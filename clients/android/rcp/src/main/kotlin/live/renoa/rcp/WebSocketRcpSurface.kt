@@ -52,6 +52,11 @@ class WebSocketRcpSurface(
     private val newCommandId: () -> Uuid = { Uuid.random() },
 ) : RcpSurface {
     private val scope = CoroutineScope(SupervisorJob() + context)
+
+    // Credentials go in the first frame after the upgrade, so a redirect could carry them to a
+    // host, or a plain-text scheme, that requireSecureEndpoint never saw. Redirects fail the upgrade.
+    private val socketClient = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+
     private val attachments = LinkedHashMap<Uuid, Attachment>()
     private val nextRequestId = AtomicLong(1)
     private val connecting = AtomicBoolean(false)
@@ -75,16 +80,19 @@ class WebSocketRcpSurface(
         try {
             check(current == null) { "RCP client is already connected" }
             val identity = identityFrame()
-            val connection = openConnection(http, endpoint)
+            val connection = openConnection(socketClient, endpoint)
             current = connection
             latest = connection
+            // close() sets closed and then reads current; this sets current and then reads closed,
+            // so a close that raced with this connect ends the connection one way or the other.
+            if (closed) end(connection, Disconnected("RCP client closed"), 1000)
             scope.launch { receive(connection) }
             try {
                 connection.opened.await()
                 send(connection, identity)
                 connection.authenticated.await()
                 for (attachment in synchronized(attachments) { attachments.values.toList() }) {
-                    attachExisting(attachment)
+                    reattach(attachment)
                 }
             } catch (failure: Throwable) {
                 end(connection, failure as? Exception ?: Disconnected("connect was cancelled", failure), 1000)
@@ -121,6 +129,7 @@ class WebSocketRcpSurface(
         request(ServerMessage.TaskDeleted::class, { ClientMessage.DeleteTask(it, taskId) }) {
             if (it.taskId != taskId) throw ProtocolViolation("delete_task response changed the task identity")
         }
+        synchronized(attachments) { attachments.remove(taskId) }
     }
 
     override suspend fun attach(taskId: Uuid, apply: suspend (TaskEvent) -> Unit) {
@@ -228,6 +237,16 @@ class WebSocketRcpSurface(
             throw failure
         }
         return expected.javaObjectType.cast(pending.response.await())
+    }
+
+    /** A task the coordinator no longer has would fail every later connect, so it is forgotten as the failure is reported. */
+    private suspend fun reattach(attachment: Attachment) {
+        try {
+            attachExisting(attachment)
+        } catch (gone: RcpException) {
+            if (gone.code == RcpErrorCode.NotFound) synchronized(attachments) { attachments.remove(attachment.taskId) }
+            throw gone
+        }
     }
 
     private suspend fun attachExisting(attachment: Attachment) {

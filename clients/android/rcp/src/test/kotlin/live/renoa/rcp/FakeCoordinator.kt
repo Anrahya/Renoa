@@ -56,6 +56,9 @@ class FakeCoordinator : AutoCloseable {
     /** Lets a test make the coordinator answer wrongly: every reply passes through it. */
     @Volatile var rewriteReply: (JsonObject) -> JsonObject = { it }
 
+    /** When set, every connection attempt is answered with a redirect to this URL instead of an upgrade. */
+    @Volatile var redirectTo: String? = null
+
     /** The version the coordinator claims in `authenticated`, and whether it refuses the client's version instead. */
     @Volatile var authenticatedVersion = 13
     @Volatile var refuseVersion = false
@@ -70,6 +73,7 @@ class FakeCoordinator : AutoCloseable {
             object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     connectionsAccepted.incrementAndGet()
+                    redirectTo?.let { return MockResponse.Builder().code(307).addHeader("Location", it).build() }
                     return MockResponse.Builder().webSocketUpgrade(Session()).build()
                 }
             }

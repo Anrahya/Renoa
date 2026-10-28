@@ -1,11 +1,15 @@
 package live.renoa.rcp
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.uuid.Uuid
 
@@ -145,5 +149,52 @@ class SessionTest : CoordinatorTest() {
         val surface = client()
         surface.connect()
         assertFailsWith<IllegalStateException> { surface.connect() }
+    }
+
+    @Test
+    fun aRedirectIsNeverFollowedSoCredentialsGoOnlyWhereTheEndpointSaid() = eventually {
+        FakeCoordinator().use { elsewhere ->
+            coordinator.redirectTo = elsewhere.endpoint.replaceFirst("ws://", "http://")
+            val surface = client()
+
+            assertFailsWith<Disconnected> { surface.connect() }
+
+            assertEquals(0, elsewhere.connectionsAccepted.get(), "the redirect target must never be contacted")
+            assertEquals(emptyList(), elsewhere.received)
+        }
+    }
+
+    @Test
+    fun closingWhileATicketIsStillBeingFetchedEndsTheConnectCall() = eventually {
+        val ticket = "ab".repeat(32)
+        coordinator.validTickets += ticket
+        val asked = CompletableDeferred<Unit>()
+        val issued = CompletableDeferred<String>()
+        val surface = client(Authentication.Ticket { asked.complete(Unit); issued.await() })
+        coroutineScope {
+            val connecting = async { runCatching { surface.connect() } }
+            asked.await()
+
+            surface.close()
+            issued.complete(ticket)
+
+            assertIs<Disconnected>(connecting.await().exceptionOrNull())
+        }
+    }
+
+    @Test
+    fun aSecretIsNeverPrintedWithItsHolder() {
+        val credential = "s3cret".repeat(10)
+        val ticket = "ab".repeat(32)
+        val credentials = DeviceCredentials(Uuid.random(), credential)
+        val printed =
+            listOf(
+                credentials,
+                Authentication.Device(credentials),
+                ClientMessage.Authenticate(RCP_BINDING_VERSION, credentials),
+                ClientMessage.AuthenticateTicket(RCP_BINDING_VERSION, ticket),
+            ).joinToString()
+        assertFalse(credential in printed, printed)
+        assertFalse(ticket in printed, printed)
     }
 }

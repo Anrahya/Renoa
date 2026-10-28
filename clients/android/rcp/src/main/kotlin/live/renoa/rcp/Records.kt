@@ -17,7 +17,10 @@ import kotlin.uuid.Uuid
  */
 
 @Serializable
-data class DeviceCredentials(val deviceId: Uuid, val credential: String)
+data class DeviceCredentials(val deviceId: Uuid, val credential: String) {
+    /** The credential is a bearer secret: printing the record must not print it. */
+    override fun toString(): String = "DeviceCredentials(deviceId=$deviceId, credential=<secret>)"
+}
 
 @Serializable
 data class TaskSummary(val taskId: Uuid, val target: String)

@@ -44,7 +44,9 @@ sealed interface ClientMessage {
 
     @Serializable
     @SerialName("authenticate_ticket")
-    data class AuthenticateTicket(val version: Int, val ticket: String) : ClientMessage
+    data class AuthenticateTicket(val version: Int, val ticket: String) : ClientMessage {
+        override fun toString(): String = "AuthenticateTicket(version=$version, ticket=<secret>)"
+    }
 
     @Serializable
     @SerialName("list_tasks")

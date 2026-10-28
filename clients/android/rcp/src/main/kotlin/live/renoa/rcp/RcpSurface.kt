@@ -51,11 +51,16 @@ interface RcpSurface {
     /** Safe to repeat with the same [taskId]: the coordinator converges on one task. */
     suspend fun openTask(taskId: Uuid, nodeId: Uuid, target: String)
 
+    /** Also stops following the task: a later [connect] does not attach it again. */
     suspend fun deleteTask(taskId: Uuid)
 
     /**
      * Replays the journal after the stored cursor, then follows live events, calling [apply]
-     * once per event in sequence order. Returns when replay is complete.
+     * for each event in sequence order. Returns when replay is complete. The cursor moves only
+     * after [apply] returns, so an event whose cursor could not be stored is delivered again on
+     * the next connection: [apply] must tolerate a repeat, which [TaskEvent.eventId] identifies.
+     * [connect] attaches the task again after a disconnect; if the coordinator then reports it
+     * gone, that connect fails with `not_found` and the task is no longer followed.
      */
     suspend fun attach(taskId: Uuid, apply: suspend (TaskEvent) -> Unit)
 

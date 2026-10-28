@@ -186,6 +186,64 @@ class AttachmentTest : CoordinatorTest() {
         assertFailsWith<IllegalStateException> { surface.attach(taskId, applied.apply) }
     }
 
+    @Test
+    fun aDeletedTaskIsNotFollowedAgainWhenTheClientReconnects() = eventually {
+        val taskId = seedJournal(2)
+        val surface = client()
+        surface.connect()
+        surface.attach(taskId, Applied().apply)
+        surface.deleteTask(taskId)
+
+        surface.disconnect()
+        surface.connect()
+
+        assertEquals(1, coordinator.framesOfType("attach").size, "connect must not ask to follow a task that was deleted")
+    }
+
+    @Test
+    fun aTaskDeletedFromAnotherDeviceIsForgottenOnceReconnectingFindsItGone() = eventually {
+        val taskId = seedJournal(2)
+        val surface = client()
+        surface.connect()
+        surface.attach(taskId, Applied().apply)
+        surface.disconnect()
+        coordinator.tasks.remove(taskId)
+
+        assertEquals(RcpErrorCode.NotFound, assertFailsWith<RcpException> { surface.connect() }.code)
+        surface.connect()
+
+        assertEquals(2, coordinator.framesOfType("attach").size, "the second connect must not ask for the gone task again")
+        assertEquals(emptyList(), surface.listTasks())
+    }
+
+    @Test
+    fun anEventTheAppAppliedIsDeliveredAgainWhenItsCursorCouldNotBeStored() = eventually {
+        val taskId = seedJournal(5)
+        state.advanceCursor(taskId, 2)
+        var failOnce = true
+        val flaky =
+            object : RcpState by state {
+                override suspend fun advanceCursor(taskId: Uuid, sequence: Long) {
+                    if (sequence == 3L && failOnce) {
+                        failOnce = false
+                        error("the cursor could not be stored")
+                    }
+                    state.advanceCursor(taskId, sequence)
+                }
+            }
+        val applied = Applied()
+        val first = client(rcpState = flaky)
+        first.connect()
+        assertFailsWith<IllegalStateException> { first.attach(taskId, applied.apply) }
+        assertEquals(2L, state.cursor(taskId))
+
+        val second = client(rcpState = flaky)
+        second.connect()
+        second.attach(taskId, applied.apply)
+
+        assertEquals(listOf(3L, 3L, 4L), applied.sequences, "an applied event whose cursor was lost is delivered again, so apply must tolerate a repeat")
+    }
+
     private suspend fun awaitCursor(taskId: Uuid, sequence: Long) {
         while (state.cursor(taskId) != sequence) kotlinx.coroutines.delay(10)
     }
