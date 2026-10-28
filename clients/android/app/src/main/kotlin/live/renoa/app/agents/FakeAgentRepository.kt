@@ -83,11 +83,12 @@ class FakeAgentRepository(
         val turn =
             synchronized(lock) {
                 room.queue.clear()
+                // A seeded agent can be working with no turn of ours running; stopping it still has to stop it.
+                // Resting is written here, with the queue, so a message sent right after cannot start a turn that this then overwrites.
+                setState(agentId, AgentState.Resting, onlyFrom = AgentState.Working)
                 room.turn.also { room.turn = null }
             }
         turn?.cancel()
-        // A seeded agent can be working with no turn of ours running; stopping it still has to stop it.
-        setState(agentId, AgentState.Resting, onlyFrom = AgentState.Working)
         room.conversation.update { it.copy(streaming = null) }
     }
 
@@ -150,20 +151,31 @@ class FakeAgentRepository(
         setState(agentId, AgentState.Working)
         try {
             while (true) {
-                // Finishing is decided under the lock, so a message sent right now starts a new turn instead of being stranded.
-                val text = synchronized(lock) { room.queue.removeFirstOrNull().also { if (it == null) room.turn = null } } ?: break
+                // Finishing is decided under the lock, and so is the state it leaves the agent in, so a message sent
+                // right now starts a new turn instead of being stranded, and this turn's Resting cannot land on top of that one's Working.
+                val text =
+                    synchronized(lock) {
+                        room.queue.removeFirstOrNull().also {
+                            if (it == null) {
+                                room.turn = null
+                                setState(agentId, AgentState.Resting)
+                            }
+                        }
+                    } ?: break
                 val agent = roster.value.first { it.id == agentId }
                 delay(wordDelayMs * 6)
                 when (val reply = script.reply(agent, text)) {
                     is Reply.Words -> speak(agentId, room, reply.text)
                     Reply.Fails -> {
-                        synchronized(lock) { room.queue.clear() }
-                        setState(agentId, AgentState.Stuck)
+                        synchronized(lock) {
+                            room.queue.clear()
+                            room.turn = null
+                            setState(agentId, AgentState.Stuck)
+                        }
                         return
                     }
                 }
             }
-            setState(agentId, AgentState.Resting)
         } catch (cancelled: CancellationException) {
             room.conversation.update { it.copy(streaming = null) }
             throw cancelled

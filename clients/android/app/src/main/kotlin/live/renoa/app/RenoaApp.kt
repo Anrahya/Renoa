@@ -11,8 +11,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -27,6 +29,7 @@ import live.renoa.app.editor.AgentEditorViewModel
 import live.renoa.app.editor.EditorMode
 import live.renoa.app.home.HomeScreen
 import live.renoa.app.home.HomeViewModel
+import live.renoa.app.nav.EntryStores
 import live.renoa.app.nav.Route
 import live.renoa.app.nav.rememberNavigator
 import live.renoa.app.signin.SignInScreen
@@ -38,21 +41,26 @@ import live.renoa.app.theme.ThemeName
 fun RenoaApp(repository: AgentRepository) {
     var theme by rememberSaveable { mutableStateOf(ThemeName.Midnight) }
     val navigator = rememberNavigator(Route.SignIn)
+    val stores: EntryStores = viewModel()
 
     RenoaTheme(theme) {
         BackHandler(enabled = navigator.stack.size > 1) { navigator.pop() }
         Box(Modifier.fillMaxSize().background(Renoa.colors.background)) {
             AnimatedContent(
-                targetState = navigator.top,
+                targetState = navigator.topEntry,
                 transitionSpec = {
                     (slideInHorizontally(tween(300)) { it / 8 } + fadeIn(tween(300))) togetherWith fadeOut(tween(150))
                 },
                 label = "screen",
-            ) { route ->
-                when (route) {
+            ) { entry ->
+                // A screen keeps its view models only while its entry is on the stack. A rotation
+                // disposes this too, but the entry is still on the stack then, so nothing is lost.
+                val owner = remember { stores.ownerFor(entry.id) }
+                DisposableEffect(Unit) { onDispose { if (navigator.entries.none { it.id == entry.id }) stores.release(entry.id) } }
+                when (val route = entry.route) {
                     Route.SignIn -> SignInScreen(onContinue = { navigator.resetTo(Route.Home) })
                     Route.Home -> {
-                        val model: HomeViewModel = viewModel(factory = viewModelFactory { initializer { HomeViewModel(repository) } })
+                        val model: HomeViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { HomeViewModel(repository) } })
                         HomeScreen(
                             model,
                             onOpenChat = { navigator.push(Route.Chat(it)) },
@@ -61,17 +69,17 @@ fun RenoaApp(repository: AgentRepository) {
                         )
                     }
                     is Route.Chat -> {
-                        val model: ChatViewModel = viewModel(key = route.encode(), factory = viewModelFactory { initializer { ChatViewModel(repository, route.agentId) } })
+                        val model: ChatViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { ChatViewModel(repository, route.agentId) } })
                         ChatScreen(model, onBack = { navigator.pop() }, onOpenProfile = { navigator.push(Route.Edit(it)) })
                     }
                     is Route.Edit -> {
                         val model: AgentEditorViewModel =
-                            viewModel(key = route.encode(), factory = viewModelFactory { initializer { AgentEditorViewModel(repository, EditorMode.Editing(route.agentId)) } })
+                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository, EditorMode.Editing(route.agentId)) } })
                         AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.pop() })
                     }
                     Route.Create -> {
                         val model: AgentEditorViewModel =
-                            viewModel(key = route.encode(), factory = viewModelFactory { initializer { AgentEditorViewModel(repository, EditorMode.Creating) } })
+                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository, EditorMode.Creating) } })
                         AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.replaceTop(Route.Chat(it)) })
                     }
                 }

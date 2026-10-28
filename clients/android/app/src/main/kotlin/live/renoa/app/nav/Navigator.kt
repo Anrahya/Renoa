@@ -42,39 +42,57 @@ sealed interface Route {
     }
 }
 
+/** One screen on the back stack. [id] is never reused, so two visits to the same route are two entries. */
+data class Entry(val id: Int, val route: Route)
+
 /** The back stack. The bottom entry is where back leaves the app. */
-class Navigator private constructor(stack: List<Route>) {
-    var stack: List<Route> by mutableStateOf(stack)
+class Navigator private constructor(entries: List<Entry>, private var nextId: Int) {
+    var entries: List<Entry> by mutableStateOf(entries)
         private set
 
-    val top: Route get() = stack.last()
+    val stack: List<Route> get() = entries.map { it.route }
+
+    val topEntry: Entry get() = entries.last()
+
+    val top: Route get() = topEntry.route
 
     fun push(route: Route) {
-        stack = stack + route
+        entries = entries + Entry(nextId++, route)
     }
 
     /** Swaps the top screen, so back skips it. */
     fun replaceTop(route: Route) {
-        stack = stack.dropLast(1) + route
+        entries = entries.dropLast(1) + Entry(nextId++, route)
     }
 
     /** Starts over with [route] alone, so back cannot return to what came before. */
     fun resetTo(route: Route) {
-        stack = listOf(route)
+        entries = listOf(Entry(nextId++, route))
     }
 
     /** Goes back one screen. Returns false at the bottom, where the system should take over. */
     fun pop(): Boolean {
-        if (stack.size <= 1) return false
-        stack = stack.dropLast(1)
+        if (entries.size <= 1) return false
+        entries = entries.dropLast(1)
         return true
     }
 
     companion object {
-        fun starting(at: Route) = Navigator(listOf(at))
+        fun starting(at: Route) = Navigator(listOf(Entry(0, at)), 1)
 
+        /** The first item is the next entry id, so a restored stack never reuses the id of a screen that was popped. */
         val Saver: Saver<Navigator, List<String>> =
-            Saver(save = { nav -> nav.stack.map(Route::encode) }, restore = { saved -> Navigator(saved.map(Route::parse)) })
+            Saver(
+                save = { nav -> listOf(nav.nextId.toString()) + nav.entries.map { "${it.id} ${it.route.encode()}" } },
+                restore = { saved ->
+                    val entries =
+                        saved.drop(1).map { line ->
+                            val (id, route) = line.split(' ', limit = 2)
+                            Entry(id.toInt(), Route.parse(route))
+                        }
+                    Navigator(entries, saved.first().toInt())
+                },
+            )
     }
 }
 
