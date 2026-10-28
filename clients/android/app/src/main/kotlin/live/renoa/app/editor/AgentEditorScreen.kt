@@ -67,7 +67,7 @@ fun AgentEditorScreen(viewModel: AgentEditorViewModel, onClose: () -> Unit, onFi
     Box(Modifier.fillMaxSize().background(colors.background)) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Close", onClick = onClose), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Close", onClick = onClose), contentAlignment = Alignment.Center) {
                     PathIcon(Glyphs.CLOSE, colors.foreground, size = 20.dp)
                 }
                 Spacer(Modifier.weight(1f))

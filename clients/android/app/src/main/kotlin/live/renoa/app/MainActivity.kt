@@ -44,6 +44,7 @@ class RenoaApplication : Application() {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The theme the app resolves sets the bars' colours again on its first frame.
         enableEdgeToEdge()
         val application = application as RenoaApplication
         val store = SignInStore(applicationContext)

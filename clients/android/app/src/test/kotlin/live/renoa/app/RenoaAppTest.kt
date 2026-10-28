@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -164,5 +165,17 @@ class RenoaAppTest : ScreenTest() {
 
         back()
         assertEquals(1, stores.held)
+    }
+
+    @Test
+    fun theBarsFollowThePhoneUntilTheMarkPicksTheOtherTheme() {
+        start()
+        val window = compose.activity.window
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        fun lightBars() = controller.isAppearanceLightStatusBars to controller.isAppearanceLightNavigationBars
+        assertEquals(true to true, lightBars(), "a phone in light mode opens on Paper, with dark icons")
+        compose.onNodeWithContentDescription("Renoa, change colours").performClick()
+        compose.waitForIdle()
+        assertEquals(false to false, lightBars(), "the mark picks Graphite, with light icons")
     }
 }

@@ -30,6 +30,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
+    // The licences of the fonts and icons the app bundles travel inside it, as their terms ask.
+    sourceSets.getByName("main").assets.directories.add(rootProject.file("licenses").path)
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -43,6 +46,8 @@ android {
             it.jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
             // The Host's published schemas, which the app's decoders are checked against.
             it.systemProperty("renoa.docs", rootProject.file("../../docs").absolutePath)
+            // The design system's tokens, which the app's colours are checked against.
+            it.systemProperty("renoa.design", rootProject.file("../../design").absolutePath)
         }
     }
 

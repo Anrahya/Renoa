@@ -11,7 +11,9 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -20,7 +22,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -41,8 +45,12 @@ import live.renoa.app.signin.SignInScreen
 import live.renoa.app.signin.SignInState
 import live.renoa.app.signin.SignInViewModel
 import live.renoa.app.theme.RenoaTheme
+import live.renoa.app.theme.SystemBars
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.ThemeName
+
+/** The widest the screens grow; past it, the theme's ground fills the sides. */
+internal val MAX_CONTENT_WIDTH = 600.dp
 
 /** The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then. */
 @Composable
@@ -54,10 +62,13 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
     val stores: EntryStores = viewModel()
 
     RenoaTheme(theme) {
+        SystemBars(theme)
         BackHandler(enabled = navigator.stack.size > 1) { navigator.pop() }
         Box(Modifier.fillMaxSize().background(Renoa.colors.background)) {
             AnimatedContent(
                 targetState = navigator.topEntry,
+                // A tablet keeps a phone's column, centred, so lines stay readable and share one left edge.
+                modifier = Modifier.align(Alignment.TopCenter).widthIn(max = MAX_CONTENT_WIDTH).fillMaxHeight(),
                 transitionSpec = {
                     (slideInHorizontally(tween(300)) { it / 8 } + fadeIn(tween(300))) togetherWith fadeOut(tween(150))
                 },

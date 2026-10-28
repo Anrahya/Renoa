@@ -15,9 +15,10 @@ The Kotlin app shell. Two modules:
   ID of a passkey the person already has), a passkey through Credential Manager, and a P-256
   device key in the Android Keystore; the device credential is kept encrypted with a Keystore
   key. The app signs in to `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for
-  this package and signing certificate (`deploy/README.md`). The screens still run on
-  `FakeAgentRepository`; the real repository over `:rcp` replaces it behind `AgentRepository`.
-  Passkeys need Android 9, so `minSdk` is 28.
+  this package and signing certificate (`deploy/README.md`). Once signed in, the screens run on
+  `RcpAgentRepository`: chat over `:rcp`, and making an agent or reading its profile through
+  the Host over the same connection. Tests use `FakeAgentRepository`. Passkeys need Android 9,
+  so `minSdk` is 28. The font and icon licences (`licenses/`) ship inside the APK as assets.
 
 ## Build
 

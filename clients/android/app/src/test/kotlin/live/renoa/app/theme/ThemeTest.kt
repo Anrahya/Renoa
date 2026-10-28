@@ -2,6 +2,7 @@ package live.renoa.app.theme
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import java.io.File
 import kotlin.reflect.full.memberProperties
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -29,7 +30,6 @@ class ThemeTest {
     @Test
     fun everyThemeSetsEveryTokenToARealColour() {
         val tokens = RenoaColors::class.memberProperties
-        assertTrue(tokens.size >= 15, "expected the full token set, found ${tokens.size}")
         for (theme in ThemeName.entries) {
             for (token in tokens) {
                 val value = token.get(theme.colors) as Color
@@ -87,5 +87,27 @@ class ThemeTest {
         }
         assertEquals(ThemeName.entries.toList(), seen)
         assertEquals(ThemeName.Graphite, theme)
+    }
+
+    /** The `--name: #RRGGBB` declarations of the block [selector] opens in `design/system/tokens.css`. */
+    private fun tokens(selector: String): Map<String, Color> {
+        val css = File(System.getProperty("renoa.design"), "system/tokens.css").readText()
+        val start = css.indexOf("$selector {")
+        assertTrue(start >= 0, "tokens.css has no $selector block")
+        val block = css.substring(start, css.indexOf('}', start))
+        return Regex("""--([a-z0-9-]+):\s*#([0-9A-Fa-f]{6});""").findAll(block).associate { match ->
+            match.groupValues[1] to Color(0xFF000000 or match.groupValues[2].toLong(16))
+        }
+    }
+
+    @Test
+    fun everyColourIsTheDesignSystemsToken() {
+        val blocks = mapOf(ThemeName.Paper to tokens(":root"), ThemeName.Graphite to tokens(":root[data-theme=\"dark\"]"))
+        for ((theme, declared) in blocks) {
+            for (token in RenoaColors::class.memberProperties) {
+                val name = token.name.replace(Regex("[A-Z]")) { "-" + it.value.lowercase() }
+                assertEquals(declared[name], token.get(theme.colors), "${theme.name} --$name")
+            }
+        }
     }
 }

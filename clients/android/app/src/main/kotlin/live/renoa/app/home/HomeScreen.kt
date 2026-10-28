@@ -84,7 +84,7 @@ fun HomeScreen(
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
-                        .size(44.dp)
+                        .size(48.dp)
                         .clickable(role = Role.Button, onClick = onChangeColours)
                         .semantics { contentDescription = "Renoa, change colours" },
                     contentAlignment = Alignment.CenterStart,
@@ -147,7 +147,6 @@ private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, arriveAfterMi
     Row(
         Modifier
             .fillMaxWidth()
-            .alpha(if (agent.state == AgentState.Asleep) 0.55f else 1f)
             .clickable(onClickLabel = "Open ${agent.name}", onClick = onOpen)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
