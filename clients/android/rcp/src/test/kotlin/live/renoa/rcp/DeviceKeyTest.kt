@@ -83,7 +83,7 @@ class DeviceKeyTest : CoordinatorTest() {
 
     /** The coordinator's checked-in vector, read from docs/identity-v0.md, verifies against the client's proof text and encoding. */
     @Test
-    fun theDocumentedProofVectorVerifiesAgainstTheClientsProofText() {
+    fun theDocumentedVectorsVerifyAgainstTheClientsTexts() {
         val doc = File(System.getProperty("renoa.docs"), "identity-v0.md").readText()
         val key = Regex("The public key is\\s+`([^`]+)`").find(doc)!!.groupValues[1]
         val (device, nonce, proof) =
@@ -105,6 +105,15 @@ class DeviceKeyTest : CoordinatorTest() {
                 verify(der)
             }
         assertTrue(verifies, "the documented proof does not verify over the client's proof text")
-        assertEquals(proof, encodeSignature(der), "the client must encode a signature exactly as the coordinator reads it")
+        assertEquals(proof, base64Url(der), "the client must encode a signature exactly as the coordinator reads it")
+        val (ceremony, registration) =
+            Regex("The registration proof for ceremony `([^`]+)` is\\s+`([^`]+)`").find(doc)!!.destructured
+        val registers =
+            Signature.getInstance("SHA256withECDSA").run {
+                initVerify(publicKey)
+                update(deviceRegistrationText(Uuid.parse(ceremony)))
+                verify(Base64.getUrlDecoder().decode(registration))
+            }
+        assertTrue(registers, "the documented registration proof does not verify over the client's registration text")
     }
 }

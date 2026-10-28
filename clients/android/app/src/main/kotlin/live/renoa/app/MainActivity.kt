@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.FakeAgentRepository
+import live.renoa.app.signin.SignInStore
+import live.renoa.app.signin.SignInViewModel
 
 /** Owns what outlives a screen. The repository is a fake until the backend work lands. */
 class RenoaApplication : Application() {
@@ -21,6 +23,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val repository = (application as RenoaApplication).repository
-        setContent { RenoaApp(repository) }
+        val store = SignInStore(applicationContext)
+        val signedIn = store.load() != null
+        setContent { RenoaApp(repository, signedIn, SignInViewModel.signingIn(applicationContext, store)) }
     }
 }

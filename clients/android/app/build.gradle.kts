@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -9,10 +10,12 @@ android {
 
     defaultConfig {
         applicationId = "live.renoa.app"
-        minSdk = 26
+        minSdk = 28
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // The Renoa the app signs in to; its passkeys and assetlinks.json belong to this origin.
+        buildConfigField("String", "RENOA_ORIGIN", "\"https://renoa.live\"")
     }
 
     buildTypes {
@@ -28,6 +31,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions {
@@ -65,6 +69,11 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(project(":rcp"))
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.credentials)
+    // Credential Manager reaches passkeys through Play services on Android 13 and earlier.
+    implementation(libs.androidx.credentials.play.services)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)

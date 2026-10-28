@@ -26,8 +26,8 @@ private val NONCE_PATTERN = Regex("^[0-9a-f]{64}$")
 internal fun deviceProofText(deviceId: Uuid, nonce: String): ByteArray =
     "renoa device proof v1\n$deviceId\n$nonce".toByteArray(Charsets.UTF_8)
 
-/** A DER signature as the binding carries it: base64url without padding, which the coordinator requires. */
-internal fun encodeSignature(der: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(der)
+/** Bytes as the coordinator carries keys and signatures: base64url without padding, which it requires. */
+internal fun base64Url(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
 /** Replay of one attachment: complete once the event at [through] has been applied. */
 private class Replay {
@@ -358,7 +358,7 @@ class WebSocketRcpSurface(
         val sign =
             device.sign
                 ?: throw DeviceKeyRequired("this device registered a key at sign-in, and the client was given none; sign in again")
-        val signature = encodeSignature(sign(deviceProofText(device.credentials.deviceId, nonce)))
+        val signature = base64Url(sign(deviceProofText(device.credentials.deviceId, nonce)))
         send(connection, encodeClientMessage(ClientMessage.DeviceProof(signature)))
     }
 
