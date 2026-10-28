@@ -43,6 +43,10 @@ pub(super) fn initialize(path: &Path) -> Result<(), NodeStoreError> {
             sequence INTEGER NOT NULL CHECK(sequence >= 0),
             event_json TEXT NOT NULL,
             PRIMARY KEY(command_id, sequence)
+         );
+         CREATE TABLE IF NOT EXISTS host_node_stops (
+            command_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL
          );",
     )?;
     initialize_version(&connection)?;

@@ -6,7 +6,7 @@ use renoa_protocol::{
 };
 use uuid::Uuid;
 
-use super::{NodeStore, TargetBinding};
+use super::{NodeStore, StopRecord, TargetBinding};
 
 fn proposal(session: u128) -> TargetBinding {
     TargetBinding {
@@ -278,4 +278,110 @@ async fn a_task_is_named_for_deletion_only_once_its_executions_have_ended() {
             .expect("unfinished")
             .is_empty()
     );
+}
+
+fn stop_rows(files: &tempfile::TempDir) -> i64 {
+    rusqlite::Connection::open(files.path().join("node.sqlite"))
+        .expect("open node ledger")
+        .query_row("SELECT count(*) FROM host_node_stops", [], |row| row.get(0))
+        .expect("count stops")
+}
+
+#[tokio::test]
+async fn a_stop_is_recorded_once_even_before_its_command_is_admitted() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let store = NodeStore::open(files.path().join("node.sqlite")).expect("open node ledger");
+    let task_id = TaskId::from_uuid(Uuid::from_u128(3));
+    let command_id = CommandId::from_uuid(Uuid::from_u128(10));
+    assert!(!store.stop_requested(command_id).await.expect("read"));
+
+    for _ in 0..2 {
+        assert_eq!(
+            store
+                .record_stop(task_id, command_id)
+                .await
+                .expect("record the stop"),
+            StopRecord::Recorded
+        );
+    }
+    store
+        .admit(task_id, command(10), proposal(100))
+        .await
+        .expect("admit the stopped command");
+
+    assert!(store.stop_requested(command_id).await.expect("read"));
+    assert!(
+        !store
+            .stop_requested(CommandId::from_uuid(Uuid::from_u128(11)))
+            .await
+            .expect("read another command")
+    );
+    assert_eq!(stop_rows(&files), 1);
+}
+
+#[tokio::test]
+async fn a_stop_that_no_execution_can_honor_is_not_recorded() {
+    use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
+
+    let files = tempfile::tempdir().expect("temporary directory");
+    let store = NodeStore::open(files.path().join("node.sqlite")).expect("open node ledger");
+    let task_id = TaskId::from_uuid(Uuid::from_u128(3));
+    let ended = CommandId::from_uuid(Uuid::from_u128(10));
+    let running = CommandId::from_uuid(Uuid::from_u128(11));
+    store
+        .admit(task_id, command(10), proposal(100))
+        .await
+        .expect("admit the first command");
+    store
+        .finish(
+            ended,
+            vec![ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            }],
+        )
+        .await
+        .expect("finish the first command");
+    store
+        .admit(task_id, command(11), proposal(100))
+        .await
+        .expect("admit the second command");
+
+    assert_eq!(
+        store.record_stop(task_id, ended).await.expect("late stop"),
+        StopRecord::AlreadyEnded
+    );
+    assert!(
+        store
+            .record_stop(TaskId::from_uuid(Uuid::from_u128(4)), running)
+            .await
+            .is_err(),
+        "another task cannot stop this task's command"
+    );
+
+    assert!(!store.stop_requested(ended).await.expect("read"));
+    assert!(!store.stop_requested(running).await.expect("read"));
+    assert_eq!(stop_rows(&files), 0);
+}
+
+#[tokio::test]
+async fn forgetting_a_task_forgets_its_stops_and_only_its_stops() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let store = NodeStore::open(files.path().join("node.sqlite")).expect("open node ledger");
+    let forgotten = TaskId::from_uuid(Uuid::from_u128(3));
+    let kept = TaskId::from_uuid(Uuid::from_u128(4));
+    let forgotten_command = CommandId::from_uuid(Uuid::from_u128(10));
+    let kept_command = CommandId::from_uuid(Uuid::from_u128(11));
+    store
+        .record_stop(forgotten, forgotten_command)
+        .await
+        .expect("record a stop");
+    store
+        .record_stop(kept, kept_command)
+        .await
+        .expect("record another task's stop");
+
+    store.forget_task(forgotten).await.expect("forget the task");
+
+    assert!(!store.stop_requested(forgotten_command).await.expect("read"));
+    assert!(store.stop_requested(kept_command).await.expect("read"));
 }

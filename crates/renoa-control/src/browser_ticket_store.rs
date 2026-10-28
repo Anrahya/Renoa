@@ -22,7 +22,6 @@ impl ControlStore {
         now: SystemTime,
     ) -> Result<(), ControlError> {
         let credential_id = passkey.cred_id().as_ref().to_vec();
-        let passkey_json = serde_json::to_string(&passkey).map_err(json_error)?;
         let ticket_hash = grant
             .ticket
             .digest()
@@ -35,20 +34,7 @@ impl ControlStore {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(sqlite_error)?;
-            transaction
-                .execute(
-                    "INSERT INTO passkeys (
-                        credential_id, principal_id, passkey_json, authentication_counter,
-                        created_at_ms
-                     ) VALUES (?1, ?2, ?3, 0, ?4)",
-                    params![
-                        credential_id,
-                        principal_id.to_string(),
-                        passkey_json,
-                        created_at_ms
-                    ],
-                )
-                .map_err(registration_insert_error)?;
+            insert_passkey(&transaction, principal_id, &passkey, created_at_ms)?;
             insert_ticket(
                 &transaction,
                 &ticket_hash,
@@ -71,7 +57,6 @@ impl ControlStore {
         now: SystemTime,
     ) -> Result<(), ControlError> {
         let credential_id = authentication.cred_id().as_ref().to_vec();
-        let observed_counter = i64::from(authentication.counter());
         let ticket_hash = grant
             .ticket
             .digest()
@@ -85,37 +70,7 @@ impl ControlStore {
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(sqlite_error)?;
             remove_expired_tickets(&transaction, now_ms)?;
-            let (passkey_json, stored_counter) = transaction
-                .query_row(
-                    "SELECT passkey_json, authentication_counter FROM passkeys
-                     WHERE credential_id = ?1 AND principal_id = ?2",
-                    params![credential_id, principal_id.to_string()],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-                )
-                .optional()
-                .map_err(sqlite_error)?
-                .ok_or_else(ControlError::authentication_failed)?;
-            if stored_counter > 0 && observed_counter <= stored_counter {
-                return Err(ControlError::authentication_failed());
-            }
-            let mut passkey: Passkey = serde_json::from_str(&passkey_json).map_err(json_error)?;
-            passkey
-                .update_credential(&authentication)
-                .ok_or_else(ControlError::authentication_failed)?;
-            let updated_json = serde_json::to_string(&passkey).map_err(json_error)?;
-            transaction
-                .execute(
-                    "UPDATE passkeys
-                     SET passkey_json = ?3, authentication_counter = ?4
-                     WHERE credential_id = ?1 AND principal_id = ?2",
-                    params![
-                        credential_id,
-                        principal_id.to_string(),
-                        updated_json,
-                        observed_counter.max(stored_counter),
-                    ],
-                )
-                .map_err(sqlite_error)?;
+            advance_passkey(&transaction, principal_id, &authentication)?;
             insert_ticket(
                 &transaction,
                 &ticket_hash,
@@ -173,6 +128,74 @@ impl ControlStore {
         })
         .await
     }
+}
+
+/// Records a newly registered passkey. A credential id already on file is an
+/// authentication failure, never an overwrite.
+pub(crate) fn insert_passkey(
+    connection: &Connection,
+    principal_id: PrincipalId,
+    passkey: &Passkey,
+    created_at_ms: i64,
+) -> Result<(), ControlError> {
+    let credential_id: &[u8] = passkey.cred_id().as_ref();
+    connection
+        .execute(
+            "INSERT INTO passkeys (
+                credential_id, principal_id, passkey_json, authentication_counter,
+                created_at_ms
+             ) VALUES (?1, ?2, ?3, 0, ?4)",
+            params![
+                credential_id,
+                principal_id.to_string(),
+                serde_json::to_string(passkey).map_err(json_error)?,
+                created_at_ms
+            ],
+        )
+        .map_err(registration_insert_error)?;
+    Ok(())
+}
+
+/// Stores an authenticated passkey's new state. A stale nonzero counter fails,
+/// so two ceremonies that finish out of order cannot both succeed.
+pub(crate) fn advance_passkey(
+    connection: &Connection,
+    principal_id: PrincipalId,
+    authentication: &AuthenticationResult,
+) -> Result<(), ControlError> {
+    let credential_id = authentication.cred_id().as_ref().to_vec();
+    let observed_counter = i64::from(authentication.counter());
+    let (passkey_json, stored_counter) = connection
+        .query_row(
+            "SELECT passkey_json, authentication_counter FROM passkeys
+             WHERE credential_id = ?1 AND principal_id = ?2",
+            params![credential_id, principal_id.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(sqlite_error)?
+        .ok_or_else(ControlError::authentication_failed)?;
+    if stored_counter > 0 && observed_counter <= stored_counter {
+        return Err(ControlError::authentication_failed());
+    }
+    let mut passkey: Passkey = serde_json::from_str(&passkey_json).map_err(json_error)?;
+    passkey
+        .update_credential(authentication)
+        .ok_or_else(ControlError::authentication_failed)?;
+    connection
+        .execute(
+            "UPDATE passkeys
+             SET passkey_json = ?3, authentication_counter = ?4
+             WHERE credential_id = ?1 AND principal_id = ?2",
+            params![
+                credential_id,
+                principal_id.to_string(),
+                serde_json::to_string(&passkey).map_err(json_error)?,
+                observed_counter.max(stored_counter),
+            ],
+        )
+        .map_err(sqlite_error)?;
+    Ok(())
 }
 
 pub(crate) fn insert_ticket(

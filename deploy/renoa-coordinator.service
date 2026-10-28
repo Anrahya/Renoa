@@ -9,7 +9,7 @@ User=renoa-arcee
 Group=renoa-arcee
 Environment=HOME=/home/renoa
 UMask=0077
-ExecStart=/usr/local/bin/renoa-coordinator serve /home/renoa/.renoa 7818 renoa.live https://renoa.live
+ExecStart=/usr/local/bin/renoa-coordinator serve /home/renoa/.renoa 7818 renoa.live https://renoa.live /opt/renoa/control-room
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=15s

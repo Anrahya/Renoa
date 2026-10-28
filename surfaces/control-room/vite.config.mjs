@@ -48,7 +48,7 @@ export default defineConfig({
     host: "0.0.0.0",
     allowedHosts: ["terminal.local"],
     proxy: {
-      "/v1/host": "http://127.0.0.1:7819",
+      "/v1/host": "http://127.0.0.1:7818",
       "/v1/identity": "http://127.0.0.1:7818",
       "/connect": { target: "ws://127.0.0.1:7818", ws: true },
     },

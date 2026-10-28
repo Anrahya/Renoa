@@ -4,13 +4,21 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use crate::{
     ControlError, DeviceCredential, DeviceCredentials, DeviceId, EnrollmentToken, PeerIdentity,
+    device_key::DevicePublicKey,
     store::{ControlStore, blocking, json_error, sqlite_error},
 };
 
+/// A device whose bearer credential checked out. When it registered a key, the
+/// connection must still prove it holds that key before it is authenticated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuthenticatedDevice {
     pub(crate) device_id: DeviceId,
     pub(crate) peer: PeerIdentity,
+    pub(crate) key: Option<DevicePublicKey>,
+    /// The digest of the credential that was presented. Activating the
+    /// connection checks it is still the device's credential, so a sign-in
+    /// that replaced it in between ends this connection too.
+    pub(crate) credential_hash: [u8; 32],
 }
 
 impl ControlStore {
@@ -96,19 +104,28 @@ impl ControlStore {
         let path = Arc::clone(&self.path);
         blocking(move || {
             let connection = crate::control_schema::open_connection(&path)?;
-            let peer_json = connection
+            let (peer_json, public_key) = connection
                 .query_row(
-                    "SELECT peer_json FROM devices
-                     WHERE device_id = ?1 AND credential_hash = ?2 AND revoked = 0",
+                    "SELECT d.peer_json, k.public_key
+                     FROM devices d LEFT JOIN device_keys k ON k.device_id = d.device_id
+                     WHERE d.device_id = ?1 AND d.credential_hash = ?2 AND d.revoked = 0",
                     params![device_id.to_string(), credential_hash.as_slice()],
-                    |row| row.get::<_, String>(0),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
                 )
                 .optional()
                 .map_err(sqlite_error)?
                 .ok_or_else(ControlError::authentication_failed)?;
+            let key = public_key
+                .map(|bytes| {
+                    DevicePublicKey::from_bytes(&bytes)
+                        .ok_or_else(|| ControlError::store("a stored device key is invalid"))
+                })
+                .transpose()?;
             Ok(AuthenticatedDevice {
                 device_id,
                 peer: serde_json::from_str(&peer_json).map_err(json_error)?,
+                key,
+                credential_hash,
             })
         })
         .await
@@ -134,16 +151,23 @@ impl ControlStore {
         .await
     }
 
-    pub(crate) async fn device_is_active(&self, device_id: DeviceId) -> Result<bool, ControlError> {
+    /// Whether the device is not revoked and still holds the credential with
+    /// this digest.
+    pub(crate) async fn device_accepts(
+        &self,
+        device_id: DeviceId,
+        credential_hash: [u8; 32],
+    ) -> Result<bool, ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
             let connection = crate::control_schema::open_connection(&path)?;
             connection
                 .query_row(
                     "SELECT EXISTS(
-                        SELECT 1 FROM devices WHERE device_id = ?1 AND revoked = 0
+                        SELECT 1 FROM devices
+                        WHERE device_id = ?1 AND credential_hash = ?2 AND revoked = 0
                      )",
-                    [device_id.to_string()],
+                    params![device_id.to_string(), credential_hash.as_slice()],
                     |row| row.get::<_, bool>(0),
                 )
                 .map_err(sqlite_error)

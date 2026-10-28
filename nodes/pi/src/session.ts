@@ -137,7 +137,14 @@ async function serveAuthenticated(
       if (typeof event.data !== "string") {
         throw new ProtocolError("coordinator sent a non-text WebSocket message");
       }
-      handleMessage(parseServerMessage(event.data), state, admissions, eventBatches);
+      handleMessage(
+        parseServerMessage(event.data),
+        state,
+        admissions,
+        eventBatches,
+        (taskId, commandId) =>
+          send(socket, { type: "acknowledge_stop", task_id: taskId, command_id: commandId }),
+      );
     });
   };
   const onClose = () => closed.resolve();
@@ -166,10 +173,17 @@ function handleMessage(
   state: NodeState,
   admissions: Set<string>,
   eventBatches: Map<string, number>,
+  acknowledgeStop: (taskId: string, commandId: string) => void,
 ): void {
   switch (message.type) {
     case "execute":
       state.admit(message.command);
+      break;
+    case "stop":
+      // The stop is durable, and its command is cancelled, before the
+      // coordinator is told, so an acknowledged stop is never lost.
+      state.recordStop(message.taskId, message.commandId);
+      acknowledgeStop(message.taskId, message.commandId);
       break;
     case "execution_acknowledged":
       if (!admissions.delete(message.commandId)) {

@@ -3,7 +3,7 @@ use std::num::NonZeroU32;
 use renoa_kernel::{EffectOutcome, EffectRequest, LoopDecision, LoopError, LoopInput};
 
 use super::{
-    AgentLoop, LoopPhase, MODEL_EFFECT_BINDING, checkpoint, decode, encode, require_effect,
+    AgentLoop, COMPACTION_EFFECT_BINDING, LoopPhase, checkpoint, decode, encode, require_effect,
     require_effect_identity,
 };
 use crate::{
@@ -57,7 +57,7 @@ impl AgentLoop {
         Ok(LoopDecision::InvokeEffects {
             checkpoint: checkpoint(phase)?,
             effects: vec![EffectRequest {
-                binding: MODEL_EFFECT_BINDING.to_owned(),
+                binding: COMPACTION_EFFECT_BINDING.to_owned(),
                 request,
                 recovery: self.model_recovery,
             }],
@@ -160,7 +160,7 @@ impl AgentLoop {
         let effect = require_effect(input.effect_batch, "compaction result")?;
         require_effect_identity(
             &effect,
-            MODEL_EFFECT_BINDING,
+            COMPACTION_EFFECT_BINDING,
             &encode("compaction request", plan.summary_request())?,
         )?;
         let output = match effect.outcome {

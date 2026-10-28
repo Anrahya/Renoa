@@ -3,12 +3,12 @@
 This directory contains the supplied service units and configuration examples for
 the current deployment:
 
-- `renoa-coordinator` carries RCP task continuity and the separate short-lived
-  Host OAuth callback relay; and
-- `renoa-node` executes RCP tasks with the shared Host's agents and runs its
-  automation schedule; and
+- `renoa-coordinator` carries RCP task continuity, the separate short-lived
+  Host OAuth callback relay, and the Control Room panel, and relays the signed-in
+  owner's Host control to the node; and
+- `renoa-node` executes RCP tasks with the shared Host's agents, runs its
+  automation schedule, and answers the owner's Host control; and
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
-- `renoa-management` serves the authenticated personal Host control panel; and
 - `renoa-discord` serves saved agent-channel bindings and private plugin approval; and
 - `renoa-slack` and `renoa-telegram` expose the configured Host through their
   respective surfaces (`renoa-slack.service` and `renoa-slack-host.service` are
@@ -37,8 +37,7 @@ git tag v0.2.0 && git push origin v0.2.0
 
 `deploy/release.json` is the single definition of a release: the binaries to
 build, the Node adapters to ship, and each service with the binaries it runs,
-whether it runs the adapters or serves the Control Room, and its companion
-units. `deploy/package-release` builds the archive from it; the archive's own
+whether it runs the adapters, and its companion units. `deploy/package-release` builds the archive from it; the archive's own
 `release.json` adds the tag, commit, build time and each binary's SHA-256.
 
 On the VPS, `renoa-deploy` installs a release:
@@ -52,10 +51,9 @@ It downloads the archive, checks it against `SHA256SUMS` and every binary
 against the manifest, then unpacks it into `/opt/renoa/releases/<tag>/`. It
 refuses a release that lacks a binary of an installed service. Only services
 whose unit is installed on this host are updated, and only those whose
-binaries, unit files, adapters or Control Room changed are restarted, in the
-order `release.json` lists them. `renoa-node` upgrades the Host catalog when it
-opens it, so it precedes `renoa-management`, which refuses a catalog of an
-older schema. Restarting `renoa-node` first
+binaries, unit files or adapters changed are restarted, in the order
+`release.json` lists them. A new Control Room restarts nothing: the coordinator
+reads `/opt/renoa/control-room` for every request. Restarting `renoa-node` first
 waits for running agent turns to finish (`--drain-timeout`, 600 s by default).
 Before switching, it snapshots the Host, coordinator, node and Discord SQLite
 databases with SQLite's backup API, and copies `config/`, into the release
@@ -70,9 +68,9 @@ symlinks through `current`, so a switch is one rename. The first install adopts
 a hand-installed layout as `releases/legacy` without changing what runs.
 
 After the switch it checks that every service that was running stays active
-through a ten-second settle window, that management answers an
-unauthenticated request with 401 and a foreign origin with 403, and that the
-Host inspects. Then it deletes every other release and the old
+through a ten-second settle window, that the coordinator answers an
+unauthenticated Host request with 401 and a foreign origin with 403, and that
+the Host inspects. Then it deletes every other release and the old
 `/opt/renoa/previous-release`, writes `/opt/renoa/current-release.json`, and
 installs its own new copy at `/usr/local/sbin/renoa-deploy`. A failed check
 leaves the new release running, keeps every release and backup, and prints the
@@ -226,12 +224,13 @@ server or default agent, stop `renoa-discord.path` and `renoa-discord.service`,
 then remove `credentials/discord.json` and `state/surfaces/discord`; the latter
 pins the previous identity and holds its bindings and task cursors.
 
-Agents can message other agents of the same owner through RCP: a node advertises each
-agent's name, may list its owner's agents, and sends a message that arrives as a
-command with an `origin` in a thread task of the receiving agent. This release
-moves RCP to binding version 14, so the coordinator, node, Pi node, and every
-surface must be upgraded together. No coordinator, node ledger, Host or kernel
-schema changes.
+Owner Host control now runs through the coordinator and the node rather than a
+separate panel service (see [Personal control panel](#personal-control-panel)).
+Agents can message other agents of the same owner through RCP: a node advertises
+each agent's name, may list its owner's agents, and sends a message that arrives
+as a command with an `origin` in a thread task of the receiving agent. This
+release moves RCP to binding version 14, so the coordinator, node, Pi node, and
+every surface must be upgraded together.
 
 Discord store schema 7 records whether each queued message is the operator's
 or a guest's, so a guest's message is submitted as a guest's. Upgrading from
@@ -257,9 +256,9 @@ Discord store schema 4 moved conversations into RCP tasks. Upgrading keeps the
 identity, channel bindings, gateway cursor, and message deduplication, and drops
 in-process sessions, queued turns, replies, and setup-delivery records.
 
-An installation configured before Control Room onboarding must drop
-`discord_config` from `config/management.json`, replace `config/discord.json` with
-the runtime-only example, delete `credentials/discord-bot-token`, and connect again.
+An installation configured before Control Room onboarding must replace
+`config/discord.json` with the runtime-only example, delete
+`credentials/discord-bot-token`, and connect again.
 If the new connection names a different server, application owner or default agent,
 the worker refuses the stored identity; remove `state/surfaces/discord` as above.
 
@@ -279,40 +278,68 @@ reports individual unreadable sessions without inventing idle states.
 
 ## Personal control panel
 
-`renoa-management` is a separate management API and static panel service. It opens the
-existing personal Host and asks the loopback identity service to validate browser
-sessions. It never executes agent turns or reads the coordinator's private database.
-With `models` configured it queries the provider catalog for owner creation.
-The initial panel observes agents, sessions, schedules and shared inventory. The
-browser exposes owner pause/resume of existing automations. Owners can
-create agents with explicit instructions, models and native grants,
-connect the Discord bot, then save Discord channel bindings. Full definition and automation editors remain
-subsequent work.
+The coordinator serves the Control Room panel and relays the signed-in owner's
+Host control to the node; no separate panel service runs. The browser's calls
+under `/v1/host` are authenticated by the coordinator (the remembered session
+cookie, and for a change exactly one `Origin` equal to its passkey origin) and
+sent over the node's existing link to the one node of that owner that serves
+Host control. The node answers from the Host's own records, so the coordinator
+neither reads the Host nor holds a Host credential. The Discord bot token typed
+into the panel passes through the coordinator's memory on its way to the node and
+is not written to its database. With `model` configured the node queries the
+provider catalog for owner creation. The panel observes agents, sessions,
+schedules and shared inventory; owners can pause and resume automations, create
+agents with explicit instructions, models and native grants, connect the Discord
+bot, then save Discord channel bindings. Full definition and automation editors
+remain subsequent work.
 
-Build the coordinator, management adapter and production assets:
+Build the coordinator and the production assets:
 
 ```sh
-cargo build --locked --release -p renoa-control --bin renoa-coordinator -p renoa-management
+cargo build --locked --release -p renoa-control --bin renoa-coordinator
 npm --prefix surfaces/control-room run build
 ```
 
-Install the management binary at `/usr/local/bin/renoa-management` and copy only
-`surfaces/control-room/dist/client/` into `/opt/renoa/control-room/`. This is a
-dedicated public asset directory, never the Host data root or source checkout.
-Retain hashed assets for the current and immediately previous release so an
-already-open browser can finish loading its version. Remove assets from older
-releases; older browser pages need a reload. The `?preview` example-data route is development-only;
-`?tasks` retains the earlier RCP task surface.
+The release archive carries `surfaces/control-room/dist/client/` as
+`control-room/`, and `renoa-deploy` links it at `/opt/renoa/control-room`. It is
+a dedicated public asset directory, never the Host data root or source checkout.
+The coordinator's last argument names it (`renoa-coordinator serve <home> <port>
+<rp-id> <origin> [<control-room-directory>]`, absolute); it must hold an
+`index.html` when the coordinator starts, and a later release switch is served
+without a restart. Retain hashed assets for the current and immediately previous
+release so an already-open browser can finish loading its version; `renoa-deploy`
+carries them. The `?preview` example-data route is development-only; `?tasks`
+retains the earlier RCP task surface.
 
-Use `renoa-management.config.example.json` for `/home/renoa/.renoa/config/management.json` with
-root ownership and mode `0600`. Replace both placeholder UUIDs: `host_id` is the
-existing Host identity from `renoa-host inspect`; `owner_principal_id` is the one
-human principal enrolled for this Host's panel. Never infer ownership from the
-first legacy RCP task. Keep that principal and configuration in the Host's backup.
-Set `public_origin` to the exact external HTTPS origin, such as
-`https://renoa.live`. Every management write requires this Origin header and an
-authenticated owner cookie; the server does not trust forwarded headers to select
-the origin. The only development exception is HTTP `localhost`.
+There is no panel configuration file. The owner is the principal that owns the
+Host's enrolled node (`enroll-node ... <owner-principal-uuid>`, below); the login
+page learns it from `GET /v1/host/access` while exactly one principal owns
+enrolled nodes. A node is enrolled once its enrollment was claimed and until
+its device is revoked; an enrollment nobody claimed names no owner. Two nodes of
+one owner connected at once make Host control
+ambiguous: the coordinator refuses the call until one disconnects. The
+`initial_reasoning` the panel's creation form offered moves to the node as the
+optional `model.defaultReasoning` in `config/node.json`.
+
+A host that ran the retired `renoa-management` service before this release must
+remove it by hand first, because the release no longer ships its binary. If its
+`config/management.json` set `initial_reasoning`, first copy that value into
+`config/node.json` as `model.defaultReasoning`, then:
+
+```sh
+systemctl disable --now renoa-management.service
+rm /etc/systemd/system/renoa-management.service /home/renoa/.renoa/config/management.json
+systemctl daemon-reload
+```
+
+Once the release is live, `curl -s http://127.0.0.1:7818/v1/host/access` must
+answer 200 with the owner's `owner_principal_id`; the Control Room cannot sign
+anyone in without it. A 503 `owner_unknown` means no node is enrolled yet, or
+enrolled nodes belong to more than one principal.
+
+The deploy health check asks the coordinator at `127.0.0.1:7818` for
+`/v1/host/discord` without a login (expecting 401) and
+`POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
 This release requires Host schema 41. A schema 28–40 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
@@ -337,7 +364,7 @@ sessions, and it runs only through the explicit reset described in
 [`docs/renoa-host-v0.md`](../docs/renoa-host-v0.md). Starting a normal Host
 process against an earlier data root fails closed with the reset command in the
 error, so stop all readers/writers of the shared Host catalog, including
-management, Slack and Telegram workers, then run:
+the node, Slack and Telegram workers, then run:
 
 ```sh
 renoa-host /home/renoa/.renoa/config/host.json reset /opt/renoa/previous-release-staging/host
@@ -365,29 +392,26 @@ are the single backup at `/opt/renoa/previous` described above. Browser login
 storage is separate and does not need to be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
-the new coordinator binary. It upgrades the identity database to schema 12 and
+the new coordinator binary. It upgrades the identity database to schema 13 and
 keeps passkeys and hashed remembered sessions there. Schema 12 records each
 node's owning principal: the upgrade adopts the owner of a node whose existing
 tasks all belong to one principal, and a node shared by several principals keeps
-serving its tasks without an owner. A pre-upgrade binary cannot open schema 12;
-any owner-requested recovery requires the matching identity
-snapshot and binary from that same backup. Install `renoa-management.service`, then reload systemd, restart the
-coordinator and enable the management service. The example runs as the existing
-Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
+serving its tasks without an owner. Schema 13 adds the device keys of signed-in
+apps and the record of stopped commands, and leaves every existing device as it
+was. A pre-upgrade binary cannot open schema 13; any owner-requested recovery
+requires the matching identity
+snapshot and binary from that same backup. The supplied `renoa-coordinator.service`
+passes the Control Room directory as its last argument; reload systemd and restart
+the coordinator after installing it. It runs as the existing Host OS user,
+`renoa-arcee`; use the actual Host owner on another machine.
 
-Preserve all existing tunnel rules and add these `renoa.live` path routes before
-the coordinator catch-all:
-
-| Path regex | Loopback destination |
-| --- | --- |
-| `^/v1/host(/.*)?$` | `http://127.0.0.1:7819` |
-| `^/$` | `http://127.0.0.1:7819` |
-| `^/index\\.html$` | `http://127.0.0.1:7819` |
-| `^/assets/.*$` | `http://127.0.0.1:7819` |
-
-Keep `/v1/identity/*`, `/connect`, credential intake and OAuth callbacks routed
-to the coordinator. Both listeners
-remain plaintext and loopback-only behind the same HTTPS origin. Cloudflare's
+The tunnel needs no panel routes: the coordinator catch-all serves `/`,
+`/index.html`, `/assets/*`, `/v1/host*`, `/v1/identity/*`, `/connect`,
+credential intake and OAuth callbacks. Remove the four path rules the retired
+panel service needed (`^/v1/host(/.*)?$`, `^/$`, `^/index\\.html$` and
+`^/assets/.*$`, all to `http://127.0.0.1:7819`) so nothing routes to a port
+nothing listens on. The listener remains plaintext and loopback-only behind the
+HTTPS origin. Cloudflare's
 [tunnel configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/)
 replaces the full configuration, so read and preserve the current rules first.
 
@@ -420,11 +444,56 @@ not become a successful empty inventory or an invalid-password screen. Replacing
 the machine requires restoring both Host state/credentials and identity state,
 and retaining the passkey origin; a DNS name alone does not preserve the system.
 
+## Signed-in apps
+
+An app signs in with a passkey and a key generated on the device (see
+`docs/identity-v0.md`, "App sign-in and device keys"). This release moves RCP to
+binding version 14 and the coordinator database to schema 13, so the
+coordinator, node, Pi node, and every surface must be upgraded together. Back
+up the coordinator database with SQLite's backup API first: schema 13 adds the
+`device_keys` and `device_sign_ins` tables (and the stop records described
+below), existing devices keep working
+unchanged as bearer-only devices, and a pre-upgrade binary cannot open schema 13.
+
+Android asks the relying party before it offers an app a passkey, and an
+assertion made by an app carries its own origin. To trust an app, copy
+`renoa-android-apps.example.json` to
+`/home/renoa/.renoa/config/android-apps.json`, owned by `renoa-arcee` (the
+account the coordinator runs as, which cannot read the root-only `/etc/renoa`)
+with mode `0600`. Replace the package name and list the SHA-256 fingerprint of
+every certificate the app is signed with (`keytool -list -v -keystore
+<keystore>`; a debug and a release build differ), then point the coordinator at
+it with a drop-in so the packaged unit stays unchanged:
+
+```sh
+install -m 0600 -o renoa-arcee -g renoa-arcee \
+  renoa-android-apps.example.json /home/renoa/.renoa/config/android-apps.json
+# edit the package name and fingerprints in that file, then:
+systemctl edit renoa-coordinator.service
+# [Service]
+# Environment=RENOA_ANDROID_APPS_FILE=/home/renoa/.renoa/config/android-apps.json
+systemctl restart renoa-coordinator.service
+```
+
+The file holds public data. An invalid or unreadable file stops the coordinator
+at startup with the entry or error that is wrong; unset trusts no app. The tunnel's catch-all rule
+already sends `/.well-known/assetlinks.json` to the coordinator. Check it after
+the restart with
+`curl -s https://renoa.live/.well-known/assetlinks.json`: it must list the
+package and every fingerprint. An owner without a passkey that reaches the phone
+creates one with `renoa-coordinator bootstrap-passkey` and enters the token in
+the app's first sign-in; the token is single-use and 30 minutes long.
+
+An owner revokes a signed-in app from another app or the Control Room
+(`revoke_device`). The operator can still revoke any device through
+`Coordinator::revoke_device`; revocation ends the device's open connections and
+rejects its next one.
+
 ## RCP execution node
 
 The node executes RCP tasks with the shared Host's agents. It runs as the Host
 account against `/home/renoa/.renoa`, the same installation root as
-`renoa-host`, `renoa-management`, and the Discord surface, so an agent keeps its
+`renoa-host` and the Discord surface, so an agent keeps its
 plugins, credentials, and workspace whichever surface reaches it.
 
 Build and install the binary:
@@ -448,7 +517,8 @@ settings must match the Host's other services:
     "credentialStore": "/home/renoa/.renoa/credentials/models.sqlite3",
     "providers": ["opencode-go"],
     "defaultProvider": "opencode-go",
-    "defaultModel": "<model-id>"
+    "defaultModel": "<model-id>",
+    "defaultReasoning": "high"
   },
   "adapters": {
     "mcp": "/opt/renoa/adapters/mcp-client-node/dist/src/main.js",
@@ -464,6 +534,14 @@ settings must match the Host's other services:
 
 Every configured adapter and credential file must already exist at its
 absolute path. Omit any optional adapter field that this Host does not use.
+`defaultReasoning` is optional: it is the reasoning level a new session starts
+with and the one the Control Room offers when the owner creates an agent; omit
+it to take the model's own default.
+
+The node also answers the owner's Host control (the Control Room's calls under
+`/v1/host`, relayed by the coordinator over this same link). It says so when it
+connects, and no other configuration is involved: the owner is the principal the
+node was enrolled for.
 
 There is no target list. The node advertises every agent in its Host as the
 target `agent:<agent-uuid>` and polls the Host every five seconds, so an agent
@@ -699,6 +777,13 @@ Verify both layers independently:
 systemctl status renoa-coordinator.service
 tailscale serve status
 ```
+
+Coordinator schema 13 also adds the table of recorded stops and a view that
+decides whether a command has settled. Opening an older database creates both and
+leaves its rows alone. RCP binding version 14 adds the status in the task
+directory, stopping a command, and live text from a running turn, so the
+coordinator, node, Pi node, and every surface must be upgraded together; a
+peer still on version 13 is refused at authentication.
 
 ### Public RCP route
 

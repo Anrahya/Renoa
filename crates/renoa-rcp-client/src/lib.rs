@@ -224,6 +224,7 @@ impl Connection {
 
     /// Attaches to a task after `after_sequence`. The replayed records and then
     /// live records arrive on [`Events`]. Returns the replay high-water mark.
+    /// This client does not ask for the task's ephemeral live activity.
     ///
     /// # Errors
     ///
@@ -238,6 +239,7 @@ impl Connection {
                 request_id,
                 task_id,
                 after_sequence,
+                live: false,
             })
             .await?
         {
@@ -364,15 +366,23 @@ async fn dispatch(
         | ServerMessage::TargetList { request_id, .. }
         | ServerMessage::TaskOpened { request_id, .. }
         | ServerMessage::TaskDeleted { request_id, .. }
+        | ServerMessage::DeviceList { request_id, .. }
+        | ServerMessage::DeviceRevoked { request_id, .. }
         | ServerMessage::Attached { request_id, .. }
-        | ServerMessage::CommandAccepted { request_id, .. } => *request_id,
+        | ServerMessage::CommandAccepted { request_id, .. }
+        | ServerMessage::StopAccepted { request_id, .. } => *request_id,
         ServerMessage::Enrolled { .. }
+        | ServerMessage::DeviceChallenge { .. }
         | ServerMessage::Authenticated { .. }
         | ServerMessage::ExecutionEventsAccepted { .. }
         | ServerMessage::ExecutionAcknowledged { .. }
-        | ServerMessage::Execute { .. } => {
+        | ServerMessage::Execute { .. }
+        | ServerMessage::HostCall { .. }
+        | ServerMessage::Stop { .. }
+        | ServerMessage::LiveActivity { .. } => {
             return Err(ClientError::Protocol(
-                "coordinator sent a node-only or session message to a surface".to_owned(),
+                "coordinator sent a node-only, session or unrequested message to a surface"
+                    .to_owned(),
             ));
         }
     };

@@ -1,10 +1,11 @@
 use renoa_control::{
-    ClientMessage, ConnectionTicket, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
-    TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId, TaskSummary,
+    ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, HostMethod,
+    JSON_WS_VERSION, NodeId, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventId,
+    TaskEventKind, TaskId, TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
-    AgentMessageKind, AgentOrigin, CommandEnvelope, CommandId, CommandInput, PrincipalId,
-    SurfaceRef, TargetCard, TargetRef,
+    AgentMessageKind, AgentOrigin, CommandEnvelope, CommandId, CommandInput, LiveActivity,
+    PrincipalId, SurfaceRef, TargetCard, TargetRef,
 };
 use renoa_protocol::{ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId};
 use serde_json::json;
@@ -214,6 +215,7 @@ fn json_websocket_v14_encodes_task_discovery() {
         tasks: vec![TaskSummary {
             task_id,
             target: TargetRef::new("workspace:renoa"),
+            status: TaskStatus::Working,
         }],
     };
     let response_json = json!({
@@ -221,7 +223,8 @@ fn json_websocket_v14_encodes_task_discovery() {
         "request_id": 11,
         "tasks": [{
             "taskId": "00000000-0000-0000-0000-000000000001",
-            "target": "workspace:renoa"
+            "target": "workspace:renoa",
+            "status": "working"
         }]
     });
     assert_eq!(
@@ -232,6 +235,101 @@ fn json_websocket_v14_encodes_task_discovery() {
         serde_json::from_value::<ServerMessage>(response_json).expect("deserialize task list"),
         response
     );
+}
+
+/// The frames exactly as `docs/rcp-json-ws-v0.md` shows them, in both
+/// directions, so a client written from the document sends and reads these
+/// bytes.
+#[test]
+fn json_websocket_v14_encodes_the_device_key_handshake_and_device_administration() {
+    let device_id = DeviceId::from_uuid(Uuid::from_u128(0x40));
+    let nonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let client_frames = [
+        (
+            ClientMessage::DeviceProof {
+                signature: "MEUCIQ".to_owned(),
+            },
+            json!({"type": "device_proof", "signature": "MEUCIQ"}),
+        ),
+        (
+            ClientMessage::ListDevices { request_id: 44 },
+            json!({"type": "list_devices", "request_id": 44}),
+        ),
+        (
+            ClientMessage::RevokeDevice {
+                request_id: 45,
+                device_id,
+            },
+            json!({
+                "type": "revoke_device",
+                "request_id": 45,
+                "device_id": "00000000-0000-0000-0000-000000000040"
+            }),
+        ),
+    ];
+    for (message, expected) in client_frames {
+        assert_eq!(
+            serde_json::to_value(&message).expect("serialize client frame"),
+            expected
+        );
+        assert_eq!(
+            serde_json::from_value::<ClientMessage>(expected).expect("deserialize client frame"),
+            message
+        );
+    }
+
+    let server_frames = [
+        (
+            ServerMessage::DeviceChallenge {
+                nonce: nonce.to_owned(),
+            },
+            json!({"type": "device_challenge", "nonce": nonce}),
+        ),
+        (
+            ServerMessage::DeviceList {
+                request_id: 44,
+                devices: vec![DeviceSummary {
+                    device_id,
+                    surface: SurfaceRef::new("android"),
+                    label: "Pixel 9".to_owned(),
+                    created_at_ms: 1_790_000_000_000,
+                    current: true,
+                }],
+            },
+            json!({
+                "type": "device_list",
+                "request_id": 44,
+                "devices": [{
+                    "deviceId": "00000000-0000-0000-0000-000000000040",
+                    "surface": "android",
+                    "label": "Pixel 9",
+                    "createdAtMs": 1_790_000_000_000_u64,
+                    "current": true
+                }]
+            }),
+        ),
+        (
+            ServerMessage::DeviceRevoked {
+                request_id: 45,
+                device_id,
+            },
+            json!({
+                "type": "device_revoked",
+                "request_id": 45,
+                "device_id": "00000000-0000-0000-0000-000000000040"
+            }),
+        ),
+    ];
+    for (message, expected) in server_frames {
+        assert_eq!(
+            serde_json::to_value(&message).expect("serialize server frame"),
+            expected
+        );
+        assert_eq!(
+            serde_json::from_value::<ServerMessage>(expected).expect("deserialize server frame"),
+            message
+        );
+    }
 }
 
 #[test]
@@ -423,6 +521,217 @@ fn execute_delivery_contains_only_continuity_data() {
             }
         })
     );
+}
+
+#[test]
+fn json_websocket_v14_attach_says_whether_it_wants_live_activity() {
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let attach = ClientMessage::Attach {
+        request_id: 3,
+        task_id,
+        after_sequence: Some(12),
+        live: true,
+    };
+    let attach_json = json!({
+        "type": "attach",
+        "request_id": 3,
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "after_sequence": 12,
+        "live": true
+    });
+    assert_eq!(
+        serde_json::to_value(&attach).expect("serialize attach"),
+        attach_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(attach_json).expect("deserialize attach"),
+        attach
+    );
+    assert!(
+        serde_json::from_value::<ClientMessage>(json!({
+            "type": "attach",
+            "request_id": 3,
+            "task_id": "00000000-0000-0000-0000-000000000001",
+            "after_sequence": null
+        }))
+        .is_err(),
+        "a version 13 attach without `live` is not a version 14 attach"
+    );
+}
+
+#[test]
+fn json_websocket_v14_encodes_stopping_a_command() {
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let command_id = CommandId::from_uuid(Uuid::from_u128(2));
+    let ids = json!({
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002"
+    });
+    let cases = [
+        (
+            serde_json::to_value(ClientMessage::StopCommand {
+                request_id: 5,
+                task_id,
+                command_id,
+            }),
+            json!({"type": "stop_command", "request_id": 5, "task_id": ids["task_id"], "command_id": ids["command_id"]}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::StopAccepted {
+                request_id: 5,
+                command_id,
+                outcome: StopOutcome::Requested,
+            }),
+            json!({"type": "stop_accepted", "request_id": 5, "command_id": ids["command_id"], "outcome": "requested"}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::StopAccepted {
+                request_id: 6,
+                command_id,
+                outcome: StopOutcome::AlreadyEnded,
+            }),
+            json!({"type": "stop_accepted", "request_id": 6, "command_id": ids["command_id"], "outcome": "already_ended"}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::Stop {
+                task_id,
+                command_id,
+            }),
+            json!({"type": "stop", "task_id": ids["task_id"], "command_id": ids["command_id"]}),
+        ),
+        (
+            serde_json::to_value(ClientMessage::AcknowledgeStop {
+                task_id,
+                command_id,
+            }),
+            json!({"type": "acknowledge_stop", "task_id": ids["task_id"], "command_id": ids["command_id"]}),
+        ),
+    ];
+    for (encoded, expected) in cases {
+        assert_eq!(encoded.expect("serialize frame"), expected);
+        let decoded = serde_json::from_value::<ServerMessage>(expected.clone())
+            .map(|_| ())
+            .or_else(|_| serde_json::from_value::<ClientMessage>(expected).map(|_| ()));
+        decoded.expect("the frame decodes as the message it encodes");
+    }
+}
+
+#[test]
+fn json_websocket_v14_encodes_live_activity() {
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let command_id = CommandId::from_uuid(Uuid::from_u128(2));
+    let published = ClientMessage::PublishLiveActivity {
+        task_id,
+        command_id,
+        activity: LiveActivity::TextDelta {
+            sequence: 3,
+            text: "Hel".to_owned(),
+        },
+    };
+    let published_json = json!({
+        "type": "publish_live_activity",
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002",
+        "activity": {"type": "text_delta", "sequence": 3, "text": "Hel"}
+    });
+    assert_eq!(
+        serde_json::to_value(&published).expect("serialize published activity"),
+        published_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(published_json)
+            .expect("deserialize published activity"),
+        published
+    );
+    let relayed = ServerMessage::LiveActivity {
+        task_id,
+        command_id,
+        activity: LiveActivity::TextReset,
+    };
+    let relayed_json = json!({
+        "type": "live_activity",
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002",
+        "activity": {"type": "text_reset"}
+    });
+    assert_eq!(
+        serde_json::to_value(&relayed).expect("serialize relayed activity"),
+        relayed_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(relayed_json)
+            .expect("deserialize relayed activity"),
+        relayed
+    );
+}
+
+#[test]
+fn json_websocket_v14_encodes_host_control_calls() {
+    let call_id = Uuid::from_u128(9);
+    let call = ServerMessage::HostCall {
+        call_id,
+        principal_id: PrincipalId::from_uuid(Uuid::from_u128(4)),
+        method: HostMethod::Post,
+        path: "/v1/host/agents".to_owned(),
+        body: Some("{\"name\":\"Scout\"}".to_owned()),
+    };
+    let call_json = json!({
+        "type": "host_call",
+        "call_id": "00000000-0000-0000-0000-000000000009",
+        "principal_id": "00000000-0000-0000-0000-000000000004",
+        "method": "POST",
+        "path": "/v1/host/agents",
+        "body": "{\"name\":\"Scout\"}"
+    });
+    assert_eq!(
+        serde_json::to_value(&call).expect("serialize Host call"),
+        call_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(call_json).expect("deserialize Host call"),
+        call
+    );
+    let read = ServerMessage::HostCall {
+        call_id,
+        principal_id: PrincipalId::from_uuid(Uuid::from_u128(4)),
+        method: HostMethod::Get,
+        path: "/v1/host".to_owned(),
+        body: None,
+    };
+    assert_eq!(
+        serde_json::to_value(read).expect("serialize Host read")["body"],
+        json!(null)
+    );
+
+    assert_eq!(
+        serde_json::to_value(ClientMessage::ServeHostControl).expect("serialize advertisement"),
+        json!({ "type": "serve_host_control" })
+    );
+    let complete = ClientMessage::CompleteHostCall {
+        call_id,
+        status: 200,
+        body: "{}".to_owned(),
+    };
+    let complete_json = json!({
+        "type": "complete_host_call",
+        "call_id": "00000000-0000-0000-0000-000000000009",
+        "status": 200,
+        "body": "{}"
+    });
+    assert_eq!(
+        serde_json::to_value(&complete).expect("serialize Host answer"),
+        complete_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(complete_json).expect("deserialize Host answer"),
+        complete
+    );
+    for method in ["get", "DELETE", "PATCH"] {
+        assert!(
+            serde_json::from_value::<HostMethod>(json!(method)).is_err(),
+            "{method} is not a Host control method"
+        );
+    }
 }
 
 #[test]

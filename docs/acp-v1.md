@@ -144,7 +144,8 @@ only when the kernel admits that operation.
 - `session/prompt` accepts text, image, and resource-link blocks.
 - A sole text block equal to `/compact` after outer whitespace is a control
   operation. Arguments or attachments are rejected; similarly named text such
-  as `/compactly` remains an ordinary prompt.
+  as `/compactly` remains an ordinary prompt. The Host owns this text rule
+  (`compact_invocation`), and the RCP node applies it to the principal's text.
 - `session/cancel` durably cancels active model or tool work and stops its child
   process before returning `cancelled`.
 - Model text and reasoning deltas stream while inference is running.
@@ -307,8 +308,8 @@ an interrupted runtime under a different configuration.
 - Earlier pre-release session manifests used storage versions 1 and 2. This
   adapter rejects them explicitly instead of guessing at an execution or trace
   migration.
-- Agent-loop revision 13 and checkpoint schema 4 are forward-only for unfinished
-  operations. A revision-12 operation needs its original runtime to finish; the
+- Agent-loop revision 14 and checkpoint schema 4 are forward-only for unfinished
+  operations. A revision-13 operation needs its original runtime to finish; the
   current Host does not migrate frozen manifests. An older binary also cannot
   decode the new compact control command.
 - If the client loses the successful `session/new` response, stable ACP v1

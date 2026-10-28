@@ -25,6 +25,8 @@ export interface ControlRoomController {
   readonly tasks: readonly TaskSummary[];
   readonly events: EventJournal;
   readonly selectedTaskId: string | null;
+  /** Tasks attached in this connection, whose journals are current. */
+  readonly attachedTaskIds: ReadonlySet<string>;
   readonly pendingCount: number;
   readonly busy: boolean;
   readonly savedPrincipalId: string;
@@ -45,6 +47,7 @@ export function useControlRoom(): ControlRoomController {
   const [tasks, setTasks] = useState<readonly TaskSummary[]>([]);
   const [events, setEvents] = useState<EventJournal>({});
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [attachedTaskIds, setAttachedTaskIds] = useState<ReadonlySet<string>>(new Set());
   const [pendingCount, setPendingCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [savedPrincipalId, setSavedPrincipalId] = useState(readPrincipal);
@@ -82,6 +85,7 @@ export function useControlRoom(): ControlRoomController {
       }
       await active.client.attach(taskId, (event) => applyEvent(active.store, event));
       active.attached.add(taskId);
+      setAttachedTaskIds(new Set(active.attached));
     },
     [applyEvent],
   );
@@ -212,6 +216,7 @@ export function useControlRoom(): ControlRoomController {
     setTasks([]);
     setEvents({});
     setSelectedTaskId(null);
+    setAttachedTaskIds(new Set());
     setPendingCount(0);
     setError(null);
     if (active !== undefined) {
@@ -288,6 +293,7 @@ export function useControlRoom(): ControlRoomController {
     tasks,
     events,
     selectedTaskId,
+    attachedTaskIds,
     pendingCount,
     busy,
     savedPrincipalId,

@@ -672,7 +672,10 @@ cancelled compaction leaves the previous active checkpoint and full transcript
 unchanged.
 
 Compaction usage contributes to the operation's existing model-usage totals;
-the harness does not report internal model work as free. Summary quality is
+the harness does not report internal model work as free. A summary is internal
+work, not a reply: observers see its model request but never an assistant
+message built from it, so no surface can show the summary as something the
+agent said. Summary quality is
 tested through continuation tasks, not by asserting that generated prose looks
 plausible.
 

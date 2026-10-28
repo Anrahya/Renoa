@@ -9,7 +9,8 @@ use std::{
 };
 
 use renoa_control::{
-    Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity, TaskId, TaskSpec,
+    AndroidApps, Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity, TaskId,
+    TaskSpec,
 };
 use renoa_protocol::{PrincipalId, SurfaceRef, TargetRef};
 use serde::Serialize;
@@ -18,13 +19,17 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const USAGE: &str = "usage:
-  renoa-coordinator serve <renoa-home> <port> <passkey-rp-id> <passkey-origin>
+  renoa-coordinator serve <renoa-home> <port> <passkey-rp-id> <passkey-origin> [<control-room-directory>]
   renoa-coordinator bootstrap-passkey <renoa-home> <principal-id>
   renoa-coordinator pair-browser <renoa-home> <principal-id>
   renoa-coordinator revoke-browser-logins <renoa-home> <principal-id>
   renoa-coordinator enroll-surface <renoa-home> <principal-id> <surface>
   renoa-coordinator enroll-node <renoa-home> <node-id> <owner-principal-id>
   renoa-coordinator create-task <renoa-home> <task-id> <principal-id> <node-id> <target>";
+/// Optional JSON file naming the Android apps whose passkey assertions the
+/// coordinator accepts and whose asset links it serves.
+const ANDROID_APPS_FILE_VARIABLE: &str = "RENOA_ANDROID_APPS_FILE";
+const MAX_ANDROID_APPS_FILE_BYTES: u64 = 16 * 1024;
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
 const BROWSER_SETUP_LIFETIME: Duration = Duration::from_mins(30);
 
@@ -38,6 +43,7 @@ enum Operation {
         port: u16,
         passkey_rp_id: String,
         passkey_origin: String,
+        control_room: Option<PathBuf>,
     },
     BootstrapPasskey {
         database: PathBuf,
@@ -102,12 +108,20 @@ impl Operation {
                     .map_err(|_| "port must be an integer from 0 through 65535".to_owned())?;
                 let passkey_rp_id = string_argument(&mut arguments)?;
                 let passkey_origin = string_argument(&mut arguments)?;
+                let control_room = arguments.next().map(PathBuf::from);
+                if control_room
+                    .as_ref()
+                    .is_some_and(|path| !path.is_absolute())
+                {
+                    return Err("the Control Room directory must be an absolute path".to_owned());
+                }
                 no_more_arguments(arguments)?;
                 Ok(Self::Serve {
                     database,
                     port,
                     passkey_rp_id,
                     passkey_origin,
+                    control_room,
                 })
             }
             Some("bootstrap-passkey") => {
@@ -272,7 +286,17 @@ async fn run() -> Result<(), String> {
             port,
             passkey_rp_id,
             passkey_origin,
-        } => serve(database, port, &passkey_rp_id, &passkey_origin).await,
+            control_room,
+        } => {
+            serve(
+                database,
+                port,
+                &passkey_rp_id,
+                &passkey_origin,
+                control_room.as_deref(),
+            )
+            .await
+        }
         Operation::BootstrapPasskey {
             database,
             principal_id,
@@ -316,9 +340,17 @@ async fn serve(
     port: u16,
     passkey_rp_id: &str,
     passkey_origin: &str,
+    control_room: Option<&std::path::Path>,
 ) -> Result<(), String> {
-    let coordinator = Coordinator::open_with_passkeys(database, passkey_rp_id, passkey_origin)
-        .map_err(|error| error.to_string())?;
+    let android_apps = load_android_apps()?;
+    let mut coordinator =
+        Coordinator::open_with_android_apps(database, passkey_rp_id, passkey_origin, android_apps)
+            .map_err(|error| error.to_string())?;
+    if let Some(directory) = control_room {
+        coordinator = coordinator
+            .with_control_room(directory)
+            .map_err(|error| error.to_string())?;
+    }
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .await
         .map_err(|error| format!("failed to bind loopback port {port}: {error}"))?;
@@ -343,6 +375,27 @@ async fn serve(
             server.await.map_err(|error| error.to_string())
         }
     }
+}
+
+/// Unset means no Android app is trusted. A set but unusable file stops
+/// `serve` at startup rather than at the first sign-in.
+fn load_android_apps() -> Result<AndroidApps, String> {
+    let Some(path) = env::var_os(ANDROID_APPS_FILE_VARIABLE) else {
+        return Ok(AndroidApps::default());
+    };
+    let path = PathBuf::from(path);
+    let shown = path.display();
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("{ANDROID_APPS_FILE_VARIABLE} {shown}: {error}"))?;
+    if !metadata.is_file() || metadata.len() > MAX_ANDROID_APPS_FILE_BYTES {
+        return Err(format!(
+            "{ANDROID_APPS_FILE_VARIABLE} {shown} must be a regular file of at most \
+             {MAX_ANDROID_APPS_FILE_BYTES} bytes"
+        ));
+    }
+    let json = std::fs::read_to_string(&path)
+        .map_err(|error| format!("{ANDROID_APPS_FILE_VARIABLE} {shown}: {error}"))?;
+    AndroidApps::from_json(&json).map_err(|error| format!("{shown}: {error}"))
 }
 
 async fn create_passkey_bootstrap(
@@ -423,4 +476,37 @@ fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<
 #[cfg(not(unix))]
 fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<()>>> {
     Ok(tokio::signal::ctrl_c())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    fn serve(control_room: Option<&str>) -> Result<Operation, String> {
+        let home = tempfile::tempdir().expect("home directory");
+        let mut arguments: Vec<OsString> = vec!["renoa-coordinator".into(), "serve".into()];
+        arguments.push(home.path().into());
+        arguments.extend(["7818", "localhost", "http://localhost"].map(OsString::from));
+        arguments.extend(control_room.map(OsString::from));
+        Operation::parse(arguments.into_iter())
+    }
+
+    #[test]
+    fn the_control_room_directory_is_optional_and_must_be_absolute() {
+        assert!(matches!(
+            serve(None),
+            Ok(Operation::Serve {
+                control_room: None,
+                ..
+            })
+        ));
+        assert!(matches!(
+            serve(Some("/opt/renoa/control-room")),
+            Ok(Operation::Serve { control_room: Some(path), .. })
+                if path == Path::new("/opt/renoa/control-room")
+        ));
+        assert!(serve(Some("control-room")).is_err());
+    }
 }

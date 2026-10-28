@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
 import { RcpError, RcpSurfaceClient, type TaskEvent } from "../src/index.js";
-import {
-  RcpSurfaceClientCore,
-  type PendingTextCommand,
-  type RcpSurfaceState,
-} from "../src/core-client.js";
+import type { PendingTextCommand, RcpSurfaceState } from "../src/contract.js";
+import { RcpSurfaceClientCore } from "../src/core-client.js";
 import { SurfaceState } from "../src/state.js";
 import { type Fixture, startFixture } from "./fixture.js";
 

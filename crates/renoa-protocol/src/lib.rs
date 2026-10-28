@@ -3,6 +3,7 @@
 mod command;
 mod execution;
 mod ids;
+mod live;
 
 pub use command::{
     AgentMessageKind, AgentOrigin, Author, CommandEnvelope, CommandInput, SurfaceRef, TargetCard,
@@ -10,3 +11,4 @@ pub use command::{
 };
 pub use execution::{ExecutionEvent, ExecutionEventKind, ExecutionTerminal};
 pub use ids::{CommandId, ExecutionEventId, ExecutionId, PrincipalId};
+pub use live::LiveActivity;

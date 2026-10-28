@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::{ContentBlock as AcpContentBlock, Meta};
 use renoa_agent::{AgentEventSink, BoxFuture, ContentBlock};
-use renoa_local::{AgentSession, LocalTurnOutcome};
+use renoa_local::{AgentSession, CompactInvocation, LocalTurnOutcome, compact_invocation};
 use uuid::Uuid;
 
 use crate::ServerError;
@@ -30,12 +30,12 @@ pub(crate) fn action(blocks: Vec<AcpContentBlock>) -> Result<PromptAction, Serve
             "prompt must contain at least one content block".to_owned(),
         ));
     }
-    if blocks.len() == 1
-        && matches!(&blocks[0], AcpContentBlock::Text(text) if text.text.trim() == "/compact")
+    if let [AcpContentBlock::Text(text)] = blocks.as_slice()
+        && compact_invocation(&text.text) == CompactInvocation::Bare
     {
         return Ok(PromptAction::Compact);
     }
-    if blocks.iter().any(is_compact_invocation) {
+    if blocks.iter().any(invokes_compact) {
         return Err(ServerError::InvalidRequest(
             "/compact does not accept arguments or attachments".to_owned(),
         ));
@@ -87,13 +87,12 @@ fn meta_identity<'a>(meta: &'a Meta, name: &str) -> Result<Option<&'a str>, Serv
     }
 }
 
-fn is_compact_invocation(block: &AcpContentBlock) -> bool {
-    let AcpContentBlock::Text(text) = block else {
-        return false;
-    };
-    let text = text.text.trim();
-    text.strip_prefix("/compact")
-        .is_some_and(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace))
+fn invokes_compact(block: &AcpContentBlock) -> bool {
+    matches!(
+        block,
+        AcpContentBlock::Text(text)
+            if compact_invocation(&text.text) != CompactInvocation::Absent
+    )
 }
 
 fn content_block(block: AcpContentBlock) -> Result<ContentBlock, ServerError> {

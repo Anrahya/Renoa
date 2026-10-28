@@ -30,6 +30,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 nix.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

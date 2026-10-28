@@ -22,24 +22,6 @@ test("a real Pi edit turn survives a lost RCP acknowledgement", { timeout: 20_00
   const fixture = await startFixture(directory);
   const provider = await startOpenAI();
   const nodeAbort = new AbortController();
-  const model: Model<"openai-completions"> = {
-    id: "test-model",
-    name: "Test model",
-    api: "openai-completions",
-    provider: "openai-compatible",
-    baseUrl: provider.baseUrl,
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 16_384,
-    maxTokens: 1_024,
-  };
-  const streamFn: StreamFn = (requested, context, options) =>
-    streamOpenAI(requested as Model<"openai-completions">, context as Context, {
-      ...options,
-      apiKey: "test-key",
-      maxRetries: 0,
-    } satisfies SimpleStreamOptions);
   const statePath = join(directory, "node.sqlite");
   const node = new PiNode({
     endpoint: fixture.lossyEndpoint,
@@ -47,8 +29,8 @@ test("a real Pi edit turn survives a lost RCP acknowledgement", { timeout: 20_00
     statePath,
     harness: new PiHarness({
       instructions: "Answer from the Pi SDK. Be concise.",
-      model,
-      streamFn,
+      model: testModel(provider.baseUrl),
+      streamFn: testStream,
       target: "workspace:pi-test",
       workspace: { root: directory, access: "read_write" },
     }),
@@ -63,6 +45,7 @@ test("a real Pi edit turn survives a lost RCP acknowledgement", { timeout: 20_00
         request_id: 1,
         task_id: fixture.taskId,
         after_sequence: null,
+        live: false,
       });
       assert.deepEqual(await surface.next(), {
         type: "attached",
@@ -137,6 +120,111 @@ test("a real Pi edit turn survives a lost RCP acknowledgement", { timeout: 20_00
     await rm(directory, { force: true, recursive: true });
   }
 });
+
+test("a stop cancels a Pi turn that is waiting on its model", { timeout: 20_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "renoa-pi-stop-"));
+  const fixture = await startFixture(directory);
+  const provider = await startStalledOpenAI();
+  const nodeAbort = new AbortController();
+  const statePath = join(directory, "node.sqlite");
+  const node = new PiNode({
+    endpoint: fixture.endpoint,
+    credentials: fixture.nodeCredentials,
+    statePath,
+    harness: new PiHarness({
+      instructions: "Answer from the Pi SDK. Be concise.",
+      model: testModel(provider.baseUrl),
+      streamFn: testStream,
+      target: "workspace:pi-test",
+    }),
+  });
+  const nodeTask = node.run(nodeAbort.signal);
+
+  try {
+    const surface = await Surface.connect(fixture.endpoint, fixture.surfaceCredentials);
+    try {
+      surface.send({
+        type: "attach",
+        request_id: 1,
+        task_id: fixture.taskId,
+        after_sequence: null,
+        live: false,
+      });
+      assert.equal(asRecord(await surface.next()).type, "attached");
+      const commandId = "00000000-0000-0000-0000-000000000011";
+      const events = await submitWhenOnline(surface, fixture.taskId, commandId);
+      await provider.requested;
+
+      surface.send({
+        type: "stop_command",
+        request_id: 30,
+        task_id: fixture.taskId,
+        command_id: commandId,
+      });
+      let accepted = false;
+      while (!accepted || !events.some(isTerminalTaskEvent)) {
+        const message = await surface.next();
+        if (isTaskEvent(message)) {
+          events.push(message);
+        } else {
+          assert.deepEqual(message, {
+            type: "stop_accepted",
+            request_id: 30,
+            command_id: commandId,
+            outcome: "requested",
+          });
+          accepted = true;
+        }
+      }
+
+      const terminal = events.map((message) => executionKind(message)).findLast((kind) => kind !== null);
+      assert.equal(asRecord(asRecord(terminal).terminal).status, "cancelled");
+      const database = new DatabaseSync(statePath, { readOnly: true });
+      try {
+        const stops = database.prepare("SELECT command_id FROM stops").all() as Array<{
+          readonly command_id: string;
+        }>;
+        assert.deepEqual(
+          stops.map((row) => row.command_id),
+          [commandId],
+          "the node recorded the stop",
+        );
+      } finally {
+        database.close();
+      }
+    } finally {
+      surface.close();
+    }
+  } finally {
+    nodeAbort.abort();
+    await nodeTask;
+    await provider.stop();
+    await fixture.stop();
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+function testModel(baseUrl: string): Model<"openai-completions"> {
+  return {
+    id: "test-model",
+    name: "Test model",
+    api: "openai-completions",
+    provider: "openai-compatible",
+    baseUrl,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 16_384,
+    maxTokens: 1_024,
+  };
+}
+
+const testStream: StreamFn = (requested, context, options) =>
+  streamOpenAI(requested as Model<"openai-completions">, context as Context, {
+    ...options,
+    apiKey: "test-key",
+    maxRetries: 0,
+  } satisfies SimpleStreamOptions);
 
 async function submitWhenOnline(
   surface: Surface,
@@ -392,6 +480,31 @@ async function startOpenAI(): Promise<OpenAIServer> {
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
     requests,
     stop: () => closeServer(server),
+  };
+}
+
+/** A model that accepts a request and never answers it. */
+async function startStalledOpenAI(): Promise<OpenAIServer & { readonly requested: Promise<void> }> {
+  const requests: unknown[] = [];
+  const requested = Promise.withResolvers<void>();
+  const server = createServer((request, response) => {
+    request.resume();
+    requests.push(request.url);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.flushHeaders();
+    requested.resolve();
+  });
+  await listen(server);
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("OpenAI fixture has no port");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    requests,
+    requested: requested.promise,
+    stop: () => {
+      server.closeAllConnections();
+      return closeServer(server);
+    },
   };
 }
 

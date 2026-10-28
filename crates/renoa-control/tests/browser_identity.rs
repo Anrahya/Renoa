@@ -96,6 +96,54 @@ struct TicketResponse {
 }
 
 #[tokio::test]
+async fn a_ceremony_request_names_no_origin_or_the_one_passkey_origin_once() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let database = files.path().join("control.sqlite");
+    let coordinator = Coordinator::open(&database).expect("open coordinator database");
+    let bootstrap = coordinator
+        .create_passkey_bootstrap(
+            PrincipalId::from_uuid(PRINCIPAL_UUID),
+            std::time::SystemTime::now() + Duration::from_mins(5),
+        )
+        .await
+        .expect("create passkey bootstrap");
+    drop(coordinator);
+    let server = RunningCoordinator::start(&database).await;
+    let http = reqwest::Client::new();
+
+    // A request that passes the origin rule reaches the surface check and is
+    // refused there as malformed; one that fails it is refused as unauthenticated.
+    let foreign = "https://attacker.invalid";
+    for (origins, expected) in [
+        (vec![], StatusCode::BAD_REQUEST),
+        (vec![PASSKEY_ORIGIN], StatusCode::BAD_REQUEST),
+        (vec![foreign], StatusCode::UNAUTHORIZED),
+        (
+            vec![PASSKEY_ORIGIN, PASSKEY_ORIGIN],
+            StatusCode::UNAUTHORIZED,
+        ),
+        (vec![PASSKEY_ORIGIN, foreign], StatusCode::UNAUTHORIZED),
+        (vec![foreign, PASSKEY_ORIGIN], StatusCode::UNAUTHORIZED),
+    ] {
+        let mut request = http
+            .post(format!(
+                "{}/v1/identity/passkeys/registration/options",
+                server.http
+            ))
+            .json(&RegistrationOptionsRequest {
+                bootstrap_token: &bootstrap,
+                surface: "web/../../node",
+            });
+        for origin in &origins {
+            request = request.header("origin", *origin);
+        }
+        let answer = request.send().await.expect("ceremony request");
+        assert_eq!(answer.status(), expected, "{origins:?}");
+    }
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn a_passkey_survives_restart_and_issues_single_use_surface_tickets() {
     let files = tempfile::tempdir().expect("temporary directory");
     let database = files.path().join("control.sqlite");

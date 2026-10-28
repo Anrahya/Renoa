@@ -7,10 +7,30 @@ export interface DeviceCredentials {
   readonly credential: string;
 }
 
+/** What a task is doing, from its latest command. */
+export type TaskStatus = "working" | "idle" | "failed";
+
 export interface TaskSummary {
   readonly taskId: string;
   readonly target: string;
+  readonly status: TaskStatus;
 }
+
+/**
+ * Ephemeral output of a running turn. It is not a task record: it has no task
+ * sequence, is never replayed, and the durable `assistant_message` that
+ * completes the same text supersedes it.
+ */
+export type LiveActivity =
+  | {
+      readonly type: "text_delta";
+      /** Counts from zero for each message of the turn. */
+      readonly sequence: number;
+      readonly text: string;
+    }
+  | { readonly type: "text_reset" };
+
+export type StopOutcome = "requested" | "already_ended";
 
 export interface TextCommandInput {
   readonly type: "text";
@@ -117,6 +137,18 @@ export type ServerMessage =
     }
   | { readonly type: "task_event"; readonly event: TaskEvent }
   | {
+      readonly type: "stop_accepted";
+      readonly request_id: number;
+      readonly command_id: string;
+      readonly outcome: StopOutcome;
+    }
+  | {
+      readonly type: "live_activity";
+      readonly task_id: string;
+      readonly command_id: string;
+      readonly activity: LiveActivity;
+    }
+  | {
       readonly type: "error";
       readonly request_id: number | null;
       readonly code: RcpErrorCode;
@@ -157,6 +189,20 @@ export function parseServerMessage(json: string): ServerMessage {
       };
     case "task_event":
       return { type, event: parseTaskEvent(object.event) };
+    case "stop_accepted":
+      return {
+        type,
+        request_id: safeUnsignedInteger(object.request_id, "request_id"),
+        command_id: uuid(object.command_id, "command_id"),
+        outcome: stopOutcome(object.outcome),
+      };
+    case "live_activity":
+      return {
+        type,
+        task_id: uuid(object.task_id, "task_id"),
+        command_id: uuid(object.command_id, "command_id"),
+        activity: parseLiveActivity(object.activity),
+      };
     case "error":
       return {
         type,
@@ -290,7 +336,48 @@ function parseTask(value: unknown): TaskSummary {
   return {
     taskId: uuid(task.taskId, "taskId"),
     target: string(task.target, "target"),
+    status: taskStatus(task.status),
   };
+}
+
+function parseLiveActivity(value: unknown): LiveActivity {
+  const activity = record(value, "live activity");
+  const type = string(activity.type, "live activity type");
+  switch (type) {
+    case "text_delta":
+      return {
+        type,
+        sequence: safeUnsignedInteger(activity.sequence, "live text sequence"),
+        text: string(activity.text, "live text"),
+      };
+    case "text_reset":
+      return { type };
+    default:
+      throw new Error(`unsupported live activity ${type}`);
+  }
+}
+
+function taskStatus(value: unknown): TaskStatus {
+  const status = string(value, "task status");
+  switch (status) {
+    case "working":
+    case "idle":
+    case "failed":
+      return status;
+    default:
+      throw new Error(`unsupported task status ${status}`);
+  }
+}
+
+function stopOutcome(value: unknown): StopOutcome {
+  const outcome = string(value, "stop outcome");
+  switch (outcome) {
+    case "requested":
+    case "already_ended":
+      return outcome;
+    default:
+      throw new Error(`unsupported stop outcome ${outcome}`);
+  }
 }
 
 function record(value: unknown, name: string): Record<string, unknown> {

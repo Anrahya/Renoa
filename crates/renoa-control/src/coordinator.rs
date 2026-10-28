@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::Path, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
 
 use axum::{Router, routing::get};
 use renoa_protocol::{PrincipalId, TargetCard, TargetRef};
@@ -12,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     DeviceId, ErrorCode, NodeId, PasskeyBootstrapToken, PeerIdentity, ServerMessage, TaskEvent,
-    TaskId, browser_identity::BrowserIdentity, browser_identity_http,
+    TaskId, android_apps::AndroidApps, browser_identity::BrowserIdentity, browser_identity_http,
     connection::upgrade_connection, oauth_relay_http, store::ControlStore,
 };
 
@@ -110,18 +115,22 @@ impl ControlError {
 #[derive(Clone)]
 pub struct Coordinator {
     state: Arc<CoordinatorState>,
+    control_room: Option<PathBuf>,
 }
 
 pub(crate) struct CoordinatorState {
     pub(crate) browser_identity: Option<BrowserIdentity>,
+    pub(crate) android_apps: AndroidApps,
     pub(crate) browser_sessions: crate::BrowserSessions,
     pub(crate) oauth_callback_uri: Option<String>,
     pub(crate) connection_slots: Arc<Semaphore>,
     pub(crate) connection_lifecycle: Mutex<()>,
     pub(crate) store: ControlStore,
+    pub(crate) host_calls: crate::host_calls::HostCalls,
     pub(crate) nodes: Mutex<HashMap<NodeId, NodeConnection>>,
     pub(crate) sessions: Mutex<HashMap<DeviceId, HashMap<Uuid, CancellationToken>>>,
     pub(crate) task_senders: Mutex<HashMap<TaskId, broadcast::Sender<TaskEvent>>>,
+    pub(crate) live_channels: Mutex<HashMap<TaskId, crate::live_activity::LiveChannel>>,
 }
 
 #[derive(Clone)]
@@ -131,6 +140,8 @@ pub(crate) struct NodeConnection {
     pub(crate) outgoing: mpsc::Sender<ServerMessage>,
     /// The agents this connection advertised; empty until it advertises.
     pub(crate) targets: Vec<TargetCard>,
+    /// Whether this connection said it answers Host control calls.
+    pub(crate) host_control: bool,
 }
 
 impl Coordinator {
@@ -140,7 +151,7 @@ impl Coordinator {
     ///
     /// Returns an error when the `SQLite` journal cannot be opened or initialized.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ControlError> {
-        Self::open_inner(path, None, None)
+        Self::open_inner(path, None, None, AndroidApps::default())
     }
 
     /// Opens the coordinator with browser passkey authentication at one exact HTTPS origin.
@@ -153,35 +164,71 @@ impl Coordinator {
         rp_id: &str,
         rp_origin: &str,
     ) -> Result<Self, ControlError> {
-        let browser_identity = BrowserIdentity::new(rp_id, rp_origin)?;
+        Self::open_with_android_apps(path, rp_id, rp_origin, AndroidApps::default())
+    }
+
+    /// Opens the coordinator with passkey authentication that also accepts the
+    /// configured Android apps' origins and serves their asset links.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database or passkey relying-party configuration is invalid.
+    pub fn open_with_android_apps(
+        path: impl AsRef<Path>,
+        rp_id: &str,
+        rp_origin: &str,
+        android_apps: AndroidApps,
+    ) -> Result<Self, ControlError> {
+        let browser_identity = BrowserIdentity::new(rp_id, rp_origin, &android_apps.origins()?)?;
         let oauth_callback_uri = format!(
             "{}{}",
             rp_origin.trim_end_matches('/'),
             renoa_oauth_relay_protocol::OAUTH_CALLBACK_PATH
         );
-        Self::open_inner(path, Some(browser_identity), Some(oauth_callback_uri))
+        Self::open_inner(
+            path,
+            Some(browser_identity),
+            Some(oauth_callback_uri),
+            android_apps,
+        )
     }
 
     fn open_inner(
         path: impl AsRef<Path>,
         browser_identity: Option<BrowserIdentity>,
         oauth_callback_uri: Option<String>,
+        android_apps: AndroidApps,
     ) -> Result<Self, ControlError> {
         let store = ControlStore::open(path)?;
         let browser_sessions = crate::BrowserSessions::open(store.path.as_ref())?;
         Ok(Self {
+            control_room: None,
             state: Arc::new(CoordinatorState {
                 browser_identity,
+                android_apps,
                 browser_sessions,
                 oauth_callback_uri,
                 connection_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS)),
                 connection_lifecycle: Mutex::new(()),
                 store,
+                host_calls: crate::host_calls::HostCalls::default(),
                 nodes: Mutex::new(HashMap::new()),
                 sessions: Mutex::new(HashMap::new()),
                 task_senders: Mutex::new(HashMap::new()),
+                live_channels: Mutex::new(HashMap::new()),
             }),
         })
+    }
+
+    /// Serves the built Control Room from `directory` on the coordinator's own
+    /// origin, beside the API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the directory has no `index.html`.
+    pub fn with_control_room(mut self, directory: impl AsRef<Path>) -> Result<Self, ControlError> {
+        self.control_room = Some(crate::control_room::check(directory.as_ref())?);
+        Ok(self)
     }
 
     /// Creates one durable task and its execution binding.
@@ -248,16 +295,7 @@ impl Coordinator {
     /// Returns an error when the device does not exist or revocation cannot be persisted.
     pub async fn revoke_device(&self, device_id: DeviceId) -> Result<(), ControlError> {
         self.state.store.revoke_device(device_id).await?;
-        let _lifecycle = self.state.connection_lifecycle.lock().await;
-        let sessions = self.state.sessions.lock().await.remove(&device_id);
-        for session in sessions.into_iter().flatten().map(|(_, session)| session) {
-            session.cancel();
-        }
-        self.state
-            .nodes
-            .lock()
-            .await
-            .retain(|_, node| node.device_id != device_id);
+        crate::device_admin::end_device_sessions(&self.state, device_id).await;
         Ok(())
     }
 
@@ -285,7 +323,14 @@ impl Coordinator {
                 .merge(browser_identity_http::routes())
                 .merge(crate::browser_sessions_http::routes())
                 .merge(oauth_relay_http::routes())
-                .merge(crate::credential_relay_http::routes());
+                .merge(crate::credential_relay_http::routes())
+                .merge(crate::host_control_http::routes());
+        }
+        if let Some(directory) = self.control_room {
+            app = app.fallback_service(crate::control_room::service(directory));
+        }
+        if !self.state.android_apps.is_empty() {
+            app = app.merge(crate::android_apps::routes());
         }
         let app = app.with_state(Arc::clone(&self.state));
         axum::serve(listener, app)

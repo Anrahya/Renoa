@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use renoa_agent::{AssistantContent, ContentBlock, Message, TokenUsage};
 use renoa_agent_loop::{
-    AgentCommand, COMPACTION_RESULT_EVENT_KIND, CompactionResult, MESSAGE_EVENT_KIND,
+    AgentCommand, COMPACTION_RESULT_EVENT_KIND, CONTEXT_CHECKPOINT_EVENT_KIND, CompactionResult,
+    MESSAGE_EVENT_KIND,
 };
 use renoa_kernel::{
     CancellationId, Command, CommandId, DriveResult, EventCursor, KernelError, OperationId,
@@ -396,6 +397,9 @@ impl LocalSession {
             let result = decode_compaction_result(operation_id, event.payload.clone())?;
             return Ok(LocalTurnOutcome::Compacted {
                 estimated_input_tokens: result.estimated_input_tokens(),
+                summarized: operation_events
+                    .iter()
+                    .any(|event| event.kind == CONTEXT_CHECKPOINT_EVENT_KIND),
             });
         }
         let event = operation_events

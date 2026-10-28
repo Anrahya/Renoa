@@ -5,7 +5,8 @@ use std::{
 
 use renoa_control::{DeviceCredential, DeviceCredentials, DeviceId};
 use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, validate_code_mode_worker,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
+    validate_code_mode_worker,
 };
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
@@ -61,6 +62,10 @@ struct ModelDocument {
     providers: Vec<ModelProvider>,
     default_provider: ModelProvider,
     default_model: String,
+    /// The reasoning an owner-created agent starts with, and a session's when
+    /// its agent names none. Absent leaves it to the model.
+    #[serde(default)]
+    default_reasoning: Option<ReasoningLevel>,
 }
 
 #[derive(Default, Deserialize)]
@@ -126,17 +131,17 @@ pub(crate) fn load(
         adapters = adapters.with_oauth_relay(&relay.origin, &relay.credentials);
     }
 
-    let host = Arc::new(LocalHost::new(
-        &state_directory,
-        LocalModelConfiguration::new(
-            &config.model.bridge,
-            config.model.providers,
-            config.model.default_provider,
-            config.model.default_model,
-            &config.model.credential_store,
-        ),
-        adapters,
-    )?);
+    let mut models = LocalModelConfiguration::new(
+        &config.model.bridge,
+        config.model.providers,
+        config.model.default_provider,
+        config.model.default_model,
+        &config.model.credential_store,
+    );
+    if let Some(reasoning) = config.model.default_reasoning {
+        models = models.with_initial_reasoning(reasoning);
+    }
+    let host = Arc::new(LocalHost::new(&state_directory, models, adapters)?);
     Ok(LoadedConfig {
         endpoint: config.endpoint,
         credentials,

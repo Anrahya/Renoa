@@ -3,11 +3,14 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    ControlError, ErrorCode, NodeId, ServerMessage, TaskId,
+    ControlError, ErrorCode, NodeId, ServerMessage, TaskId, control_log,
     coordinator::CoordinatorState,
+    host_calls::HostReply,
     operations::NodeOperation,
     wire::{publish_task_event, send_control_error, send_error},
 };
+
+const REPLACED: &str = "node connection has been replaced";
 
 /// Whether `connection_id` is still the connection serving `node_id`; a node
 /// that reconnected replaces its earlier connection.
@@ -24,6 +27,25 @@ pub(crate) async fn node_connection_is_current(
         .is_some_and(|node| node.connection_id == connection_id)
 }
 
+/// Marks the node's current connection as answering Host control calls. The
+/// connection is checked and marked under one lock, so a connection that a
+/// newer one replaced cannot mark the newer one's entry. Returns whether the
+/// connection was the current one.
+pub(crate) async fn serve_host_control(
+    state: &CoordinatorState,
+    node_id: NodeId,
+    connection_id: Uuid,
+) -> bool {
+    state
+        .nodes
+        .lock()
+        .await
+        .get_mut(&node_id)
+        .filter(|node| node.connection_id == connection_id)
+        .map(|node| node.host_control = true)
+        .is_some()
+}
+
 pub(crate) async fn handle_node_operation(
     state: &CoordinatorState,
     outgoing: &mpsc::Sender<ServerMessage>,
@@ -37,16 +59,32 @@ pub(crate) async fn handle_node_operation(
             NodeOperation::SendAgentMessage { request_id, .. } => Some(*request_id),
             _ => None,
         };
-        send_error(
-            outgoing,
-            request_id,
-            ErrorCode::InvalidRole,
-            "node connection has been replaced",
-        )
-        .await;
+        send_error(outgoing, request_id, ErrorCode::InvalidRole, REPLACED).await;
         return;
     }
     match operation {
+        NodeOperation::ServeHostControl => {
+            if serve_host_control(state, node_id, connection_id).await {
+                control_log::event(
+                    "info",
+                    "node_host_control_advertised",
+                    &serde_json::json!({ "node_id": node_id }),
+                );
+            } else {
+                send_error(outgoing, None, ErrorCode::InvalidRole, REPLACED).await;
+            }
+        }
+        NodeOperation::CompleteHostCall {
+            call_id,
+            status,
+            body,
+        } => complete_host_call(
+            state,
+            node_id,
+            connection_id,
+            call_id,
+            HostReply { status, body },
+        ),
         NodeOperation::AdvertiseTargets { targets } => {
             if let Err(error) =
                 crate::task_opening::advertise_targets(state, node_id, connection_id, targets).await
@@ -71,6 +109,23 @@ pub(crate) async fn handle_node_operation(
                 Err(error) => send_control_error(outgoing, None, &error).await,
             }
         }
+        NodeOperation::AcknowledgeStop {
+            task_id,
+            command_id,
+        } => {
+            if let Err(error) = state
+                .store
+                .acknowledge_stop(node_id, task_id, command_id)
+                .await
+            {
+                send_control_error(outgoing, None, &error).await;
+            }
+        }
+        NodeOperation::PublishLiveActivity {
+            task_id,
+            command_id,
+            activity,
+        } => crate::live_activity::relay(state, node_id, task_id, command_id, activity).await,
         NodeOperation::PublishExecutionEvents {
             task_id,
             command_id,
@@ -99,6 +154,24 @@ pub(crate) async fn handle_node_operation(
             )
             .await;
         }
+    }
+}
+
+/// Hands a node's answer to the call waiting for it. An answer no call waits
+/// for, because it timed out or came from a replaced connection, is dropped.
+fn complete_host_call(
+    state: &CoordinatorState,
+    node_id: NodeId,
+    connection_id: Uuid,
+    call_id: Uuid,
+    reply: HostReply,
+) {
+    if !state.host_calls.complete(connection_id, call_id, reply) {
+        control_log::event(
+            "info",
+            "host_call_answer_dropped",
+            &serde_json::json!({ "node_id": node_id, "call_id": call_id }),
+        );
     }
 }
 

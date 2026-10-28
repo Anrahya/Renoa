@@ -16,6 +16,12 @@ export interface Admission {
   readonly admitted: boolean;
 }
 
+/** A command's stop, as a signal that aborts when the stop is recorded. */
+export interface StopWatch {
+  readonly signal: AbortSignal;
+  release(): void;
+}
+
 export interface PendingPublication {
   readonly commandId: string;
   readonly taskId: string;
@@ -26,6 +32,7 @@ export interface PendingPublication {
 export class NodeState {
   readonly #database: DatabaseSync;
   readonly #onCommit: () => void;
+  readonly #stopListeners = new Set<(commandId: string) => void>();
   #closed = false;
 
   constructor(path: string, onCommit: () => void = () => {}) {
@@ -77,8 +84,71 @@ export class NodeState {
         task_id TEXT PRIMARY KEY,
         messages_json TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS stops (
+        command_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL
+      ) STRICT;
       PRAGMA user_version = 2;
     `);
+  }
+
+  /**
+   * Records a stop for a command, which may not have been admitted yet. A
+   * command whose execution already terminated records nothing. Repeating a
+   * stop converges.
+   */
+  recordStop(taskId: string, commandId: string): "recorded" | "ended" {
+    const outcome = this.#transaction(() => {
+      const execution = this.#database
+        .prepare("SELECT task_id, status FROM executions WHERE command_id = ?")
+        .get(commandId) as
+        | { readonly task_id: string; readonly status: string }
+        | undefined;
+      if (execution !== undefined && execution.task_id !== taskId) {
+        throw new Error(`command ${commandId} does not belong to task ${taskId}`);
+      }
+      if (execution?.status === "terminal") {
+        return "ended" as const;
+      }
+      this.#database
+        .prepare("INSERT OR IGNORE INTO stops (command_id, task_id) VALUES (?, ?)")
+        .run(commandId, taskId);
+      return "recorded" as const;
+    });
+    if (outcome === "recorded") {
+      for (const listener of [...this.#stopListeners]) {
+        listener(commandId);
+      }
+    }
+    return outcome;
+  }
+
+  /**
+   * A signal that aborts once a stop is recorded for the command. It listens
+   * before it reads the ledger, and a stop writes the ledger before it
+   * notifies listeners, so a stop recorded at any moment reaches the signal.
+   */
+  watchStop(commandId: string): StopWatch {
+    const controller = new AbortController();
+    const abort = () => controller.abort(new Error("stopped by request"));
+    const listener = (stopped: string) => {
+      if (stopped === commandId) {
+        abort();
+      }
+    };
+    this.#stopListeners.add(listener);
+    const recorded = this.#database
+      .prepare("SELECT EXISTS(SELECT 1 FROM stops WHERE command_id = ?) AS recorded")
+      .get(commandId) as { readonly recorded: number };
+    if (recorded.recorded === 1) {
+      abort();
+    }
+    return {
+      signal: controller.signal,
+      release: () => {
+        this.#stopListeners.delete(listener);
+      },
+    };
   }
 
   admit(command: ExecuteCommand): Admission {

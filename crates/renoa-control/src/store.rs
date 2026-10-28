@@ -60,8 +60,10 @@ impl ControlStore {
     ) -> Result<Vec<TaskSummary>, ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
-            let connection = open_connection(&path)?;
-            let mut statement = connection
+            // One read transaction, so every status is from the same snapshot.
+            let mut connection = open_connection(&path)?;
+            let transaction = connection.transaction().map_err(sqlite_error)?;
+            let mut statement = transaction
                 .prepare(
                     "SELECT task_id, target_json FROM tasks
                      WHERE principal_id = ?1 ORDER BY task_id",
@@ -75,9 +77,11 @@ impl ControlStore {
             let mut tasks = Vec::new();
             for row in rows {
                 let (task_id, target_json) = row.map_err(sqlite_error)?;
+                let task_id = TaskId::from_uuid(task_id.parse().map_err(id_error)?);
                 tasks.push(TaskSummary {
-                    task_id: TaskId::from_uuid(task_id.parse().map_err(id_error)?),
+                    task_id,
                     target: serde_json::from_str(&target_json).map_err(json_error)?,
+                    status: crate::task_status::derive(&transaction, task_id)?,
                 });
             }
             Ok(tasks)
