@@ -1,0 +1,361 @@
+package live.renoa.rcp
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.OkHttpClient
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.CoroutineContext
+import kotlin.reflect.KClass
+import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
+
+private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
+private val TICKET_PATTERN = Regex("^[0-9a-fA-F]{64}$")
+
+/** Replay of one attachment: complete once the event at [through] has been applied. */
+private class Replay {
+    val done = CompletableDeferred<Unit>()
+
+    @Volatile
+    var through: Long? = null
+}
+
+private class Attachment(val taskId: Uuid, val apply: suspend (TaskEvent) -> Unit) {
+    @Volatile
+    var cursor: Long? = null
+
+    @Volatile
+    var replay: Replay? = null
+}
+
+/**
+ * The binding 13 surface client over a WebSocket.
+ *
+ * Frames are handled one at a time, in arrival order, on [context]; [attach] callbacks run
+ * there. Retry timing after a disconnect is the caller's policy: this client never reconnects
+ * on its own. [connect] re-attaches every task that finished replay on this instance.
+ */
+class WebSocketRcpSurface(
+    private val endpoint: String,
+    private val authentication: Authentication,
+    private val state: RcpState,
+    private val http: OkHttpClient = OkHttpClient(),
+    context: CoroutineContext = Dispatchers.Default,
+    private val newCommandId: () -> Uuid = { Uuid.random() },
+) : RcpSurface {
+    private val scope = CoroutineScope(SupervisorJob() + context)
+    private val attachments = LinkedHashMap<Uuid, Attachment>()
+    private val nextRequestId = AtomicLong(1)
+    private val connecting = AtomicBoolean(false)
+
+    @Volatile
+    private var current: Connection? = null
+
+    @Volatile
+    private var latest: Connection? = null
+
+    @Volatile
+    private var closed = false
+
+    init {
+        requireSecureEndpoint(endpoint)
+    }
+
+    override suspend fun connect() {
+        check(!closed) { "RCP client is closed" }
+        check(connecting.compareAndSet(false, true)) { "RCP client is already connecting" }
+        try {
+            check(current == null) { "RCP client is already connected" }
+            val identity = identityFrame()
+            val connection = openConnection(http, endpoint)
+            current = connection
+            latest = connection
+            scope.launch { receive(connection) }
+            try {
+                connection.opened.await()
+                send(connection, identity)
+                connection.authenticated.await()
+                for (attachment in synchronized(attachments) { attachments.values.toList() }) {
+                    attachExisting(attachment)
+                }
+            } catch (failure: Throwable) {
+                end(connection, failure as? Exception ?: Disconnected("connect was cancelled", failure), 1000)
+                throw failure
+            }
+        } finally {
+            connecting.set(false)
+        }
+    }
+
+    override suspend fun disconnect() {
+        val connection = current ?: return
+        connection.socket.close(1000, "client disconnect")
+        withTimeoutOrNull(2.seconds) { connection.ended.await() }
+            ?: end(connection, Disconnected("the server did not finish the close handshake"), 1000)
+    }
+
+    override suspend fun awaitDisconnect(): Throwable =
+        checkNotNull(latest) { "RCP client has not connected" }.ended.await()
+
+    override suspend fun listTasks(): List<TaskSummary> =
+        request(ServerMessage.TaskList::class, { ClientMessage.ListTasks(it) }).tasks
+
+    override suspend fun listTargets(): List<TargetSummary> =
+        request(ServerMessage.TargetList::class, { ClientMessage.ListTargets(it) }).targets
+
+    override suspend fun openTask(taskId: Uuid, nodeId: Uuid, target: String) {
+        request(ServerMessage.TaskOpened::class, { ClientMessage.OpenTask(it, taskId, nodeId, target) }) {
+            if (it.taskId != taskId) throw ProtocolViolation("open_task response changed the task identity")
+        }
+    }
+
+    override suspend fun deleteTask(taskId: Uuid) {
+        request(ServerMessage.TaskDeleted::class, { ClientMessage.DeleteTask(it, taskId) }) {
+            if (it.taskId != taskId) throw ProtocolViolation("delete_task response changed the task identity")
+        }
+    }
+
+    override suspend fun attach(taskId: Uuid, apply: suspend (TaskEvent) -> Unit) {
+        connected()
+        val attachment = Attachment(taskId, apply)
+        synchronized(attachments) {
+            check(taskId !in attachments) { "task $taskId is already attached" }
+            attachments[taskId] = attachment
+        }
+        try {
+            attachExisting(attachment)
+        } catch (failure: Throwable) {
+            synchronized(attachments) { attachments.remove(taskId) }
+            throw failure
+        }
+    }
+
+    override suspend fun submitText(taskId: Uuid, text: String): CommandSubmission {
+        connected()
+        val command = PendingTextCommand(newCommandId(), taskId, text)
+        requireFits(command)
+        state.enqueueCommand(command)
+        return CommandSubmission(command.commandId, scope.async { sendPending(command) })
+    }
+
+    override suspend fun retryPendingCommands(): List<Uuid> {
+        connected()
+        val admitted = mutableListOf<Uuid>()
+        for (command in state.pendingCommands()) {
+            sendPending(command)
+            admitted += command.commandId
+        }
+        return admitted
+    }
+
+    override fun close() {
+        closed = true
+        current?.let { end(it, Disconnected("RCP client closed"), 1000) }
+        scope.cancel()
+    }
+
+    private suspend fun sendPending(command: PendingTextCommand) {
+        val input = CommandInput.Text(command.text)
+        request(
+            ServerMessage.CommandAccepted::class,
+            { ClientMessage.Submit(it, command.taskId, command.commandId, input) },
+        ) {
+            if (it.commandId != command.commandId) throw ProtocolViolation("command admission changed the command identity")
+        }
+        state.removeCommand(command.commandId)
+    }
+
+    /** A frame the coordinator would refuse must not reach the outbox: it could never be admitted. */
+    private fun requireFits(command: PendingTextCommand) {
+        val worstCase =
+            ClientMessage.Submit(MAX_SAFE_INTEGER, command.taskId, command.commandId, CommandInput.Text(command.text))
+        val bytes = encodeClientMessage(worstCase).toByteArray(Charsets.UTF_8).size
+        require(bytes <= MAX_FRAME_BYTES) {
+            "text is $bytes bytes once encoded; one RCP message holds at most $MAX_FRAME_BYTES. Send shorter text."
+        }
+    }
+
+    private suspend fun identityFrame(): String =
+        encodeClientMessage(
+            when (val auth = authentication) {
+                is Authentication.Device -> ClientMessage.Authenticate(RCP_BINDING_VERSION, auth.credentials)
+                is Authentication.Ticket -> {
+                    val ticket = auth.get()
+                    require(TICKET_PATTERN.matches(ticket)) { "connection ticket must be 64 hexadecimal characters" }
+                    ClientMessage.AuthenticateTicket(RCP_BINDING_VERSION, ticket)
+                }
+            },
+        )
+
+    private fun connected(): Connection {
+        val connection = current
+        check(connection != null && connection.authenticated.isCompleted && !connection.ended.isCompleted) {
+            "RCP client is not connected"
+        }
+        return connection
+    }
+
+    private fun send(connection: Connection, frame: String) {
+        if (!connection.socket.send(frame)) throw Disconnected("RCP connection is closing")
+    }
+
+    private suspend fun <R : ServerMessage> request(
+        expected: KClass<R>,
+        build: (Long) -> ClientMessage,
+        onReceive: (R) -> Unit = {},
+    ): R {
+        val connection = connected()
+        val id = nextRequestId.getAndIncrement()
+        check(id <= MAX_SAFE_INTEGER) { "RCP request id space exhausted" }
+        val pending = Pending(expected, { onReceive(expected.javaObjectType.cast(it)) })
+        connection.pending[id] = pending
+        if (connection.ended.isCompleted) {
+            connection.pending.remove(id)
+            throw Disconnected("RCP connection ended before the request was sent", connection.ended.await())
+        }
+        try {
+            send(connection, encodeClientMessage(build(id)))
+        } catch (failure: Exception) {
+            connection.pending.remove(id)
+            throw failure
+        }
+        return expected.javaObjectType.cast(pending.response.await())
+    }
+
+    private suspend fun attachExisting(attachment: Attachment) {
+        attachment.cursor = state.cursor(attachment.taskId)
+        val replay = Replay()
+        attachment.replay = replay
+        request(
+            ServerMessage.Attached::class,
+            { ClientMessage.Attach(it, attachment.taskId, attachment.cursor) },
+        ) {
+            if (it.taskId != attachment.taskId) throw ProtocolViolation("attach response changed the task identity")
+            replay.through = it.throughSequence
+            val cursor = attachment.cursor
+            if (it.throughSequence == null || (cursor != null && cursor >= it.throughSequence)) {
+                attachment.replay = null
+                replay.done.complete(Unit)
+            }
+        }
+        replay.done.await()
+    }
+
+    private suspend fun receive(connection: Connection) {
+        try {
+            for (event in connection.inbound) {
+                when (event) {
+                    Inbound.Opened -> connection.opened.complete(Unit)
+                    is Inbound.Text -> handle(connection, event.text)
+                    Inbound.Binary -> throw ProtocolViolation("the server sent a binary frame; binding $RCP_BINDING_VERSION is text only")
+                    is Inbound.Closed -> {
+                        end(connection, Disconnected("RCP connection closed (${event.code} ${event.reason})"), null)
+                        return
+                    }
+                    is Inbound.Failed -> {
+                        end(connection, Disconnected("RCP connection failed: ${event.cause.message}", event.cause), null)
+                        return
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            end(connection, Disconnected("RCP client closed"), 1000)
+            throw cancelled
+        } catch (failure: Exception) {
+            val code =
+                when (failure) {
+                    is RcpException -> 1000
+                    is ProtocolViolation -> 1002
+                    else -> 1011
+                }
+            end(connection, failure, code)
+        }
+    }
+
+    private suspend fun handle(connection: Connection, text: String) {
+        when (val message = decodeServerMessage(text)) {
+            is ServerMessage.Authenticated -> {
+                if (message.version != RCP_BINDING_VERSION || connection.authenticated.isCompleted) {
+                    throw ProtocolViolation("unexpected authenticated frame with version ${message.version}")
+                }
+                connection.authenticated.complete(Unit)
+            }
+            is ServerMessage.TaskEventFrame -> applyTaskEvent(message.event)
+            is ServerMessage.Error -> {
+                val failure = RcpException(message.code, message.message, message.requestId)
+                val id = message.requestId ?: throw failure
+                val pending =
+                    connection.pending.remove(id) ?: throw ProtocolViolation("error references unknown request $id")
+                pending.response.completeExceptionally(failure)
+            }
+            is ServerMessage.TaskList -> complete(connection, message.requestId, message)
+            is ServerMessage.TargetList -> complete(connection, message.requestId, message)
+            is ServerMessage.TaskOpened -> complete(connection, message.requestId, message)
+            is ServerMessage.Attached -> complete(connection, message.requestId, message)
+            is ServerMessage.CommandAccepted -> complete(connection, message.requestId, message)
+            is ServerMessage.TaskDeleted -> complete(connection, message.requestId, message)
+        }
+    }
+
+    private fun complete(connection: Connection, requestId: Long, message: ServerMessage) {
+        val pending =
+            connection.pending.remove(requestId)
+                ?: throw ProtocolViolation("response references unknown request $requestId")
+        try {
+            if (!pending.expected.isInstance(message)) {
+                throw ProtocolViolation("expected ${pending.expected.simpleName}, received ${message::class.simpleName}")
+            }
+            pending.onReceive(message)
+        } catch (failure: Exception) {
+            pending.response.completeExceptionally(failure)
+            throw failure
+        }
+        pending.response.complete(message)
+    }
+
+    private suspend fun applyTaskEvent(event: TaskEvent) {
+        val attachment =
+            synchronized(attachments) { attachments[event.taskId] }
+                ?: throw ProtocolViolation("received an event for unattached task ${event.taskId}")
+        val cursor = attachment.cursor
+        if (cursor != null && event.sequence <= cursor) return
+        val expected = if (cursor == null) 0L else cursor + 1
+        if (event.sequence != expected) {
+            throw ProtocolViolation("task ${event.taskId} event sequence ${event.sequence} follows $cursor")
+        }
+        attachment.apply(event)
+        state.advanceCursor(event.taskId, event.sequence)
+        attachment.cursor = event.sequence
+        val replay = attachment.replay
+        val through = replay?.through
+        if (replay != null && through != null && event.sequence >= through) {
+            attachment.replay = null
+            replay.done.complete(Unit)
+        }
+    }
+
+    private fun end(connection: Connection, reason: Throwable, closeCode: Int?) {
+        if (!connection.ended.complete(reason)) return
+        if (current === connection) current = null
+        connection.opened.completeExceptionally(reason)
+        connection.authenticated.completeExceptionally(reason)
+        for (pending in connection.pending.values) pending.response.completeExceptionally(reason)
+        connection.pending.clear()
+        synchronized(attachments) {
+            for (attachment in attachments.values) {
+                attachment.replay?.done?.completeExceptionally(reason)
+                attachment.replay = null
+            }
+        }
+        if (closeCode != null) connection.socket.close(closeCode, null) else connection.socket.cancel()
+        connection.inbound.close()
+    }
+}
