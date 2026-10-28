@@ -12,6 +12,13 @@ status=0
 
 listed=$(grep -v '^#' "$exceptions" | awk 'NF { print $1 }')
 
+# Listed before the loop so a failed listing, such as outside a git checkout,
+# fails the check instead of checking nothing.
+files=$(
+  git ls-files '*.rs' '*.ts' '*.tsx' '*.mjs' '*.js' '*.kt' |
+    grep -vE '(^|/)tests?(/|\.rs$)|_tests?\.rs$|\.test\.(ts|tsx|mjs|js)$|/benches/|/examples/|/dist/|\.d\.ts$|(^|/)test[_-]|/fixtures?/'
+)
+
 while IFS= read -r file; do
   lines=$(wc -l < "$file" | tr -d ' ')
   if [ "$lines" -ge "$limit" ] && ! grep -qxF "$file" <<< "$listed"; then
@@ -19,10 +26,7 @@ while IFS= read -r file; do
       "Name its second responsibility and move it out, or delete something." >&2
     status=1
   fi
-done < <(
-  git ls-files '*.rs' '*.ts' '*.tsx' '*.mjs' '*.js' '*.kt' |
-    grep -vE '(^|/)tests?(/|\.rs$)|_tests?\.rs$|\.test\.(ts|tsx|mjs|js)$|/benches/|/examples/|/dist/|\.d\.ts$|(^|/)test[_-]|/fixtures?/'
-)
+done <<< "$files"
 
 for file in $listed; do
   if [ ! -f "$file" ]; then
