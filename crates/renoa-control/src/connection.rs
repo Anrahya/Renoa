@@ -182,6 +182,7 @@ async fn activate_device(
                 device_id,
                 outgoing: outgoing.clone(),
                 targets: Vec::new(),
+                host_control: false,
             },
         );
     }
@@ -407,7 +408,9 @@ async fn read_peer(
         | ClientMessage::Submit { .. }
         | ClientMessage::DeleteTask { .. }
         | ClientMessage::AcknowledgeExecution { .. }
-        | ClientMessage::PublishExecutionEvents { .. } => {
+        | ClientMessage::PublishExecutionEvents { .. }
+        | ClientMessage::ServeHostControl
+        | ClientMessage::CompleteHostCall { .. } => {
             send_error(
                 outgoing,
                 None,

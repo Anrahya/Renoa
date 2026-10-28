@@ -370,7 +370,8 @@ async fn dispatch(
         | ServerMessage::Authenticated { .. }
         | ServerMessage::ExecutionEventsAccepted { .. }
         | ServerMessage::ExecutionAcknowledged { .. }
-        | ServerMessage::Execute { .. } => {
+        | ServerMessage::Execute { .. }
+        | ServerMessage::HostCall { .. } => {
             return Err(ClientError::Protocol(
                 "coordinator sent a node-only or session message to a surface".to_owned(),
             ));

@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
@@ -9,11 +12,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    ErrorCode, NodeId, ServerMessage, TaskEvent, TaskEventId, TaskEventKind, TaskId,
+    DeviceId, ErrorCode, HostMethod, NodeId, ServerMessage, TaskEvent, TaskEventId, TaskEventKind,
+    TaskId,
+    host_calls::{HOST_CALL_TIMEOUT, HostCallError, HostReply, HostRequest, call},
     wire::{TASK_BROADCAST_CAPACITY, publish_task_event},
 };
 
-use super::{Coordinator, TaskSpec};
+use super::{Coordinator, NodeConnection, TaskSpec};
 use crate::surface_operations::attach_surface;
 
 #[tokio::test]
@@ -103,4 +108,59 @@ async fn a_lagging_surface_is_told_to_replay() {
         }
     }
     cancelled.cancel();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_host_call_the_node_never_answers_times_out_and_its_late_answer_is_dropped() {
+    let files = TempDir::new().expect("temporary directory");
+    let coordinator =
+        Coordinator::open(files.path().join("control.sqlite")).expect("open coordinator");
+    let owner = PrincipalId::from_uuid(Uuid::from_u128(2));
+    let node_id = NodeId::from_uuid(Uuid::from_u128(4));
+    coordinator
+        .create_node_enrollment(node_id, owner, SystemTime::now() + Duration::from_mins(1))
+        .await
+        .expect("record the node's owner");
+    let connection_id = Uuid::from_u128(6);
+    let (outgoing, mut sent) = mpsc::channel(1);
+    coordinator.state.nodes.lock().await.insert(
+        node_id,
+        NodeConnection {
+            connection_id,
+            device_id: DeviceId::from_uuid(Uuid::from_u128(7)),
+            outgoing,
+            targets: Vec::new(),
+            host_control: true,
+        },
+    );
+
+    let started = tokio::time::Instant::now();
+    let outcome = call(
+        &coordinator.state,
+        owner,
+        HostRequest {
+            method: HostMethod::Post,
+            path: "/v1/host/agents".to_owned(),
+            body: None,
+        },
+    )
+    .await;
+    assert!(matches!(outcome, Err(HostCallError::TimedOut)));
+    assert!(started.elapsed() >= HOST_CALL_TIMEOUT);
+
+    let Some(ServerMessage::HostCall { call_id, .. }) = sent.recv().await else {
+        panic!("the node was sent the call before it timed out");
+    };
+    let late = HostReply {
+        status: 200,
+        body: "{}".to_owned(),
+    };
+    assert!(
+        !coordinator
+            .state
+            .host_calls
+            .complete(connection_id, call_id, late),
+        "a call that timed out takes no answer"
+    );
+    assert_eq!(coordinator.state.host_calls.len(), 0);
 }

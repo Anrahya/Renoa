@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `13`.
+first implemented transport binding. The current binding version is `14`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -53,14 +53,18 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `13` with `version_mismatch` and ends the session.
+rejects any value other than `14` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `13` supersedes version `12` by adding an optional `author` to text
+Version `14` supersedes version `13` by adding Host control relaying
+(`serve_host_control`, `host_call`, `complete_host_call`). A version `13` peer
+is rejected at authentication.
+
+Version `13` superseded version `12` by adding an optional `author` to text
 command input, which marks text written by a guest rather than the
 authenticated principal. A version `12` peer is rejected at authentication.
 
@@ -97,7 +101,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 13,
+  "version": 14,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -107,7 +111,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 13,
+  "version": 14,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -120,7 +124,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 13,
+  "version": 14,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -133,7 +137,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 13,
+  "version": 14,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -480,6 +484,55 @@ response reports the source cursor:
 
 Node frames use `command_id` for correlation because it is already the durable
 operation identity. They do not carry `request_id`.
+
+### Host control
+
+A node whose Host the owner controls from a browser says so once per
+connection, after it authenticates:
+
+```json
+{ "type": "serve_host_control" }
+```
+
+The coordinator remembers it for that connection only; a reconnecting node says
+it again. The frame has no acknowledgement, and only a node connection may send
+it. The coordinator relays an authenticated owner's browser call to the one
+connected node of that owner that has said so:
+
+```json
+{
+  "type": "host_call",
+  "call_id": "00000000-0000-0000-0000-000000000090",
+  "principal_id": "00000000-0000-0000-0000-000000000050",
+  "method": "POST",
+  "path": "/v1/host/agents",
+  "body": "{\"name\":\"Scout\"}"
+}
+```
+
+`method` is `GET`, `POST` or `PUT`. `principal_id` is the owner the
+coordinator authenticated from the browser's session; nothing in `body` can name
+another. `body` is the request's JSON text, or `null` for a read. The node
+decides which paths exist and what each does; the coordinator interprets
+neither. The node answers on the same connection:
+
+```json
+{
+  "type": "complete_host_call",
+  "call_id": "00000000-0000-0000-0000-000000000090",
+  "status": 200,
+  "body": "{}"
+}
+```
+
+The coordinator delivers an answer to the browser only from the connection the
+call was sent on, and only once; any other answer is dropped. A `status` the
+coordinator cannot relay (anything outside 200-299 and 400-599) becomes a
+`502`. A call ends without an answer when its connection ends or after sixty
+seconds. The coordinator never retries a call and keeps neither the request nor
+the answer. A change survives a lost answer because the browser repeats the same
+request under the same `operation_id` and the Host answers from the receipt it
+recorded.
 
 ## Errors
 

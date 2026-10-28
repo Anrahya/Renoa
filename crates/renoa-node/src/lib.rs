@@ -5,6 +5,7 @@ mod automation_cleanup;
 mod automations;
 mod backoff;
 mod bridge;
+mod host_control;
 mod live;
 mod node_log;
 mod node_store;

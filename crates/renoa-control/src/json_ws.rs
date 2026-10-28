@@ -1,13 +1,16 @@
 use renoa_protocol::{CommandEnvelope, CommandId, CommandInput, ExecutionEvent, TargetRef};
 use serde::{Deserialize, Serialize};
 
+use renoa_protocol::PrincipalId;
+use uuid::Uuid;
+
 use crate::{
-    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, NodeId, TargetSummary,
-    TaskEvent, TaskEventKind, TaskId, TaskSummary,
+    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, HostMethod, NodeId,
+    TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
     operations::{NodeOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 13;
+pub const JSON_WS_VERSION: u32 = 14;
 const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -65,6 +68,13 @@ pub enum ClientMessage {
         task_id: TaskId,
         command_id: CommandId,
     },
+    /// The node answers Host control calls for the owner who enrolled it.
+    ServeHostControl,
+    CompleteHostCall {
+        call_id: Uuid,
+        status: u16,
+        body: String,
+    },
 }
 
 impl ClientMessage {
@@ -74,7 +84,9 @@ impl ClientMessage {
             | Self::Authenticate { .. }
             | Self::AuthenticateTicket { .. }
             | Self::AdvertiseTargets { .. }
-            | Self::AcknowledgeExecution { .. } => true,
+            | Self::AcknowledgeExecution { .. }
+            | Self::ServeHostControl
+            | Self::CompleteHostCall { .. } => true,
             Self::ListTasks { request_id }
             | Self::ListTargets { request_id }
             | Self::OpenTask { request_id, .. }
@@ -166,6 +178,16 @@ impl ClientMessage {
                 command_id,
                 events,
             })),
+            Self::ServeHostControl => Some(JsonOperation::Node(NodeOperation::ServeHostControl)),
+            Self::CompleteHostCall {
+                call_id,
+                status,
+                body,
+            } => Some(JsonOperation::Node(NodeOperation::CompleteHostCall {
+                call_id,
+                status,
+                body,
+            })),
             Self::Enroll { .. } | Self::Authenticate { .. } | Self::AuthenticateTicket { .. } => {
                 None
             }
@@ -228,6 +250,14 @@ pub enum ServerMessage {
         task_id: TaskId,
         command: CommandEnvelope,
     },
+    /// One owner call under `/v1/host`, for the node that serves the Host.
+    HostCall {
+        call_id: Uuid,
+        principal_id: PrincipalId,
+        method: HostMethod,
+        path: String,
+        body: Option<String>,
+    },
     TaskEvent {
         event: TaskEvent,
     },
@@ -244,7 +274,8 @@ impl ServerMessage {
             Self::Enrolled { .. }
             | Self::Authenticated { .. }
             | Self::ExecutionAcknowledged { .. }
-            | Self::Execute { .. } => true,
+            | Self::Execute { .. }
+            | Self::HostCall { .. } => true,
             Self::TaskList { request_id, .. }
             | Self::TargetList { request_id, .. }
             | Self::TaskOpened { request_id, .. }

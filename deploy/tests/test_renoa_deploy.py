@@ -217,12 +217,28 @@ class DeployTest(unittest.TestCase):
         self.assertFalse((self.layout.units / "renoa-discord.service").exists())
         self.assertNotIn("renoa-discord.service", self.host.restarted())
 
-    def test_the_node_upgrades_the_host_catalog_before_management_reads_it(self):
-        (self.layout.units / "renoa-management.service").write_text(UNIT.format(name="renoa-management.service"))
+    def test_a_changed_control_room_restarts_nothing_because_the_coordinator_reads_it_live(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}, assets=("app-1.js",)))
+        self.host.commands.clear()
 
-        self.install(release_archive(self.archives, "v1", {"renoa-node": b"n1", "renoa-management": b"m1"}))
+        self.install(release_archive(self.archives, "v2", {"renoa-node": b"h1"}, assets=("app-2.js",)))
 
-        self.assertEqual(self.host.restarted(), ["renoa-node.service", "renoa-management.service"])
+        self.assertEqual(self.host.restarted(), [])
+
+    def test_a_coordinator_that_serves_the_owner_api_without_a_login_fails_the_health_check(self):
+        class Open(FakeHost):
+            def http_status(self, url, method="GET", headers=None):
+                return 200
+
+        self.host = Open(self.root)
+        self.layout = deploy.Layout(self.host)
+
+        code = self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}))
+
+        self.assertEqual(code, 1)
+        health = json.loads(self.layout.manifest.read_text())["health"]
+        self.assertTrue(any("unauthenticated Host request, not 401" in failure for failure in health), health)
+        self.assertTrue(any("foreign origin, not 403" in failure for failure in health), health)
 
     def test_a_changed_adapter_restarts_the_services_that_run_it(self):
         self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}))

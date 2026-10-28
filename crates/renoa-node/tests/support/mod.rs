@@ -52,9 +52,23 @@ pub(crate) struct TestSystem {
 
 impl TestSystem {
     pub(crate) async fn start() -> Self {
+        Self::start_with(|database| Coordinator::open(database).expect("open coordinator store"))
+            .await
+    }
+
+    /// A coordinator that also serves the browser identity and Host control
+    /// routes for browsers at `origin`.
+    pub(crate) async fn start_with_browsers(origin: &str) -> Self {
+        Self::start_with(|database| {
+            Coordinator::open_with_passkeys(database, "localhost", origin)
+                .expect("open coordinator store")
+        })
+        .await
+    }
+
+    async fn start_with(open: impl FnOnce(PathBuf) -> Coordinator) -> Self {
         let files = TempDir::new().expect("temporary directory");
-        let coordinator =
-            Coordinator::open(files.path().join("control.sqlite")).expect("open coordinator store");
+        let coordinator = open(files.path().join("control.sqlite"));
         let task_id = TaskId::new();
         let node_id = NodeId::new();
         let principal_id = PrincipalId::new();
@@ -91,6 +105,14 @@ impl TestSystem {
             .await
             .expect("create node enrollment");
         self.claim(token).await
+    }
+
+    /// The coordinator's address for plain HTTP requests.
+    pub(crate) fn http_url(&self) -> String {
+        self.url
+            .replace("ws://", "http://")
+            .trim_end_matches("/connect")
+            .to_owned()
     }
 
     pub(crate) const fn node_id(&self) -> NodeId {

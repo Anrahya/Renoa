@@ -174,9 +174,9 @@ Keep responsibility with the component that implements the behavior:
   exact Host and allowed operations. Neither component runs agents.
 - Host composition selects existing provider, loop, context, tool, credential,
   workspace, and execution components. Their implementations remain outside the
-  management transport, and provider and surface policy remain outside the kernel.
+  Host-control relay, and provider and surface policy remain outside the kernel.
 - Domain operations own their validation, transactions, and durable receipts.
-  Automations retain scheduling semantics. A management router delegates to those operations rather than reimplementing them.
+  Automations retain scheduling semantics. The node's Host-control table delegates to those operations rather than reimplementing them.
 - Observation projects committed metadata independently of runtime construction.
   Inspection and configuration changes that do not execute work must not require
   model discovery, valid provider credentials, or acquisition of session ownership.
@@ -213,14 +213,16 @@ execution consumer.
 
 ### Personal control-panel boundary
 
-The first browser consumer targets the existing shared Host through a separate
-same-origin HTTPS management API. Reuse direct browser pairing and passkey verification while keeping the
-management session separate from RCP's one-use WebSocket tickets. Bind the verified
-principal to the configured Host explicitly. Management sessions must be revocable;
-cookies must be secure and HTTP-only, and state changes must check request origin
-and protect against cross-site request forgery. Identity code may be factored for
-the two real consumers, but the coordinator must not acquire a dependency on
-Host runtime construction. A browser-provided Host ID, path, or actor ID cannot
+The first browser consumer targets the existing shared Host through same-origin
+HTTPS calls under `/v1/host`. The coordinator authenticates them with direct
+browser pairing and passkey verification, keeping the remembered session separate
+from RCP's one-use WebSocket tickets, and relays each call over the node's
+existing link to the node that serves the Host. The verified principal is the
+node's recorded owner; no other principal's call is relayed. Remembered sessions
+must be revocable; cookies must be secure and HTTP-only, and state changes must
+check request origin and protect against cross-site request forgery. The
+coordinator must not acquire a dependency on Host runtime construction: it
+interprets no Host operation. A browser-provided Host ID, path, or actor ID cannot
 choose another data root or substitute an authenticated identity.
 
 The initial overview uses `HostObserver`. It shows recorded work, attention, schedules,
@@ -230,13 +232,14 @@ states. Start with refreshable HTTP snapshots; do not add another event journal
 or infer an event sequence from differences between snapshots. Surface health,
 effective runtime tools, and other details need their own evidence before display.
 
-`renoa-management` serves the built panel and the metadata API independently of
-execution workers. Its configured loopback identity service validates the browser
-cookie; the adapter does not read the identity database or execute agent turns.
-With model configuration it starts catalog/describe requests to validate creation.
-`GET /v1/host/access` reveals only the public owner login identifier. `GET /v1/host`
-requires that authenticated owner. The binary pins one existing Host UUID and refuses
-a replaced Host even at the same storage path.
+The coordinator serves the built panel from its own origin, beside the API, so
+the panel, its session cookie and its calls share one origin. The node answers
+each relayed call from the Host's own records; with model configuration it starts
+catalog/describe requests to validate creation. `GET /v1/host/access` reveals
+only the public login identifier of the owner when exactly one principal owns
+enrolled nodes. `GET /v1/host` requires that authenticated owner. The node pins
+the Host UUID it opened and refuses a replaced Host even at the same storage path.
+When no node serves the Host the panel is told so, and the owner's browser retries.
 
 The browser retries unavailable services and network failures, keeping the last
 snapshot explicitly stale. Only rejected credentials clear the view. Its remembered
@@ -255,8 +258,8 @@ of Host assembly and surface adapters.
 Host. `POST /v1/host/automations/{automation_id}/enabled` adapts that domain operation;
 the browser exposes it beside the schedule on both Work and agent detail. The trusted adapter supplies the
 authenticated principal separately from JSON input. Each write requires the
-configured owner cookie and exactly one matching `Origin` header. The management
-configuration names `public_origin`; forwarded headers cannot select it.
+owner's cookie and exactly one matching `Origin` header. The coordinator's
+configured passkey origin is that origin; forwarded headers cannot select it.
 
 The JSON request contains `operation_id` (a fresh UUID for each logical change),
 `expected_revision`, and the desired `enabled` boolean. The server rejects unknown
@@ -424,7 +427,7 @@ any session. Large
 artifacts, instructions, provider diagnostics and credential material stay outside
 the overview response and need separate, deliberate detail reads.
 
-This is local observation, not a browser authentication or management transport.
+This is local observation, not a browser authentication or Host-control transport.
 The browser path must authenticate its principal against this exact Host before
 exposing inventory or accepting operations. It must not reuse an RCP one-use
 connection ticket as an HTTP bearer token. RCP remains responsible for continuity

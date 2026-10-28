@@ -18,6 +18,7 @@ use crate::{
     agent_targets,
     automations::{self, AutomationLink},
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
+    host_control::HostControl,
     live::LiveEvents,
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
@@ -81,11 +82,13 @@ impl RenoaNode {
         let state = NodeStore::open(host.home().node_database())?;
         state.validate_configured_targets(|binding| agent_targets::serves(host.home(), binding))?;
         let (commits, _) = watch::channel(0_u64);
+        let host_control = HostControl::open(Arc::clone(&host))?;
         Ok(Self {
             endpoint,
             credentials,
             runtime: Arc::new(NodeRuntime {
                 host,
+                host_control,
                 state,
                 commits,
             }),
@@ -207,6 +210,7 @@ impl RenoaNode {
 
 pub(crate) struct NodeRuntime {
     pub(crate) host: Arc<LocalHost>,
+    pub(crate) host_control: HostControl,
     pub(crate) state: NodeStore,
     pub(crate) commits: watch::Sender<u64>,
 }

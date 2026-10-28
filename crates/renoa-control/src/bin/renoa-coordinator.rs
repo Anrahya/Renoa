@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const USAGE: &str = "usage:
-  renoa-coordinator serve <renoa-home> <port> <passkey-rp-id> <passkey-origin>
+  renoa-coordinator serve <renoa-home> <port> <passkey-rp-id> <passkey-origin> [<control-room-directory>]
   renoa-coordinator bootstrap-passkey <renoa-home> <principal-id>
   renoa-coordinator pair-browser <renoa-home> <principal-id>
   renoa-coordinator revoke-browser-logins <renoa-home> <principal-id>
@@ -38,6 +38,7 @@ enum Operation {
         port: u16,
         passkey_rp_id: String,
         passkey_origin: String,
+        control_room: Option<PathBuf>,
     },
     BootstrapPasskey {
         database: PathBuf,
@@ -102,12 +103,20 @@ impl Operation {
                     .map_err(|_| "port must be an integer from 0 through 65535".to_owned())?;
                 let passkey_rp_id = string_argument(&mut arguments)?;
                 let passkey_origin = string_argument(&mut arguments)?;
+                let control_room = arguments.next().map(PathBuf::from);
+                if control_room
+                    .as_ref()
+                    .is_some_and(|path| !path.is_absolute())
+                {
+                    return Err("the Control Room directory must be an absolute path".to_owned());
+                }
                 no_more_arguments(arguments)?;
                 Ok(Self::Serve {
                     database,
                     port,
                     passkey_rp_id,
                     passkey_origin,
+                    control_room,
                 })
             }
             Some("bootstrap-passkey") => {
@@ -272,7 +281,17 @@ async fn run() -> Result<(), String> {
             port,
             passkey_rp_id,
             passkey_origin,
-        } => serve(database, port, &passkey_rp_id, &passkey_origin).await,
+            control_room,
+        } => {
+            serve(
+                database,
+                port,
+                &passkey_rp_id,
+                &passkey_origin,
+                control_room.as_deref(),
+            )
+            .await
+        }
         Operation::BootstrapPasskey {
             database,
             principal_id,
@@ -316,9 +335,15 @@ async fn serve(
     port: u16,
     passkey_rp_id: &str,
     passkey_origin: &str,
+    control_room: Option<&std::path::Path>,
 ) -> Result<(), String> {
-    let coordinator = Coordinator::open_with_passkeys(database, passkey_rp_id, passkey_origin)
+    let mut coordinator = Coordinator::open_with_passkeys(database, passkey_rp_id, passkey_origin)
         .map_err(|error| error.to_string())?;
+    if let Some(directory) = control_room {
+        coordinator = coordinator
+            .with_control_room(directory)
+            .map_err(|error| error.to_string())?;
+    }
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .await
         .map_err(|error| format!("failed to bind loopback port {port}: {error}"))?;
@@ -423,4 +448,37 @@ fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<
 #[cfg(not(unix))]
 fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<()>>> {
     Ok(tokio::signal::ctrl_c())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    fn serve(control_room: Option<&str>) -> Result<Operation, String> {
+        let home = tempfile::tempdir().expect("home directory");
+        let mut arguments: Vec<OsString> = vec!["renoa-coordinator".into(), "serve".into()];
+        arguments.push(home.path().into());
+        arguments.extend(["7818", "localhost", "http://localhost"].map(OsString::from));
+        arguments.extend(control_room.map(OsString::from));
+        Operation::parse(arguments.into_iter())
+    }
+
+    #[test]
+    fn the_control_room_directory_is_optional_and_must_be_absolute() {
+        assert!(matches!(
+            serve(None),
+            Ok(Operation::Serve {
+                control_room: None,
+                ..
+            })
+        ));
+        assert!(matches!(
+            serve(Some("/opt/renoa/control-room")),
+            Ok(Operation::Serve { control_room: Some(path), .. })
+                if path == Path::new("/opt/renoa/control-room")
+        ));
+        assert!(serve(Some("control-room")).is_err());
+    }
 }

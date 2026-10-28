@@ -21,6 +21,9 @@ use crate::{
     node_store::ExecutionRecord,
 };
 
+mod host_calls;
+use host_calls::{HostCalls, IncomingCall};
+
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -116,6 +119,8 @@ async fn serve_session_inner(
     node_log::event("info", "coordinator_connected", &serde_json::json!({}));
     let mut advertised = None;
     advertise(&mut socket, &runtime, &mut advertised).await?;
+    send_client(&mut socket, &ClientMessage::ServeHostControl).await?;
+    let mut host_calls = HostCalls::new(Arc::clone(&runtime));
     let mut agent_refresh = tokio::time::interval(AGENT_REFRESH_INTERVAL);
     agent_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -140,6 +145,11 @@ async fn serve_session_inner(
                 }
             }
             _ = agent_refresh.tick() => advertise(&mut socket, &runtime, &mut advertised).await?,
+            answer = host_calls.finished(), if !host_calls.is_idle() => {
+                if let Some(answer) = answer {
+                    send_client(&mut socket, &answer).await?;
+                }
+            }
             message = receive_server(&mut socket) => {
                 let message = message?;
                 handle_server_message(
@@ -148,6 +158,7 @@ async fn serve_session_inner(
                     tasks,
                     running,
                     &mut publications,
+                    &mut host_calls,
                     message,
                 ).await?;
             }
@@ -205,6 +216,7 @@ async fn handle_server_message(
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
     publications: &mut HashMap<CommandId, Publication>,
+    host_calls: &mut HostCalls,
     message: ServerMessage,
 ) -> Result<(), NodeError> {
     match message {
@@ -257,6 +269,22 @@ async fn handle_server_message(
             publication.event_in_flight = None;
             refresh_publications(runtime, publications).await?;
             send_pending(socket, runtime, publications).await?;
+        }
+        ServerMessage::HostCall {
+            call_id,
+            principal_id,
+            method,
+            path,
+            body,
+        } => {
+            let call = IncomingCall {
+                call_id,
+                principal_id,
+                method,
+                path,
+                body,
+            };
+            host_calls.start(call);
         }
         ServerMessage::Error { code, message, .. } => {
             return Err(NodeError::Rejected { code, message });

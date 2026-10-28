@@ -2,6 +2,7 @@ use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, PrincipalId, SurfaceRef, TargetRef,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{NodeId, TaskEventId, TaskId};
 
@@ -94,8 +95,23 @@ pub(crate) enum SurfaceOperation {
     },
 }
 
+/// The methods of an owner's Host control call. The relay forwards no other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HostMethod {
+    Get,
+    Post,
+    Put,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum NodeOperation {
+    ServeHostControl,
+    CompleteHostCall {
+        call_id: Uuid,
+        status: u16,
+        body: String,
+    },
     AdvertiseTargets {
         targets: Vec<TargetRef>,
     },

@@ -11,12 +11,15 @@ mod browser_ticket_store;
 mod connection;
 mod control_log;
 mod control_migrations;
+mod control_room;
 mod control_schema;
 mod coordinator;
 mod credential_relay_http;
 mod credential_relay_store;
 mod dispatch_store;
 mod event_store;
+mod host_calls;
+mod host_control_http;
 mod identity;
 mod identity_store;
 mod ids;
@@ -41,5 +44,5 @@ pub use identity::{
 pub use ids::{DeviceId, NodeId, TaskEventId, TaskId};
 pub use json_ws::{ClientMessage, JSON_WS_VERSION, ServerMessage};
 pub use operations::{
-    ErrorCode, PeerIdentity, TargetSummary, TaskEvent, TaskEventKind, TaskSummary,
+    ErrorCode, HostMethod, PeerIdentity, TargetSummary, TaskEvent, TaskEventKind, TaskSummary,
 };

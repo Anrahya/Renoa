@@ -41,6 +41,8 @@ pub(crate) async fn cleanup_connection(
     let PeerIdentity::Node { node_id } = peer else {
         return;
     };
+    // Even a connection a newer one replaced ends the calls sent on it.
+    state.host_calls.end_connection(connection_id);
     let mut nodes = state.nodes.lock().await;
     if nodes
         .get(node_id)

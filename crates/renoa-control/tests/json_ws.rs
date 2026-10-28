@@ -1,5 +1,5 @@
 use renoa_control::{
-    ClientMessage, ConnectionTicket, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
+    ClientMessage, ConnectionTicket, ErrorCode, HostMethod, JSON_WS_VERSION, NodeId, ServerMessage,
     TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId, TaskSummary,
 };
 use renoa_protocol::{
@@ -10,8 +10,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v13_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 13);
+fn json_websocket_v14_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 14);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -24,7 +24,7 @@ fn json_websocket_v13_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 13,
+            "version": 14,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -91,7 +91,7 @@ fn json_websocket_v13_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v13_text_input_carries_context_and_a_guest_author_only_when_present() {
+fn json_websocket_v14_text_input_carries_context_and_a_guest_author_only_when_present() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let submit = ClientMessage::Submit {
@@ -192,7 +192,7 @@ fn json_websocket_v13_text_input_carries_context_and_a_guest_author_only_when_pr
 }
 
 #[test]
-fn json_websocket_v13_encodes_task_discovery() {
+fn json_websocket_v14_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -234,7 +234,7 @@ fn json_websocket_v13_encodes_task_discovery() {
 }
 
 #[test]
-fn json_websocket_v13_encodes_target_discovery_and_task_opening() {
+fn json_websocket_v14_encodes_target_discovery_and_task_opening() {
     let node_id = NodeId::from_uuid(Uuid::from_u128(3));
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let cases = [
@@ -298,7 +298,7 @@ fn json_websocket_v13_encodes_target_discovery_and_task_opening() {
 }
 
 #[test]
-fn json_websocket_v13_encodes_harness_neutral_execution_events() {
+fn json_websocket_v14_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {
@@ -413,4 +413,73 @@ fn execute_delivery_contains_only_continuity_data() {
             }
         })
     );
+}
+
+#[test]
+fn json_websocket_v14_encodes_host_control_calls() {
+    let call_id = Uuid::from_u128(9);
+    let call = ServerMessage::HostCall {
+        call_id,
+        principal_id: PrincipalId::from_uuid(Uuid::from_u128(4)),
+        method: HostMethod::Post,
+        path: "/v1/host/agents".to_owned(),
+        body: Some("{\"name\":\"Scout\"}".to_owned()),
+    };
+    let call_json = json!({
+        "type": "host_call",
+        "call_id": "00000000-0000-0000-0000-000000000009",
+        "principal_id": "00000000-0000-0000-0000-000000000004",
+        "method": "POST",
+        "path": "/v1/host/agents",
+        "body": "{\"name\":\"Scout\"}"
+    });
+    assert_eq!(
+        serde_json::to_value(&call).expect("serialize Host call"),
+        call_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(call_json).expect("deserialize Host call"),
+        call
+    );
+    let read = ServerMessage::HostCall {
+        call_id,
+        principal_id: PrincipalId::from_uuid(Uuid::from_u128(4)),
+        method: HostMethod::Get,
+        path: "/v1/host".to_owned(),
+        body: None,
+    };
+    assert_eq!(
+        serde_json::to_value(read).expect("serialize Host read")["body"],
+        json!(null)
+    );
+
+    assert_eq!(
+        serde_json::to_value(ClientMessage::ServeHostControl).expect("serialize advertisement"),
+        json!({ "type": "serve_host_control" })
+    );
+    let complete = ClientMessage::CompleteHostCall {
+        call_id,
+        status: 200,
+        body: "{}".to_owned(),
+    };
+    let complete_json = json!({
+        "type": "complete_host_call",
+        "call_id": "00000000-0000-0000-0000-000000000009",
+        "status": 200,
+        "body": "{}"
+    });
+    assert_eq!(
+        serde_json::to_value(&complete).expect("serialize Host answer"),
+        complete_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(complete_json).expect("deserialize Host answer"),
+        complete
+    );
+    for method in ["get", "DELETE", "PATCH"] {
+        assert!(
+            serde_json::from_value::<HostMethod>(json!(method)).is_err(),
+            "{method} is not a Host control method"
+        );
+    }
 }

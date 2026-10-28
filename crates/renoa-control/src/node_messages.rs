@@ -3,8 +3,9 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    ControlError, ErrorCode, NodeId, ServerMessage, TaskId,
+    ControlError, ErrorCode, NodeId, ServerMessage, TaskId, control_log,
     coordinator::CoordinatorState,
+    host_calls::HostReply,
     operations::NodeOperation,
     wire::{publish_task_event, send_control_error, send_error},
 };
@@ -33,6 +34,33 @@ pub(crate) async fn handle_node_operation(
         return;
     }
     match operation {
+        NodeOperation::ServeHostControl => {
+            if let Some(node) = state.nodes.lock().await.get_mut(&node_id) {
+                node.host_control = true;
+            }
+            control_log::event(
+                "info",
+                "node_host_control_advertised",
+                &serde_json::json!({ "node_id": node_id }),
+            );
+        }
+        NodeOperation::CompleteHostCall {
+            call_id,
+            status,
+            body,
+        } => {
+            let delivered =
+                state
+                    .host_calls
+                    .complete(connection_id, call_id, HostReply { status, body });
+            if !delivered {
+                control_log::event(
+                    "info",
+                    "host_call_answer_dropped",
+                    &serde_json::json!({ "node_id": node_id, "call_id": call_id }),
+                );
+            }
+        }
         NodeOperation::AdvertiseTargets { targets } => {
             if let Err(error) =
                 crate::task_opening::advertise_targets(state, node_id, connection_id, targets).await

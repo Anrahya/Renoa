@@ -59,6 +59,30 @@ pub(crate) fn node_owner(
 }
 
 impl ControlStore {
+    /// The one principal that owns every enrolled node: the Host owner a login
+    /// page names. `None` when no node is owned or several principals own one.
+    pub(crate) async fn sole_node_owner(&self) -> Result<Option<PrincipalId>, ControlError> {
+        let path = Arc::clone(&self.path);
+        blocking(move || {
+            let connection = open_connection(&path)?;
+            let mut statement = connection
+                .prepare("SELECT DISTINCT principal_id FROM node_owners LIMIT 2")
+                .map_err(sqlite_error)?;
+            let owners = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(sqlite_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sqlite_error)?;
+            match owners.as_slice() {
+                [owner] => Ok(Some(PrincipalId::from_uuid(
+                    owner.parse().map_err(id_error)?,
+                ))),
+                _ => Ok(None),
+            }
+        })
+        .await
+    }
+
     /// Records the node's owner and its single-use enrollment together, so a
     /// refused owner leaves no enrollment and a failed enrollment no owner.
     pub(crate) async fn create_node_enrollment(
