@@ -76,7 +76,7 @@ mod tests {
         SurfaceRef, TargetRef,
     };
 
-    use renoa_local::{Speaker, TurnObservation};
+    use renoa_local::Speaker;
     use renoa_protocol::Author;
 
     use super::{prompt_text, speaker, surface_context};
