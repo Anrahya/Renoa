@@ -370,7 +370,8 @@ async fn dispatch(
         | ServerMessage::DeviceRevoked { request_id, .. }
         | ServerMessage::Attached { request_id, .. }
         | ServerMessage::CommandAccepted { request_id, .. }
-        | ServerMessage::StopAccepted { request_id, .. } => *request_id,
+        | ServerMessage::StopAccepted { request_id, .. }
+        | ServerMessage::HostAnswer { request_id, .. } => *request_id,
         ServerMessage::Enrolled { .. }
         | ServerMessage::DeviceChallenge { .. }
         | ServerMessage::Authenticated { .. }

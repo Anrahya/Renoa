@@ -8,14 +8,12 @@ use uuid::Uuid;
 
 use crate::{
     ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
-    HostMethod, NodeId, StopOutcome, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
+    HostMethod, NodeId, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary,
     agent_messages::OutgoingMessage,
     operations::{NodeOperation, SurfaceOperation},
 };
 
 pub const JSON_WS_VERSION: u32 = 14;
-const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
-const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -77,6 +75,13 @@ pub enum ClientMessage {
         request_id: u64,
         task_id: TaskId,
     },
+    /// The owner's Host control call, from a signed-in app or browser.
+    CallHost {
+        request_id: u64,
+        method: HostMethod,
+        path: String,
+        body: Option<String>,
+    },
     AdvertiseTargets {
         targets: Vec<TargetCard>,
     },
@@ -116,40 +121,6 @@ pub enum ClientMessage {
 }
 
 impl ClientMessage {
-    pub(crate) fn has_interoperable_numbers(&self) -> bool {
-        match self {
-            Self::Enroll { .. }
-            | Self::Authenticate { .. }
-            | Self::AuthenticateTicket { .. }
-            | Self::DeviceProof { .. }
-            | Self::AdvertiseTargets { .. }
-            | Self::AcknowledgeExecution { .. }
-            | Self::AcknowledgeStop { .. }
-            | Self::ServeHostControl
-            | Self::CompleteHostCall { .. } => true,
-            Self::ListTasks { request_id }
-            | Self::ListTargets { request_id }
-            | Self::ListDevices { request_id }
-            | Self::RevokeDevice { request_id, .. }
-            | Self::OpenTask { request_id, .. }
-            | Self::Submit { request_id, .. }
-            | Self::StopCommand { request_id, .. }
-            | Self::DeleteTask { request_id, .. }
-            | Self::SendAgentMessage { request_id, .. } => interoperable(*request_id),
-            Self::Attach {
-                request_id,
-                after_sequence,
-                ..
-            } => interoperable(*request_id) && after_sequence.is_none_or(interoperable),
-            Self::PublishExecutionEvents { events, .. } => {
-                events.iter().all(execution_event_has_interoperable_numbers)
-            }
-            Self::PublishLiveActivity { activity, .. } => {
-                live_activity_has_interoperable_numbers(activity)
-            }
-        }
-    }
-
     pub(crate) fn into_operation(self) -> Option<JsonOperation> {
         let operation = match self {
             Self::AdvertiseTargets { targets } => NodeOperation::AdvertiseTargets { targets },
@@ -226,7 +197,8 @@ impl ClientMessage {
             | Self::Attach { .. }
             | Self::Submit { .. }
             | Self::StopCommand { .. }
-            | Self::DeleteTask { .. } => return self.into_surface_operation(),
+            | Self::DeleteTask { .. }
+            | Self::CallHost { .. } => return self.into_surface_operation(),
         };
         Some(JsonOperation::Node(operation))
     }
@@ -293,6 +265,15 @@ impl ClientMessage {
                 request_id,
                 device_id,
             } => (request_id, SurfaceOperation::RevokeDevice { device_id }),
+            Self::CallHost {
+                request_id,
+                method,
+                path,
+                body,
+            } => (
+                request_id,
+                SurfaceOperation::CallHost { method, path, body },
+            ),
             Self::Enroll { .. }
             | Self::ListTargets { .. }
             | Self::Authenticate { .. }
@@ -380,6 +361,12 @@ pub enum ServerMessage {
         request_id: u64,
         task_id: TaskId,
     },
+    /// The Host's answer to a `call_host`, as its HTTP status and JSON body.
+    HostAnswer {
+        request_id: u64,
+        status: u16,
+        body: String,
+    },
     ExecutionEventsAccepted {
         command_id: CommandId,
         through_execution_sequence: u64,
@@ -418,74 +405,7 @@ pub enum ServerMessage {
     },
 }
 
-impl ServerMessage {
-    pub(crate) fn has_interoperable_numbers(&self) -> bool {
-        match self {
-            Self::Enrolled { .. }
-            | Self::Authenticated { .. }
-            | Self::DeviceChallenge { .. }
-            | Self::ExecutionAcknowledged { .. }
-            | Self::Execute { .. }
-            | Self::Stop { .. }
-            | Self::HostCall { .. } => true,
-            Self::TaskList { request_id, .. }
-            | Self::TargetList { request_id, .. }
-            | Self::DeviceRevoked { request_id, .. }
-            | Self::TaskOpened { request_id, .. }
-            | Self::CommandAccepted { request_id, .. }
-            | Self::StopAccepted { request_id, .. }
-            | Self::TaskDeleted { request_id, .. } => interoperable(*request_id),
-            Self::DeviceList {
-                request_id,
-                devices,
-            } => {
-                interoperable(*request_id)
-                    && devices
-                        .iter()
-                        .all(|device| interoperable(device.created_at_ms))
-            }
-            Self::Attached {
-                request_id,
-                through_sequence,
-                ..
-            } => interoperable(*request_id) && through_sequence.is_none_or(interoperable),
-            Self::ExecutionEventsAccepted {
-                through_execution_sequence,
-                ..
-            } => interoperable(*through_execution_sequence),
-            Self::TaskEvent { event } => {
-                interoperable(event.sequence)
-                    && match &event.kind {
-                        TaskEventKind::CommandSubmitted { .. } => true,
-                        TaskEventKind::ExecutionEvent { event, .. } => {
-                            execution_event_has_interoperable_numbers(event)
-                        }
-                    }
-            }
-            Self::LiveActivity { activity, .. } => {
-                live_activity_has_interoperable_numbers(activity)
-            }
-            Self::Error { request_id, .. } => request_id.is_none_or(interoperable),
-        }
-    }
-}
-
-fn live_activity_has_interoperable_numbers(activity: &LiveActivity) -> bool {
-    match activity {
-        LiveActivity::TextDelta { sequence, .. } => interoperable(*sequence),
-        LiveActivity::TextReset => true,
-    }
-}
-
-const fn interoperable(value: u64) -> bool {
-    value <= MAX_INTEROPERABLE_INTEGER
-}
-
-fn execution_event_has_interoperable_numbers(event: &ExecutionEvent) -> bool {
-    interoperable(event.sequence)
-        && (-MAX_INTEROPERABLE_SIGNED_INTEGER..=MAX_INTEROPERABLE_SIGNED_INTEGER)
-            .contains(&event.recorded_at_ms)
-}
+mod numbers;
 
 #[cfg(test)]
 mod tests;

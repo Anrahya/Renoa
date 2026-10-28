@@ -974,3 +974,111 @@ async fn a_control_room_directory_without_a_shell_is_refused() {
             .expect("coordinator");
     assert!(coordinator.with_control_room(empty.path()).is_err());
 }
+
+// --- `call_host`: the same relay over an RCP connection ---
+
+impl Fixture {
+    /// A browser's RCP connection, opened with a ticket from its remembered session.
+    async fn browser_connection(&self, caller: &Caller) -> Socket {
+        let ticket: Value = caller
+            .write(
+                Method::POST,
+                "/v1/identity/connection-ticket",
+                &json!({"surface": "control_room"}),
+            )
+            .send()
+            .await
+            .expect("ticket request")
+            .error_for_status()
+            .expect("a ticket")
+            .json()
+            .await
+            .expect("ticket JSON");
+        let (mut socket, _) = connect_async(&self.ws).await.expect("connect");
+        send(
+            &mut socket,
+            &ClientMessage::AuthenticateTicket {
+                version: JSON_WS_VERSION,
+                ticket: serde_json::from_value(ticket["connectionTicket"].clone()).expect("ticket"),
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut socket).await,
+            ServerMessage::Authenticated { .. }
+        ));
+        socket
+    }
+
+    /// A chat surface of the owner, linked with a bearer credential as Discord is.
+    async fn chat_link(&self) -> Socket {
+        let token = self
+            .coordinator
+            .create_enrollment(
+                PeerIdentity::Surface {
+                    principal_id: self.owner,
+                    surface: SurfaceRef::new("discord"),
+                },
+                SystemTime::now() + Duration::from_mins(1),
+            )
+            .await
+            .expect("surface enrollment");
+        let (mut socket, _) = connect_async(&self.ws).await.expect("connect");
+        send(
+            &mut socket,
+            &ClientMessage::Enroll {
+                version: JSON_WS_VERSION,
+                token,
+            },
+        )
+        .await;
+        let ServerMessage::Enrolled { credentials, .. } = receive(&mut socket).await else {
+            panic!("the coordinator enrolls the surface");
+        };
+        self.connect(&credentials).await
+    }
+}
+
+fn call_host(request_id: u64, method: HostMethod, path: &str, body: Option<&str>) -> ClientMessage {
+    ClientMessage::CallHost {
+        request_id,
+        method,
+        path: path.to_owned(),
+        body: body.map(str::to_owned),
+    }
+}
+
+/// The error a request was answered with, and its message.
+async fn refusal(socket: &mut Socket, request_id: u64) -> (ErrorCode, String) {
+    match receive(socket).await {
+        ServerMessage::Error {
+            request_id: Some(answered),
+            code,
+            message,
+        } if answered == request_id => (code, message),
+        other => panic!("expected request {request_id} to be refused, received {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn only_a_signed_in_app_calls_the_host_over_rcp_never_a_browser_ticket_or_a_chat_link() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    // A ticket connection outlives the browser session that issued it, so it
+    // would keep Host control after a logout; the browser uses /v1/host.
+    let mut browser = f.browser_connection(&f.caller).await;
+    let mut link = f.chat_link().await;
+    for socket in [&mut browser, &mut link] {
+        send(socket, &call_host(1, HostMethod::Get, "/v1/host", None)).await;
+        let (code, message) = refusal(socket, 1).await;
+        assert_eq!(code, ErrorCode::InvalidRole);
+        assert!(message.contains("signed-in app"), "{message}");
+    }
+    assert!(hears_nothing(&mut node).await);
+    // The same browser still reaches its Host through its session.
+    let read = spawn_answer(f.caller.get("/v1/host"));
+    let (call_id, ..) = next_call(&mut node).await;
+    send(&mut node, &complete(call_id, 200, "{}")).await;
+    assert_eq!(read.await.expect("read task").status, StatusCode::OK);
+    f.stop().await;
+}

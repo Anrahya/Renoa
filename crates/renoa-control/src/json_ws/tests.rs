@@ -2,7 +2,7 @@
 //! receives an unsafe number it would later send back, so the outbound
 //! checks are exercised here.
 
-use super::*;
+use super::{numbers::MAX_INTEROPERABLE_INTEGER, *};
 
 const LARGEST_SAFE: u64 = MAX_INTEROPERABLE_INTEGER;
 const SMALLEST_UNSAFE: u64 = MAX_INTEROPERABLE_INTEGER + 1;

@@ -19,12 +19,12 @@ class WireTest {
     private val clientTypes =
         setOf(
             "authenticate", "authenticate_ticket", "device_proof", "list_tasks", "list_targets", "open_task", "attach",
-            "stop_command", "submit", "delete_task",
+            "stop_command", "submit", "delete_task", "call_host",
         )
     private val surfaceReceivedTypes =
         setOf(
             "authenticated", "device_challenge", "task_list", "target_list", "task_opened", "attached", "live_activity",
-            "stop_accepted", "command_accepted", "task_deleted", "task_event", "error",
+            "stop_accepted", "command_accepted", "task_deleted", "task_event", "host_answer", "error",
         )
 
     /** Frames the binding defines that a surface never sends or receives. Listing them forces a decision when the document grows. */

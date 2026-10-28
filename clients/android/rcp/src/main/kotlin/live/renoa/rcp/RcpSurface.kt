@@ -90,6 +90,14 @@ interface RcpSurface {
      */
     suspend fun stopCommand(taskId: Uuid, commandId: Uuid): StopOutcome
 
+    /**
+     * Calls the owner's Host at [path] under `/v1/host`, with [body] as JSON text for a change. The
+     * Host's own refusal is an answer, not an exception. An [RcpException] with `node_offline` leaves
+     * a change's outcome unknown: repeat it under the same `operation_id`, which the Host answers
+     * from its receipt. Only a device that proved its key may call.
+     */
+    suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer
+
     /** Resends every pending command with its original identity and returns the ones admitted. */
     suspend fun retryPendingCommands(): List<Uuid>
 

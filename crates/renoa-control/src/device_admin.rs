@@ -1,8 +1,10 @@
 //! What a connection may do to its principal's signed-in apps, and ending a
 //! device's sessions once it is revoked.
 
+use std::sync::Arc;
+
 use renoa_protocol::{PrincipalId, SurfaceRef};
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 use crate::{
     DeviceId, ErrorCode, ServerMessage, control_log,
@@ -32,12 +34,25 @@ impl Authority {
         }
     }
 
-    /// Only a person-bound connection may list or revoke devices, so a thin
-    /// chat surface cannot cut off the owner's apps.
-    pub(crate) const fn may_administer_devices(self) -> bool {
+    /// Whether a person proved themselves on this connection, with a passkey
+    /// or a device key. Only such a connection may list or revoke devices, so
+    /// a thin chat surface cannot cut off the owner's apps.
+    pub(crate) const fn is_person_bound(self) -> bool {
         match self {
             Self::Ticket | Self::KeyedDevice(_) => true,
             Self::BearerDevice(_) => false,
+        }
+    }
+
+    /// Whether this connection may call the owner's Host. Only an app that
+    /// proved its key may: revoking the device ends its connections. A
+    /// browser's ticket connection is not tied to the session that issued it,
+    /// so logging out would not end it; a browser calls `/v1/host`, which
+    /// checks its session on every call.
+    pub(crate) const fn may_call_host(self) -> bool {
+        match self {
+            Self::KeyedDevice(_) => true,
+            Self::Ticket | Self::BearerDevice(_) => false,
         }
     }
 }
@@ -47,6 +62,8 @@ pub(crate) struct SurfaceSession {
     pub(crate) principal_id: PrincipalId,
     pub(crate) surface: SurfaceRef,
     pub(crate) authority: Authority,
+    /// The connection's slots for Host calls waiting on an answer.
+    pub(crate) host_calls: Arc<Semaphore>,
 }
 
 pub(crate) async fn list_devices(
@@ -115,7 +132,7 @@ async fn allowed(
     request_id: u64,
     authority: Authority,
 ) -> bool {
-    if authority.may_administer_devices() {
+    if authority.is_person_bound() {
         return true;
     }
     send_error(

@@ -11,6 +11,8 @@ import kotlinx.coroutines.test.runTest
 import live.renoa.rcp.ApplyLiveActivity
 import live.renoa.rcp.CommandSubmission
 import live.renoa.rcp.Disconnected
+import live.renoa.rcp.HostAnswer
+import live.renoa.rcp.HostMethod
 import live.renoa.rcp.InMemoryRcpState
 import live.renoa.rcp.LiveActivity
 import live.renoa.rcp.PendingTextCommand
@@ -159,6 +161,8 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         stopped += commandId
         return StopOutcome.Requested
     }
+
+    override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer = error("unused")
 
     override suspend fun retryPendingCommands(): List<Uuid> =
         state.pendingCommands().map { command ->

@@ -73,6 +73,9 @@ class FakeCoordinator : AutoCloseable {
     /** Lets a test make the coordinator answer wrongly: every reply passes through it. */
     @Volatile var rewriteReply: (JsonObject) -> JsonObject = { it }
 
+    /** The owner's Host: answers a `call_host` with a status and JSON text, or null to refuse it as offline. */
+    @Volatile var host: (method: String, path: String, body: String?) -> Pair<Int, String>? = { _, _, _ -> 200 to "{}" }
+
     /** When set, every connection attempt is answered with a redirect to this URL instead of an upgrade. */
     @Volatile var redirectTo: String? = null
 
@@ -223,6 +226,7 @@ class FakeCoordinator : AutoCloseable {
                 "attach" -> attach(requestId, frame)
                 "submit" -> submit(requestId, frame)
                 "stop_command" -> stopCommand(requestId, frame)
+                "call_host" -> callHost(requestId, frame)
                 else -> webSocket.send(error(requestId, "invalid_message", "unsupported frame $type"))
             }
         }
@@ -354,6 +358,20 @@ class FakeCoordinator : AutoCloseable {
             }
             attached += taskId
             if (live) attachedLive += taskId
+        }
+
+        private fun callHost(requestId: Long, frame: JsonObject) {
+            if (deviceKey == null) {
+                socket.send(error(requestId, "invalid_role", "the Host is controlled from a signed-in app or a browser"))
+                return
+            }
+            val body = frame.getValue("body").let { if (it is JsonNull) null else it.jsonPrimitive.content }
+            val answer = host(frame.getValue("method").jsonPrimitive.content, frame.getValue("path").jsonPrimitive.content, body)
+            if (answer == null) {
+                socket.send(error(requestId, "node_offline", "Your Host is not connected. Retry when it returns."))
+                return
+            }
+            reply(requestId, "host_answer") { put("status", answer.first); put("body", answer.second) }
         }
 
         private fun stopCommand(requestId: Long, frame: JsonObject) {

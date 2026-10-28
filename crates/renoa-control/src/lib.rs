@@ -28,6 +28,7 @@ mod dispatch_store;
 mod event_store;
 mod host_calls;
 mod host_control_http;
+mod host_control_rcp;
 mod identity;
 mod identity_store;
 mod ids;
