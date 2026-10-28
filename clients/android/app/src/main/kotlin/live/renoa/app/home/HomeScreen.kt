@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -72,6 +73,9 @@ fun HomeScreen(
     onChangeColours: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
+    // Read once per visit: the first visit assembles, later ones show the tiles in place.
+    val assemble = remember { !viewModel.assembled }
+    LaunchedEffect(Unit) { viewModel.markAssembled() }
     val colors = Renoa.colors
     val lead = state.lead
 
@@ -89,11 +93,11 @@ fun HomeScreen(
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 16.dp)) {
                 val briefing = state.briefing
                 if (briefing != null && lead != null) {
-                    item(key = "briefing") { BriefingCard(lead, briefing.text, state.people) { onOpenChat(lead.id) } }
+                    item(key = "briefing") { BriefingCard(lead, briefing.text, state.people, assemble) { onOpenChat(lead.id) } }
                 }
                 itemsIndexed(state.people, key = { _, agent -> agent.id }) { index, agent ->
                     // On the first showing the tiles drop in one after another, as an agent assembles on the landing page.
-                    PersonRow(agent, state.agent(agent.glance.with), index * 90, onOpen = { onOpenChat(agent.id) }, onAnswer = { viewModel.answer(agent.id, it) })
+                    PersonRow(agent, state.agent(agent.glance.with), if (assemble) index * 90 else null, onOpen = { onOpenChat(agent.id) }, onAnswer = { viewModel.answer(agent.id, it) })
                 }
                 item(key = "new") { MeetSomeoneNew(onNewAgent) }
             }
@@ -117,7 +121,7 @@ private fun nameColoured(text: String, people: List<AgentSummary>, base: SpanSty
     }
 
 @Composable
-private fun BriefingCard(lead: AgentSummary, text: String, people: List<AgentSummary>, onOpen: () -> Unit) {
+private fun BriefingCard(lead: AgentSummary, text: String, people: List<AgentSummary>, assemble: Boolean, onOpen: () -> Unit) {
     val colors = Renoa.colors
     val shape = RoundedCornerShape(RenoaShapes.Card)
     Row(
@@ -131,13 +135,13 @@ private fun BriefingCard(lead: AgentSummary, text: String, people: List<AgentSum
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Badge(lead.name, lead.state, 52.dp, primary = lead.primary, arriveAfterMillis = 0)
+        Badge(lead.name, lead.state, 52.dp, primary = lead.primary, arriveAfterMillis = if (assemble) 0 else null)
         Text(nameColoured(text, people, SpanStyle(color = colors.foregroundSoft), colors.foreground), Modifier.weight(1f).padding(top = 2.dp), style = RenoaType.Body)
     }
 }
 
 @Composable
-private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, arriveAfterMillis: Int, onOpen: () -> Unit, onAnswer: (String) -> Unit) {
+private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, arriveAfterMillis: Int?, onOpen: () -> Unit, onAnswer: (String) -> Unit) {
     val colors = Renoa.colors
     val glance = agent.glance
     Row(

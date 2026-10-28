@@ -37,6 +37,17 @@ data class HomeUiState(
 class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     private val notice = MutableStateFlow<String?>(null)
 
+    /**
+     * Whether Home has already shown its tiles dropping in. Home stays at the bottom of the back
+     * stack, so this lives as long as the app does: coming back from a chat does not replay it.
+     */
+    var assembled: Boolean = false
+        private set
+
+    fun markAssembled() {
+        assembled = true
+    }
+
     val state: StateFlow<HomeUiState> =
         combine(repository.agents, repository.briefing, notice) { agents, briefing, notice -> HomeUiState(briefing, homeOrder(agents), notice) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.briefing.value, homeOrder(repository.agents.value)))
