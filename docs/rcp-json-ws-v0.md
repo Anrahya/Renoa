@@ -153,7 +153,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 13
+  "version": 14
 }
 ```
 
@@ -529,8 +529,8 @@ The coordinator delivers an answer to the browser only from the connection the
 call was sent on, and only once; any other answer is dropped. A `status` the
 coordinator cannot relay (anything outside 200-299 and 400-599) becomes a
 `502`. A call ends without an answer when its connection ends or after sixty
-seconds. The coordinator never retries a call and keeps neither the request nor
-the answer. A change survives a lost answer because the browser repeats the same
+seconds. The coordinator never retries a call and writes neither the request
+body nor the answer to its files. A change survives a lost answer because the browser repeats the same
 request under the same `operation_id` and the Host answers from the receipt it
 recorded.
 

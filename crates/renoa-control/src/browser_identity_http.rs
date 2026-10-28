@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, FromRequest, Request, State, rejection::JsonRejection},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -173,18 +173,28 @@ async fn authentication_verify(
     }
 }
 
+/// Whether the request names exactly one `Origin` and it is the passkey
+/// origin. This is the only origin rule: a browser write that a cookie or a
+/// pairing code authorizes requires it, and a ceremony that names an origin must
+/// pass it.
+pub(crate) fn same_origin(state: &CoordinatorState, headers: &HeaderMap) -> bool {
+    let mut origins = headers.get_all(header::ORIGIN).iter();
+    let (Some(origin), None) = (origins.next(), origins.next()) else {
+        return false;
+    };
+    state
+        .browser_identity
+        .as_ref()
+        .is_some_and(|identity| origin == identity.origin())
+}
+
 async fn json_request<T: DeserializeOwned>(
     request: Request,
     state: &Arc<CoordinatorState>,
 ) -> Result<T, Box<Response>> {
-    // Existing native clients need not send Origin. Browser requests with an
-    // Origin must match the passkey relying party before a cookie can be issued.
-    if let Some(origin) = request.headers().get(header::ORIGIN)
-        && state
-            .browser_identity
-            .as_ref()
-            .is_none_or(|identity| origin != identity.origin())
-    {
+    // Existing native clients need not send Origin. A request that names one
+    // must name exactly the passkey relying party's before a cookie can be issued.
+    if request.headers().contains_key(header::ORIGIN) && !same_origin(state, request.headers()) {
         return Err(Box::new(error_response(
             &ControlError::authentication_failed(),
         )));

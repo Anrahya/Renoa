@@ -108,6 +108,17 @@ impl Answer {
     }
 }
 
+/// What the owner reads in a refusal names none of the machinery behind it.
+fn assert_plain(answer: &Answer) {
+    let message = answer.json()["message"]
+        .as_str()
+        .expect("a message")
+        .to_lowercase();
+    for word in ["coordinator", "node", "relay", "socket"] {
+        assert!(!message.contains(word), "{word:?} in {message:?}");
+    }
+}
+
 async fn answer_of(request: RequestBuilder) -> Answer {
     let response = request.send().await.expect("HTTP answer");
     Answer {
@@ -208,11 +219,15 @@ impl Fixture {
     }
 
     async fn enroll_node(&self) -> DeviceCredentials {
+        self.enroll_node_of(self.owner).await
+    }
+
+    async fn enroll_node_of(&self, owner: PrincipalId) -> DeviceCredentials {
         let token = self
             .coordinator
             .create_node_enrollment(
                 NodeId::new(),
-                self.owner,
+                owner,
                 SystemTime::now() + Duration::from_mins(1),
             )
             .await
@@ -478,6 +493,7 @@ async fn a_host_that_is_offline_or_not_serving_is_unavailable_until_a_node_serve
     let offline = answer_of(f.caller.get("/v1/host")).await;
     assert_eq!(offline.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(offline.code(), "host_offline");
+    assert_plain(&offline);
 
     // A connected node that never said it serves Host control is not called.
     let mut node = f.connect(&credentials).await;
@@ -507,6 +523,7 @@ async fn two_serving_nodes_of_one_owner_are_ambiguous_until_one_leaves() {
     let ambiguous = answer_of(f.caller.get("/v1/host")).await;
     assert_eq!(ambiguous.status, StatusCode::CONFLICT);
     assert_eq!(ambiguous.code(), "host_ambiguous");
+    assert_plain(&ambiguous);
     assert!(hears_nothing(&mut first).await);
 
     // The coordinator notices the departure asynchronously.
@@ -540,6 +557,7 @@ async fn a_node_that_disconnects_mid_call_ends_the_call() {
     let ended = write.await.expect("write task");
     assert_eq!(ended.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(ended.code(), "host_disconnected");
+    assert_plain(&ended);
     assert!(
         ended.json()["message"]
             .as_str()
@@ -547,6 +565,80 @@ async fn a_node_that_disconnects_mid_call_ends_the_call() {
             .contains("retry the same request"),
         "a change says how to recover its outcome"
     );
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn a_connection_a_newer_one_replaced_still_ends_the_calls_sent_on_it() {
+    let f = Fixture::start().await;
+    let credentials = f.enroll_node().await;
+    let mut old = f.connect(&credentials).await;
+    advertise(&mut old).await;
+    let write = spawn_answer(f.caller.write(Method::POST, "/v1/host/agents", &json!({})));
+    let _ = next_call(&mut old).await;
+
+    // The node returns on a new connection while the old one lingers. The old
+    // connection's answers are dropped from then on, so its call ends when it
+    // closes, not at the sixty-second deadline.
+    let _current = f.connect(&credentials).await;
+    old.close(None).await.expect("close the old connection");
+    drop(old);
+
+    let ended = timeout(Duration::from_secs(10), write)
+        .await
+        .expect("the call ends with its connection")
+        .expect("write task");
+    assert_eq!(ended.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(ended.code(), "host_disconnected");
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn a_login_storage_outage_is_unavailable_and_not_a_logout() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let storage =
+        rusqlite::Connection::open(f.files.path().join("control.sqlite")).expect("fault injection");
+    storage
+        .execute("ALTER TABLE browser_sessions RENAME TO sessions_away", [])
+        .expect("break login storage");
+
+    let outage = answer_of(f.caller.get("/v1/host")).await;
+    assert_eq!(outage.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(outage.code(), "identity_unavailable");
+    assert_plain(&outage);
+    assert!(
+        hears_nothing(&mut node).await,
+        "no call is made on an unverified login"
+    );
+
+    // The browser keeps its cookie through the outage and is served again once
+    // login storage returns.
+    storage
+        .execute("ALTER TABLE sessions_away RENAME TO browser_sessions", [])
+        .expect("repair login storage");
+    let read = spawn_answer(f.caller.get("/v1/host"));
+    let (call_id, ..) = next_call(&mut node).await;
+    send(&mut node, &complete(call_id, 200, "{}")).await;
+    assert_eq!(read.await.expect("read task").status, StatusCode::OK);
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn a_failed_lookup_of_the_owners_host_is_unavailable_in_plain_words() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let storage =
+        rusqlite::Connection::open(f.files.path().join("control.sqlite")).expect("fault injection");
+    storage
+        .execute("ALTER TABLE node_owners RENAME TO owners_away", [])
+        .expect("break ownership storage");
+
+    let failed = answer_of(f.caller.get("/v1/host")).await;
+    assert_eq!(failed.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(failed.code(), "host_unavailable");
+    assert_plain(&failed);
+    assert!(hears_nothing(&mut node).await);
     f.stop().await;
 }
 
@@ -603,6 +695,7 @@ async fn an_answer_the_relay_cannot_forward_is_a_bad_gateway() {
         let bad = call.await.expect("call task");
         assert_eq!(bad.status, StatusCode::BAD_GATEWAY, "{status}");
         assert_eq!(bad.code(), "host_invalid_reply");
+        assert_plain(&bad);
     }
     f.stop().await;
 }
@@ -741,25 +834,67 @@ async fn the_login_page_learns_the_one_owner_of_the_enrolled_nodes() {
     let none = answer_of(anonymous.get("/v1/host/access")).await;
     assert_eq!(none.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(none.code(), "owner_unknown");
+    assert_plain(&none);
 
-    let _first = f.quiet_node().await;
-    let _second = f.quiet_node().await;
+    // An enrollment nobody claimed is not an enrolled node, even the owner's.
+    f.coordinator
+        .create_node_enrollment(
+            NodeId::new(),
+            f.owner,
+            SystemTime::now() + Duration::from_mins(1),
+        )
+        .await
+        .expect("an enrollment nobody claims");
+    assert_eq!(
+        answer_of(anonymous.get("/v1/host/access")).await.code(),
+        "owner_unknown"
+    );
+
+    let first = f.enroll_node().await;
+    let second = f.enroll_node().await;
     let one = answer_of(anonymous.get("/v1/host/access")).await;
     assert_eq!(one.status, StatusCode::OK);
     assert_eq!(one.json(), json!({"owner_principal_id": f.owner}));
     assert_eq!(one.headers["cache-control"], "no-store");
 
+    // A stray enrollment for another principal must not lock the owner out of
+    // signing in: only a claimed node counts.
+    let stranger = PrincipalId::from_uuid(Uuid::new_v4());
     f.coordinator
         .create_node_enrollment(
             NodeId::new(),
-            PrincipalId::from_uuid(Uuid::new_v4()),
+            stranger,
             SystemTime::now() + Duration::from_mins(1),
         )
         .await
-        .expect("another owner's node");
+        .expect("an enrollment nobody claims");
+    let unclaimed = answer_of(anonymous.get("/v1/host/access")).await;
+    assert_eq!(unclaimed.json(), json!({"owner_principal_id": f.owner}));
+
+    // Once another principal's node is enrolled the owner is no longer unique;
+    // when that node is revoked it is again.
+    let strangers_node = f.enroll_node_of(stranger).await;
     let several = answer_of(anonymous.get("/v1/host/access")).await;
     assert_eq!(several.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(several.code(), "owner_unknown");
+    f.coordinator
+        .revoke_device(strangers_node.device_id)
+        .await
+        .expect("revoke the stranger's node");
+    let revoked = answer_of(anonymous.get("/v1/host/access")).await;
+    assert_eq!(revoked.json(), json!({"owner_principal_id": f.owner}));
+
+    // A revoked node names no one: with every node revoked there is no owner.
+    for credentials in [first, second] {
+        f.coordinator
+            .revoke_device(credentials.device_id)
+            .await
+            .expect("revoke the owner's node");
+    }
+    assert_eq!(
+        answer_of(anonymous.get("/v1/host/access")).await.code(),
+        "owner_unknown"
+    );
     f.stop().await;
 }
 

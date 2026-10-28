@@ -33,6 +33,28 @@ impl Server {
         self.stop.cancel();
         self.task.await.expect("join server").expect("stop server");
     }
+    /// A pairing request with no `Origin`, a foreign one, or a repeated one is
+    /// refused and claims nothing.
+    async fn refuse_forged_origins(&self, client: &Client, body: &Value) {
+        for origins in [
+            vec![],
+            vec!["https://attacker.invalid"],
+            vec![ORIGIN, ORIGIN],
+        ] {
+            let mut request = client
+                .post(format!("{}/v1/identity/pair", self.url))
+                .json(body);
+            for origin in &origins {
+                request = request.header("origin", *origin);
+            }
+            assert_eq!(
+                request.send().await.expect("forged request").status(),
+                StatusCode::UNAUTHORIZED,
+                "{origins:?}"
+            );
+        }
+    }
+
     async fn pair(&self, client: &Client, body: &Value) -> Response {
         client
             .post(format!("{}/v1/identity/pair", self.url))
@@ -57,18 +79,7 @@ async fn pairing_retries_after_restart_but_cannot_switch_browser_or_revive_logou
         .expect("pairing code");
     let body = json!({"pairingToken":token,"browserNonce":"12".repeat(32)});
     let client = Client::new();
-    for origin in [None, Some("https://attacker.invalid")] {
-        let mut request = client
-            .post(format!("{}/v1/identity/pair", server.url))
-            .json(&body);
-        if let Some(origin) = origin {
-            request = request.header("origin", origin);
-        }
-        assert_eq!(
-            request.send().await.expect("forged request").status(),
-            StatusCode::UNAUTHORIZED
-        );
-    }
+    server.refuse_forged_origins(&client, &body).await;
     let first = server.pair(&client, &body).await;
     assert_eq!(first.status(), StatusCode::OK);
     let cookie = first.headers()["set-cookie"]

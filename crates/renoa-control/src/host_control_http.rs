@@ -1,6 +1,7 @@
 //! `/v1/host`: the signed-in owner's browser calls its Host through the node
 //! that serves it. The coordinator authenticates the owner and relays the
-//! call; it knows no Host operation and keeps nothing of the request.
+//! call; it knows no Host operation and writes neither the request body nor
+//! the answer to its files.
 
 use std::{sync::Arc, time::SystemTime};
 
@@ -16,7 +17,7 @@ use serde::Serialize;
 
 use crate::{
     HostMethod,
-    browser_identity_http::secure_json,
+    browser_identity_http::{same_origin, secure_json},
     control_log,
     coordinator::CoordinatorState,
     host_calls::{HostCallError, HostReply, HostRequest, call},
@@ -54,7 +55,7 @@ async fn access(State(state): State<Arc<CoordinatorState>>) -> Response {
         Ok(None) => failure(
             StatusCode::SERVICE_UNAVAILABLE,
             "owner_unknown",
-            "No single Host owner is enrolled on this coordinator.",
+            "No single owner of a Host is known yet.",
         ),
         Err(error) => store_failure(&error),
     }
@@ -75,7 +76,7 @@ async fn relay(State(state): State<Arc<CoordinatorState>>, request: Request) -> 
         }
     };
     // Never derive authority from Host/Forwarded headers or a caller-supplied actor.
-    if method != HostMethod::Get && !exactly_one_matching_origin(&state, &parts.headers) {
+    if method != HostMethod::Get && !same_origin(&state, &parts.headers) {
         return failure(
             StatusCode::FORBIDDEN,
             "wrong_origin",
@@ -127,17 +128,6 @@ async fn relay(State(state): State<Arc<CoordinatorState>>, request: Request) -> 
         response.headers_mut().insert(header::SET_COOKIE, cookie);
     }
     response
-}
-
-fn exactly_one_matching_origin(state: &CoordinatorState, headers: &HeaderMap) -> bool {
-    let mut origins = headers.get_all(header::ORIGIN).iter();
-    let (Some(origin), None) = (origins.next(), origins.next()) else {
-        return false;
-    };
-    state
-        .browser_identity
-        .as_ref()
-        .is_some_and(|identity| origin == identity.origin())
 }
 
 async fn read_body(
@@ -198,7 +188,7 @@ fn reply_response(reply: HostReply) -> Response {
         return failure(
             StatusCode::BAD_GATEWAY,
             "host_invalid_reply",
-            "Your Host sent an answer this coordinator cannot relay.",
+            "Your Host sent an answer that could not be passed on. Retry in a moment.",
         );
     };
     let mut response = Response::new(Body::from(reply.body));
@@ -251,6 +241,6 @@ fn store_failure(error: &crate::ControlError) -> Response {
     failure(
         StatusCode::SERVICE_UNAVAILABLE,
         "host_unavailable",
-        "The coordinator could not look up your Host. Retry in a moment.",
+        "Your Host could not be reached. Retry in a moment.",
     )
 }

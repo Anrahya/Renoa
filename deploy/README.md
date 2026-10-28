@@ -311,7 +311,9 @@ retains the earlier RCP task surface.
 There is no panel configuration file. The owner is the principal that owns the
 Host's enrolled node (`enroll-node ... <owner-principal-uuid>`, below); the login
 page learns it from `GET /v1/host/access` while exactly one principal owns
-enrolled nodes. Two nodes of one owner connected at once make Host control
+enrolled nodes. A node is enrolled once its enrollment was claimed and until
+its device is revoked; an enrollment nobody claimed names no owner. Two nodes of
+one owner connected at once make Host control
 ambiguous: the coordinator refuses the call until one disconnects. The
 `initial_reasoning` the panel's creation form offered moves to the node as the
 optional `model.defaultReasoning` in `config/node.json`.
@@ -326,6 +328,11 @@ systemctl disable --now renoa-management.service
 rm /etc/systemd/system/renoa-management.service /home/renoa/.renoa/config/management.json
 systemctl daemon-reload
 ```
+
+Once the release is live, `curl -s http://127.0.0.1:7818/v1/host/access` must
+answer 200 with the owner's `owner_principal_id`; the Control Room cannot sign
+anyone in without it. A 503 `owner_unknown` means no node is enrolled yet, or
+enrolled nodes belong to more than one principal.
 
 The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and

@@ -29,6 +29,7 @@ class FakeHost(deploy.Host):
         self.commands: list[tuple[str, ...]] = []
         self.turns = 0
         self.restart_during_settle: set[str] = set()
+        self.probes: list[tuple[str, str]] = []
         self._settled = False
 
     def run(self, *args):
@@ -46,6 +47,7 @@ class FakeHost(deploy.Host):
         return deploy.subprocess.CompletedProcess(args, 0, stdout, "")
 
     def http_status(self, url, method="GET", headers=None):
+        self.probes.append((method, url))
         return 403 if method == "POST" else 401
 
     def sleep(self, seconds):
@@ -224,6 +226,17 @@ class DeployTest(unittest.TestCase):
         self.install(release_archive(self.archives, "v2", {"renoa-node": b"h1"}, assets=("app-2.js",)))
 
         self.assertEqual(self.host.restarted(), [])
+
+    def test_the_health_check_asks_the_coordinator_on_its_own_port(self):
+        self.assertEqual(self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"})), 0)
+
+        self.assertEqual(
+            self.host.probes,
+            [
+                ("GET", "http://127.0.0.1:7818/v1/host/discord"),
+                ("POST", "http://127.0.0.1:7818/v1/host/discord/inspection"),
+            ],
+        )
 
     def test_a_coordinator_that_serves_the_owner_api_without_a_login_fails_the_health_check(self):
         class Open(FakeHost):

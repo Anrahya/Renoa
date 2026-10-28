@@ -60,13 +60,25 @@ pub(crate) fn node_owner(
 
 impl ControlStore {
     /// The one principal that owns every enrolled node: the Host owner a login
-    /// page names. `None` when no node is owned or several principals own one.
+    /// page names. A node is enrolled once its enrollment was claimed and
+    /// until its device is revoked; an owner row of an unclaimed enrollment or
+    /// of a revoked node names no one. `None` when no node is enrolled or
+    /// several principals own one.
     pub(crate) async fn sole_node_owner(&self) -> Result<Option<PrincipalId>, ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
             let connection = open_connection(&path)?;
             let mut statement = connection
-                .prepare("SELECT DISTINCT principal_id FROM node_owners LIMIT 2")
+                .prepare(
+                    "SELECT DISTINCT owner.principal_id FROM node_owners owner
+                     WHERE EXISTS (
+                         SELECT 1 FROM devices device
+                         WHERE device.revoked = 0
+                           AND json_extract(device.peer_json, '$.role') = 'node'
+                           AND json_extract(device.peer_json, '$.node_id') = owner.node_id
+                     )
+                     LIMIT 2",
+                )
                 .map_err(sqlite_error)?;
             let owners = statement
                 .query_map([], |row| row.get::<_, String>(0))

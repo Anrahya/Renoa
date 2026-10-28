@@ -85,6 +85,12 @@ The command prints a 30-minute, one-use token. It is the only implemented
 passkey-registration authority; no unauthenticated remote endpoint can create
 one.
 
+"Same-origin" below is one rule: the request names exactly one `Origin` header
+and it equals the configured origin. Pairing, logout, transport tickets and
+every Host write (`/v1/host` reads need only the cookie) refuse a request
+without it. The four passkey endpoints also accept a request with no `Origin`,
+for native clients, but refuse one that names another origin or repeats it.
+
 The same-origin browser then uses four JSON `POST` endpoints:
 
 ```text

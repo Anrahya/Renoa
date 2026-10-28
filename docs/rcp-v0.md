@@ -133,8 +133,8 @@ These decisions define RCP and are not ordinary implementation details:
     task authority by sharing a process or origin. The owner's browser reaches
     its Host through the coordinator, which authenticates the owner and relays
     each call over the node's existing link to the node that serves the Host;
-    the coordinator interprets no Host operation and keeps nothing of a call,
-    and the Host keeps the records and receipts.
+    the coordinator interprets no Host operation and writes no call's body or
+    answer to its files, and the Host keeps the records and receipts.
 22. A new command or task opening whose node is offline is rejected before
     admission and leaves no record. An offline node is usually a sleeping or
     unplugged device, so the sender learns immediately and resends later; the

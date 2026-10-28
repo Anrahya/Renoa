@@ -10,6 +10,27 @@ use crate::{
     wire::{publish_task_event, send_control_error, send_error},
 };
 
+const REPLACED: &str = "node connection has been replaced";
+
+/// Marks the node's current connection as answering Host control calls. The
+/// connection is checked and marked under one lock, so a connection that a
+/// newer one replaced cannot mark the newer one's entry. Returns whether the
+/// connection was the current one.
+pub(crate) async fn serve_host_control(
+    state: &CoordinatorState,
+    node_id: NodeId,
+    connection_id: Uuid,
+) -> bool {
+    state
+        .nodes
+        .lock()
+        .await
+        .get_mut(&node_id)
+        .filter(|node| node.connection_id == connection_id)
+        .map(|node| node.host_control = true)
+        .is_some()
+}
+
 pub(crate) async fn handle_node_operation(
     state: &CoordinatorState,
     outgoing: &mpsc::Sender<ServerMessage>,
@@ -24,25 +45,20 @@ pub(crate) async fn handle_node_operation(
         .get(&node_id)
         .is_some_and(|node| node.connection_id == connection_id);
     if !current {
-        send_error(
-            outgoing,
-            None,
-            ErrorCode::InvalidRole,
-            "node connection has been replaced",
-        )
-        .await;
+        send_error(outgoing, None, ErrorCode::InvalidRole, REPLACED).await;
         return;
     }
     match operation {
         NodeOperation::ServeHostControl => {
-            if let Some(node) = state.nodes.lock().await.get_mut(&node_id) {
-                node.host_control = true;
+            if serve_host_control(state, node_id, connection_id).await {
+                control_log::event(
+                    "info",
+                    "node_host_control_advertised",
+                    &serde_json::json!({ "node_id": node_id }),
+                );
+            } else {
+                send_error(outgoing, None, ErrorCode::InvalidRole, REPLACED).await;
             }
-            control_log::event(
-                "info",
-                "node_host_control_advertised",
-                &serde_json::json!({ "node_id": node_id }),
-            );
         }
         NodeOperation::CompleteHostCall {
             call_id,

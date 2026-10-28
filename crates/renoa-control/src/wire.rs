@@ -41,8 +41,6 @@ pub(crate) async fn cleanup_connection(
     let PeerIdentity::Node { node_id } = peer else {
         return;
     };
-    // Even a connection a newer one replaced ends the calls sent on it.
-    state.host_calls.end_connection(connection_id);
     let mut nodes = state.nodes.lock().await;
     if nodes
         .get(node_id)
@@ -50,6 +48,11 @@ pub(crate) async fn cleanup_connection(
     {
         nodes.remove(node_id);
     }
+    // Even a connection a newer one replaced ends the calls sent on it. This
+    // runs under the node table's lock, which a new call holds while it
+    // registers (`host_calls::dispatch`), so no call can register on this
+    // connection after its calls ended.
+    state.host_calls.end_connection(connection_id);
 }
 
 pub(crate) fn classify_message(message: Message) -> InboundMessage {

@@ -6,7 +6,6 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::node_log;
 
 pub(super) const BAD_REQUEST: u16 = 400;
-pub(super) const FORBIDDEN: u16 = 403;
 pub(super) const NOT_FOUND: u16 = 404;
 pub(super) const METHOD_NOT_ALLOWED: u16 = 405;
 pub(super) const CONFLICT: u16 = 409;

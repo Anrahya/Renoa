@@ -1,10 +1,11 @@
 //! Owner calls to the Host, relayed to the node that serves it.
 //!
 //! A call is an HTTP-shaped request and reply under `/v1/host`. It is not a
-//! task: it enters no journal and the coordinator stores nothing of it. It is
-//! held in memory only while pending, ends when the node's connection does,
-//! and is never retried here. A change is retried by its caller under the
-//! operation identity the Host already records.
+//! task: it enters no journal and the coordinator writes neither its request
+//! body nor its answer to disk. It is held in memory only while pending, ends
+//! when the node's connection does, and is never retried here. A change is
+//! retried by its caller under the operation identity the Host already
+//! records.
 
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -16,7 +17,9 @@ use renoa_protocol::PrincipalId;
 use tokio::{sync::oneshot, time::timeout};
 use uuid::Uuid;
 
-use crate::{ControlError, HostMethod, ServerMessage, control_log, coordinator::CoordinatorState};
+use crate::{
+    ControlError, HostMethod, NodeId, ServerMessage, control_log, coordinator::CoordinatorState,
+};
 
 pub(crate) const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -129,23 +132,39 @@ pub(crate) async fn call(
     if owned.is_empty() {
         return Err(HostCallError::NotAnOwner);
     }
-    let (node_id, connection_id, outgoing) = {
+    dispatch(state, &owned, principal_id, request).await
+}
+
+/// Finds the one connected node of `owned` that serves Host control and sends
+/// it the call. The call is registered while the node table is held, and a
+/// closing connection ends its calls under that same lock
+/// (`wire::cleanup_connection`), so a connection either ends the call or is
+/// already gone from the table: no call waits on a link that has ended.
+pub(crate) async fn dispatch(
+    state: &CoordinatorState,
+    owned: &[NodeId],
+    principal_id: PrincipalId,
+    request: HostRequest,
+) -> Result<HostReply, HostCallError> {
+    let call_id = Uuid::new_v4();
+    let (reply, answer) = oneshot::channel();
+    let (node_id, outgoing, _registration) = {
         let nodes = state.nodes.lock().await;
         let mut serving = owned.iter().filter_map(|node_id| {
             nodes
                 .get(node_id)
                 .filter(|node| node.host_control)
-                .map(|node| (*node_id, node.connection_id, node.outgoing.clone()))
+                .map(|node| (*node_id, node))
         });
-        let node = serving.next().ok_or(HostCallError::Offline)?;
+        let (node_id, node) = serving.next().ok_or(HostCallError::Offline)?;
         if serving.next().is_some() {
             return Err(HostCallError::Ambiguous);
         }
-        node
+        let registration = state
+            .host_calls
+            .register(call_id, node.connection_id, reply);
+        (node_id, node.outgoing.clone(), registration)
     };
-    let call_id = Uuid::new_v4();
-    let (reply, answer) = oneshot::channel();
-    let _registration = state.host_calls.register(call_id, connection_id, reply);
     control_log::event(
         "info",
         "host_call_sent",

@@ -8,9 +8,7 @@ use renoa_protocol::PrincipalId;
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::reply::{
-    BAD_REQUEST, CONFLICT, FORBIDDEN, NOT_FOUND, Reply, UNAVAILABLE, UNPROCESSABLE, log,
-};
+use super::reply::{BAD_REQUEST, CONFLICT, NOT_FOUND, Reply, UNAVAILABLE, UNPROCESSABLE, log};
 
 #[derive(Serialize)]
 struct Receipt {
@@ -47,7 +45,9 @@ pub(super) async fn set_enabled(
             );
         }
     };
-    // The coordinator authenticated this principal as the Host's owner.
+    // The coordinator authenticated this principal and checked that it owns
+    // this node; the node pins no owner of its own. The control is opened for
+    // the relayed principal, so its owner check cannot refuse that principal.
     let control =
         match HostAutomationControl::open(host.home().path(), host_id, principal.as_uuid()) {
             Ok(control) => control,
@@ -72,11 +72,6 @@ pub(super) async fn set_enabled(
         Err(LocalHostError::Automation(AutomationError::NotFound)) => {
             Reply::failure(NOT_FOUND, "not_found", "This automation no longer exists.")
         }
-        Err(LocalHostError::Automation(AutomationError::Forbidden)) => Reply::failure(
-            FORBIDDEN,
-            "wrong_owner",
-            "This login does not own the configured Host.",
-        ),
         Err(LocalHostError::Automation(AutomationError::Invalid(reason))) => {
             Reply::failure(UNPROCESSABLE, "invalid_schedule", &reason)
         }
