@@ -235,6 +235,7 @@ class ScreensTest : ScreenTest() {
         var state: SignInState by mutableStateOf(SignInState.Ready)
         var code by mutableStateOf("")
         show { SignInScreen(state, code, { code = it }) { submitted++ } }
+        compose.mainClock.advanceTimeBy(3_000)
         compose.waitForIdle()
         compose.onNodeWithText("Your agents, in your pocket.").assertIsDisplayed()
         compose.onNodeWithText("Continue with passkey").assertIsNotEnabled()
@@ -246,8 +247,19 @@ class ScreensTest : ScreenTest() {
 
         state = SignInState.Working
         compose.onNodeWithText("Waiting for your passkey…").assertIsNotEnabled()
+        snapshot("sign-in-linking")
         state = SignInState.Failed("That code didn't work. A setup code works once, for 30 minutes.")
         compose.onNodeWithText("That code didn't work. A setup code works once, for 30 minutes.").assertIsDisplayed()
         snapshot("sign-in-failed")
+    }
+
+    @Test
+    fun signInDrawsTheAgentAndItsAppsInPaper() {
+        show(ThemeName.Paper, seconds = 2f) { SignInScreen(SignInState.Ready, "", {}) {} }
+        // The tiles drop in one after another; let the last one land before the picture.
+        compose.mainClock.advanceTimeBy(3_000)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("An agent on the Renoa board, linked to Discord, Telegram and the web. This phone joins it once you sign in.").assertIsDisplayed()
+        snapshot("sign-in-paper")
     }
 }

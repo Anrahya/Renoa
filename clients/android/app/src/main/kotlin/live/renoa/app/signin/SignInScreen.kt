@@ -48,8 +48,6 @@ import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.RenoaButton
 import kotlin.math.abs
 
-private val TILE_TONES = listOf(Color(0xFFFF8A4C), Color(0xFFE046B4), Color(0xFF2FD0E6), Color(0xFFC9485B), Color(0xFFF2B8C6), Color(0xFF4FB3FF))
-
 /**
  * The first screen. The person enters the code from their Renoa, and the passkey prompt does the
  * rest; [state] says whether that is under way or why it stopped.
@@ -57,45 +55,10 @@ private val TILE_TONES = listOf(Color(0xFFFF8A4C), Color(0xFFE046B4), Color(0xFF
 @Composable
 internal fun SignInScreen(state: SignInState, code: String, onCodeChange: (String) -> Unit, onSubmit: () -> Unit) {
     val colors = Renoa.colors
-    val reduced = LocalReducedMotion.current
-    // Seven tiles drop into place one after the other: the core first, then the six around it.
-    val drops = remember { List(7) { Animatable(if (reduced) 1f else 0f) } }
-    LaunchedEffect(Unit) {
-        if (reduced) return@LaunchedEffect
-        drops.forEachIndexed { i, drop ->
-            launch {
-                delay(100L + i * 90L)
-                drop.animateTo(1f, tween(800, easing = RenoaEasing.Ease))
-            }
-        }
-    }
+    val working = state == SignInState.Working
 
     Column(Modifier.fillMaxSize().background(colors.background).safeDrawingPadding()) {
-        Box(Modifier.weight(1f).fillMaxWidth().semantics { contentDescription = "The Renoa mark: an ink core with six tiles around it" }, contentAlignment = Alignment.Center) {
-            Canvas(Modifier.fillMaxSize()) {
-                val s = size.minDimension.coerceAtMost(420.dp.toPx()) / 420f
-                withTransform({ translate(size.width / 2, size.height / 2); scale(s, s, Offset.Zero) }) {
-                    // The board: faint empty sockets the tiles could fill.
-                    for (index in 7 until 60) {
-                        val c = HexSpiral.centre(HexSpiral.seat(index), 46f)
-                        if (abs(c.x) < 220 && abs(c.y) < 230) {
-                            drawPath(hexPath(c.x, c.y, 42f, 3.5f), colors.border.copy(alpha = 0.5f), style = Stroke(1f))
-                        }
-                    }
-                    for (index in 0 until 7) {
-                        val c = HexSpiral.centre(HexSpiral.seat(index), 46f)
-                        val progress = drops[index].value
-                        val tone = if (index == 0) colors.foreground else TILE_TONES[index - 1]
-                        withTransform({ translate(0f, (1f - progress) * -30f) }) {
-                            drawPath(hexPath(c.x, c.y + 5, 42f, 3.5f), (if (index == 0) colors.foregroundSoft else Color.Black.copy(alpha = 0.35f)).copy(alpha = progress))
-                            drawPath(hexPath(c.x, c.y, 42f, 3.5f), tone.copy(alpha = progress))
-                            drawPath(hexPath(c.x, c.y, 42f, 3.5f), Color.White.copy(alpha = 0.18f * progress), style = Stroke(1.2f))
-                        }
-                    }
-                }
-            }
-        }
-        val working = state == SignInState.Working
+        SignInBoard(linking = working, modifier = Modifier.weight(1f).fillMaxWidth())
         val ready = !working && SignInCode.parse(code) != null
         val shape = RoundedCornerShape(RenoaShapes.Control)
         // One centred column, no wider than a phone, so a tablet keeps one left edge for every line.
