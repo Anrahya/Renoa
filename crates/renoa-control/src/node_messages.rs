@@ -57,6 +57,23 @@ pub(crate) async fn handle_node_operation(
                 Err(error) => send_control_error(outgoing, None, &error).await,
             }
         }
+        NodeOperation::AcknowledgeStop {
+            task_id,
+            command_id,
+        } => {
+            if let Err(error) = state
+                .store
+                .acknowledge_stop(node_id, task_id, command_id)
+                .await
+            {
+                send_control_error(outgoing, None, &error).await;
+            }
+        }
+        NodeOperation::PublishLiveActivity {
+            task_id,
+            command_id,
+            activity,
+        } => crate::live_activity::relay(state, node_id, task_id, command_id, activity).await,
         NodeOperation::PublishExecutionEvents {
             task_id,
             command_id,

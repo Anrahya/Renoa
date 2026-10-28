@@ -1,7 +1,7 @@
-use renoa_protocol::{ExecutionEventId, ExecutionEventKind, ExecutionId};
+use renoa_protocol::{ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId};
 use uuid::Uuid;
 
-use super::*;
+use super::{publication::publication_batch, *};
 
 #[test]
 fn publication_batches_stop_before_the_websocket_limit() {

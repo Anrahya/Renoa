@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 13 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 14 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -142,6 +142,22 @@ These decisions define RCP and are not ordinary implementation details:
     connection presence, not durable state; the targets stay opaque and carry
     no harness configuration. A node without an owner serves only tasks the
     operator created for it.
+24. A stop is a durable control scoped to one command. The coordinator records
+    it before answering, delivers it to the command's node until the node
+    acknowledges that it durably recorded the stop, and converges when it is
+    repeated. It is accepted while the node is offline: decision 22 refuses new
+    work for an absent executor, a stop adds none, and a turn can outlive its
+    node's link. A stop has no outcome record of its own. The command's
+    terminal record is the outcome, `cancelled` when the stop reached the
+    execution first, so a stop never reaches another command of the task.
+25. Live activity is ephemeral and advisory. A node may relay the visible text
+    of a running turn, and the coordinator forwards it only from the task's own
+    node and only to surfaces attached to that task that asked for it. It is
+    never stored, replayed, or counted in the journal, and a surface that
+    misses it loses nothing, because the same text is a complete durable
+    assistant message. Reasoning and tool-call arguments are never live
+    activity, and live frames travel apart from the journal's delivery so that
+    no number of them can make a surface replay.
 
 ## Vocabulary
 
@@ -290,10 +306,19 @@ An authenticated surface must be able to discover tasks authorized for its
 principal. Pairing a device with the coordinator is sufficient; users must not
 pair the same phone separately with every task or node.
 
-The current proof implements an initial `ListTasks` snapshot. It returns only
-task identity and target, filters by the authenticated principal, and orders by
-task identity. Pagination, user-facing metadata, presence, and live directory
-updates remain open until a real surface requires them.
+The current proof implements an initial `ListTasks` snapshot. It returns task
+identity, target, and status, filters by the authenticated principal, and
+orders by task identity. Pagination, user-facing metadata, presence, and live
+directory updates remain open until a real surface requires them.
+
+The status is `working`, `idle`, or `failed`. It is the status of the task's
+latest command, where latest is admission order: `working` until that command's
+execution terminates, then `failed` if it failed and `idle` if it completed or
+was cancelled. A task with no command is `idle`, and an older command that
+never terminated does not decide the status once a later command exists. The
+rule reads only the task journal, so any surface holding the journal derives
+the same value. A waiting-on-owner status and a next scheduled wake have no
+producer in RCP and stay open.
 
 ### Attachment and replay
 
@@ -327,6 +352,44 @@ The current proof stores only the fact required for reliable delivery: whether
 an admitted command is still pending node admission. A richer dispatched,
 running, and terminal state model remains deferred until a surface or executor
 feature consumes it.
+
+### Stopping a command
+
+A surface stops one command by task and command identity. The coordinator
+checks that the principal owns the task and that the command belongs to it,
+records the stop, and only then answers `requested`. The command is the stable
+identity: a repeated request returns the original answer and keeps one record.
+If the command's execution had already terminated and no stop was recorded
+before, the answer is `already_ended` and nothing is recorded.
+
+The coordinator delivers the recorded stop to the task's node and keeps
+delivering it after every reconnect and coordinator restart until the node
+acknowledges it. The node acknowledges only after recording the stop in its own
+ledger, and then cancels the command: a running turn is cancelled through the
+harness's own cancellation, and a command that has not started begins
+cancelled. The stop is accepted while the node is offline and follows the
+command's execution when the node returns.
+
+The outcome is ordinary journal state. The stop that reaches an execution first
+ends it `cancelled`; a turn that finishes first ends `completed` or `failed`
+and the stop changes nothing.
+
+### Live activity
+
+A surface may ask, when it attaches, to receive live activity. While a turn
+runs, its node relays the visible assistant text as `text_delta` frames,
+numbered from zero for each message and coalesced to at most one frame per
+50 milliseconds, and a `text_reset` when a message the surface was shown is
+abandoned. Frames are not journal records. They carry no task sequence, are
+not replayed, and are dropped when no surface wants them, when a surface is too
+slow to take them, or when the node's link is down. The durable
+`assistant_message` that completes the same text supersedes them. Reasoning and
+tool-call arguments never leave the node.
+
+The coordinator accepts a frame only from the task's own node and forwards it
+only to surfaces that attached with live activity requested. Frames use a
+buffer separate from the journal's, so a flood of frames can cost a slow surface
+frames but can never cost it its place in the journal.
 
 ## Executor link
 
@@ -431,6 +494,22 @@ must retain the same identity and content. New events must begin exactly at the
 cursor; gaps, a different execution identity, and events after
 `execution_terminated` are rejected. The acknowledgement reports the highest
 execution sequence committed with the task journal.
+
+### Stop delivery and live publication
+
+A `Stop` delivery names a task and a command. A node records it in its ledger,
+cancels the command, and answers `AcknowledgeStop`. Until then the coordinator
+sends it again on every node activation, after that activation's pending
+`Execute` deliveries. A stop that arrives before its command is still honored
+when the command arrives, because the node's ledger, not the arrival order,
+decides whether a command starts cancelled. A node that does not own the task
+is refused, and an acknowledgement for a task the coordinator no longer holds
+has nothing left to confirm.
+
+A node publishes live frames with `PublishLiveActivity` and receives no answer.
+The Rust node streams only model requests that offer tools: a request with none
+is a context-compaction summary, which is internal and must not reach a
+surface, so an agent without tools does not stream.
 
 ### Authority changes
 
@@ -634,8 +713,16 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 13 JSON/WebSocket shape with binding-level conformance
+- a documented version 14 JSON/WebSocket shape with binding-level conformance
   assertions;
+- a command-scoped stop that is durable before it is answered, delivered to the
+  node until acknowledged across reconnects and coordinator restart, accepted
+  while the node is offline, and ends a running or redriven Host turn
+  `cancelled` while the task's next command runs unaffected;
+- ephemeral live text from a running Host turn to surfaces that asked for it,
+  from the task's own node only, never stored, with reasoning kept on the node
+  and no flood able to make a surface replay;
+- a per-task status in the directory derived from the latest command;
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
   tickets that bind a principal and surface without creating a device;
@@ -727,8 +814,11 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
-4. The shared activity profile carries complete durable events, not transient
-   token deltas or a general streaming UI protocol.
+4. The shared activity profile carries complete durable events. Visible text
+   is relayed only as ephemeral live activity: there is no live reasoning or
+   tool-argument stream and no general streaming UI protocol, and the Rust
+   node streams only requests that offer tools, and the Pi node publishes no
+   live activity.
 5. Trusted-device approval for remote native enrollment, recovery, passkey and
    device administration, and credential rotation are designed boundaries but
    are not implemented. First-device passkey bootstrap is local and explicit.
@@ -797,6 +887,20 @@ RCP v0 is not proven until deterministic tests cover at least:
     registration, authentication, and browser tickets are one-use; concurrent
     ticket claims produce one winner; and ticket authentication creates no
     durable device.
+16. A stop is durable when answered, delivered until the node acknowledges it
+    across node reconnects and a coordinator restart, accepted while the node
+    is offline, convergent when repeated, refused for a command the principal
+    does not own, and records nothing for an ended command. Only the task's
+    node may acknowledge it.
+17. A stop reaches a running Host turn and ends its command `cancelled`, the
+    task's next command still completes, and a stop recorded while the node is
+    down cancels the turn the restarted node redrives.
+18. Live activity reaches only surfaces that attached asking for it, only from
+    the task's own node, is never stored, and never makes a flooded surface
+    replay; the reasoning of a streamed turn appears in neither a live frame
+    nor the journal.
+19. The directory reports each task's status from its latest command exactly
+    as the journal defines it, and reading the directory writes nothing.
 
 The test harness should deliberately cut connections at persistence and
 acknowledgement boundaries. Happy-path socket tests are insufficient evidence
@@ -836,7 +940,10 @@ assumption after context compaction:
   registry for one node hosting multiple harness configurations
 - Execution generations and safe rebinding messages
 - Task-list pagination and live directory updates
-- Cancellation, steering, approval, and queued-follow-up semantics
+- Steering, approval, and queued-follow-up semantics. Stopping one command is
+  defined by locked decision 24
+- A waiting-on-owner task status and the next scheduled wake of a task, which
+  no part of RCP produces yet
 - Snapshot, automatic retention, compaction, artifact, and blob behavior. An
   owner deleting one of its tasks is defined: `DeleteTask` in
   [RCP operations](rcp-operations-v0.md).

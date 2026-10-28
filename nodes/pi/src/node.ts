@@ -83,14 +83,21 @@ export class PiNode {
         }
         continue;
       }
+      const stop = this.#state.watchStop(execution.commandId);
       try {
-        await this.#harness.execute(execution, this.#state, signal);
+        await this.#harness.execute(
+          execution,
+          this.#state,
+          AbortSignal.any([signal, stop.signal]),
+        );
       } catch (error) {
         this.#state.finish(
           execution.commandId,
           { status: "failed", error: asError(error).message },
           this.#state.loadMessages(execution.taskId),
         );
+      } finally {
+        stop.release();
       }
     }
   }

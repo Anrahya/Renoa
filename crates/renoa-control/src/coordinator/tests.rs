@@ -44,6 +44,7 @@ async fn a_lagging_surface_is_told_to_replay() {
         task_id,
         None,
         principal_id,
+        false,
     )
     .await
     .expect("attach surface");

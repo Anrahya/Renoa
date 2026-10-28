@@ -69,6 +69,7 @@ impl NodeStore {
                 "DELETE FROM host_node_executions WHERE task_id = ?1",
                 [&task],
             )?;
+            transaction.execute("DELETE FROM host_node_stops WHERE task_id = ?1", [&task])?;
             transaction.execute("DELETE FROM host_node_tasks WHERE task_id = ?1", [&task])?;
             transaction.commit()?;
             Ok(())

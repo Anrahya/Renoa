@@ -54,7 +54,8 @@ export function usePreviewControlRoom(): ControlRoomController {
 }
 
 function task(suffix: number, target: string): TaskSummary {
-  return { taskId: id(suffix), target };
+  // The first task's journal ends mid-run; every other task has finished.
+  return { taskId: id(suffix), target, status: suffix === 10 ? "working" : "idle" };
 }
 
 function command(sequence: number, taskSummary: TaskSummary, text: string): TaskEvent {

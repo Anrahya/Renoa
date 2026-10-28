@@ -6,10 +6,12 @@ mod automations;
 mod backoff;
 mod bridge;
 mod live;
+mod live_text;
 mod node_log;
 mod node_store;
 mod operator;
 mod projection;
 mod session;
+mod stop;
 
 pub use bridge::{NodeError, RenoaNode};

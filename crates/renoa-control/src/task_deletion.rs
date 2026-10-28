@@ -51,9 +51,8 @@ pub(crate) async fn delete_task(
                 // A command is settled only by a terminal execution: before its
                 // first event is accepted, an acknowledged execution has no
                 // stream yet but may be running.
-                "SELECT EXISTS(SELECT 1 FROM commands c WHERE c.task_id = ?1
-                    AND NOT EXISTS(SELECT 1 FROM execution_event_streams s
-                                   WHERE s.command_id = c.command_id AND s.terminal = 1))",
+                "SELECT EXISTS(SELECT 1 FROM command_states
+                               WHERE task_id = ?1 AND settled = 0)",
                 [&task],
                 |row| row.get(0),
             )
@@ -72,6 +71,7 @@ pub(crate) async fn delete_task(
         return Ok(());
     };
     state.task_senders.lock().await.remove(&task_id);
+    state.live_channels.lock().await.remove(&task_id);
     control_log::event(
         "info",
         "task_deleted",

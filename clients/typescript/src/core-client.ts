@@ -1,56 +1,33 @@
 import {
+  RcpError,
+  assertRcpConnectionOptions,
+  type ApplyLiveActivity,
+  type ApplyTaskEvent,
+  type CommandSubmission,
+  type PendingTextCommand,
+  type RcpAuthentication,
+  type RcpSurfaceClientCoreOptions,
+  type RcpSurfaceState,
+} from "./contract.js";
+import {
   RCP_VERSION,
   parseServerMessage,
   uuid,
-  type DeviceCredentials,
-  type RcpErrorCode,
   type ServerMessage,
+  type StopOutcome,
   type TaskEvent,
   type TaskSummary,
 } from "./protocol.js";
-
-type Awaitable<T> = T | Promise<T>;
-
-export interface PendingTextCommand {
-  readonly commandId: string;
-  readonly taskId: string;
-  readonly text: string;
-}
-
-export interface RcpSurfaceState {
-  cursor(taskId: string): Awaitable<number | null>;
-  advanceCursor(taskId: string, sequence: number): Awaitable<void>;
-  enqueueCommand(command: PendingTextCommand): Awaitable<void>;
-  pendingCommands(): Awaitable<readonly PendingTextCommand[]>;
-  removeCommand(commandId: string): Awaitable<void>;
-  close(): Awaitable<void>;
-}
-
-export type RcpAuthentication =
-  | { readonly type: "device"; readonly credentials: DeviceCredentials }
-  | { readonly type: "ticket"; readonly getTicket: () => string | Promise<string> };
-
-export interface RcpSurfaceClientCoreOptions {
-  readonly endpoint: string;
-  readonly authentication: RcpAuthentication;
-  readonly state: RcpSurfaceState;
-}
 
 interface PendingRequest {
   complete(message: ServerMessage): void;
   reject(error: Error): void;
 }
 
-export type ApplyTaskEvent = (event: TaskEvent) => void | Promise<void>;
-
-export interface CommandSubmission {
-  readonly commandId: string;
-  readonly accepted: Promise<void>;
-}
-
 interface Attachment {
   readonly taskId: string;
   readonly apply: ApplyTaskEvent;
+  readonly live: ApplyLiveActivity | undefined;
   cursor: number | null;
   replay:
     | {
@@ -59,18 +36,6 @@ interface Attachment {
         readonly reject: (error: Error) => void;
       }
     | undefined;
-}
-
-export class RcpError extends Error {
-  readonly code: RcpErrorCode;
-  readonly requestId: number | null;
-
-  constructor(code: RcpErrorCode, message: string, requestId: number | null) {
-    super(message);
-    this.name = "RcpError";
-    this.code = code;
-    this.requestId = requestId;
-  }
 }
 
 export class RcpSurfaceClientCore {
@@ -196,7 +161,15 @@ export class RcpSurfaceClientCore {
     );
   }
 
-  async attach(taskId: string, apply: ApplyTaskEvent): Promise<void> {
+  /**
+   * Attaches to a task. Passing `live` asks the coordinator for the live
+   * activity of the task's running turns; without it only the journal arrives.
+   */
+  async attach(
+    taskId: string,
+    apply: ApplyTaskEvent,
+    live?: ApplyLiveActivity,
+  ): Promise<void> {
     uuid(taskId, "taskId");
     this.#connectedSocket();
     if (this.#attachments.has(taskId)) {
@@ -205,6 +178,7 @@ export class RcpSurfaceClientCore {
     const attachment: Attachment = {
       taskId,
       apply,
+      live,
       cursor: await this.#state.cursor(taskId),
       replay: undefined,
     };
@@ -215,6 +189,35 @@ export class RcpSurfaceClientCore {
       this.#attachments.delete(taskId);
       throw error;
     }
+  }
+
+  /**
+   * Asks the task's node to stop one command. The command is the stable
+   * identity of the stop, so repeating the call after an uncertain reply is
+   * safe: a recorded stop answers `requested` again. `already_ended` means the
+   * command's execution had finished and nothing was recorded. The result of a
+   * stop that was recorded is the command's terminal task event.
+   */
+  stopCommand(taskId: string, commandId: string): Promise<StopOutcome> {
+    uuid(taskId, "taskId");
+    uuid(commandId, "commandId");
+    return this.#request(
+      (requestId) => ({
+        type: "stop_command",
+        request_id: requestId,
+        task_id: taskId,
+        command_id: commandId,
+      }),
+      (message) => {
+        if (message.type !== "stop_accepted") {
+          throw new Error(`expected stop_accepted, received ${message.type}`);
+        }
+        if (message.command_id !== commandId) {
+          throw new Error("stop answer changed the command identity");
+        }
+        return message.outcome;
+      },
+    );
   }
 
   async submitText(taskId: string, text: string): Promise<CommandSubmission> {
@@ -272,6 +275,7 @@ export class RcpSurfaceClientCore {
         request_id: requestId,
         task_id: attachment.taskId,
         after_sequence: attachment.cursor,
+        live: attachment.live !== undefined,
       }),
       (message) => {
         if (message.type !== "attached") {
@@ -346,6 +350,14 @@ export class RcpSurfaceClientCore {
     }
     if (message.type === "task_event") {
       await this.#applyTaskEvent(message.event);
+      return;
+    }
+    if (message.type === "live_activity") {
+      const attachment = this.#attachments.get(message.task_id);
+      if (attachment?.live === undefined) {
+        throw new Error(`received live activity for task ${message.task_id}, which did not ask`);
+      }
+      await attachment.live(message.command_id, message.activity);
       return;
     }
     if (message.type === "error") {
@@ -466,24 +478,3 @@ function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
-export function assertRcpConnectionOptions(
-  endpoint: string,
-  authentication: RcpAuthentication,
-): void {
-  if (typeof endpoint !== "string" || endpoint === "") {
-    throw new Error("endpoint must be a non-empty string");
-  }
-  if (authentication.type === "device") {
-    uuid(authentication.credentials.deviceId, "credentials.deviceId");
-    if (
-      typeof authentication.credentials.credential !== "string" ||
-      authentication.credentials.credential === ""
-    ) {
-      throw new Error("credentials.credential must be a non-empty string");
-    }
-    return;
-  }
-  if (typeof authentication.getTicket !== "function") {
-    throw new Error("authentication.getTicket must be a function");
-  }
-}

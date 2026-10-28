@@ -7,8 +7,11 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
-use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent, TargetRef};
-use tokio::{sync::watch, task::JoinSet};
+use renoa_protocol::{CommandEnvelope, CommandId, TargetRef};
+use tokio::{
+    sync::{broadcast::error::RecvError, watch},
+    task::JoinSet,
+};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{Message, protocol::WebSocketConfig},
@@ -18,8 +21,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     bridge::{ExecutionTask, NodeError, NodeRuntime, finish_execution, schedule_pending},
     node_log,
-    node_store::ExecutionRecord,
 };
+use publication::{Publication, refresh_publications, send_pending};
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -31,12 +34,6 @@ pub(crate) enum SessionEnd {
         connected_for: Option<Duration>,
     },
     Shutdown,
-}
-
-struct Publication {
-    record: ExecutionRecord,
-    admission_in_flight: bool,
-    event_in_flight: Option<u64>,
 }
 
 #[allow(
@@ -119,13 +116,32 @@ async fn serve_session_inner(
     let mut agent_refresh = tokio::time::interval(AGENT_REFRESH_INTERVAL);
     agent_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    let mut live = runtime.live.subscribe();
     let mut publications = HashMap::new();
     refresh_publications(&runtime, &mut publications).await?;
     send_pending(&mut socket, &runtime, &mut publications).await?;
 
     loop {
         tokio::select! {
+            // Live frames are polled before commits: a delta is queued before
+            // the durable record that supersedes it, and must reach the
+            // coordinator first.
+            biased;
             () = shutdown.cancelled() => return Ok(SessionEnd::Shutdown),
+            frame = live.recv() => match frame {
+                Ok(frame) => {
+                    send_client(&mut socket, &ClientMessage::PublishLiveActivity {
+                        task_id: frame.task_id,
+                        command_id: frame.command_id,
+                        activity: frame.activity,
+                    }).await?;
+                }
+                // Dropped frames are the surface's gap to notice; nothing is replayed.
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => {
+                    return Err(NodeError::Protocol("local live channel closed".to_owned()));
+                }
+            },
             changed = commits.changed() => {
                 if changed.is_err() {
                     return Err(NodeError::Protocol("local commit signal closed".to_owned()));
@@ -258,6 +274,21 @@ async fn handle_server_message(
             refresh_publications(runtime, publications).await?;
             send_pending(socket, runtime, publications).await?;
         }
+        ServerMessage::Stop {
+            task_id,
+            command_id,
+        } => {
+            // Acknowledged only once the stop is durable here.
+            runtime.stop(task_id, command_id).await?;
+            send_client(
+                socket,
+                &ClientMessage::AcknowledgeStop {
+                    task_id,
+                    command_id,
+                },
+            )
+            .await?;
+        }
         ServerMessage::Error { code, message, .. } => {
             return Err(NodeError::Rejected { code, message });
         }
@@ -269,6 +300,8 @@ async fn handle_server_message(
         | ServerMessage::TaskDeleted { .. }
         | ServerMessage::Attached { .. }
         | ServerMessage::CommandAccepted { .. }
+        | ServerMessage::StopAccepted { .. }
+        | ServerMessage::LiveActivity { .. }
         | ServerMessage::TaskEvent { .. } => {
             return Err(NodeError::Protocol(
                 "coordinator sent a surface-only message to a node".to_owned(),
@@ -292,128 +325,6 @@ async fn handle_execute(
     runtime.signal_commit();
     schedule_pending(Arc::clone(runtime), tasks, running).await?;
     Ok(())
-}
-
-async fn refresh_publications(
-    runtime: &NodeRuntime,
-    publications: &mut HashMap<CommandId, Publication>,
-) -> Result<(), NodeError> {
-    let records = runtime.state.load_pending_publications().await?;
-    let pending = records
-        .iter()
-        .map(|record| record.command.command_id)
-        .collect::<HashSet<_>>();
-    publications.retain(|command_id, _| pending.contains(command_id));
-    for record in records {
-        publications
-            .entry(record.command.command_id)
-            .and_modify(|publication| publication.record = record.clone())
-            .or_insert(Publication {
-                record,
-                admission_in_flight: false,
-                event_in_flight: None,
-            });
-    }
-    Ok(())
-}
-
-async fn send_pending(
-    socket: &mut Socket,
-    runtime: &NodeRuntime,
-    publications: &mut HashMap<CommandId, Publication>,
-) -> Result<(), NodeError> {
-    let mut ordered = publications
-        .iter()
-        .map(|(command_id, publication)| {
-            (
-                publication.record.task_id.to_string(),
-                publication.record.admission_sequence,
-                *command_id,
-            )
-        })
-        .collect::<Vec<_>>();
-    ordered.sort_unstable_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-    let mut blocked_tasks = HashSet::new();
-    for (_, _, command_id) in ordered {
-        let publication = publications.get_mut(&command_id).ok_or_else(|| {
-            NodeError::Protocol(format!(
-                "pending publication {command_id} disappeared during scheduling"
-            ))
-        })?;
-        let record = publication.record.clone();
-        let send_admission = !record.admission_acked && !publication.admission_in_flight;
-        if send_admission {
-            send_client(
-                socket,
-                &ClientMessage::AcknowledgeExecution {
-                    task_id: record.task_id,
-                    command_id,
-                },
-            )
-            .await?;
-            publication.admission_in_flight = true;
-        }
-
-        if blocked_tasks.contains(&record.task_id) {
-            continue;
-        }
-        if publication.event_in_flight.is_some() {
-            blocked_tasks.insert(record.task_id);
-            continue;
-        }
-        let events = runtime
-            .state
-            .load_events_after(command_id, record.published_through)
-            .await?;
-        let events = publication_batch(record.task_id, command_id, events)?;
-        let Some(through_execution_sequence) = events.last().map(|event| event.sequence) else {
-            if !record.terminal {
-                blocked_tasks.insert(record.task_id);
-            }
-            continue;
-        };
-        send_client(
-            socket,
-            &ClientMessage::PublishExecutionEvents {
-                task_id: record.task_id,
-                command_id,
-                events,
-            },
-        )
-        .await?;
-        publication.event_in_flight = Some(through_execution_sequence);
-        blocked_tasks.insert(record.task_id);
-    }
-    Ok(())
-}
-
-fn publication_batch(
-    task_id: TaskId,
-    command_id: CommandId,
-    events: Vec<ExecutionEvent>,
-) -> Result<Vec<ExecutionEvent>, NodeError> {
-    let mut batch = Vec::new();
-    for event in events {
-        batch.push(event);
-        let message = ClientMessage::PublishExecutionEvents {
-            task_id,
-            command_id,
-            events: batch.clone(),
-        };
-        if serde_json::to_vec(&message)?.len() > MAX_APPLICATION_MESSAGE_BYTES {
-            let oversized = batch.pop().ok_or_else(|| {
-                NodeError::Protocol("publication batch lost its candidate event".to_owned())
-            })?;
-            if batch.is_empty() {
-                return Err(NodeError::Protocol(format!(
-                    "execution event {} exceeds the RCP WebSocket message limit",
-                    oversized.event_id
-                )));
-            }
-            break;
-        }
-    }
-    Ok(batch)
 }
 
 async fn send_client(socket: &mut Socket, message: &ClientMessage) -> Result<(), NodeError> {
@@ -457,5 +368,6 @@ async fn receive_server(socket: &mut Socket) -> Result<ServerMessage, NodeError>
     }
 }
 
+mod publication;
 #[cfg(test)]
 mod tests;

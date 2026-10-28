@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `13`.
+first implemented transport binding. The current binding version is `14`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -53,14 +53,21 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `13` with `version_mismatch` and ends the session.
+rejects any value other than `14` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `13` supersedes version `12` by adding an optional `author` to text
+Version `14` supersedes version `13` by adding the chat essentials. A task
+summary carries a `status`. `attach` carries a required `live` flag. A surface
+can `stop_command`, answered by `stop_accepted`; the coordinator delivers `stop`
+to the node, which answers `acknowledge_stop`. A node can
+`publish_live_activity`, which the coordinator relays to interested surfaces as
+`live_activity`. A version `13` peer is rejected at authentication.
+
+Version `13` superseded version `12` by adding an optional `author` to text
 command input, which marks text written by a guest rather than the
 authenticated principal. A version `12` peer is rejected at authentication.
 
@@ -97,7 +104,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 13,
+  "version": 14,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -107,7 +114,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 13,
+  "version": 14,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -120,7 +127,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 13,
+  "version": 14,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -133,7 +140,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 13,
+  "version": 14,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -149,7 +156,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 13
+  "version": 14
 }
 ```
 
@@ -177,14 +184,17 @@ by `taskId`:
   "tasks": [
     {
       "taskId": "00000000-0000-0000-0000-000000000010",
-      "target": "workspace:renoa"
+      "target": "workspace:renoa",
+      "status": "working"
     }
   ]
 }
 ```
 
-An authorized principal with no tasks receives an empty `tasks` array. Version
-`10` defines no pagination or live directory update frame.
+`status` is `working`, `idle`, or `failed`, derived from the task's latest
+command as the operation contract defines. An authorized principal with no
+tasks receives an empty `tasks` array. The binding defines no pagination or
+live directory update frame.
 
 ### List targets
 
@@ -268,11 +278,15 @@ returns `not_found`.
   "type": "attach",
   "request_id": 41,
   "task_id": "00000000-0000-0000-0000-000000000010",
-  "after_sequence": 12
+  "after_sequence": 12,
+  "live": true
 }
 ```
 
-Use `null` for `after_sequence` to request the full journal.
+Use `null` for `after_sequence` to request the full journal. `live` is
+required: `true` asks for `live_activity` frames while the task's turns run,
+and `false` receives only the journal. A frame without `live` is not a version
+`14` attach.
 
 The first successful response identifies the replay high-water mark:
 
@@ -288,6 +302,65 @@ The first successful response identifies the replay high-water mark:
 `through_sequence` is `null` for an empty task. Zero or more `task_event`
 frames follow for the durable suffix, then the same frame type carries live
 records.
+
+### Live activity
+
+An attachment that sent `"live": true` receives frames like this one while the
+task's node runs a turn:
+
+```json
+{
+  "type": "live_activity",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "activity": { "type": "text_delta", "sequence": 0, "text": "Hel" }
+}
+```
+
+`sequence` counts from zero for each message of the turn, and `text` is the
+visible assistant text since the previous frame. This frame abandons what the
+surface showed for the message in progress:
+
+```json
+{
+  "type": "live_activity",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "activity": { "type": "text_reset" }
+}
+```
+
+A live frame has no `request_id`, no task sequence, and no durable effect. The
+`assistant_message` record that completes the text supersedes the live text. A
+surface that is too slow to take a frame loses it and is not told to replay.
+
+### Stop a command
+
+```json
+{
+  "type": "stop_command",
+  "request_id": 44,
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020"
+}
+```
+
+The coordinator answers after the stop is durable:
+
+```json
+{
+  "type": "stop_accepted",
+  "request_id": 44,
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "outcome": "requested"
+}
+```
+
+`outcome` is `requested` or `already_ended`. A command already ended with no
+earlier stop records nothing and answers `already_ended`; a retry of a recorded
+stop answers `requested` again. A task the principal does not own and a
+command the task never admitted return `not_found`. The command's terminal
+`execution_event` carries the result, `cancelled` when the stop won.
 
 ### Submit
 
@@ -478,6 +551,44 @@ response reports the source cursor:
 }
 ```
 
+The coordinator delivers a recorded stop, after the pending `execute` frames on
+a node's activation and whenever a stop is recorded for an online node:
+
+```json
+{
+  "type": "stop",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020"
+}
+```
+
+After the node durably records the stop and cancels the command, it sends:
+
+```json
+{
+  "type": "acknowledge_stop",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020"
+}
+```
+
+There is no success response. A node that does not own the task receives
+`invalid_message`. Until the acknowledgement commits, the coordinator repeats
+the `stop`.
+
+While a turn runs, the node may publish live activity. The coordinator relays
+it as `live_activity` to the attached surfaces that asked, only when the node
+owns the task, and sends no response:
+
+```json
+{
+  "type": "publish_live_activity",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "activity": { "type": "text_delta", "sequence": 0, "text": "Hel" }
+}
+```
+
 Node frames use `command_id` for correlation because it is already the durable
 operation identity. They do not carry `request_id`.
 
@@ -510,8 +621,8 @@ Storage and serialization details are not exposed on the wire.
 
 ## Numbers
 
-`request_id`, task sequences, execution sequences, and millisecond timestamps are JSON
-integers. Cross-language clients must keep unsigned values between `0` and
+`request_id`, task sequences, execution sequences, live text sequences, and
+millisecond timestamps are JSON integers. Cross-language clients must keep unsigned values between `0` and
 `9,007,199,254,740,991`, and signed timestamps between
 `-9,007,199,254,740,991` and `9,007,199,254,740,991`. The coordinator rejects an
 incoming frame outside this range as `invalid_message`. It replaces an
@@ -525,15 +636,18 @@ round.
   durable.
 - `command_accepted`, `execution_acknowledged`, and `execution_events_accepted` are
   sent only after their documented commits.
-- A node reconnect receives every still-pending `execute` delivery.
+- A node reconnect receives every still-pending `execute` delivery, then every
+  stop it has not acknowledged.
+- `stop_accepted` is sent only after the stop is committed. `live_activity` is
+  sent without any commit and may be lost.
 - A surface reconnects with its last durably applied task sequence.
 - A slow attached surface receives `replay_required` and must reattach.
 - Clients must not infer task completion from a closed socket.
 
 ## Binding exclusions
 
-Version `10` defines no task-list pagination, live directory or target updates,
-application heartbeat or presence, cancellation, steering, approval, artifact,
-binary-frame, compression, HTTP/SSE, webhook, or public TLS deployment
-contract. Adding any of those requires an operation contract first, then a
+The binding defines no task-list pagination, live directory or target updates,
+application heartbeat or presence, steering, approval, artifact, binary-frame,
+compression, HTTP/SSE, webhook, or public TLS deployment contract, and no live
+activity beyond visible text. Adding any of those requires an operation contract first, then a
 binding and tests. The transport `ping` above is not an application heartbeat.

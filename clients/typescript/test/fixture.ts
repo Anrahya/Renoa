@@ -13,10 +13,11 @@ export interface Fixture {
   readonly credentials: DeviceCredentials;
   readonly unownedTaskId: string;
   readonly statePath: string;
+  /** The first task has a command no node has run, so it is working. */
   readonly tasks: readonly [
-    { readonly taskId: string; readonly target: string },
-    { readonly taskId: string; readonly target: string },
-    { readonly taskId: string; readonly target: string },
+    { readonly taskId: string; readonly target: string; readonly status: "working" },
+    { readonly taskId: string; readonly target: string; readonly status: "idle" },
+    { readonly taskId: string; readonly target: string; readonly status: "idle" },
   ];
   stop(): Promise<void>;
 }

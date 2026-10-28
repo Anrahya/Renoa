@@ -693,6 +693,13 @@ systemctl status renoa-coordinator.service
 tailscale serve status
 ```
 
+Coordinator schema 13 adds the table of recorded stops and a view that decides
+whether a command has settled. Opening an older database creates both and
+leaves its rows alone. RCP binding version 14 adds the status in the task
+directory, stopping a command, and live text from a running turn, so the
+coordinator, node, Pi node, and every surface must be upgraded together; a
+peer still on version 13 is refused at authentication.
+
 ### Public RCP route
 
 Install `cloudflared` from Cloudflare's signed package repository. Create a
@@ -777,7 +784,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 13; the recorded version-8 proof establishes only the deployment
+binding version 14; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

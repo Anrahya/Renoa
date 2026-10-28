@@ -3,8 +3,8 @@ use std::time::{Duration, SystemTime};
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
-    NodeId, PeerIdentity, ServerMessage, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSpec,
-    TaskSummary,
+    NodeId, PeerIdentity, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind,
+    TaskId, TaskSpec, TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
@@ -51,10 +51,12 @@ mod discovery {
             TaskSummary {
                 task_id: system.task_id,
                 target: system.target.clone(),
+                status: TaskStatus::Idle,
             },
             TaskSummary {
                 task_id: second_task_id,
                 target: second_target,
+                status: TaskStatus::Idle,
             },
         ];
         expected.sort_by_key(|task| task.task_id.to_string());
@@ -570,6 +572,7 @@ mod delivery {
                 request_id: 2,
                 task_id: system.task_id,
                 after_sequence: Some(first_seen.sequence),
+                live: false,
             },
         )
         .await;
@@ -598,6 +601,7 @@ mod delivery {
                 request_id: 2,
                 task_id: system.task_id,
                 after_sequence: Some(0),
+                live: false,
             },
         )
         .await;
@@ -708,6 +712,7 @@ mod delivery {
                 request_id: 4,
                 task_id: system.task_id,
                 after_sequence: None,
+                live: false,
             },
         )
         .await;
@@ -998,6 +1003,7 @@ mod delivery {
                 request_id: 3,
                 task_id: system.task_id,
                 after_sequence: original.last().map(|event| event.sequence),
+                live: false,
             },
         )
         .await;
@@ -1101,7 +1107,8 @@ mod task_deletion {
                       + (SELECT count(*) FROM task_events WHERE task_id = ?1)
                       + (SELECT count(*) FROM commands WHERE task_id = ?1)
                       + (SELECT count(*) FROM execution_event_streams)
-                      + (SELECT count(*) FROM pending_executions)",
+                      + (SELECT count(*) FROM pending_executions)
+                      + (SELECT count(*) FROM stop_requests)",
                 [task_id.to_string()],
                 |row| row.get(0),
             )
@@ -1138,6 +1145,24 @@ mod task_deletion {
             ),
             "an acknowledged execution with no events yet keeps its task"
         );
+        // A recorded stop is part of what the task holds, and goes with it.
+        send(
+            &mut mac,
+            &ClientMessage::StopCommand {
+                request_id: 7,
+                task_id: system.task_id,
+                command_id,
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut mac).await,
+            ServerMessage::StopAccepted { request_id: 7, .. }
+        ));
+        assert!(matches!(
+            receive(&mut node).await,
+            ServerMessage::Stop { .. }
+        ));
         let terminal = transcript.events.last().expect("terminal event").sequence;
         send(
             &mut node,
@@ -1174,6 +1199,7 @@ mod task_deletion {
                 request_id: 1,
                 task_id: system.task_id,
                 after_sequence: None,
+                live: false,
             },
         )
         .await;
@@ -1251,6 +1277,7 @@ mod task_opening {
         assert!(list_tasks(&mut surface).await.contains(&TaskSummary {
             task_id,
             target: TargetRef::new(ALPHA),
+            status: TaskStatus::Idle,
         }));
 
         attach_initial(&mut surface, task_id).await;
@@ -1449,6 +1476,879 @@ mod task_opening {
             sleep(Duration::from_millis(20)).await;
         }
         panic!("expected {expected} advertised targets");
+    }
+}
+
+mod stopping {
+    use super::*;
+
+    async fn stop(surface: &mut Socket, task_id: TaskId, command_id: CommandId) -> ServerMessage {
+        send(
+            surface,
+            &ClientMessage::StopCommand {
+                request_id: 11,
+                task_id,
+                command_id,
+            },
+        )
+        .await;
+        receive(surface).await
+    }
+
+    fn requested(command_id: CommandId) -> ServerMessage {
+        ServerMessage::StopAccepted {
+            request_id: 11,
+            command_id,
+            outcome: StopOutcome::Requested,
+        }
+    }
+
+    fn stop_frame(system: &TestSystem, command_id: CommandId) -> ServerMessage {
+        ServerMessage::Stop {
+            task_id: system.task_id,
+            command_id,
+        }
+    }
+
+    /// The stop rows the coordinator holds, as `(command, delivered)`.
+    fn stop_rows(system: &TestSystem) -> Vec<(String, bool)> {
+        let connection = Connection::open(system.files.path().join("control.sqlite"))
+            .expect("open coordinator store");
+        let mut statement = connection
+            .prepare("SELECT command_id, delivered FROM stop_requests ORDER BY rowid")
+            .expect("prepare stop rows");
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query stop rows")
+            .map(|row| row.expect("stop row"))
+            .collect()
+    }
+
+    async fn acknowledge_stop(node: &mut Socket, system: &TestSystem, command_id: CommandId) {
+        send(
+            node,
+            &ClientMessage::AcknowledgeStop {
+                task_id: system.task_id,
+                command_id,
+            },
+        )
+        .await;
+    }
+
+    /// Answers once the node's earlier frames were handled: the coordinator
+    /// handles one connection's frames in order, and acknowledging an
+    /// execution is always answered. A frame the coordinator delivered to the
+    /// node earlier would arrive first and fail the assertion.
+    async fn barrier(node: &mut Socket, system: &TestSystem, command_id: CommandId) {
+        send(
+            node,
+            &ClientMessage::AcknowledgeExecution {
+                task_id: system.task_id,
+                command_id,
+            },
+        )
+        .await;
+        assert_eq!(
+            receive(node).await,
+            ServerMessage::ExecutionAcknowledged { command_id }
+        );
+    }
+
+    async fn publish(
+        node: &mut Socket,
+        system: &TestSystem,
+        command_id: CommandId,
+        events: Vec<ExecutionEvent>,
+    ) {
+        let through_execution_sequence = events.last().expect("events").sequence;
+        send(
+            node,
+            &ClientMessage::PublishExecutionEvents {
+                task_id: system.task_id,
+                command_id,
+                events,
+            },
+        )
+        .await;
+        assert_eq!(
+            receive(node).await,
+            ServerMessage::ExecutionEventsAccepted {
+                command_id,
+                through_execution_sequence,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stop_is_durable_when_answered_and_delivered_when_the_node_acknowledges_it() {
+        let system = TestSystem::start("workspace:stop").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Run for a while.").await;
+        assert!(matches!(
+            receive(&mut node).await,
+            ServerMessage::Execute { .. }
+        ));
+
+        assert_eq!(
+            stop(&mut mac, system.task_id, command_id).await,
+            requested(command_id)
+        );
+        assert_eq!(
+            stop_rows(&system),
+            vec![(command_id.to_string(), false)],
+            "the stop was durable when it was answered"
+        );
+        assert_eq!(receive(&mut node).await, stop_frame(&system, command_id));
+
+        acknowledge_stop(&mut node, &system, command_id).await;
+        barrier(&mut node, &system, command_id).await;
+        assert_eq!(stop_rows(&system), vec![(command_id.to_string(), true)]);
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_stop_requested_while_the_node_is_offline_follows_its_execution_until_acknowledged() {
+        let system = TestSystem::start("workspace:stop-offline").await;
+        let node_device = system.enroll_node().await;
+        let mut node = system.connect(&node_device).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Run for a while.").await;
+        let delivery = receive(&mut node).await;
+        node.close(None).await.expect("disconnect the node");
+
+        assert_eq!(
+            stop(&mut mac, system.task_id, command_id).await,
+            requested(command_id),
+            "a stop is accepted while the node is offline"
+        );
+
+        let mut reconnected = system.connect(&node_device).await;
+        assert_eq!(receive(&mut reconnected).await, delivery);
+        assert_eq!(
+            receive(&mut reconnected).await,
+            stop_frame(&system, command_id),
+            "the stop follows the execution it stops"
+        );
+        reconnected
+            .close(None)
+            .await
+            .expect("disconnect before acknowledging");
+
+        let mut again = system.connect(&node_device).await;
+        assert_eq!(receive(&mut again).await, delivery);
+        assert_eq!(
+            receive(&mut again).await,
+            stop_frame(&system, command_id),
+            "an unacknowledged stop is delivered again"
+        );
+        acknowledge_stop(&mut again, &system, command_id).await;
+        barrier(&mut again, &system, command_id).await;
+        again
+            .close(None)
+            .await
+            .expect("disconnect after acknowledging");
+
+        // Both pending deliveries are settled: the next activation sends the
+        // node nothing before it answers.
+        let mut last = system.connect(&node_device).await;
+        barrier(&mut last, &system, command_id).await;
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_stop_survives_a_coordinator_restart() {
+        let mut system = TestSystem::start("workspace:stop-restart").await;
+        let node_device = system.enroll_node().await;
+        let mut node = system.connect(&node_device).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Run for a while.").await;
+        let delivery = receive(&mut node).await;
+        assert_eq!(
+            stop(&mut mac, system.task_id, command_id).await,
+            requested(command_id)
+        );
+        drop((node, mac));
+
+        system.restart_coordinator().await;
+
+        let mut node = system.connect(&node_device).await;
+        assert_eq!(receive(&mut node).await, delivery);
+        assert_eq!(receive(&mut node).await, stop_frame(&system, command_id));
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn repeating_a_stop_returns_the_original_answer_and_keeps_one_row() {
+        let system = TestSystem::start("workspace:stop-twice").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Run for a while.").await;
+        assert!(matches!(
+            receive(&mut node).await,
+            ServerMessage::Execute { .. }
+        ));
+
+        for _ in 0..2 {
+            assert_eq!(
+                stop(&mut mac, system.task_id, command_id).await,
+                requested(command_id)
+            );
+            assert_eq!(
+                receive(&mut node).await,
+                stop_frame(&system, command_id),
+                "an unacknowledged stop is sent again to the online node"
+            );
+        }
+        assert_eq!(stop_rows(&system).len(), 1);
+
+        // The command ends cancelled. A retry still reads the recorded stop,
+        // and an acknowledged stop is not sent again.
+        acknowledge_stop(&mut node, &system, command_id).await;
+        barrier(&mut node, &system, command_id).await;
+        publish(
+            &mut node,
+            &system,
+            command_id,
+            ended_with(
+                ExecutionId::new(),
+                ExecutionTerminal::Cancelled {
+                    reason: "agent turn was cancelled".to_owned(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(
+            stop(&mut mac, system.task_id, command_id).await,
+            requested(command_id),
+            "a recorded stop outranks the command's present state"
+        );
+        barrier(&mut node, &system, command_id).await;
+        assert_eq!(stop_rows(&system), vec![(command_id.to_string(), true)]);
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_stop_for_an_ended_command_records_and_delivers_nothing() {
+        let system = TestSystem::start("workspace:stop-late").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Finish first.").await;
+        execute_and_publish(&system, &mut node, command_id).await;
+
+        assert_eq!(
+            stop(&mut mac, system.task_id, command_id).await,
+            ServerMessage::StopAccepted {
+                request_id: 11,
+                command_id,
+                outcome: StopOutcome::AlreadyEnded,
+            }
+        );
+        assert!(stop_rows(&system).is_empty());
+        barrier(&mut node, &system, command_id).await;
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_stop_that_names_nothing_the_principal_owns_is_refused_and_leaves_no_row() {
+        let system = TestSystem::start("workspace:stop-refused").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Run for a while.").await;
+        assert!(matches!(
+            receive(&mut node).await,
+            ServerMessage::Execute { .. }
+        ));
+        let second_task = TaskId::new();
+        system
+            .coordinator
+            .create_task(TaskSpec {
+                task_id: second_task,
+                principal_id: system.principal_id,
+                node_id: system.node_id,
+                target: TargetRef::new("workspace:second"),
+            })
+            .await
+            .expect("create a second task");
+        let stranger_device = system
+            .enroll(PeerIdentity::Surface {
+                principal_id: PrincipalId::new(),
+                surface: SurfaceRef::new("stranger"),
+            })
+            .await;
+        let mut stranger = system.connect(&stranger_device).await;
+
+        let replies = [
+            stop(&mut mac, system.task_id, CommandId::new()).await,
+            stop(&mut mac, second_task, command_id).await,
+            stop(&mut stranger, system.task_id, command_id).await,
+        ];
+        for reply in replies {
+            assert!(
+                matches!(
+                    reply,
+                    ServerMessage::Error {
+                        request_id: Some(11),
+                        code: ErrorCode::NotFound,
+                        ..
+                    }
+                ),
+                "{reply:?}"
+            );
+        }
+        assert!(stop_rows(&system).is_empty());
+        barrier(&mut node, &system, command_id).await;
+
+        system.stop().await;
+    }
+
+    /// A stop is recorded by `admit_stop` and nothing else, so every way into
+    /// the recorded state checks the command and its task first.
+    #[test]
+    fn only_admit_stop_records_a_stop() {
+        let sources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let writers: Vec<String> = std::fs::read_dir(&sources)
+            .expect("read the coordinator sources")
+            .map(|entry| entry.expect("source entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .filter(|path| {
+                std::fs::read_to_string(path)
+                    .expect("read a coordinator source")
+                    .contains("INSERT INTO stop_requests")
+            })
+            .map(|path| {
+                path.file_name()
+                    .expect("file name")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(writers, ["command_stop.rs"]);
+    }
+
+    #[tokio::test]
+    async fn only_the_tasks_node_acknowledges_a_stop() {
+        let system = TestSystem::start("workspace:stop-owner").await;
+        let mut owner = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Run for a while.").await;
+        assert!(matches!(
+            receive(&mut owner).await,
+            ServerMessage::Execute { .. }
+        ));
+        assert_eq!(
+            stop(&mut mac, system.task_id, command_id).await,
+            requested(command_id)
+        );
+        assert_eq!(receive(&mut owner).await, stop_frame(&system, command_id));
+
+        let attacker_device = system
+            .enroll(PeerIdentity::Node {
+                node_id: NodeId::new(),
+            })
+            .await;
+        let mut attacker = system.connect(&attacker_device).await;
+        acknowledge_stop(&mut attacker, &system, command_id).await;
+        assert!(matches!(
+            receive(&mut attacker).await,
+            ServerMessage::Error {
+                code: ErrorCode::InvalidMessage,
+                ..
+            }
+        ));
+        assert_eq!(stop_rows(&system), vec![(command_id.to_string(), false)]);
+
+        // An acknowledgement that names another task confirms nothing here.
+        send(
+            &mut owner,
+            &ClientMessage::AcknowledgeStop {
+                task_id: TaskId::new(),
+                command_id,
+            },
+        )
+        .await;
+        barrier(&mut owner, &system, command_id).await;
+        assert_eq!(stop_rows(&system), vec![(command_id.to_string(), false)]);
+
+        system.stop().await;
+    }
+}
+
+mod live_activity {
+    use renoa_protocol::LiveActivity;
+
+    use super::*;
+
+    async fn attach(surface: &mut Socket, task_id: TaskId, live: bool) {
+        send(
+            surface,
+            &ClientMessage::Attach {
+                request_id: 1,
+                task_id,
+                after_sequence: None,
+                live,
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(surface).await,
+            ServerMessage::Attached { request_id: 1, .. }
+        ));
+    }
+
+    async fn publish_live(
+        node: &mut Socket,
+        system: &TestSystem,
+        command_id: CommandId,
+        activity: LiveActivity,
+    ) {
+        send(
+            node,
+            &ClientMessage::PublishLiveActivity {
+                task_id: system.task_id,
+                command_id,
+                activity,
+            },
+        )
+        .await;
+    }
+
+    fn delta(sequence: u64, text: &str) -> LiveActivity {
+        LiveActivity::TextDelta {
+            sequence,
+            text: text.to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn only_a_live_attached_surface_receives_frames_and_nothing_is_stored() {
+        let system = TestSystem::start("workspace:live").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut live = system.connect(&system.enroll_surface("phone").await).await;
+        let mut plain = system.connect(&system.enroll_surface("desk").await).await;
+        let mut sender = system.connect(&system.enroll_surface("sender").await).await;
+        attach(&mut live, system.task_id, true).await;
+        attach(&mut plain, system.task_id, false).await;
+        let command_id = CommandId::new();
+        submit(&mut sender, system.task_id, command_id, "Write something.").await;
+        let (_, transcript) = execute(&system, &mut node, command_id).await;
+
+        publish_live(&mut node, &system, command_id, delta(0, "Hel")).await;
+        publish_live(&mut node, &system, command_id, delta(1, "lo")).await;
+        publish_live(&mut node, &system, command_id, LiveActivity::TextReset).await;
+        send(
+            &mut node,
+            &ClientMessage::PublishExecutionEvents {
+                task_id: system.task_id,
+                command_id,
+                events: transcript.events,
+            },
+        )
+        .await;
+
+        let mut frames = Vec::new();
+        let mut durable = 0;
+        while frames.len() < 3 || durable < 5 {
+            match receive(&mut live).await {
+                ServerMessage::LiveActivity {
+                    task_id,
+                    command_id: cause,
+                    activity,
+                } => {
+                    assert_eq!((task_id, cause), (system.task_id, command_id));
+                    frames.push(activity);
+                }
+                ServerMessage::TaskEvent { .. } => durable += 1,
+                other => panic!("unexpected message {other:?}"),
+            }
+        }
+        assert_eq!(
+            frames,
+            vec![delta(0, "Hel"), delta(1, "lo"), LiveActivity::TextReset],
+            "frames arrive in the order the node published them"
+        );
+
+        // The surface that did not ask sees the five journal events and then
+        // answers a request; the frames were published before the events, so
+        // one forwarded to it would have arrived first.
+        for _ in 0..5 {
+            assert!(
+                matches!(receive(&mut plain).await, ServerMessage::TaskEvent { .. }),
+                "a surface that did not attach live received a live frame"
+            );
+        }
+        send(&mut plain, &ClientMessage::ListTasks { request_id: 9 }).await;
+        assert!(matches!(
+            receive(&mut plain).await,
+            ServerMessage::TaskList { request_id: 9, .. }
+        ));
+        let stored: i64 = Connection::open(system.files.path().join("control.sqlite"))
+            .expect("open coordinator store")
+            .query_row("SELECT count(*) FROM task_events", [], |row| row.get(0))
+            .expect("count the journal");
+        assert_eq!(stored, 5, "the command and its four execution events");
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_frame_from_a_node_that_does_not_own_the_task_is_not_relayed() {
+        let system = TestSystem::start("workspace:live-owner").await;
+        let mut owner = system.connect(&system.enroll_node().await).await;
+        let mut phone = system.connect(&system.enroll_surface("phone").await).await;
+        attach(&mut phone, system.task_id, true).await;
+        let command_id = CommandId::new();
+        let stranger_device = system
+            .enroll(PeerIdentity::Node {
+                node_id: NodeId::new(),
+            })
+            .await;
+        let mut stranger = system.connect(&stranger_device).await;
+
+        publish_live(&mut stranger, &system, command_id, delta(0, "forged")).await;
+        // The stranger's frames are handled in order: its refused
+        // acknowledgement answers only after the forged frame was handled.
+        send(
+            &mut stranger,
+            &ClientMessage::AcknowledgeStop {
+                task_id: system.task_id,
+                command_id,
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut stranger).await,
+            ServerMessage::Error {
+                code: ErrorCode::InvalidMessage,
+                ..
+            }
+        ));
+        publish_live(&mut owner, &system, command_id, delta(0, "genuine")).await;
+
+        assert_eq!(
+            receive(&mut phone).await,
+            ServerMessage::LiveActivity {
+                task_id: system.task_id,
+                command_id,
+                activity: delta(0, "genuine"),
+            }
+        );
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_flood_of_live_frames_never_makes_a_surface_replay() {
+        let system = TestSystem::start("workspace:live-flood").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut phone = system.connect(&system.enroll_surface("phone").await).await;
+        let mut sender = system.connect(&system.enroll_surface("sender").await).await;
+        attach(&mut phone, system.task_id, true).await;
+        let command_id = CommandId::new();
+        submit(&mut sender, system.task_id, command_id, "Write a lot.").await;
+        let (_, transcript) = execute(&system, &mut node, command_id).await;
+
+        // More frames and bytes than the live channel and the connection hold
+        // while the surface reads none. The surface may lose frames; it must
+        // not lose its place in the journal.
+        let chunk = "x".repeat(64 * 1024);
+        for sequence in 0..400 {
+            publish_live(&mut node, &system, command_id, delta(sequence, &chunk)).await;
+        }
+        send(
+            &mut node,
+            &ClientMessage::PublishExecutionEvents {
+                task_id: system.task_id,
+                command_id,
+                events: transcript.events,
+            },
+        )
+        .await;
+
+        let mut ended = false;
+        while !ended {
+            match receive(&mut phone).await {
+                ServerMessage::Error { code, .. } => {
+                    panic!("live frames made the surface fail with {code:?}")
+                }
+                ServerMessage::TaskEvent { event } => {
+                    ended = matches!(
+                        event.kind,
+                        TaskEventKind::ExecutionEvent {
+                            event: ExecutionEvent {
+                                kind: ExecutionEventKind::ExecutionTerminated { .. },
+                                ..
+                            },
+                            ..
+                        }
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        system.stop().await;
+    }
+}
+
+mod status {
+    use super::*;
+
+    async fn statuses(surface: &mut Socket) -> Vec<TaskStatus> {
+        send(surface, &ClientMessage::ListTasks { request_id: 21 }).await;
+        let ServerMessage::TaskList { tasks, .. } = receive(surface).await else {
+            panic!("expected a task list");
+        };
+        tasks.into_iter().map(|task| task.status).collect()
+    }
+
+    /// The rule the documents state, applied to the journal a surface holds:
+    /// the latest command is working until its execution terminates, and the
+    /// terminal decides what follows.
+    fn status_of(journal: &[TaskEvent]) -> TaskStatus {
+        let latest = journal.iter().rev().find_map(|event| match &event.kind {
+            TaskEventKind::CommandSubmitted { command } => Some(command.command_id),
+            TaskEventKind::ExecutionEvent { .. } => None,
+        });
+        let Some(latest) = latest else {
+            return TaskStatus::Idle;
+        };
+        journal
+            .iter()
+            .find_map(|event| match &event.kind {
+                TaskEventKind::ExecutionEvent {
+                    command_id,
+                    event:
+                        ExecutionEvent {
+                            kind: ExecutionEventKind::ExecutionTerminated { terminal },
+                            ..
+                        },
+                } if *command_id == latest => Some(match terminal {
+                    ExecutionTerminal::Failed { .. } => TaskStatus::Failed,
+                    ExecutionTerminal::Completed | ExecutionTerminal::Cancelled { .. } => {
+                        TaskStatus::Idle
+                    }
+                }),
+                _ => None,
+            })
+            .unwrap_or(TaskStatus::Working)
+    }
+
+    async fn assert_status(expected: TaskStatus, journal: &[TaskEvent], surface: &mut Socket) {
+        assert_eq!(statuses(surface).await, vec![expected], "the directory");
+        assert_eq!(status_of(journal), expected, "the journal rule");
+    }
+
+    async fn read(surface: &mut Socket, journal: &mut Vec<TaskEvent>, count: usize) {
+        for _ in 0..count {
+            let ServerMessage::TaskEvent { event } = receive(surface).await else {
+                panic!("expected a task event");
+            };
+            journal.push(event);
+        }
+    }
+
+    async fn publish(
+        node: &mut Socket,
+        system: &TestSystem,
+        command_id: CommandId,
+        events: Vec<ExecutionEvent>,
+    ) {
+        send(
+            node,
+            &ClientMessage::PublishExecutionEvents {
+                task_id: system.task_id,
+                command_id,
+                events,
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(node).await,
+            ServerMessage::ExecutionEventsAccepted { .. }
+        ));
+    }
+
+    /// Submits `command_id` and has the node acknowledge it; returns the
+    /// transcript that would end it in `terminal`.
+    async fn start(
+        system: &TestSystem,
+        node: &mut Socket,
+        mac: &mut Socket,
+        command_id: CommandId,
+        terminal: ExecutionTerminal,
+    ) -> Vec<ExecutionEvent> {
+        submit(mac, system.task_id, command_id, "Go.").await;
+        execute(system, node, command_id).await;
+        ended_with(ExecutionId::new(), terminal)
+    }
+
+    #[tokio::test]
+    async fn the_directory_reports_the_latest_commands_status_as_the_journal_defines_it() {
+        let system = TestSystem::start("workspace:status").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let mut watcher = system
+            .connect(&system.enroll_surface("watcher").await)
+            .await;
+        let mut journal = Vec::new();
+        attach_initial(&mut watcher, system.task_id).await;
+        assert_status(TaskStatus::Idle, &journal, &mut mac).await;
+
+        let completed = CommandId::new();
+        let events = start(
+            &system,
+            &mut node,
+            &mut mac,
+            completed,
+            ExecutionTerminal::Completed,
+        )
+        .await;
+        read(&mut watcher, &mut journal, 1).await;
+        assert_status(TaskStatus::Working, &journal, &mut mac).await;
+        publish(&mut node, &system, completed, events[..2].to_vec()).await;
+        read(&mut watcher, &mut journal, 2).await;
+        assert_status(TaskStatus::Working, &journal, &mut mac).await;
+        publish(&mut node, &system, completed, events[2..].to_vec()).await;
+        read(&mut watcher, &mut journal, 1).await;
+        assert_status(TaskStatus::Idle, &journal, &mut mac).await;
+
+        let failed = CommandId::new();
+        let events = start(
+            &system,
+            &mut node,
+            &mut mac,
+            failed,
+            ExecutionTerminal::Failed {
+                error: "the model is unavailable".to_owned(),
+            },
+        )
+        .await;
+        read(&mut watcher, &mut journal, 1).await;
+        assert_status(TaskStatus::Working, &journal, &mut mac).await;
+        publish(&mut node, &system, failed, events).await;
+        read(&mut watcher, &mut journal, 3).await;
+        assert_status(TaskStatus::Failed, &journal, &mut mac).await;
+
+        let cancelled = CommandId::new();
+        let events = start(
+            &system,
+            &mut node,
+            &mut mac,
+            cancelled,
+            ExecutionTerminal::Cancelled {
+                reason: "agent turn was cancelled".to_owned(),
+            },
+        )
+        .await;
+        read(&mut watcher, &mut journal, 1).await;
+        assert_status(TaskStatus::Working, &journal, &mut mac).await;
+        publish(&mut node, &system, cancelled, events).await;
+        read(&mut watcher, &mut journal, 3).await;
+        assert_status(TaskStatus::Idle, &journal, &mut mac).await;
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn an_older_command_that_never_settled_does_not_hold_a_task_in_working() {
+        let system = TestSystem::start("workspace:status-orphan").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+
+        let orphan = CommandId::new();
+        submit(&mut mac, system.task_id, orphan, "Never finishes.").await;
+        execute(&system, &mut node, orphan).await;
+        assert_eq!(statuses(&mut mac).await, vec![TaskStatus::Working]);
+
+        let later = CommandId::new();
+        submit(&mut mac, system.task_id, later, "Finishes.").await;
+        execute_and_publish(&system, &mut node, later).await;
+
+        assert_eq!(statuses(&mut mac).await, vec![TaskStatus::Idle]);
+
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn reading_the_directory_writes_nothing() {
+        let system = TestSystem::start("workspace:status-read").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Finish.").await;
+        execute_and_publish(&system, &mut node, command_id).await;
+        // `data_version` moves when another connection commits a change.
+        let observer = Connection::open(system.files.path().join("control.sqlite"))
+            .expect("open coordinator store");
+        let version = |connection: &Connection| -> i64 {
+            connection
+                .query_row("PRAGMA data_version", [], |row| row.get(0))
+                .expect("read data version")
+        };
+        let before = version(&observer);
+
+        assert_eq!(statuses(&mut mac).await, vec![TaskStatus::Idle]);
+
+        assert_eq!(version(&observer), before);
+
+        system.stop().await;
+    }
+
+    /// Whether a command has settled is decided by the `command_states` view
+    /// alone: the execution stream's flag is named only by the modules that
+    /// write, migrate or define it, and every reader goes through the view.
+    #[test]
+    fn only_the_view_decides_whether_a_command_settled() {
+        const OWNERS: [&str; 3] = [
+            "control_schema.rs",
+            "event_store.rs",
+            "control_migrations.rs",
+        ];
+        const READERS: [&str; 3] = ["command_stop.rs", "task_deletion.rs", "task_status.rs"];
+        let sources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let source_of = |name: &str| {
+            std::fs::read_to_string(sources.join(name)).expect("read a coordinator source")
+        };
+        for entry in std::fs::read_dir(&sources).expect("read the coordinator sources") {
+            let path = entry.expect("source entry").path();
+            let name = path
+                .file_name()
+                .expect("file name")
+                .to_string_lossy()
+                .into_owned();
+            if path.extension().is_none_or(|extension| extension != "rs")
+                || OWNERS.contains(&name.as_str())
+            {
+                continue;
+            }
+            let source = source_of(&name);
+            assert_eq!(
+                source.matches("execution_event_streams").count(),
+                source
+                    .matches("DELETE FROM execution_event_streams")
+                    .count(),
+                "{name} reads the execution stream table; settled is decided by command_states"
+            );
+        }
+        for name in READERS {
+            assert!(
+                source_of(name).contains("command_states"),
+                "{name} no longer reads command_states"
+            );
+        }
     }
 }
 
@@ -1728,6 +2628,19 @@ fn execution_event(
     }
 }
 
+/// An execution transcript that starts, runs one turn and ends in `terminal`.
+fn ended_with(execution_id: ExecutionId, terminal: ExecutionTerminal) -> Vec<ExecutionEvent> {
+    vec![
+        execution_event(execution_id, 0, ExecutionEventKind::ExecutionStarted),
+        execution_event(execution_id, 1, ExecutionEventKind::TurnStarted),
+        execution_event(
+            execution_id,
+            2,
+            ExecutionEventKind::ExecutionTerminated { terminal },
+        ),
+    ]
+}
+
 async fn attach_initial(socket: &mut Socket, task_id: TaskId) {
     send(
         socket,
@@ -1735,6 +2648,7 @@ async fn attach_initial(socket: &mut Socket, task_id: TaskId) {
             request_id: 1,
             task_id,
             after_sequence: None,
+            live: false,
         },
     )
     .await;
@@ -1785,6 +2699,7 @@ async fn assert_replayed_prefix(
             request_id: 3,
             task_id: system.task_id,
             after_sequence: None,
+            live: false,
         },
     )
     .await;

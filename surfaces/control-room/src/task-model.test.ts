@@ -27,6 +27,7 @@ describe("task projection", () => {
 const TASK: TaskSummary = {
   taskId: "00000000-0000-0000-0000-000000000010",
   target: "workspace:renoa",
+  status: "idle",
 };
 
 function command(sequence: number): TaskEvent {

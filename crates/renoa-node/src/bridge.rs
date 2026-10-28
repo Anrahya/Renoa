@@ -7,7 +7,7 @@ use renoa_local::{AgentSession, LocalHost, LocalHostError, Speaker, TurnObservat
 use renoa_protocol::{Author, CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use thiserror::Error;
 use tokio::{
-    sync::watch,
+    sync::{broadcast, watch},
     task::{JoinError, JoinSet},
     time::sleep,
 };
@@ -18,13 +18,18 @@ use crate::{
     agent_targets,
     automations::{self, AutomationLink},
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
-    live::LiveEvents,
+    live::{LiveEvents, LiveFrame},
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
     operator,
     projection::{project_history, terminal_event},
     session::{SessionEnd, serve_session},
+    stop::RunningTurns,
 };
+
+/// How many live frames wait for the session loop before the oldest is
+/// dropped. Live activity is never kept for later.
+const LIVE_FRAME_CAPACITY: usize = 1024;
 
 #[derive(Debug, Error)]
 pub enum NodeError {
@@ -81,6 +86,7 @@ impl RenoaNode {
         let state = NodeStore::open(host.home().node_database())?;
         state.validate_configured_targets(|binding| agent_targets::serves(host.home(), binding))?;
         let (commits, _) = watch::channel(0_u64);
+        let (live, _) = broadcast::channel(LIVE_FRAME_CAPACITY);
         Ok(Self {
             endpoint,
             credentials,
@@ -88,6 +94,8 @@ impl RenoaNode {
                 host,
                 state,
                 commits,
+                live,
+                turns: RunningTurns::default(),
             }),
             automations: None,
         })
@@ -209,6 +217,10 @@ pub(crate) struct NodeRuntime {
     pub(crate) host: Arc<LocalHost>,
     pub(crate) state: NodeStore,
     pub(crate) commits: watch::Sender<u64>,
+    /// Ephemeral live activity for the session loop to forward.
+    pub(crate) live: broadcast::Sender<LiveFrame>,
+    /// The running turns a stop can cancel.
+    pub(crate) turns: RunningTurns,
 }
 
 impl NodeRuntime {
@@ -230,6 +242,13 @@ impl NodeRuntime {
     async fn execute(self: Arc<Self>, record: ExecutionRecord) -> Result<(), NodeError> {
         let command_id = record.command.command_id;
         let agent_id = AgentId::from_uuid(record.binding.agent_id);
+        // Registered before the ledger is read, so a stop recorded from now on
+        // cancels this token and an earlier one is read below.
+        let cancellation = CancellationToken::new();
+        let _running = self.turns.register(command_id, cancellation.clone());
+        if self.state.stop_requested(command_id).await? {
+            cancellation.cancel();
+        }
         node_log::event(
             "info",
             "execution_started",
@@ -264,11 +283,11 @@ impl NodeRuntime {
         };
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
-        let cancellation = CancellationToken::new();
         let (setup_events, setup) =
             operator::setup_sink(self.host.home(), command_id.as_uuid(), &cancellation);
-        let events =
-            Arc::new(LiveEvents::start(Arc::clone(&self), command_id, setup_events).await?);
+        let events = Arc::new(
+            LiveEvents::start(Arc::clone(&self), record.task_id, command_id, setup_events).await?,
+        );
         let mut observation =
             TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
         if let Some(context) = record.command.input.context() {

@@ -1,13 +1,15 @@
-use renoa_protocol::{CommandEnvelope, CommandId, CommandInput, ExecutionEvent, TargetRef};
+use renoa_protocol::{
+    CommandEnvelope, CommandId, CommandInput, ExecutionEvent, LiveActivity, TargetRef,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, NodeId, TargetSummary,
-    TaskEvent, TaskEventKind, TaskId, TaskSummary,
+    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, NodeId, StopOutcome,
+    TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
     operations::{NodeOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 13;
+pub const JSON_WS_VERSION: u32 = 14;
 const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -42,12 +44,19 @@ pub enum ClientMessage {
         request_id: u64,
         task_id: TaskId,
         after_sequence: Option<u64>,
+        /// Whether the surface also wants the task's ephemeral live activity.
+        live: bool,
     },
     Submit {
         request_id: u64,
         task_id: TaskId,
         command_id: CommandId,
         input: CommandInput,
+    },
+    StopCommand {
+        request_id: u64,
+        task_id: TaskId,
+        command_id: CommandId,
     },
     DeleteTask {
         request_id: u64,
@@ -65,6 +74,15 @@ pub enum ClientMessage {
         task_id: TaskId,
         command_id: CommandId,
     },
+    AcknowledgeStop {
+        task_id: TaskId,
+        command_id: CommandId,
+    },
+    PublishLiveActivity {
+        task_id: TaskId,
+        command_id: CommandId,
+        activity: LiveActivity,
+    },
 }
 
 impl ClientMessage {
@@ -74,11 +92,13 @@ impl ClientMessage {
             | Self::Authenticate { .. }
             | Self::AuthenticateTicket { .. }
             | Self::AdvertiseTargets { .. }
-            | Self::AcknowledgeExecution { .. } => true,
+            | Self::AcknowledgeExecution { .. }
+            | Self::AcknowledgeStop { .. } => true,
             Self::ListTasks { request_id }
             | Self::ListTargets { request_id }
             | Self::OpenTask { request_id, .. }
             | Self::Submit { request_id, .. }
+            | Self::StopCommand { request_id, .. }
             | Self::DeleteTask { request_id, .. } => interoperable(*request_id),
             Self::Attach {
                 request_id,
@@ -88,88 +108,132 @@ impl ClientMessage {
             Self::PublishExecutionEvents { events, .. } => {
                 events.iter().all(execution_event_has_interoperable_numbers)
             }
+            Self::PublishLiveActivity { activity, .. } => {
+                live_activity_has_interoperable_numbers(activity)
+            }
         }
     }
 
     pub(crate) fn into_operation(self) -> Option<JsonOperation> {
-        match self {
-            Self::ListTasks { request_id } => Some(JsonOperation::Surface {
-                request_id,
-                operation: SurfaceOperation::ListTasks,
-            }),
-            Self::ListTargets { request_id } => Some(JsonOperation::Surface {
-                request_id,
-                operation: SurfaceOperation::ListTargets,
-            }),
+        let operation = match self {
+            Self::AdvertiseTargets { targets } => NodeOperation::AdvertiseTargets { targets },
+            Self::AcknowledgeExecution {
+                task_id,
+                command_id,
+            } => NodeOperation::AcknowledgeExecution {
+                task_id,
+                command_id,
+            },
+            Self::PublishExecutionEvents {
+                task_id,
+                command_id,
+                events,
+            } => NodeOperation::PublishExecutionEvents {
+                task_id,
+                command_id,
+                events,
+            },
+            Self::AcknowledgeStop {
+                task_id,
+                command_id,
+            } => NodeOperation::AcknowledgeStop {
+                task_id,
+                command_id,
+            },
+            Self::PublishLiveActivity {
+                task_id,
+                command_id,
+                activity,
+            } => NodeOperation::PublishLiveActivity {
+                task_id,
+                command_id,
+                activity,
+            },
+            Self::Enroll { .. } | Self::Authenticate { .. } | Self::AuthenticateTicket { .. } => {
+                return None;
+            }
+            Self::ListTasks { .. }
+            | Self::ListTargets { .. }
+            | Self::OpenTask { .. }
+            | Self::Attach { .. }
+            | Self::Submit { .. }
+            | Self::StopCommand { .. }
+            | Self::DeleteTask { .. } => return self.into_surface_operation(),
+        };
+        Some(JsonOperation::Node(operation))
+    }
+
+    fn into_surface_operation(self) -> Option<JsonOperation> {
+        let (request_id, operation) = match self {
+            Self::ListTasks { request_id } => (request_id, SurfaceOperation::ListTasks),
+            Self::ListTargets { request_id } => (request_id, SurfaceOperation::ListTargets),
             Self::OpenTask {
                 request_id,
                 task_id,
                 node_id,
                 target,
-            } => Some(JsonOperation::Surface {
+            } => (
                 request_id,
-                operation: SurfaceOperation::OpenTask {
+                SurfaceOperation::OpenTask {
                     task_id,
                     node_id,
                     target,
                 },
-            }),
+            ),
             Self::Attach {
                 request_id,
                 task_id,
                 after_sequence,
-            } => Some(JsonOperation::Surface {
+                live,
+            } => (
                 request_id,
-                operation: SurfaceOperation::Attach {
+                SurfaceOperation::Attach {
                     task_id,
                     after_sequence,
+                    live,
                 },
-            }),
+            ),
             Self::Submit {
                 request_id,
                 task_id,
                 command_id,
                 input,
-            } => Some(JsonOperation::Surface {
+            } => (
                 request_id,
-                operation: SurfaceOperation::Submit {
+                SurfaceOperation::Submit {
                     task_id,
                     command_id,
                     input,
                 },
-            }),
+            ),
+            Self::StopCommand {
+                request_id,
+                task_id,
+                command_id,
+            } => (
+                request_id,
+                SurfaceOperation::StopCommand {
+                    task_id,
+                    command_id,
+                },
+            ),
             Self::DeleteTask {
                 request_id,
                 task_id,
-            } => Some(JsonOperation::Surface {
-                request_id,
-                operation: SurfaceOperation::DeleteTask { task_id },
-            }),
-            Self::AdvertiseTargets { targets } => {
-                Some(JsonOperation::Node(NodeOperation::AdvertiseTargets {
-                    targets,
-                }))
-            }
-            Self::AcknowledgeExecution {
-                task_id,
-                command_id,
-            } => Some(JsonOperation::Node(NodeOperation::AcknowledgeExecution {
-                task_id,
-                command_id,
-            })),
-            Self::PublishExecutionEvents {
-                task_id,
-                command_id,
-                events,
-            } => Some(JsonOperation::Node(NodeOperation::PublishExecutionEvents {
-                task_id,
-                command_id,
-                events,
-            })),
-            Self::Enroll { .. } | Self::Authenticate { .. } | Self::AuthenticateTicket { .. } => {
-                None
-            }
-        }
+            } => (request_id, SurfaceOperation::DeleteTask { task_id }),
+            Self::Enroll { .. }
+            | Self::Authenticate { .. }
+            | Self::AuthenticateTicket { .. }
+            | Self::AdvertiseTargets { .. }
+            | Self::AcknowledgeExecution { .. }
+            | Self::PublishExecutionEvents { .. }
+            | Self::AcknowledgeStop { .. }
+            | Self::PublishLiveActivity { .. } => return None,
+        };
+        Some(JsonOperation::Surface {
+            request_id,
+            operation,
+        })
     }
 }
 
@@ -213,6 +277,11 @@ pub enum ServerMessage {
         request_id: u64,
         command_id: CommandId,
     },
+    StopAccepted {
+        request_id: u64,
+        command_id: CommandId,
+        outcome: StopOutcome,
+    },
     TaskDeleted {
         request_id: u64,
         task_id: TaskId,
@@ -228,8 +297,17 @@ pub enum ServerMessage {
         task_id: TaskId,
         command: CommandEnvelope,
     },
+    Stop {
+        task_id: TaskId,
+        command_id: CommandId,
+    },
     TaskEvent {
         event: TaskEvent,
+    },
+    LiveActivity {
+        task_id: TaskId,
+        command_id: CommandId,
+        activity: LiveActivity,
     },
     Error {
         request_id: Option<u64>,
@@ -244,11 +322,13 @@ impl ServerMessage {
             Self::Enrolled { .. }
             | Self::Authenticated { .. }
             | Self::ExecutionAcknowledged { .. }
-            | Self::Execute { .. } => true,
+            | Self::Execute { .. }
+            | Self::Stop { .. } => true,
             Self::TaskList { request_id, .. }
             | Self::TargetList { request_id, .. }
             | Self::TaskOpened { request_id, .. }
             | Self::CommandAccepted { request_id, .. }
+            | Self::StopAccepted { request_id, .. }
             | Self::TaskDeleted { request_id, .. } => interoperable(*request_id),
             Self::Attached {
                 request_id,
@@ -268,8 +348,18 @@ impl ServerMessage {
                         }
                     }
             }
+            Self::LiveActivity { activity, .. } => {
+                live_activity_has_interoperable_numbers(activity)
+            }
             Self::Error { request_id, .. } => request_id.is_none_or(interoperable),
         }
+    }
+}
+
+fn live_activity_has_interoperable_numbers(activity: &LiveActivity) -> bool {
+    match activity {
+        LiveActivity::TextDelta { sequence, .. } => interoperable(*sequence),
+        LiveActivity::TextReset => true,
     }
 }
 

@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ControlError, ErrorCode, ServerMessage, TaskId, TaskSpec, control_log,
     coordinator::CoordinatorState,
+    live_activity::LiveFrame,
     operations::SurfaceOperation,
     store::CommandAdmission,
     wire::{publish_task_event, send_control_error, send_error, task_sender},
@@ -24,26 +25,11 @@ pub(crate) async fn handle_surface_operation(
     operation: SurfaceOperation,
 ) {
     match operation {
-        SurfaceOperation::ListTasks => match state.store.list_tasks(principal_id).await {
-            Ok(tasks) => {
-                let _ = outgoing
-                    .send(ServerMessage::TaskList { request_id, tasks })
-                    .await;
-            }
-            Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-        },
+        SurfaceOperation::ListTasks => {
+            serve_list_tasks(&state, outgoing, principal_id, request_id).await;
+        }
         SurfaceOperation::ListTargets => {
-            match crate::task_opening::list_targets(&state, principal_id).await {
-                Ok(targets) => {
-                    let _ = outgoing
-                        .send(ServerMessage::TargetList {
-                            request_id,
-                            targets,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-            }
+            serve_list_targets(&state, outgoing, principal_id, request_id).await;
         }
         SurfaceOperation::OpenTask {
             task_id,
@@ -56,23 +42,14 @@ pub(crate) async fn handle_surface_operation(
                 node_id,
                 target,
             };
-            match crate::task_opening::open_task(&state, task).await {
-                Ok(()) => {
-                    let _ = outgoing
-                        .send(ServerMessage::TaskOpened {
-                            request_id,
-                            task_id,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-            }
+            serve_open_task(&state, outgoing, request_id, task).await;
         }
         SurfaceOperation::Attach {
             task_id,
             after_sequence,
+            live,
         } => {
-            if let Err(error) = attach_surface(
+            let attached = attach_surface(
                 state,
                 outgoing.clone(),
                 connection_cancelled.child_token(),
@@ -80,11 +57,10 @@ pub(crate) async fn handle_surface_operation(
                 task_id,
                 after_sequence,
                 principal_id,
+                live,
             )
-            .await
-            {
-                send_control_error(outgoing, Some(request_id), &error).await;
-            }
+            .await;
+            report(outgoing, request_id, attached).await;
         }
         SurfaceOperation::Submit {
             task_id,
@@ -102,26 +78,122 @@ pub(crate) async fn handle_surface_operation(
                 surface,
             )
             .await;
-            if let Err(error) = result {
-                send_control_error(outgoing, Some(request_id), &error).await;
-            }
+            report(outgoing, request_id, result).await;
+        }
+        SurfaceOperation::StopCommand {
+            task_id,
+            command_id,
+        } => {
+            let stopped =
+                crate::command_stop::stop_command(&state, principal_id, task_id, command_id).await;
+            answer(outgoing, request_id, stopped, |outcome| {
+                ServerMessage::StopAccepted {
+                    request_id,
+                    command_id,
+                    outcome,
+                }
+            })
+            .await;
         }
         SurfaceOperation::DeleteTask { task_id } => {
-            match crate::task_deletion::delete_task(&state, principal_id, task_id).await {
-                Ok(()) => {
-                    let _ = outgoing
-                        .send(ServerMessage::TaskDeleted {
-                            request_id,
-                            task_id,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-            }
+            serve_delete_task(&state, outgoing, principal_id, request_id, task_id).await;
         }
     }
 }
 
+async fn serve_list_tasks(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    principal_id: PrincipalId,
+    request_id: u64,
+) {
+    let tasks = state.store.list_tasks(principal_id).await;
+    answer(outgoing, request_id, tasks, |tasks| {
+        ServerMessage::TaskList { request_id, tasks }
+    })
+    .await;
+}
+
+async fn serve_list_targets(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    principal_id: PrincipalId,
+    request_id: u64,
+) {
+    let targets = crate::task_opening::list_targets(state, principal_id).await;
+    answer(outgoing, request_id, targets, |targets| {
+        ServerMessage::TargetList {
+            request_id,
+            targets,
+        }
+    })
+    .await;
+}
+
+async fn serve_open_task(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    request_id: u64,
+    task: TaskSpec,
+) {
+    let task_id = task.task_id;
+    let opened = crate::task_opening::open_task(state, task).await;
+    answer(outgoing, request_id, opened, |()| {
+        ServerMessage::TaskOpened {
+            request_id,
+            task_id,
+        }
+    })
+    .await;
+}
+
+async fn serve_delete_task(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    principal_id: PrincipalId,
+    request_id: u64,
+    task_id: TaskId,
+) {
+    let deleted = crate::task_deletion::delete_task(state, principal_id, task_id).await;
+    answer(outgoing, request_id, deleted, |()| {
+        ServerMessage::TaskDeleted {
+            request_id,
+            task_id,
+        }
+    })
+    .await;
+}
+
+/// Sends the error that ended a request whose success answers for itself.
+async fn report(
+    outgoing: &mpsc::Sender<ServerMessage>,
+    request_id: u64,
+    result: Result<(), ControlError>,
+) {
+    if let Err(error) = result {
+        send_control_error(outgoing, Some(request_id), &error).await;
+    }
+}
+
+/// Sends a request's reply, or the error that ended it.
+async fn answer<T>(
+    outgoing: &mpsc::Sender<ServerMessage>,
+    request_id: u64,
+    result: Result<T, ControlError>,
+    reply: impl FnOnce(T) -> ServerMessage,
+) {
+    match result {
+        Ok(value) => {
+            let _ = outgoing.send(reply(value)).await;
+        }
+        Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "these values are the complete authenticated attachment request"
+)]
 pub(crate) async fn attach_surface(
     state: Arc<CoordinatorState>,
     outgoing: mpsc::Sender<ServerMessage>,
@@ -130,14 +202,20 @@ pub(crate) async fn attach_surface(
     task_id: TaskId,
     after_sequence: Option<u64>,
     principal_id: PrincipalId,
+    live_activity: bool,
 ) -> Result<(), ControlError> {
     // Reject unknown tasks before allocating their long-lived broadcaster. The
     // suffix is read after subscription to preserve the replay-to-live boundary.
-    state
+    let task = state
         .store
         .load_task_for_principal(task_id, principal_id)
         .await?;
     let mut live = task_sender(&state, task_id).await.subscribe();
+    let mut live_frames = if live_activity {
+        Some(crate::live_activity::subscribe(&state, task_id, task.node_id).await)
+    } else {
+        None
+    };
     let suffix = state
         .store
         .load_suffix(task_id, principal_id, after_sequence)
@@ -161,6 +239,21 @@ pub(crate) async fn attach_surface(
         loop {
             tokio::select! {
                 () = cancelled.cancelled() => return,
+                frame = next_live_frame(&mut live_frames) => match frame {
+                    // Live frames are best effort: a full queue drops a frame,
+                    // and a receiver that fell behind skips ahead without
+                    // asking the surface to replay. The surface sees the gap
+                    // in the frames' sequence.
+                    Ok(LiveFrame { command_id, activity }) => {
+                        let _ = outgoing.try_send(ServerMessage::LiveActivity {
+                            task_id,
+                            command_id,
+                            activity,
+                        });
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => live_frames = None,
+                },
                 event = live.recv() => match event {
                     Ok(event) if through_sequence.is_none_or(|sequence| event.sequence > sequence) => {
                         if outgoing.send(ServerMessage::TaskEvent { event }).await.is_err() {
@@ -184,6 +277,16 @@ pub(crate) async fn attach_surface(
         }
     });
     Ok(())
+}
+
+/// The next live frame, or never when the attachment did not ask for them.
+async fn next_live_frame(
+    frames: &mut Option<broadcast::Receiver<LiveFrame>>,
+) -> Result<LiveFrame, broadcast::error::RecvError> {
+    match frames {
+        Some(frames) => frames.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 #[allow(
