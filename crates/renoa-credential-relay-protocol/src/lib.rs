@@ -12,6 +12,9 @@ pub const CREDENTIAL_RELAYS_PATH: &str = "/v1/credential-relays";
 /// Public, static browser helper used by a capability-bearing setup page.
 pub const CREDENTIAL_SETUP_SCRIPT_PATH: &str = "/v1/credential-setup.js";
 
+/// Public, static stylesheet of the same setup page.
+pub const CREDENTIAL_SETUP_STYLE_PATH: &str = "/v1/credential-setup.css";
+
 /// Header carrying an enrolled Renoa device identity.
 pub const DEVICE_ID_HEADER: &str = "x-renoa-device-id";
 
