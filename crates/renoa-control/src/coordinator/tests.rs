@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef,
@@ -153,17 +153,7 @@ impl LiveAttachment {
         )
         .await
         .expect("attach surface");
-        let command = CommandEnvelope {
-            command_id: CommandId::from_uuid(Uuid::from_u128(5)),
-            principal_id,
-            surface: SurfaceRef::new("live-test"),
-            target,
-            input: CommandInput::Text {
-                text: "write something".to_owned(),
-                context: None,
-                author: renoa_protocol::Author::Principal,
-            },
-        };
+        let command = write_command(principal_id, target);
         Self {
             coordinator,
             _files: files,
@@ -320,4 +310,177 @@ async fn a_frame_published_before_a_record_reaches_the_surface_before_it() {
         );
     }
     attachment.cancelled.cancel();
+}
+
+/// The node publishes a frame and then commits a record while a surface is
+/// attaching, between its journal subscription and its frame subscription.
+/// Whether the attachment replays that record or forwards it live, the frame
+/// must not reach the surface after it. The runtime has one SQLite worker:
+/// holding the live channels stops the attachment once it has subscribed to
+/// the journal, and occupying the worker keeps any suffix read it has not
+/// finished from running until the frame and the record are out.
+#[test]
+fn a_frame_published_before_a_replayed_record_never_follows_it() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .expect("test runtime");
+    runtime.block_on(async {
+        let files = TempDir::new().expect("temporary directory");
+        let database = files.path().join("control.sqlite");
+        let coordinator = Coordinator::open(&database).expect("open coordinator");
+        let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+        let principal_id = PrincipalId::from_uuid(Uuid::from_u128(2));
+        let node_id = NodeId::from_uuid(Uuid::from_u128(4));
+        let target = TargetRef::new("workspace:replay-test");
+        coordinator
+            .create_task(TaskSpec {
+                task_id,
+                principal_id,
+                node_id,
+                target: target.clone(),
+            })
+            .await
+            .expect("create task");
+        let command = write_command(principal_id, target);
+        let (outgoing, mut responses) = mpsc::channel(64);
+        let cancelled = CancellationToken::new();
+
+        let live_channels = coordinator.state.live_channels.lock().await;
+        let attachment = tokio::spawn(attach_surface(
+            Arc::clone(&coordinator.state),
+            outgoing,
+            cancelled.clone(),
+            1,
+            task_id,
+            None,
+            principal_id,
+            true,
+        ));
+        while !coordinator
+            .state
+            .task_senders
+            .lock()
+            .await
+            .contains_key(&task_id)
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        // The attachment waits for the live channels; take the worker first.
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let worker = tokio::task::spawn_blocking(move || released.recv());
+        drop(live_channels);
+        while !coordinator
+            .state
+            .live_channels
+            .lock()
+            .await
+            .contains_key(&task_id)
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+
+        // The node's order: the frame, then the record that commits after it.
+        live_activity::relay(
+            &coordinator.state,
+            node_id,
+            task_id,
+            command.command_id,
+            LiveActivity::TextDelta {
+                sequence: 0,
+                text: "Hel".to_owned(),
+            },
+        )
+        .await;
+        let record = commit_record(&database, task_id, &command);
+        publish_task_event(&coordinator.state, record).await;
+        release.send(()).expect("release the worker");
+        worker
+            .await
+            .expect("worker")
+            .expect("the worker was released");
+        attachment
+            .await
+            .expect("attachment")
+            .expect("attach surface");
+        // A later record ends the delivery: a frame still waiting for the
+        // attachment goes out before it, so a late frame cannot hide.
+        publish_task_event(
+            &coordinator.state,
+            TaskEvent {
+                event_id: TaskEventId::from_uuid(Uuid::from_u128(101)),
+                task_id,
+                sequence: 1,
+                kind: TaskEventKind::CommandSubmitted { command },
+            },
+        )
+        .await;
+
+        let delivered = deliveries_before_the_second_record(&mut responses).await;
+        let record = delivered
+            .iter()
+            .position(|delivery| *delivery == "record")
+            .expect("the record is delivered");
+        assert!(
+            !delivered[record..].contains(&"frame"),
+            "the frame published before the record arrived after it: {delivered:?}"
+        );
+        cancelled.cancel();
+    });
+}
+
+fn write_command(principal_id: PrincipalId, target: TargetRef) -> CommandEnvelope {
+    CommandEnvelope {
+        command_id: CommandId::from_uuid(Uuid::from_u128(5)),
+        principal_id,
+        surface: SurfaceRef::new("live-test"),
+        target,
+        input: CommandInput::Text {
+            text: "write something".to_owned(),
+            context: None,
+            author: renoa_protocol::Author::Principal,
+        },
+    }
+}
+
+/// Commits `command`'s submission as the task's next record through the
+/// store's own append, without the store's SQLite worker.
+fn commit_record(database: &Path, task_id: TaskId, command: &CommandEnvelope) -> TaskEvent {
+    let mut connection = crate::control_schema::open_connection(database).expect("open the store");
+    let transaction = connection.transaction().expect("begin");
+    let record = crate::event_store::append_event(
+        &transaction,
+        task_id,
+        "replay-test",
+        &TaskEventKind::CommandSubmitted {
+            command: command.clone(),
+        },
+    )
+    .expect("append the record");
+    transaction.commit().expect("commit the record");
+    record
+}
+
+/// What a surface received after `Attached`, in order, up to the record
+/// numbered 1.
+async fn deliveries_before_the_second_record(
+    responses: &mut mpsc::Receiver<ServerMessage>,
+) -> Vec<&'static str> {
+    let mut next = async || {
+        timeout(Duration::from_secs(1), responses.recv())
+            .await
+            .expect("the attachment delivers what it holds")
+            .expect("surface response channel remains open")
+    };
+    assert!(matches!(next().await, ServerMessage::Attached { .. }));
+    let mut delivered = Vec::new();
+    loop {
+        match next().await {
+            ServerMessage::LiveActivity { .. } => delivered.push("frame"),
+            ServerMessage::TaskEvent { event } if event.sequence == 0 => delivered.push("record"),
+            ServerMessage::TaskEvent { .. } => return delivered,
+            other => panic!("unexpected surface response: {other:?}"),
+        }
+    }
 }

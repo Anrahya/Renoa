@@ -21,23 +21,23 @@ export interface TaskView {
   readonly eventCount: number;
 }
 
-// What a task shows while the Control Room holds none of its journal: the
-// status the directory reports. Once the journal is loaded the projection below
-// takes over, and it names finer states of its own ("queued", a failed tool
-// call) that are not RCP statuses.
+// What a task shows while the Control Room is not attached to it: the status
+// the directory reports, because a journal saved earlier may be out of date.
+// An attached task's journal is current, and the projection below names finer
+// states of its own ("queued", a failed tool call) that are not RCP statuses.
 const DIRECTORY_VIEW: Readonly<Record<TaskStatus, { readonly state: TaskState; readonly detail: string }>> = {
   working: { state: "working", detail: "Agent is working" },
-  idle: { state: "ready", detail: "No activity recorded" },
+  idle: { state: "ready", detail: "Ready to continue" },
   failed: { state: "failed", detail: "The last command failed" },
 };
 
 export function projectTask(
   task: TaskSummary,
   events: readonly TaskEvent[],
+  attached: boolean,
 ): TaskView {
-  const directory = DIRECTORY_VIEW[task.status];
-  let state: TaskState = events.length === 0 ? directory.state : "ready";
-  let detail = events.length === 0 ? directory.detail : "Ready to continue";
+  let state: TaskState = "ready";
+  let detail = events.length === 0 ? "No activity recorded" : "Ready to continue";
   let lastRecordedAtMs: number | null = null;
   const toolNames = new Map<string, string>();
 
@@ -86,6 +86,10 @@ export function projectTask(
         }
         break;
     }
+  }
+
+  if (!attached) {
+    ({ state, detail } = DIRECTORY_VIEW[task.status]);
   }
 
   return {

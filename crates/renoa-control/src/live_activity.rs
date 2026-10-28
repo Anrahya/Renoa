@@ -15,6 +15,9 @@ use tokio::sync::{broadcast, mpsc};
 use crate::{NodeId, ServerMessage, TaskId, control_log, coordinator::CoordinatorState};
 
 pub(crate) const LIVE_BROADCAST_CAPACITY: usize = 256;
+// A broadcast channel rounds its capacity up to a power of two, and
+// `forward_waiting` bounds its drain by this number, so the two must agree.
+const _: () = assert!(LIVE_BROADCAST_CAPACITY.is_power_of_two());
 
 /// One task's live channel and the only node allowed to publish on it.
 pub(crate) struct LiveChannel {

@@ -73,11 +73,16 @@ await client.attach(
 Live frames carry no task sequence and are never replayed. A frame can be
 missed, and each message's `sequence` counts from zero so a surface can tell.
 The durable `assistant_message` event that completes the same text supersedes
-the draft: replace what was shown with it. A frame the node published before an
-event arrives before that event; one published just after it may arrive first.
+the draft: replace what was shown with it. The client calls the callback for a
+frame the node published before an event before it applies that event; a frame
+published just after it may come first. A `text_delta` with `sequence` 0 starts
+the next message, so one that comes before the previous message's
+`assistant_message` begins a new draft that the record must not replace.
 Reasoning is never sent. The client does not wait for the callback and ignores
 what it throws or rejects with, so a failure drawing a draft ends neither the
-connection nor the delivery of task events. Without the callback the
+connection nor the delivery of task events. An async surface that must keep
+drafts and task events in order queues both callbacks' work on one queue of its
+own. Without the callback the
 coordinator sends no live frame, and one that arrives for an attachment that did
 not ask disconnects the client.
 

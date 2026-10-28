@@ -30,6 +30,10 @@ use crate::{
 /// How many live frames wait for the session loop before the oldest is
 /// dropped. Live activity is never kept for later.
 pub(crate) const LIVE_FRAME_CAPACITY: usize = 1024;
+// A broadcast channel rounds its capacity up to a power of two, and the
+// session bounds its drain of waiting frames by this number, so the two must
+// agree.
+const _: () = assert!(LIVE_FRAME_CAPACITY.is_power_of_two());
 
 #[derive(Debug, Error)]
 pub enum NodeError {

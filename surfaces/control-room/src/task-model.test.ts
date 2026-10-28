@@ -5,36 +5,38 @@ import { projectTask, taskTitle } from "./task-model";
 
 describe("task projection", () => {
   test("reports only states proved by durable events", () => {
-    expect(projectTask(TASK, []).state).toBe("ready");
-    expect(projectTask(TASK, [command(0)]).state).toBe("queued");
-    expect(projectTask(TASK, [command(0), execution(1, { type: "turn_started" })]).state)
+    expect(projectTask(TASK, [], true).state).toBe("ready");
+    expect(projectTask(TASK, [command(0)], true).state).toBe("queued");
+    expect(projectTask(TASK, [command(0), execution(1, { type: "turn_started" })], true).state)
       .toBe("working");
     expect(
       projectTask(TASK, [
         command(0),
         execution(1, { type: "execution_terminated", terminal: { status: "completed" } }),
-      ]),
+      ], true),
     ).toMatchObject({ state: "ready", detail: "Ready to continue" });
   });
 
-  test("shows the directory status for a task whose journal is not loaded", () => {
-    expect(projectTask({ ...TASK, status: "working" }, [])).toMatchObject({
+  test("shows the directory status for a task it is not attached to", () => {
+    const saved = [command(0), execution(1, { type: "tool_started", call_id: "c", name: "bash", arguments: {} })];
+    expect(projectTask({ ...TASK, status: "idle" }, saved, false)).toMatchObject({
+      state: "ready",
+      detail: "Ready to continue",
+      eventCount: 2,
+    });
+    expect(projectTask({ ...TASK, status: "working" }, [], false)).toMatchObject({
       state: "working",
       detail: "Agent is working",
     });
-    expect(projectTask({ ...TASK, status: "failed" }, []).state).toBe("failed");
-    expect(projectTask({ ...TASK, status: "idle" }, [])).toMatchObject({
-      state: "ready",
-      detail: "No activity recorded",
-    });
+    expect(projectTask({ ...TASK, status: "failed" }, saved, false).state).toBe("failed");
   });
 
-  test("lets a loaded journal outrank a directory status that may be stale", () => {
+  test("lets an attached journal outrank the directory status it was listed with", () => {
     expect(
       projectTask({ ...TASK, status: "working" }, [
         command(0),
         execution(1, { type: "execution_terminated", terminal: { status: "completed" } }),
-      ]).state,
+      ], true).state,
     ).toBe("ready");
   });
 

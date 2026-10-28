@@ -211,15 +211,19 @@ pub(crate) async fn attach_surface(
         .load_task_for_principal(task_id, principal_id)
         .await?;
     let mut live = task_sender(&state, task_id).await.subscribe();
+    let suffix = state
+        .store
+        .load_suffix(task_id, principal_id, after_sequence)
+        .await?;
+    // Live frames are subscribed after the suffix is read. A frame published
+    // before a replayed record was published before this point and is never
+    // received, and every record committed from here on is forwarded live,
+    // after the frames that preceded it.
     let mut live_frames = if wants_live_activity {
         Some(live_activity::subscribe(&state, task_id, task.node_id).await)
     } else {
         None
     };
-    let suffix = state
-        .store
-        .load_suffix(task_id, principal_id, after_sequence)
-        .await?;
     outgoing
         .send(ServerMessage::Attached {
             request_id,

@@ -43,8 +43,9 @@ export type ApplyTaskEvent = (event: TaskEvent) => void | Promise<void>;
  * task events that carry the same text. The client does not wait for what this
  * returns and ignores a throw or a rejection, so a surface's trouble drawing a
  * draft neither ends the connection nor delays task events. Because it is not
- * awaited, an async callback that must keep frames in order has to queue them
- * itself.
+ * awaited, the order holds only for when it is called: an async surface that
+ * must keep frames and task events in order queues both on one queue of its
+ * own.
  */
 export type ApplyLiveActivity = (
   commandId: string,
