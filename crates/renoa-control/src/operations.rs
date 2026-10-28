@@ -1,11 +1,11 @@
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, LiveActivity, PrincipalId,
-    SurfaceRef, TargetRef,
+    SurfaceRef, TargetCard, TargetRef,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{DeviceId, NodeId, TaskEventId, TaskId};
+use crate::{DeviceId, NodeId, TaskEventId, TaskId, agent_messages::OutgoingMessage};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
@@ -83,6 +83,7 @@ pub struct DeviceSummary {
 pub struct TargetSummary {
     pub node_id: NodeId,
     pub target: TargetRef,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,7 +114,6 @@ pub enum TaskEventKind {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SurfaceOperation {
     ListTasks,
-    ListTargets,
     OpenTask {
         task_id: TaskId,
         node_id: NodeId,
@@ -160,7 +160,7 @@ pub(crate) enum NodeOperation {
         body: String,
     },
     AdvertiseTargets {
-        targets: Vec<TargetRef>,
+        targets: Vec<TargetCard>,
     },
     AcknowledgeExecution {
         task_id: TaskId,
@@ -179,5 +179,9 @@ pub(crate) enum NodeOperation {
         task_id: TaskId,
         command_id: CommandId,
         activity: LiveActivity,
+    },
+    SendAgentMessage {
+        request_id: u64,
+        message: OutgoingMessage,
     },
 }

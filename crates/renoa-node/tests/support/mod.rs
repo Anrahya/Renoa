@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
     NodeId, PeerIdentity, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind,
-    TaskId, TaskSpec,
+    TaskId, TaskSpec, TaskSummary,
 };
 use renoa_kernel::{AgentId, EventCursor, Kernel, OperationStatus, SessionId};
 use renoa_local::{
@@ -232,7 +232,7 @@ impl HostFixture {
         fs::create_dir(&workspace).expect("create model control directory");
         fs::write(&bridge, bridge_script(&workspace)).expect("write model bridge");
         fs::write(&credentials, "").expect("write credential placeholder");
-        let agent_id = provision_alpha(&data, &bridge, &credentials).await;
+        let agent_id = provision_agent_named(&data, &bridge, &credentials, "Alpha").await;
         let fixture = Self {
             ledger: data.join("state/node.sqlite3"),
             data,
@@ -264,7 +264,12 @@ impl HostFixture {
 
     /// Provisions another agent in the same Host.
     pub(crate) async fn provision_agent(&self) -> AgentId {
-        provision_alpha(&self.data, &self.bridge, &self.credentials).await
+        self.provision_agent_named("Alpha").await
+    }
+
+    /// Provisions another agent in the same Host under `name`.
+    pub(crate) async fn provision_agent_named(&self, name: &str) -> AgentId {
+        provision_agent_named(&self.data, &self.bridge, &self.credentials, name).await
     }
 
     /// Provisions an agent that reads the speaking person's `USER.md` and may
@@ -449,14 +454,15 @@ impl HostFixture {
     }
 }
 
-/// Provisions the canonical Alpha agent a node fixture executes.
+/// Provisions an agent built on the Alpha preset that a node fixture executes.
 ///
 /// Node targets never create agents, so the durable definition must already
 /// exist in the Host data root the node opens.
-async fn provision_alpha(
+async fn provision_agent_named(
     data: &std::path::Path,
     bridge: &std::path::Path,
     credentials: &std::path::Path,
+    name: &str,
 ) -> AgentId {
     let host = LocalHost::new(
         data,
@@ -478,7 +484,7 @@ async fn provision_alpha(
         AgentCreateRequest::from_preset(
             Uuid::new_v4(),
             AgentPresetId::new("renoa.coding.alpha.v3").expect("alpha preset id"),
-            "Alpha",
+            name,
         ),
         CancellationToken::new(),
     )
@@ -684,6 +690,17 @@ pub(crate) async fn collect_live_until_text(
         }
     }
     (frames, events)
+}
+
+/// Every task the system's principal owns, asked on a fresh socket so the
+/// answer never interleaves with an attachment's records.
+pub(crate) async fn list_tasks(system: &TestSystem) -> Vec<TaskSummary> {
+    let mut socket = system.connect_surface().await;
+    send(&mut socket, &ClientMessage::ListTasks { request_id: 700 }).await;
+    let ServerMessage::TaskList { tasks, .. } = receive(&mut socket).await else {
+        panic!("expected a task list");
+    };
+    tasks
 }
 
 /// Whether the coordinator still holds `task_id`, asked on a fresh socket so

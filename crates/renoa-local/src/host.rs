@@ -16,6 +16,7 @@ mod lease;
 mod mcp;
 mod models;
 pub(crate) mod observation;
+pub(crate) mod peers;
 pub(crate) mod profiles;
 mod reset;
 mod runtime;
@@ -41,6 +42,7 @@ use crate::{
 pub(crate) use models::{
     discover_models_for, initial_reasoning, require_model, selected_model_by_selection_id,
 };
+pub use peers::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 pub use reset::{HostResetReport, reset_host_data_root};
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 
@@ -121,6 +123,9 @@ pub(crate) struct HostConfig {
     pub(crate) skill_store: SkillStore,
     pub(crate) plugins: PluginManager,
     pub(crate) code_mode: Option<Arc<MontyEvaluator>>,
+    /// How this Host's agents reach other agents; set by the node serving this
+    /// Host, and replaced by the next node that opens on it.
+    pub(crate) peers: std::sync::Mutex<Option<Arc<dyn AgentPeers>>>,
 }
 
 struct HostInitialization {
@@ -381,6 +386,7 @@ impl LocalHost {
                 skill_store,
                 plugins,
                 code_mode,
+                peers: std::sync::Mutex::new(None),
             }),
         })
     }

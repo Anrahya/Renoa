@@ -75,6 +75,7 @@ async fn a_lagging_surface_is_told_to_replay() {
             context: None,
             author: renoa_protocol::Author::Principal,
         },
+        origin: None,
     };
     // The blocked delivery can hold one queued event and one in-flight event.
     let event_count =
@@ -588,6 +589,7 @@ fn write_command(principal_id: PrincipalId, target: TargetRef) -> CommandEnvelop
             context: None,
             author: renoa_protocol::Author::Principal,
         },
+        origin: None,
     }
 }
 

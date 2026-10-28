@@ -4,7 +4,8 @@ use renoa_control::{
     TaskEventKind, TaskId, TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
-    CommandEnvelope, CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef,
+    AgentMessageKind, AgentOrigin, CommandEnvelope, CommandId, CommandInput, LiveActivity,
+    PrincipalId, SurfaceRef, TargetCard, TargetRef,
 };
 use renoa_protocol::{ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId};
 use serde_json::json;
@@ -338,9 +339,15 @@ fn json_websocket_v14_encodes_target_discovery_and_task_opening() {
     let cases = [
         (
             serde_json::to_value(ClientMessage::AdvertiseTargets {
-                targets: vec![TargetRef::new("agent:alpha")],
+                targets: vec![TargetCard {
+                    target: TargetRef::new("agent:alpha"),
+                    name: "Alpha".to_owned(),
+                }],
             }),
-            json!({"type": "advertise_targets", "targets": ["agent:alpha"]}),
+            json!({
+                "type": "advertise_targets",
+                "targets": [{"target": "agent:alpha", "name": "Alpha"}]
+            }),
         ),
         (
             serde_json::to_value(ClientMessage::ListTargets { request_id: 12 }),
@@ -367,6 +374,7 @@ fn json_websocket_v14_encodes_target_discovery_and_task_opening() {
                 targets: vec![TargetSummary {
                     node_id,
                     target: TargetRef::new("agent:alpha"),
+                    name: "Alpha".to_owned(),
                 }],
             }),
             json!({
@@ -374,7 +382,8 @@ fn json_websocket_v14_encodes_target_discovery_and_task_opening() {
                 "request_id": 12,
                 "targets": [{
                     "nodeId": "00000000-0000-0000-0000-000000000003",
-                    "target": "agent:alpha"
+                    "target": "agent:alpha",
+                    "name": "Alpha"
                 }]
             }),
         ),
@@ -494,6 +503,7 @@ fn execute_delivery_contains_only_continuity_data() {
                 context: None,
                 author: renoa_protocol::Author::Principal,
             },
+            origin: None,
         },
     };
 
@@ -722,4 +732,65 @@ fn json_websocket_v14_encodes_host_control_calls() {
             "{method} is not a Host control method"
         );
     }
+}
+
+#[test]
+fn json_websocket_v14_encodes_an_agent_message_and_its_origin() {
+    let message = ClientMessage::SendAgentMessage {
+        request_id: 21,
+        from_command: CommandId::from_uuid(Uuid::from_u128(2)),
+        message_id: CommandId::from_uuid(Uuid::from_u128(5)),
+        node_id: NodeId::from_uuid(Uuid::from_u128(3)),
+        target: TargetRef::new("agent:research"),
+        text: "Summarise today's notes.".to_owned(),
+    };
+    let encoded = json!({
+        "type": "send_agent_message",
+        "request_id": 21,
+        "from_command": "00000000-0000-0000-0000-000000000002",
+        "message_id": "00000000-0000-0000-0000-000000000005",
+        "node_id": "00000000-0000-0000-0000-000000000003",
+        "target": "agent:research",
+        "text": "Summarise today's notes."
+    });
+    assert_eq!(
+        serde_json::to_value(&message).expect("serialize message"),
+        encoded
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(encoded).expect("deserialize message"),
+        message
+    );
+
+    let command = CommandEnvelope {
+        command_id: CommandId::from_uuid(Uuid::from_u128(5)),
+        principal_id: PrincipalId::from_uuid(Uuid::from_u128(4)),
+        surface: SurfaceRef::new("agent"),
+        target: TargetRef::new("agent:research"),
+        input: CommandInput::from_text("Summarise today's notes."),
+        origin: Some(AgentOrigin {
+            from_command: CommandId::from_uuid(Uuid::from_u128(2)),
+            from: TargetRef::new("agent:desk"),
+            name: "Desk".to_owned(),
+            depth: 1,
+            kind: AgentMessageKind::Request,
+        }),
+    };
+    assert_eq!(
+        serde_json::to_value(&command).expect("serialize command"),
+        json!({
+            "commandId": "00000000-0000-0000-0000-000000000005",
+            "principalId": "00000000-0000-0000-0000-000000000004",
+            "surface": "agent",
+            "target": "agent:research",
+            "input": { "type": "text", "text": "Summarise today's notes." },
+            "origin": {
+                "fromCommand": "00000000-0000-0000-0000-000000000002",
+                "from": "agent:desk",
+                "name": "Desk",
+                "depth": 1,
+                "kind": "request"
+            }
+        })
+    );
 }

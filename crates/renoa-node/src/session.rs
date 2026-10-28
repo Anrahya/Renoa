@@ -7,7 +7,7 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
-use renoa_protocol::{CommandEnvelope, CommandId, TargetRef};
+use renoa_protocol::{CommandEnvelope, CommandId, TargetCard};
 use tokio::{
     sync::{broadcast, broadcast::error::RecvError, watch},
     task::JoinSet,
@@ -19,6 +19,7 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    agent_link::{Answer, LinkSession},
     bridge::{ExecutionTask, NodeError, NodeRuntime, finish_execution, schedule_pending},
     live::LiveFrame,
     node_log,
@@ -126,6 +127,7 @@ async fn serve_session_inner(
     let mut publications = HashMap::new();
     refresh_publications(&runtime, &mut publications).await?;
     send_pending(&mut socket, &runtime.state, &mut live, &mut publications).await?;
+    let mut link = runtime.link.open();
 
     loop {
         tokio::select! {
@@ -135,6 +137,7 @@ async fn serve_session_inner(
             // records it has read.
             biased;
             () = shutdown.cancelled() => return Ok(SessionEnd::Shutdown),
+            request = link.next_message() => send_client(&mut socket, &request).await?,
             frame = live.recv() => match frame {
                 Ok(frame) => send_live(&mut socket, frame).await?,
                 // Dropped frames are the surface's gap to notice; nothing is replayed.
@@ -170,6 +173,7 @@ async fn serve_session_inner(
                     tasks,
                     running,
                     &mut publications,
+                    &mut link,
                     &mut host_calls,
                     &mut live,
                     message,
@@ -184,7 +188,7 @@ async fn serve_session_inner(
 async fn advertise(
     socket: &mut Socket,
     runtime: &NodeRuntime,
-    advertised: &mut Option<Vec<TargetRef>>,
+    advertised: &mut Option<Vec<TargetCard>>,
 ) -> Result<(), NodeError> {
     let targets = match runtime.advertised_targets().await {
         Ok(targets) => targets,
@@ -212,7 +216,7 @@ async fn advertise(
         "info",
         "targets_advertised",
         &serde_json::json!({
-            "targets": targets.iter().map(TargetRef::as_str).collect::<Vec<_>>(),
+            "targets": targets.iter().map(|card| card.target.as_str()).collect::<Vec<_>>(),
         }),
     );
     *advertised = Some(targets);
@@ -248,6 +252,7 @@ async fn handle_server_message(
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
     publications: &mut HashMap<CommandId, Publication>,
+    link: &mut LinkSession,
     host_calls: &mut HostCalls,
     live: &mut broadcast::Receiver<LiveFrame>,
     message: ServerMessage,
@@ -259,20 +264,7 @@ async fn handle_server_message(
             send_pending(socket, &runtime.state, live, publications).await?;
         }
         ServerMessage::ExecutionAcknowledged { command_id } => {
-            let publication = publications.get_mut(&command_id).ok_or_else(|| {
-                NodeError::Protocol(format!(
-                    "received admission acknowledgement for unknown command {command_id}"
-                ))
-            })?;
-            if !publication.admission_in_flight {
-                return Err(NodeError::Protocol(format!(
-                    "received unsolicited admission acknowledgement for command {command_id}"
-                )));
-            }
-            runtime.state.acknowledge_admission(command_id).await?;
-            publication.record.admission_acked = true;
-            publication.admission_in_flight = false;
-            refresh_publications(runtime, publications).await?;
+            acknowledge_admission(runtime, publications, command_id).await?;
         }
         ServerMessage::ExecutionEventsAccepted {
             command_id,
@@ -323,6 +315,20 @@ async fn handle_server_message(
             };
             host_calls.start(call);
         }
+        ServerMessage::TargetList {
+            request_id,
+            targets,
+        } => link.answer(request_id, Answer::Targets(targets))?,
+        ServerMessage::CommandAccepted { request_id, .. } => {
+            link.answer(request_id, Answer::Accepted)?;
+        }
+        // An error that names a request is that request's refusal; any other
+        // ends the session.
+        ServerMessage::Error {
+            request_id: Some(request_id),
+            code,
+            message,
+        } => link.answer(request_id, Answer::Refused { code, message })?,
         ServerMessage::Error { code, message, .. } => {
             return Err(NodeError::Rejected { code, message });
         }
@@ -332,11 +338,9 @@ async fn handle_server_message(
         | ServerMessage::DeviceRevoked { .. }
         | ServerMessage::Enrolled { .. }
         | ServerMessage::TaskList { .. }
-        | ServerMessage::TargetList { .. }
         | ServerMessage::TaskOpened { .. }
         | ServerMessage::TaskDeleted { .. }
         | ServerMessage::Attached { .. }
-        | ServerMessage::CommandAccepted { .. }
         | ServerMessage::StopAccepted { .. }
         | ServerMessage::LiveActivity { .. }
         | ServerMessage::TaskEvent { .. } => {
@@ -345,6 +349,28 @@ async fn handle_server_message(
             ));
         }
     }
+    Ok(())
+}
+
+async fn acknowledge_admission(
+    runtime: &Arc<NodeRuntime>,
+    publications: &mut HashMap<CommandId, Publication>,
+    command_id: CommandId,
+) -> Result<(), NodeError> {
+    let publication = publications.get_mut(&command_id).ok_or_else(|| {
+        NodeError::Protocol(format!(
+            "received admission acknowledgement for unknown command {command_id}"
+        ))
+    })?;
+    if !publication.admission_in_flight {
+        return Err(NodeError::Protocol(format!(
+            "received unsolicited admission acknowledgement for command {command_id}"
+        )));
+    }
+    runtime.state.acknowledge_admission(command_id).await?;
+    publication.record.admission_acked = true;
+    publication.admission_in_flight = false;
+    refresh_publications(runtime, publications).await?;
     Ok(())
 }
 

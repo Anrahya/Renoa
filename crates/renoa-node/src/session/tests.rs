@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use renoa_protocol::{
     CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId, LiveActivity,
-    PrincipalId, SurfaceRef,
+    PrincipalId, SurfaceRef, TargetRef,
 };
 use tokio::{net::TcpListener, sync::mpsc, time::timeout};
 use uuid::Uuid;
@@ -48,6 +48,7 @@ async fn a_frame_queued_before_a_record_is_read_reaches_the_coordinator_before_i
             context: None,
             author: renoa_protocol::Author::Principal,
         },
+        origin: None,
     };
     let binding = TargetBinding {
         target: "agent:alpha".to_owned(),

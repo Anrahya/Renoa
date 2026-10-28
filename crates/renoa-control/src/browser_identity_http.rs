@@ -347,7 +347,7 @@ pub(crate) fn error_response(error: &ControlError) -> Response {
             error.to_string(),
         ),
         ControlErrorKind::NotFound => (StatusCode::NOT_FOUND, "not_found", error.to_string()),
-        ControlErrorKind::NodeOffline | ControlErrorKind::Store => (
+        ControlErrorKind::NodeOffline | ControlErrorKind::Role | ControlErrorKind::Store => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "identity service failed".to_owned(),

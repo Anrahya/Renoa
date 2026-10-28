@@ -62,7 +62,7 @@ The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `14` supersedes version `13` by adding three things. The device-key
+Version `14` supersedes version `13` by adding four things. The device-key
 handshake (`device_challenge`, `device_proof`) and the owner's device operations
 (`list_devices`, `revoke_device`, with `device_list` and `device_revoked`). The
 chat essentials: a task summary carries a `status`, `attach` carries a required
@@ -70,8 +70,11 @@ chat essentials: a task summary carries a `status`, `attach` carries a required
 coordinator delivers `stop` to the node, which answers `acknowledge_stop`; and a
 node can `publish_live_activity`, which the coordinator relays to interested
 surfaces as `live_activity`. And Host control relaying (`serve_host_control`,
-`host_call`, `complete_host_call`). A version `13` peer is rejected at
-authentication.
+`host_call`, `complete_host_call`). And agent messages: a node advertises named
+targets (`advertise_targets` carries `{target, name}` cards instead of bare
+strings), `target_list` summaries gain `name`, `list_targets` is open to nodes
+as well as surfaces, a node sends `send_agent_message`, and a command may carry
+an `origin`. A version `13` peer is rejected at authentication.
 
 Version `13` superseded version `12` by adding an optional `author` to text
 command input, which marks text written by a guest rather than the
@@ -247,7 +250,9 @@ live directory update frame.
 ```
 
 The response contains the targets currently advertised by online nodes that the
-authenticated principal owns, ordered by `nodeId` then `target`:
+authenticated principal owns, ordered by `nodeId` then `target`. A node may send
+the same frame; its principal is its owner, and a node without an owner receives
+`invalid_role` with its `request_id`:
 
 ```json
 {
@@ -256,7 +261,8 @@ authenticated principal owns, ordered by `nodeId` then `target`:
   "targets": [
     {
       "nodeId": "00000000-0000-0000-0000-000000000030",
-      "target": "agent:arcee"
+      "target": "agent:arcee",
+      "name": "Arcee"
     }
   ]
 }
@@ -583,11 +589,34 @@ has no acknowledgement:
 ```json
 {
   "type": "advertise_targets",
-  "targets": ["agent:alpha", "agent:arcee"]
+  "targets": [
+    { "target": "agent:alpha", "name": "Alpha" },
+    { "target": "agent:arcee", "name": "Arcee" }
+  ]
 }
 ```
 
 An invalid advertisement returns `invalid_message` with a `null` `request_id`.
+
+A node sends a message for the agent that is executing `from_command` to
+another agent of its owner:
+
+```json
+{
+  "type": "send_agent_message",
+  "request_id": 7,
+  "from_command": "00000000-0000-0000-0000-000000000020",
+  "message_id": "00000000-0000-0000-0000-000000000021",
+  "node_id": "00000000-0000-0000-0000-000000000030",
+  "target": "agent:arcee",
+  "text": "Please summarise today's notes."
+}
+```
+
+The response is `command_accepted` with the `request_id` and `message_id` as
+`command_id`, or an `error` with the `request_id` and the code
+[the operation](rcp-operations-v0.md#sendagentmessage) assigns. A surface that
+sends it receives `invalid_role` with a `null` `request_id`.
 
 The coordinator delivers an admitted command:
 
@@ -612,6 +641,30 @@ The delivery deliberately contains no harness configuration. The node adapter
 uses `task_id` and the opaque command target to select its local harness. Model,
 instructions, tools, permissions, and provider configuration do not appear on
 the wire.
+
+A command that another agent caused carries an `origin` beside `input`, and
+the same command appears in the `command_submitted` task record. The field is
+absent from every other command:
+
+```json
+{
+  "commandId": "00000000-0000-0000-0000-000000000021",
+  "principalId": "00000000-0000-0000-0000-000000000050",
+  "surface": "agent",
+  "target": "agent:arcee",
+  "input": { "type": "text", "text": "Please summarise today's notes." },
+  "origin": {
+    "fromCommand": "00000000-0000-0000-0000-000000000020",
+    "from": "agent:alpha",
+    "name": "Alpha",
+    "depth": 1,
+    "kind": "request"
+  }
+}
+```
+
+`kind` is `request`, `reply`, or `failure`. A surface's `submit` has no
+`origin`; the coordinator sets it only for an agent message.
 
 After local durable admission, the node sends:
 

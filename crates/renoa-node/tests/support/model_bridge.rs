@@ -163,6 +163,38 @@ for (const message of request.messages) {
 }
 if (pending.size > 0) throw Error("tool calls were left without results");"#;
 
+/// "Ask <agent>: <question>" messages the named agent through the Host plugin,
+/// discovering its schema first as a model must. The question's recipient
+/// answers "Count the files." with what its turn context says about the
+/// sender, and the asker answers that reply the same way.
+const AGENT_TURNS: &str = r#"} else if (prompt.startsWith("Ask ")) {
+  const [, agent, question] = prompt.match(/^Ask ([^:]+): (.*)$/);
+  const turn = request.messages.slice(request.messages.findLastIndex(message => message.role === "user") + 1)
+    .filter(message => message.role === "tool");
+  const last = turn.at(-1);
+  // The discovery results are JSON; the message's own result is plain text.
+  const found = () => JSON.parse(last.result.content[0].text);
+  stopReason = "tool_use";
+  if (turn.length === 0) {
+    content = [{ type: "tool_call", id: "find-message", name: "plugin_search", arguments: { query: "message_agent" } }];
+  } else if (turn.length === 1) {
+    const match = found().tool_matches.find(tool => tool.name === "message_agent");
+    content = [{ type: "tool_call", id: "describe-message", name: "plugin_search", arguments: { reference: match.reference } }];
+  } else if (turn.length === 2) {
+    content = [{ type: "tool_call", id: "send-message", name: "tool_execute", arguments: {
+      reference: found().reference,
+      arguments: { to: agent, text: question }
+    } }];
+  } else {
+    content = [{ type: "text", text: "Asked." }];
+    stopReason = "stop";
+  }
+} else if (prompt === "Count the files." || prompt.startsWith("Count: 3.")) {
+  const seen = user.content.map(block => block.text ?? "").join("\n")
+    .match(/<context source="surface">\n([\s\S]*?)\n<\/context>/);
+  const context = seen ? seen[1] : "nowhere";
+  content = [{ type: "text", text: prompt === "Count the files." ? `Count: 3. ${context}` : `Thanks. ${context}` }];"#;
+
 pub(super) fn bridge_script(workspace: &Path) -> String {
     let workspace = serde_json::to_string(&workspace.to_string_lossy()).expect("encode workspace");
     format!(
@@ -240,7 +272,7 @@ let stopReason = "stop";
     await new Promise(resolve => setTimeout(resolve, 10));
   }}
   content = [{{ type: "text", text: `Finished parallel ${{suffix}}.` }}];
-{SPEAKER_TURNS}{COMPACTION_TURNS}{AUTOMATION_TURNS}}} else if (prompt === "First.") {{
+{SPEAKER_TURNS}{COMPACTION_TURNS}{AUTOMATION_TURNS}{AGENT_TURNS}}} else if (prompt === "First.") {{
   content = [{{ type: "text", text: "First response." }}];
 }} else if (prompt === "Second.") {{
   content = [{{ type: "text", text: "Second response." }}];

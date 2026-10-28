@@ -203,7 +203,10 @@ impl System {
         send(
             &mut node,
             &ClientMessage::AdvertiseTargets {
-                targets: vec![TargetRef::new(TARGET)],
+                targets: vec![renoa_protocol::TargetCard {
+                    target: TargetRef::new(TARGET),
+                    name: "Desk".to_owned(),
+                }],
             },
         )
         .await;

@@ -108,6 +108,7 @@ async fn tasks_opened_on_one_advertised_target_receive_separate_host_sessions() 
             vec![TargetSummary {
                 node_id: system.node_id(),
                 target: system.target.clone(),
+                name: "Alpha".to_owned(),
             }]
         );
         let first = open_task(&mut surface, system.node_id(), system.target.clone()).await;

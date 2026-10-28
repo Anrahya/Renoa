@@ -1,5 +1,5 @@
 use renoa_protocol::{
-    CommandEnvelope, CommandId, CommandInput, ExecutionEvent, LiveActivity, TargetRef,
+    CommandEnvelope, CommandId, CommandInput, ExecutionEvent, LiveActivity, TargetCard, TargetRef,
 };
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::{
     ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
     HostMethod, NodeId, StopOutcome, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
+    agent_messages::OutgoingMessage,
     operations::{NodeOperation, SurfaceOperation},
 };
 
@@ -77,7 +78,7 @@ pub enum ClientMessage {
         task_id: TaskId,
     },
     AdvertiseTargets {
-        targets: Vec<TargetRef>,
+        targets: Vec<TargetCard>,
     },
     PublishExecutionEvents {
         task_id: TaskId,
@@ -104,6 +105,14 @@ pub enum ClientMessage {
         status: u16,
         body: String,
     },
+    SendAgentMessage {
+        request_id: u64,
+        from_command: CommandId,
+        message_id: CommandId,
+        node_id: NodeId,
+        target: TargetRef,
+        text: String,
+    },
 }
 
 impl ClientMessage {
@@ -125,7 +134,8 @@ impl ClientMessage {
             | Self::OpenTask { request_id, .. }
             | Self::Submit { request_id, .. }
             | Self::StopCommand { request_id, .. }
-            | Self::DeleteTask { request_id, .. } => interoperable(*request_id),
+            | Self::DeleteTask { request_id, .. }
+            | Self::SendAgentMessage { request_id, .. } => interoperable(*request_id),
             Self::Attach {
                 request_id,
                 after_sequence,
@@ -175,6 +185,23 @@ impl ClientMessage {
                 command_id,
                 activity,
             },
+            Self::SendAgentMessage {
+                request_id,
+                from_command,
+                message_id,
+                node_id,
+                target,
+                text,
+            } => NodeOperation::SendAgentMessage {
+                request_id,
+                message: OutgoingMessage {
+                    from_command,
+                    message_id,
+                    to_node: node_id,
+                    to_target: target,
+                    text,
+                },
+            },
             Self::ServeHostControl => NodeOperation::ServeHostControl,
             Self::CompleteHostCall {
                 call_id,
@@ -189,8 +216,10 @@ impl ClientMessage {
             | Self::Authenticate { .. }
             | Self::AuthenticateTicket { .. }
             | Self::DeviceProof { .. } => return None,
+            Self::ListTargets { request_id } => {
+                return Some(JsonOperation::ListTargets { request_id });
+            }
             Self::ListTasks { .. }
-            | Self::ListTargets { .. }
             | Self::ListDevices { .. }
             | Self::RevokeDevice { .. }
             | Self::OpenTask { .. }
@@ -205,7 +234,6 @@ impl ClientMessage {
     fn into_surface_operation(self) -> Option<JsonOperation> {
         let (request_id, operation) = match self {
             Self::ListTasks { request_id } => (request_id, SurfaceOperation::ListTasks),
-            Self::ListTargets { request_id } => (request_id, SurfaceOperation::ListTargets),
             Self::OpenTask {
                 request_id,
                 task_id,
@@ -266,6 +294,7 @@ impl ClientMessage {
                 device_id,
             } => (request_id, SurfaceOperation::RevokeDevice { device_id }),
             Self::Enroll { .. }
+            | Self::ListTargets { .. }
             | Self::Authenticate { .. }
             | Self::AuthenticateTicket { .. }
             | Self::DeviceProof { .. }
@@ -275,7 +304,8 @@ impl ClientMessage {
             | Self::AcknowledgeStop { .. }
             | Self::PublishLiveActivity { .. }
             | Self::ServeHostControl
-            | Self::CompleteHostCall { .. } => return None,
+            | Self::CompleteHostCall { .. }
+            | Self::SendAgentMessage { .. } => return None,
         };
         Some(JsonOperation::Surface {
             request_id,
@@ -291,6 +321,11 @@ pub(crate) enum JsonOperation {
         operation: SurfaceOperation,
     },
     Node(NodeOperation),
+    /// Open to both roles: a surface lists its principal's targets, a node
+    /// those of its owner.
+    ListTargets {
+        request_id: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

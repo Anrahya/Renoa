@@ -133,7 +133,7 @@ async fn answer_of(request: RequestBuilder) -> Answer {
 /// refusal of a surface-only message proves the advertisement was processed.
 async fn advertise(node: &mut Socket) {
     send(node, &ClientMessage::ServeHostControl).await;
-    send(node, &ClientMessage::ListTargets { request_id: 1 }).await;
+    send(node, &ClientMessage::ListTasks { request_id: 1 }).await;
     assert!(matches!(
         receive(node).await,
         ServerMessage::Error {

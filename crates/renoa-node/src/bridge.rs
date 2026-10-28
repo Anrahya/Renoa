@@ -3,10 +3,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_kernel::AgentId;
-use renoa_local::{
-    AgentSession, LocalHost, LocalHostError, LocalTurnOutcome, Speaker, TurnObservation,
-};
-use renoa_protocol::{Author, CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
+use renoa_local::{AgentSession, LocalHost, LocalHostError, LocalTurnOutcome, TurnObservation};
+use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, TargetCard, TargetRef};
 use thiserror::Error;
 use tokio::{
     sync::{broadcast, watch},
@@ -17,6 +15,7 @@ use tokio_tungstenite::tungstenite::{Error as WebSocketError, client::IntoClient
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    agent_link::{AgentLink, Peers},
     agent_targets,
     automations::{self, AutomationLink},
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
@@ -25,7 +24,7 @@ use crate::{
     live::{LiveEvents, LiveFrame},
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
-    operator,
+    operator, origin,
     projection::{closing_events, project_history},
     session::{SessionEnd, serve_session},
     stop::RunningTurns,
@@ -94,6 +93,8 @@ impl RenoaNode {
         let state = NodeStore::open(host.home().node_database())?;
         state.validate_configured_targets(|binding| agent_targets::serves(host.home(), binding))?;
         let (commits, _) = watch::channel(0_u64);
+        let link = Arc::new(AgentLink::default());
+        host.attach_agent_peers(Arc::new(Peers(Arc::clone(&link))));
         let host_control = HostControl::open(Arc::clone(&host))?;
         let (live, _) = broadcast::channel(LIVE_FRAME_CAPACITY);
         Ok(Self {
@@ -104,6 +105,7 @@ impl RenoaNode {
                 host_control,
                 state,
                 commits,
+                link,
                 live,
                 turns: RunningTurns::default(),
             }),
@@ -228,6 +230,8 @@ pub(crate) struct NodeRuntime {
     pub(crate) host_control: HostControl,
     pub(crate) state: NodeStore,
     pub(crate) commits: watch::Sender<u64>,
+    /// How this node's agents reach the coordinator for other agents.
+    pub(crate) link: Arc<AgentLink>,
     /// Ephemeral live activity for the session loop to forward.
     pub(crate) live: broadcast::Sender<LiveFrame>,
     /// The running turns a stop can cancel.
@@ -236,7 +240,7 @@ pub(crate) struct NodeRuntime {
 
 impl NodeRuntime {
     /// The Host agents this node offers for new tasks.
-    pub(crate) async fn advertised_targets(&self) -> Result<Vec<TargetRef>, NodeError> {
+    pub(crate) async fn advertised_targets(&self) -> Result<Vec<TargetCard>, NodeError> {
         agent_targets::advertised(&self.host).await
     }
 
@@ -260,7 +264,7 @@ impl NodeRuntime {
         if self.state.stop_requested(command_id).await? {
             cancellation.cancel();
         }
-        let request = match control::request(&record.command.input) {
+        let request = match control::request(&record.command) {
             Ok(request) => request,
             // A command stopped before it started begins cancelled, refused
             // or not.
@@ -394,22 +398,17 @@ async fn run_request(
     let command = &record.command;
     Ok(match request {
         Request::Turn => {
-            let mut observation =
+            let observation =
                 TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
-            if let Some(context) = command.input.context() {
-                observation = observation.with_surface_context(context);
-            }
+            let observation = origin::observed(command, observation);
             session
                 .execute_turn_observed_with_cancellation(
                     command.command_id.as_uuid(),
-                    vec![ContentBlock::text(command.input.text())],
+                    vec![ContentBlock::text(origin::prompt_text(command))],
                     observation,
                     events,
                     cancellation,
-                    match command.input.author() {
-                        Author::Principal => Speaker::Principal(command.principal_id.as_uuid()),
-                        Author::Guest => Speaker::Guest,
-                    },
+                    origin::speaker(command),
                 )
                 .await
         }

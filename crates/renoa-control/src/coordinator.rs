@@ -6,7 +6,7 @@ use std::{
 };
 
 use axum::{Router, routing::get};
-use renoa_protocol::{PrincipalId, TargetRef};
+use renoa_protocol::{PrincipalId, TargetCard, TargetRef};
 use thiserror::Error;
 use tokio::{
     net::TcpListener,
@@ -39,6 +39,8 @@ pub(crate) enum ControlErrorKind {
     Invalid,
     NodeOffline,
     NotFound,
+    /// The authenticated role cannot perform the operation.
+    Role,
     Store,
 }
 
@@ -67,14 +69,19 @@ impl ControlError {
     }
 
     pub(crate) fn node_offline() -> Self {
-        Self::new(
-            ControlErrorKind::NodeOffline,
-            "the task's execution node is offline",
-        )
+        Self::node_offline_with("the task's execution node is offline")
+    }
+
+    pub(crate) fn node_offline_with(message: impl Into<String>) -> Self {
+        Self::new(ControlErrorKind::NodeOffline, message)
     }
 
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self::new(ControlErrorKind::NotFound, message)
+    }
+
+    pub(crate) fn role(message: impl Into<String>) -> Self {
+        Self::new(ControlErrorKind::Role, message)
     }
 
     pub(crate) fn store(message: impl Into<String>) -> Self {
@@ -100,6 +107,7 @@ impl ControlError {
             ControlErrorKind::Invalid => ErrorCode::InvalidMessage,
             ControlErrorKind::NodeOffline => ErrorCode::NodeOffline,
             ControlErrorKind::NotFound => ErrorCode::NotFound,
+            ControlErrorKind::Role => ErrorCode::InvalidRole,
         }
     }
 }
@@ -131,7 +139,7 @@ pub(crate) struct NodeConnection {
     pub(crate) device_id: DeviceId,
     pub(crate) outgoing: mpsc::Sender<ServerMessage>,
     /// The agents this connection advertised; empty until it advertises.
-    pub(crate) targets: Vec<TargetRef>,
+    pub(crate) targets: Vec<TargetCard>,
     /// Whether this connection said it answers Host control calls.
     pub(crate) host_control: bool,
 }

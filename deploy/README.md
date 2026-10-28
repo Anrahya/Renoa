@@ -226,8 +226,11 @@ pins the previous identity and holds its bindings and task cursors.
 
 Owner Host control now runs through the coordinator and the node rather than a
 separate panel service (see [Personal control panel](#personal-control-panel)).
-This release moves RCP to binding version 14, so the coordinator, node, Pi node,
-and every surface must be upgraded together.
+Agents can message other agents of the same owner through RCP: a node advertises
+each agent's name, may list its owner's agents, and sends a message that arrives
+as a command with an `origin` in a thread task of the receiving agent. This
+release moves RCP to binding version 14, so the coordinator, node, Pi node, and
+every surface must be upgraded together.
 
 Discord store schema 7 records whether each queued message is the operator's
 or a guest's, so a guest's message is submitted as a guest's. Upgrading from

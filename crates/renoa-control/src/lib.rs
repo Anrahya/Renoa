@@ -1,5 +1,7 @@
 //! Cross-surface task continuity outside Renoa's execution kernel.
 
+mod agent_messages;
+mod agent_replies;
 mod android_apps;
 mod browser_identity;
 mod browser_identity_http;

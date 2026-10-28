@@ -557,7 +557,7 @@ lookup as external MCP tools; `renoa.time` contributes context to each message:
 
 | Plugin | Capabilities |
 | --- | --- |
-| `renoa.agents` | Create, list, rename agents |
+| `renoa.agents` | Create, list, rename agents; list and message the owner's other agents |
 | `renoa.automations` | Manage schedules and read retained results |
 | `renoa.documents` | Edit this agent's SOUL and the speaking person's USER file |
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
@@ -1336,6 +1336,39 @@ configured tools and OS/workspace environment. Approval dialogs, automatic
 review, general workflow graphs, and execution migration are not prerequisites.
 Exact storage schemas and wire fields remain implementation decisions and are
 introduced only with a consuming execution path or invariant test.
+
+### Messaging other agents
+
+`agent_roster` and `message_agent` belong to `renoa.agents`, so the owner's
+switch for that plugin governs them. The Host offers them only once a node has
+attached an `AgentPeers` port (`LocalHost::attach_agent_peers`); a Host with no
+port, such as one run without a coordinator, shows an agent neither tool. Once a
+node has attached, the tools stay offered, and while that node's coordinator
+link is down they fail with an error that says to try again. The port has two
+methods: the agents this agent can message now, without itself, and delivery of
+one message. The Host knows nothing of how a message travels, and an agent sees
+names, never routes.
+
+`agent_roster` takes no fields and returns `{"agents": [{"name": ...}]}`.
+`message_agent` takes `to`, an agent's name as the roster lists it (matched
+without regard to case), and `text`. It sends and returns; the answer arrives
+later as a new message in the same conversation, so the text should say what to
+send back. Delivery needs the executing command, so the tool refuses outside a
+turn that is answering a message. The message identity derives from the command
+and the tool call, so replaying the call re-sends the same message.
+
+A failed call says what was wrong and whether repeating it could help. A
+refusal says that repeating the same call straight away would be refused again;
+an unavailable port says that trying again in a little while may work. For
+`message_agent` both also say that nothing was sent, and so does a failed
+lookup of the roster: it is read before any send and changes nothing, so it
+never reports an unknown delivery. Only a send whose answer was lost reports
+that it is not known whether the message was delivered, and what sending it
+again would do; a cancelled send says the message may have been delivered.
+
+Both tools answer a malformed call in the shape the agent-facing tools share:
+the field, what it received, what it expected, and a correct call.
+Neither tool states or knows a limit on the length of an exchange.
 
 ### Host-owned automations
 

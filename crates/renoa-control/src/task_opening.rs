@@ -7,20 +7,23 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use renoa_protocol::{PrincipalId, TargetRef};
+use renoa_protocol::{PrincipalId, TargetCard};
 use rusqlite::{OptionalExtension, TransactionBehavior};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    ControlError, NodeId, TargetSummary, TaskId, TaskSpec, control_log,
+    ControlError, ErrorCode, NodeId, PeerIdentity, ServerMessage, TargetSummary, TaskId, TaskSpec,
+    control_log,
     control_schema::open_connection,
     coordinator::CoordinatorState,
+    node_messages::node_connection_is_current,
     node_ownership::node_owner,
     store::{ControlStore, blocking, id_error, insert_task, json_error, sqlite_error},
+    wire::{send_control_error, send_error},
 };
 
 const MAX_ADVERTISED_TARGETS: usize = 256;
-const MAX_TARGET_BYTES: usize = 256;
 
 /// Whether the requested target is executable at the moment of opening.
 enum Availability {
@@ -39,13 +42,12 @@ pub(crate) async fn advertise_targets(
     state: &CoordinatorState,
     node_id: NodeId,
     connection_id: Uuid,
-    targets: Vec<TargetRef>,
+    targets: Vec<TargetCard>,
 ) -> Result<(), ControlError> {
     let targets = validate_targets(targets)?;
     let names = targets
         .iter()
-        .map(TargetRef::as_str)
-        .map(str::to_owned)
+        .map(|card| card.target.as_str().to_owned())
         .collect::<Vec<_>>();
     let mut nodes = state.nodes.lock().await;
     let node = nodes
@@ -62,29 +64,88 @@ pub(crate) async fn advertise_targets(
     Ok(())
 }
 
-fn validate_targets(targets: Vec<TargetRef>) -> Result<Vec<TargetRef>, ControlError> {
+fn validate_targets(targets: Vec<TargetCard>) -> Result<Vec<TargetCard>, ControlError> {
     if targets.len() > MAX_ADVERTISED_TARGETS {
         return Err(ControlError::invalid(format!(
             "a node may advertise at most {MAX_ADVERTISED_TARGETS} targets"
         )));
     }
     let mut seen = BTreeSet::new();
-    for target in &targets {
-        let name = target.as_str();
-        if name.is_empty() || name.len() > MAX_TARGET_BYTES || name.chars().any(char::is_control) {
+    for card in &targets {
+        let target = card.target.as_str();
+        if !TargetCard::label_is_valid(target) {
             return Err(ControlError::invalid(format!(
-                "an advertised target must be 1 to {MAX_TARGET_BYTES} bytes without control characters"
+                "an advertised target must be 1 to {} bytes without control characters",
+                TargetCard::MAX_LABEL_BYTES
             )));
         }
-        if !seen.insert(name) {
+        if !TargetCard::label_is_valid(&card.name) {
             return Err(ControlError::invalid(format!(
-                "target `{name}` was advertised more than once"
+                "the name of target `{target}` must be 1 to {} bytes without control characters",
+                TargetCard::MAX_LABEL_BYTES
+            )));
+        }
+        if !seen.insert(target) {
+            return Err(ControlError::invalid(format!(
+                "target `{target}` was advertised more than once"
             )));
         }
     }
     let mut targets = targets;
-    targets.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    targets.sort_by(|left, right| left.target.as_str().cmp(right.target.as_str()));
     Ok(targets)
+}
+
+/// Answers `list_targets` for either role. A surface lists the targets of its
+/// own principal's nodes; a node lists those of its owner, which is how an
+/// agent finds the other agents it may message.
+pub(crate) async fn handle_list_targets(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    peer: &PeerIdentity,
+    connection_id: Uuid,
+    request_id: u64,
+) {
+    let principal_id = match peer {
+        PeerIdentity::Surface { principal_id, .. } => *principal_id,
+        PeerIdentity::Node { node_id } => {
+            if !node_connection_is_current(state, *node_id, connection_id).await {
+                send_error(
+                    outgoing,
+                    Some(request_id),
+                    ErrorCode::InvalidRole,
+                    "node connection has been replaced",
+                )
+                .await;
+                return;
+            }
+            match state.store.node_owner(*node_id).await {
+                Ok(Some(owner)) => owner,
+                Ok(None) => {
+                    let error = ControlError::role(
+                        "This machine has no owner, so there are no other agents to list. Tell the person you are working with.",
+                    );
+                    send_control_error(outgoing, Some(request_id), &error).await;
+                    return;
+                }
+                Err(error) => {
+                    send_control_error(outgoing, Some(request_id), &error).await;
+                    return;
+                }
+            }
+        }
+    };
+    match list_targets(state, principal_id).await {
+        Ok(targets) => {
+            let _ = outgoing
+                .send(ServerMessage::TargetList {
+                    request_id,
+                    targets,
+                })
+                .await;
+        }
+        Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
+    }
 }
 
 /// Lists the advertised targets of every online node the principal owns.
@@ -98,10 +159,11 @@ pub(crate) async fn list_targets(
         .into_iter()
         .filter_map(|node_id| nodes.get(&node_id).map(|node| (node_id, node)))
         .flat_map(|(node_id, node)| {
-            node.targets
-                .iter()
-                .cloned()
-                .map(move |target| TargetSummary { node_id, target })
+            node.targets.iter().cloned().map(move |card| TargetSummary {
+                node_id,
+                target: card.target,
+                name: card.name,
+            })
         })
         .collect::<Vec<_>>();
     drop(nodes);
@@ -119,7 +181,9 @@ pub(crate) async fn open_task(
 ) -> Result<(), ControlError> {
     let availability = match state.nodes.lock().await.get(&task.node_id) {
         None => Availability::NodeOffline,
-        Some(node) if node.targets.contains(&task.target) => Availability::Advertised,
+        Some(node) if node.targets.iter().any(|card| card.target == task.target) => {
+            Availability::Advertised
+        }
         Some(_) => Availability::NotAdvertised,
     };
     let fields = serde_json::json!({

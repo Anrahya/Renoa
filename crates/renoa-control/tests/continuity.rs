@@ -8,7 +8,7 @@ use renoa_control::{
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
-    ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
+    ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetCard, TargetRef,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -1259,10 +1259,12 @@ mod task_opening {
                 TargetSummary {
                     node_id: system.node_id,
                     target: TargetRef::new(ALPHA),
+                    name: "Alpha".to_owned(),
                 },
                 TargetSummary {
                     node_id: system.node_id,
                     target: TargetRef::new(ARCEE),
+                    name: "Arcee".to_owned(),
                 },
             ]
         );
@@ -1417,10 +1419,25 @@ mod task_opening {
         send(
             node,
             &ClientMessage::AdvertiseTargets {
-                targets: targets.iter().copied().map(TargetRef::new).collect(),
+                targets: targets
+                    .iter()
+                    .map(|target| TargetCard {
+                        target: TargetRef::new(*target),
+                        name: card_name(target),
+                    })
+                    .collect(),
             },
         )
         .await;
+    }
+
+    /// `agent:alpha` is advertised as "Alpha".
+    fn card_name(target: &str) -> String {
+        let name = target.trim_start_matches("agent:");
+        let mut letters = name.chars();
+        letters.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(letters).collect()
+        })
     }
 
     async fn open_task(

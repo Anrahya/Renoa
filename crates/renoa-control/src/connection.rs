@@ -165,6 +165,16 @@ async fn serve_messages(
             continue;
         };
         match (peer, operation) {
+            (peer, JsonOperation::ListTargets { request_id }) => {
+                crate::task_opening::handle_list_targets(
+                    &state,
+                    outgoing,
+                    peer,
+                    connection_id,
+                    request_id,
+                )
+                .await;
+            }
             (
                 PeerIdentity::Surface {
                     principal_id,
@@ -365,7 +375,8 @@ async fn read_peer(
         | ClientMessage::PublishLiveActivity { .. }
         | ClientMessage::PublishExecutionEvents { .. }
         | ClientMessage::ServeHostControl
-        | ClientMessage::CompleteHostCall { .. } => {
+        | ClientMessage::CompleteHostCall { .. }
+        | ClientMessage::SendAgentMessage { .. } => {
             send_error(
                 outgoing,
                 None,

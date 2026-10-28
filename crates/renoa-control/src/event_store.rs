@@ -5,6 +5,7 @@ use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::{
     ControlError, TaskEvent, TaskEventId, TaskEventKind, TaskId,
+    agent_replies::AgentReply,
     control_schema::open_connection,
     store::{
         ControlStore, blocking, id_error, json_error, sqlite_error, task_not_found, to_sql_integer,
@@ -21,14 +22,20 @@ pub(crate) struct TaskSuffix {
 pub(crate) struct ExecutionEventAdmission {
     pub(crate) through_execution_sequence: u64,
     pub(crate) events: Vec<TaskEvent>,
+    /// The answer a newly terminal agent request admitted in the asker's task,
+    /// committed with the events that caused it.
+    pub(crate) reply: Option<AgentReply>,
 }
 
 impl ControlStore {
+    /// Appends a batch of execution events. `replier` is the executing
+    /// agent's name, which an answer to an agent's request carries.
     pub(crate) async fn append_execution_events(
         &self,
         task_id: TaskId,
         command_id: CommandId,
         events: Vec<ExecutionEvent>,
+        replier: String,
     ) -> Result<ExecutionEventAdmission, ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
@@ -36,8 +43,15 @@ impl ControlStore {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(sqlite_error)?;
-            let admission =
+            let mut admission =
                 admit_execution_event_batch(&transaction, task_id, command_id, &events)?;
+            admission.reply = crate::agent_replies::admit_reply(
+                &transaction,
+                task_id,
+                command_id,
+                &admission.events,
+                &replier,
+            )?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(admission)
         })
@@ -158,6 +172,7 @@ fn admit_execution_event_batch(
             .checked_sub(1)
             .ok_or_else(|| ControlError::store("execution event cursor did not advance"))?,
         events: appended,
+        reply: None,
     })
 }
 

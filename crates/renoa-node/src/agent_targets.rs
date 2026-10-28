@@ -3,7 +3,7 @@
 
 use renoa_kernel::AgentId;
 use renoa_local::{LocalHost, RenoaHome};
-use renoa_protocol::TargetRef;
+use renoa_protocol::{TargetCard, TargetRef};
 use uuid::Uuid;
 
 use crate::{bridge::NodeError, node_store::TargetBinding};
@@ -19,13 +19,17 @@ fn agent(target: &str) -> Option<Uuid> {
     (target == format!("{PREFIX}{id}")).then_some(id)
 }
 
-/// The targets this node currently offers, in agent identity order.
-pub(crate) async fn advertised(host: &LocalHost) -> Result<Vec<TargetRef>, NodeError> {
+/// The targets this node currently offers, in agent identity order, each
+/// with the name its owner gave the agent.
+pub(crate) async fn advertised(host: &LocalHost) -> Result<Vec<TargetCard>, NodeError> {
     let agents = host
         .list_agents()
         .await
         .map_err(|error| NodeError::Store(error.to_string()))?;
-    Ok(agents.into_iter().map(|agent| target(agent.id)).collect())
+    Ok(agents
+        .into_iter()
+        .map(|agent| TargetCard::new(target(agent.id), &agent.name))
+        .collect())
 }
 
 /// Proposes the binding for a task's first command. The ledger keeps an

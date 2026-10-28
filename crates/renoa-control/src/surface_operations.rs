@@ -40,15 +40,6 @@ pub(crate) async fn handle_surface_operation(
                 .map(|tasks| ServerMessage::TaskList { request_id, tasks });
             send_reply(outgoing, request_id, result).await;
         }
-        SurfaceOperation::ListTargets => {
-            let result = crate::task_opening::list_targets(&state, principal_id)
-                .await
-                .map(|targets| ServerMessage::TargetList {
-                    request_id,
-                    targets,
-                });
-            send_reply(outgoing, request_id, result).await;
-        }
         SurfaceOperation::OpenTask {
             task_id,
             node_id,

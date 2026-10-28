@@ -59,6 +59,14 @@ pub(crate) fn node_owner(
 }
 
 impl ControlStore {
+    pub(crate) async fn node_owner(
+        &self,
+        node_id: NodeId,
+    ) -> Result<Option<PrincipalId>, ControlError> {
+        let path = Arc::clone(&self.path);
+        blocking(move || node_owner(&open_connection(&path)?, node_id)).await
+    }
+
     /// The one principal that owns every enrolled node: the Host owner a login
     /// page names. A node is enrolled once its enrollment was claimed and
     /// until its device is revoked; an owner row of an unclaimed enrollment or
