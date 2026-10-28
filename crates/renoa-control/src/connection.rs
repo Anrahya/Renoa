@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    ClientMessage, ErrorCode, JSON_WS_VERSION, PeerIdentity, ServerMessage,
+    ClientMessage, EnrollmentToken, ErrorCode, JSON_WS_VERSION, PeerIdentity, ServerMessage,
     coordinator::CoordinatorState,
     device_admin::{Authority, SurfaceSession},
     device_handshake::prove_possession,
@@ -294,20 +294,7 @@ async fn read_peer(
     let message = next_application_message(receiver, outgoing).await?;
     let authenticated = match message {
         ClientMessage::Enroll { version, token } => {
-            if !check_version(outgoing, version).await {
-                return None;
-            }
-            match state.store.claim_enrollment(token).await {
-                Ok(credentials) => {
-                    let _ = outgoing
-                        .send(ServerMessage::Enrolled {
-                            version: JSON_WS_VERSION,
-                            credentials,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, None, &error).await,
-            }
+            enroll(state, outgoing, version, token).await;
             return None;
         }
         ClientMessage::Authenticate {
@@ -390,6 +377,30 @@ async fn read_peer(
         }
     };
     Some(authenticated)
+}
+
+/// Answers an enrollment. The connection ends either way: an enrolled device
+/// connects again with its credentials.
+async fn enroll(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    version: u32,
+    token: EnrollmentToken,
+) {
+    if !check_version(outgoing, version).await {
+        return;
+    }
+    match state.store.claim_enrollment(token).await {
+        Ok(credentials) => {
+            let _ = outgoing
+                .send(ServerMessage::Enrolled {
+                    version: JSON_WS_VERSION,
+                    credentials,
+                })
+                .await;
+        }
+        Err(error) => send_control_error(outgoing, None, &error).await,
+    }
 }
 
 async fn check_version(outgoing: &mpsc::Sender<ServerMessage>, version: u32) -> bool {

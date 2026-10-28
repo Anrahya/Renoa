@@ -219,6 +219,25 @@ async fn advertise(
     Ok(())
 }
 
+/// Records a stop and cancels its command, then acknowledges it: the
+/// acknowledgement is sent only once the stop is durable here.
+async fn stop(
+    socket: &mut Socket,
+    runtime: &NodeRuntime,
+    task_id: TaskId,
+    command_id: CommandId,
+) -> Result<(), NodeError> {
+    runtime.stop(task_id, command_id).await?;
+    send_client(
+        socket,
+        &ClientMessage::AcknowledgeStop {
+            task_id,
+            command_id,
+        },
+    )
+    .await
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "these values are the complete state of one authenticated node session"
@@ -287,18 +306,7 @@ async fn handle_server_message(
         ServerMessage::Stop {
             task_id,
             command_id,
-        } => {
-            // Acknowledged only once the stop is durable here.
-            runtime.stop(task_id, command_id).await?;
-            send_client(
-                socket,
-                &ClientMessage::AcknowledgeStop {
-                    task_id,
-                    command_id,
-                },
-            )
-            .await?;
-        }
+        } => stop(socket, runtime, task_id, command_id).await?,
         ServerMessage::HostCall {
             call_id,
             principal_id,

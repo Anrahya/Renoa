@@ -252,6 +252,8 @@ async fn a_connection_that_ends_while_a_call_waits_for_the_node_table_ends_that_
         "a call registered just before its connection ended is ended with it, not left to time out"
     );
     assert_eq!(state.host_calls.len(), 0);
+}
+
 /// A task with one live-attached surface whose connection queue holds `queue`
 /// messages. The test runtime is single-threaded, so the attachment's loop
 /// runs only when the test awaits: whatever the test publishes in between is

@@ -64,19 +64,13 @@ pub(crate) async fn handle_node_operation(
             call_id,
             status,
             body,
-        } => {
-            let delivered =
-                state
-                    .host_calls
-                    .complete(connection_id, call_id, HostReply { status, body });
-            if !delivered {
-                control_log::event(
-                    "info",
-                    "host_call_answer_dropped",
-                    &serde_json::json!({ "node_id": node_id, "call_id": call_id }),
-                );
-            }
-        }
+        } => complete_host_call(
+            state,
+            node_id,
+            connection_id,
+            call_id,
+            HostReply { status, body },
+        ),
         NodeOperation::AdvertiseTargets { targets } => {
             if let Err(error) =
                 crate::task_opening::advertise_targets(state, node_id, connection_id, targets).await
@@ -137,6 +131,24 @@ pub(crate) async fn handle_node_operation(
                 Err(error) => send_control_error(outgoing, None, &error).await,
             }
         }
+    }
+}
+
+/// Hands a node's answer to the call waiting for it. An answer no call waits
+/// for, because it timed out or came from a replaced connection, is dropped.
+fn complete_host_call(
+    state: &CoordinatorState,
+    node_id: NodeId,
+    connection_id: Uuid,
+    call_id: Uuid,
+    reply: HostReply,
+) {
+    if !state.host_calls.complete(connection_id, call_id, reply) {
+        control_log::event(
+            "info",
+            "host_call_answer_dropped",
+            &serde_json::json!({ "node_id": node_id, "call_id": call_id }),
+        );
     }
 }
 
