@@ -66,3 +66,31 @@ test("RCP numbers outside JavaScript's exact range are rejected", () => {
     /through_execution_sequence must be a safe unsigned integer/,
   );
 });
+
+test("a stop names a task and a command and nothing else", () => {
+  assert.deepEqual(
+    parseServerMessage(
+      JSON.stringify({
+        type: "stop",
+        task_id: "00000000-0000-0000-0000-000000000001",
+        command_id: "00000000-0000-0000-0000-000000000002",
+      }),
+    ),
+    {
+      type: "stop",
+      taskId: "00000000-0000-0000-0000-000000000001",
+      commandId: "00000000-0000-0000-0000-000000000002",
+    },
+  );
+  assert.throws(
+    () =>
+      parseServerMessage(
+        JSON.stringify({
+          type: "stop",
+          task_id: "00000000-0000-0000-0000-000000000001",
+          command_id: "not-a-uuid",
+        }),
+      ),
+    /command_id must be a canonical UUID/,
+  );
+});

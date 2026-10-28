@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -44,7 +44,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     create_oauth_relay_schema(connection)?;
     create_credential_relay_schema(connection)?;
     connection
-        .execute_batch("PRAGMA user_version = 12;")
+        .execute_batch("PRAGMA user_version = 13;")
         .map_err(sqlite_error)
 }
 
@@ -204,6 +204,23 @@ fn create_continuity_schema(connection: &Connection) -> Result<(), ControlError>
                 next_sequence INTEGER NOT NULL CHECK(next_sequence >= 0),
                 terminal INTEGER NOT NULL CHECK(terminal IN (0, 1))
             );
+
+            -- A surface's request to stop one command. `delivered` turns on when
+            -- the command's node acknowledges that it durably recorded the stop.
+            CREATE TABLE IF NOT EXISTS stop_requests (
+                command_id TEXT PRIMARY KEY REFERENCES commands(command_id) ON DELETE CASCADE,
+                delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0, 1))
+            );
+
+            -- The one place that decides whether a command has settled: its
+            -- execution stream reached a terminal record.
+            CREATE VIEW IF NOT EXISTS command_states AS
+                SELECT commands.rowid AS ordinal,
+                       commands.command_id AS command_id,
+                       commands.task_id AS task_id,
+                       COALESCE(execution_event_streams.terminal, 0) AS settled
+                FROM commands
+                LEFT JOIN execution_event_streams USING (command_id);
 
             CREATE INDEX IF NOT EXISTS task_events_task_sequence
                 ON task_events(task_id, sequence);",

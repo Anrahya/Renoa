@@ -5,16 +5,39 @@ import { projectTask, taskTitle } from "./task-model";
 
 describe("task projection", () => {
   test("reports only states proved by durable events", () => {
-    expect(projectTask(TASK, []).state).toBe("ready");
-    expect(projectTask(TASK, [command(0)]).state).toBe("queued");
-    expect(projectTask(TASK, [command(0), execution(1, { type: "turn_started" })]).state)
+    expect(projectTask(TASK, [], true).state).toBe("ready");
+    expect(projectTask(TASK, [command(0)], true).state).toBe("queued");
+    expect(projectTask(TASK, [command(0), execution(1, { type: "turn_started" })], true).state)
       .toBe("working");
     expect(
       projectTask(TASK, [
         command(0),
         execution(1, { type: "execution_terminated", terminal: { status: "completed" } }),
-      ]),
+      ], true),
     ).toMatchObject({ state: "ready", detail: "Ready to continue" });
+  });
+
+  test("shows the directory status for a task it is not attached to", () => {
+    const saved = [command(0), execution(1, { type: "tool_started", call_id: "c", name: "bash", arguments: {} })];
+    expect(projectTask({ ...TASK, status: "idle" }, saved, false)).toMatchObject({
+      state: "ready",
+      detail: "Ready to continue",
+      eventCount: 2,
+    });
+    expect(projectTask({ ...TASK, status: "working" }, [], false)).toMatchObject({
+      state: "working",
+      detail: "Agent is working",
+    });
+    expect(projectTask({ ...TASK, status: "failed" }, saved, false).state).toBe("failed");
+  });
+
+  test("lets an attached journal outrank the directory status it was listed with", () => {
+    expect(
+      projectTask({ ...TASK, status: "working" }, [
+        command(0),
+        execution(1, { type: "execution_terminated", terminal: { status: "completed" } }),
+      ], true).state,
+    ).toBe("ready");
   });
 
   test("uses a readable title without inventing task metadata", () => {
@@ -27,6 +50,7 @@ describe("task projection", () => {
 const TASK: TaskSummary = {
   taskId: "00000000-0000-0000-0000-000000000010",
   target: "workspace:renoa",
+  status: "idle",
 };
 
 function command(sequence: number): TaskEvent {

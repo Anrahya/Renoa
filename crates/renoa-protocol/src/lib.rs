@@ -3,7 +3,9 @@
 mod command;
 mod execution;
 mod ids;
+mod live;
 
 pub use command::{Author, CommandEnvelope, CommandInput, SurfaceRef, TargetRef};
 pub use execution::{ExecutionEvent, ExecutionEventKind, ExecutionTerminal};
 pub use ids::{CommandId, ExecutionEventId, ExecutionId, PrincipalId};
+pub use live::LiveActivity;

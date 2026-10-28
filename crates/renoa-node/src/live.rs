@@ -1,41 +1,73 @@
-//! A running turn's durable events, recorded as they happen so attached
-//! surfaces see tool calls and intermediate assistant messages before the
-//! turn ends. Token deltas and reasoning stay local; only complete events are
-//! recorded, and the end-of-turn projection records whatever is still missing.
+//! A running turn's events, reported as they happen so attached surfaces see
+//! the turn before it ends.
+//!
+//! Complete events (tool calls and intermediate assistant messages) are
+//! recorded durably, and the end-of-turn projection records whatever is still
+//! missing. Visible text deltas are ephemeral: they are sent to the session
+//! loop as live frames and never stored. Reasoning never leaves the Host.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::{
+    sync::{Arc, Mutex, PoisonError},
+    time::Instant,
+};
 
 use renoa_agent::{AgentEvent, AgentEventSink, AssistantContent, BoxFuture};
-use renoa_protocol::{CommandId, ExecutionEventKind};
+use renoa_control::TaskId;
+use renoa_protocol::{CommandId, ExecutionEventKind, LiveActivity};
 
 use crate::{
     bridge::NodeRuntime,
+    live_text::LiveText,
     node_log,
     node_store::{LiveLedger, NodeStoreError},
     projection::project_tool_result,
 };
 
+/// One piece of ephemeral live activity, on its way to the coordinator.
+#[derive(Debug, Clone)]
+pub(crate) struct LiveFrame {
+    pub(crate) task_id: TaskId,
+    pub(crate) command_id: CommandId,
+    pub(crate) activity: LiveActivity,
+}
+
 pub(crate) struct LiveEvents {
     runtime: Arc<NodeRuntime>,
+    task_id: TaskId,
     command_id: CommandId,
     /// Held only to count a report, never across an await.
     ledger: Mutex<LiveLedger>,
+    /// Held only to coalesce a delta, never across an await.
+    text: Mutex<LiveText>,
     inner: Arc<dyn AgentEventSink>,
 }
 
 impl LiveEvents {
     pub(crate) async fn start(
         runtime: Arc<NodeRuntime>,
+        task_id: TaskId,
         command_id: CommandId,
         inner: Arc<dyn AgentEventSink>,
     ) -> Result<Self, NodeStoreError> {
         let ledger = runtime.state.live_ledger(command_id).await?;
         Ok(Self {
             runtime,
+            task_id,
             command_id,
             ledger: Mutex::new(ledger),
+            text: Mutex::new(LiveText::default()),
             inner,
         })
+    }
+
+    /// No receiver is a node with no coordinator session, which drops the
+    /// frame: live activity is never kept for later.
+    fn send_live(&self, activity: LiveActivity) {
+        let _ = self.runtime.live.send(LiveFrame {
+            task_id: self.task_id,
+            command_id: self.command_id,
+            activity,
+        });
     }
 
     /// The durable events one agent event completes.
@@ -120,6 +152,16 @@ impl LiveEvents {
 impl AgentEventSink for LiveEvents {
     fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
         Box::pin(async move {
+            // Live text goes first, so it precedes the durable record that
+            // supersedes it on the way to the coordinator.
+            let activity = self
+                .text
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .observe(&event, Instant::now());
+            if let Some(activity) = activity {
+                self.send_live(activity);
+            }
             for kind in self.complete(&event) {
                 self.record(kind).await;
             }

@@ -13,7 +13,7 @@ use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
     PeerIdentity, ServerMessage, TaskId, TaskSpec,
 };
-use renoa_protocol::{CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef};
+use renoa_protocol::{CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef};
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{
@@ -67,7 +67,35 @@ async fn main() {
         unowned_task_id,
     );
 
-    while node.next().await.is_some() {}
+    // The node never runs a command. It answers each execution with the live
+    // text of a turn, so a surface can observe live activity and its absence.
+    while let Some(message) = node.next().await {
+        if let Ok(Message::Text(json)) = message
+            && let Ok(ServerMessage::Execute { task_id, command }) = serde_json::from_str(&json)
+        {
+            for activity in [
+                LiveActivity::TextDelta {
+                    sequence: 0,
+                    text: "Hel".to_owned(),
+                },
+                LiveActivity::TextDelta {
+                    sequence: 1,
+                    text: "lo".to_owned(),
+                },
+                LiveActivity::TextReset,
+            ] {
+                send(
+                    &mut node,
+                    &ClientMessage::PublishLiveActivity {
+                        task_id,
+                        command_id: command.command_id,
+                        activity,
+                    },
+                )
+                .await;
+            }
+        }
+    }
     shutdown.cancel();
     server.await.expect("coordinator server task");
 }
@@ -209,9 +237,11 @@ fn write_description(
         "replayEndpoint": replay_endpoint,
         "credentials": credentials,
         "unownedTaskId": unowned_task_id,
-        "tasks": tasks.iter().map(|(task_id, target, _)| json!({
+        // Only the first task has a command, and no node ever runs it.
+        "tasks": tasks.iter().enumerate().map(|(index, (task_id, target, _))| json!({
             "taskId": task_id,
             "target": target,
+            "status": if index == 0 { "working" } else { "idle" },
         })).collect::<Vec<_>>(),
     });
     let mut stdout = io::stdout().lock();

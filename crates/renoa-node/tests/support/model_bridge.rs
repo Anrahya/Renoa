@@ -28,6 +28,22 @@ const HELD_TOOL_TURN: &str = r#"} else if (prompt === "Read proof, then wait." &
   content = [{ type: "text", text: "The held proof was read." }];
 }"#;
 
+/// A turn that streams its answer: private reasoning, then visible text in two
+/// deltas further apart than the node's flush interval, then it waits for
+/// release before it completes with the whole text.
+const STREAMED_TURN: &str = r#" else if (prompt === "Stream an answer.") {
+  const record = value => process.stdout.write(JSON.stringify(value) + "\n");
+  const delta = (type, text) => record({ event: "content_delta", content_index: 0, delta: { type, text } });
+  delta("reasoning", "private deliberation");
+  delta("text", "Hello ");
+  await new Promise(resolve => setTimeout(resolve, 400));
+  delta("text", "world");
+  while (!existsSync(join(workspace, "model-release"))) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  content = [{ type: "text", text: "Hello world" }];
+}"#;
+
 /// Creates a paused automation through the Host plugin, discovering its
 /// schema first as a model must, and answers the automation's standing
 /// prompts: one that succeeds, one whose model fails, and one whose tool call
@@ -135,7 +151,8 @@ if (prompt === "Read proof." && toolResults.length === 0) {{
   stopReason = "tool_use";
 }} else if (prompt === "Read proof.") {{
   content = [{{ type: "text", text: "The durable proof was read." }}];
-{HELD_TOOL_TURN} else if (prompt === "Hold through reconnect.") {{
+{HELD_TOOL_TURN}{STREAMED_TURN} else if (prompt === "Hold through reconnect.") {{
+  writeFileSync(join(workspace, "model-pid"), String(process.pid));
   writeFileSync(join(workspace, "model-started"), "started");
   while (!existsSync(join(workspace, "model-release"))) {{
     await new Promise(resolve => setTimeout(resolve, 10));

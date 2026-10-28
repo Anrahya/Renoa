@@ -162,3 +162,65 @@ function executionTaskEvent(kind: unknown): string {
     },
   });
 }
+
+test("task summaries carry a status and reject one the client does not know", () => {
+  const list = (status: unknown) =>
+    parseServerMessage(
+      JSON.stringify({
+        type: "task_list",
+        request_id: 4,
+        tasks: [{ taskId: TASK_ID, target: "workspace:renoa", status }],
+      }),
+    );
+  for (const status of ["working", "idle", "failed"] as const) {
+    const message = list(status);
+    assert.equal(message.type, "task_list");
+    assert.equal(message.tasks[0]?.status, status);
+  }
+  assert.throws(() => list("waiting"), /unsupported task status waiting/);
+  assert.throws(() => list(undefined), /task status must be a string/);
+});
+
+test("a stop answer names the command and one of two outcomes", () => {
+  const accepted = (outcome: unknown) =>
+    parseServerMessage(
+      JSON.stringify({
+        type: "stop_accepted",
+        request_id: 5,
+        command_id: COMMAND_ID,
+        outcome,
+      }),
+    );
+  assert.deepEqual(accepted("requested"), {
+    type: "stop_accepted",
+    request_id: 5,
+    command_id: COMMAND_ID,
+    outcome: "requested",
+  });
+  assert.equal(accepted("already_ended").type, "stop_accepted");
+  assert.throws(() => accepted("stopped"), /unsupported stop outcome stopped/);
+});
+
+test("live activity is a numbered text delta or a reset and carries no task sequence", () => {
+  const live = (activity: unknown) =>
+    parseServerMessage(
+      JSON.stringify({
+        type: "live_activity",
+        task_id: TASK_ID,
+        command_id: COMMAND_ID,
+        activity,
+      }),
+    );
+  assert.deepEqual(live({ type: "text_delta", sequence: 3, text: "Hel" }), {
+    type: "live_activity",
+    task_id: TASK_ID,
+    command_id: COMMAND_ID,
+    activity: { type: "text_delta", sequence: 3, text: "Hel" },
+  });
+  assert.deepEqual(live({ type: "text_reset" }).type, "live_activity");
+  assert.throws(() => live({ type: "reasoning", text: "x" }), /unsupported live activity/);
+  assert.throws(
+    () => live({ type: "text_delta", sequence: Number.MAX_SAFE_INTEGER + 1, text: "x" }),
+    /live text sequence must be a safe unsigned integer/,
+  );
+});

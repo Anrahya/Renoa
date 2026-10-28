@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import type { PendingTextCommand, RcpSurfaceState } from "./core-client.js";
+import type { PendingTextCommand, RcpSurfaceState } from "./contract.js";
 
 export class SurfaceState implements RcpSurfaceState {
   readonly #database: DatabaseSync;
