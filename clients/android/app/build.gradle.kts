@@ -16,6 +16,7 @@ android {
         versionName = "0.1.0"
         // The Renoa the app signs in to; its passkeys and assetlinks.json belong to this origin.
         buildConfigField("String", "RENOA_ORIGIN", "\"https://renoa.live\"")
+        buildConfigField("String", "RENOA_CONNECT", "\"wss://renoa.live/connect\"")
     }
 
     buildTypes {

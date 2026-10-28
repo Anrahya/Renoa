@@ -39,7 +39,7 @@ class RenoaAppTest : ScreenTest() {
     private fun start() {
         // The phone's animation scale is off, so no badge loops and the screen can settle.
         Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-        compose.setContent { RenoaApp(repository, signedIn = true, signingIn = { _, _ -> }) }
+        compose.setContent { RenoaApp({ repository }, signedIn = true, signingIn = { _, _ -> }) }
         compose.waitForIdle()
     }
 
@@ -115,7 +115,7 @@ class RenoaAppTest : ScreenTest() {
         val codes = mutableListOf<SignInCode>()
         var refuse = true
         compose.setContent {
-            RenoaApp(repository, signedIn = false, signingIn = { code, _ ->
+            RenoaApp({ repository }, signedIn = false, signingIn = { code, _ ->
                 codes += code
                 if (refuse) throw SignInRefused(401, "authentication_failed", "authentication failed")
             })
@@ -137,7 +137,7 @@ class RenoaAppTest : ScreenTest() {
     fun aRotationKeepsTheFormAndLeavingTheScreenDoesNot() {
         val restoration = StateRestorationTester(compose)
         Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-        restoration.setContent { RenoaApp(repository, signedIn = true, signingIn = { _, _ -> }) }
+        restoration.setContent { RenoaApp({ repository }, signedIn = true, signingIn = { _, _ -> }) }
         compose.waitForIdle()
         meetSomeoneNew()
         compose.waitForIdle()
