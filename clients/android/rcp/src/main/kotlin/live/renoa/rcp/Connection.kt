@@ -36,6 +36,9 @@ internal class Connection(val socket: WebSocket, val inbound: Channel<Inbound>) 
     val pending = ConcurrentHashMap<Long, Pending>()
     val opened = CompletableDeferred<Unit>()
     val authenticated = CompletableDeferred<Unit>()
+
+    /** Whether the coordinator has asked for the device-key proof; it asks at most once. Read on the receive loop only. */
+    var challenged = false
     val ended = CompletableDeferred<Throwable>()
 }
 

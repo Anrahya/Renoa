@@ -44,7 +44,7 @@ class AttachmentTest : CoordinatorTest() {
         val surface = client()
         surface.connect()
 
-        surface.attach(taskId, applied.apply)
+        surface.attach(taskId, apply = applied.apply)
         assertEquals(listOf(3L, 4L), applied.sequences)
         assertEquals("2", coordinator.framesOfType("attach").single().getValue("after_sequence").toString())
 
@@ -59,7 +59,7 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val surface = client()
         surface.connect()
-        surface.attach(taskId, applied.apply)
+        surface.attach(taskId, apply = applied.apply)
         assertEquals(listOf(0L, 1L, 2L), applied.sequences)
         assertEquals("null", coordinator.framesOfType("attach").single().getValue("after_sequence").toString())
         assertEquals(2L, state.cursor(taskId))
@@ -71,7 +71,7 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val surface = client()
         surface.connect()
-        surface.attach(taskId, applied.apply)
+        surface.attach(taskId, apply = applied.apply)
         assertEquals(emptyList(), applied.sequences)
         coordinator.publish(taskId, submitted("first"))
         awaitCursor(taskId, 0)
@@ -85,7 +85,7 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val surface = client()
         surface.connect()
-        surface.attach(taskId, applied.apply)
+        surface.attach(taskId, apply = applied.apply)
         assertEquals(emptyList(), applied.sequences)
         coordinator.publish(taskId, submitted("next"))
         awaitCursor(taskId, 3)
@@ -110,7 +110,7 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val second = client()
         second.connect()
-        second.attach(taskId, applied.apply)
+        second.attach(taskId, apply = applied.apply)
         assertEquals(listOf(3L, 4L), applied.sequences)
     }
 
@@ -120,7 +120,7 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val surface = client()
         surface.connect()
-        surface.attach(taskId, applied.apply)
+        surface.attach(taskId, apply = applied.apply)
 
         coordinator.injectRaw(eventFrame(taskId, 5))
         assertIs<ProtocolViolation>(surface.awaitDisconnect())
@@ -134,7 +134,7 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val surface = client()
         surface.connect()
-        surface.attach(taskId, applied.apply)
+        surface.attach(taskId, apply = applied.apply)
 
         coordinator.injectRaw(eventFrame(taskId, 1))
         coordinator.publish(taskId, submitted("next"))
@@ -156,7 +156,7 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val surface = client()
         surface.connect()
-        surface.attach(taskId, applied.apply)
+        surface.attach(taskId, apply = applied.apply)
 
         // Two events happen that this slow surface is never sent, then the coordinator tells it to start over.
         coordinator.append(taskId, submitted("missed 2"))
@@ -182,8 +182,8 @@ class AttachmentTest : CoordinatorTest() {
 
         coordinator.seedTask(taskId)
         val applied = Applied()
-        surface.attach(taskId, applied.apply)
-        assertFailsWith<IllegalStateException> { surface.attach(taskId, applied.apply) }
+        surface.attach(taskId, apply = applied.apply)
+        assertFailsWith<IllegalStateException> { surface.attach(taskId, apply = applied.apply) }
     }
 
     @Test
@@ -191,7 +191,7 @@ class AttachmentTest : CoordinatorTest() {
         val taskId = seedJournal(2)
         val surface = client()
         surface.connect()
-        surface.attach(taskId, Applied().apply)
+        surface.attach(taskId, apply = Applied().apply)
         surface.deleteTask(taskId)
 
         surface.disconnect()
@@ -205,7 +205,7 @@ class AttachmentTest : CoordinatorTest() {
         val taskId = seedJournal(2)
         val surface = client()
         surface.connect()
-        surface.attach(taskId, Applied().apply)
+        surface.attach(taskId, apply = Applied().apply)
         surface.disconnect()
         coordinator.tasks.remove(taskId)
 
@@ -234,18 +234,14 @@ class AttachmentTest : CoordinatorTest() {
         val applied = Applied()
         val first = client(rcpState = flaky)
         first.connect()
-        assertFailsWith<IllegalStateException> { first.attach(taskId, applied.apply) }
+        assertFailsWith<IllegalStateException> { first.attach(taskId, apply = applied.apply) }
         assertEquals(2L, state.cursor(taskId))
 
         val second = client(rcpState = flaky)
         second.connect()
-        second.attach(taskId, applied.apply)
+        second.attach(taskId, apply = applied.apply)
 
         assertEquals(listOf(3L, 3L, 4L), applied.sequences, "an applied event whose cursor was lost is delivered again, so apply must tolerate a repeat")
-    }
-
-    private suspend fun awaitCursor(taskId: Uuid, sequence: Long) {
-        while (state.cursor(taskId) != sequence) kotlinx.coroutines.delay(10)
     }
 
     private fun eventFrame(taskId: Uuid, sequence: Long): String =
