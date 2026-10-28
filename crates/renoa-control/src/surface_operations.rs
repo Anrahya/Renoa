@@ -60,13 +60,12 @@ pub(crate) async fn handle_surface_operation(
                 node_id,
                 target,
             };
-            let result = crate::task_opening::open_task(&state, task)
-                .await
-                .map(|()| ServerMessage::TaskOpened {
-                    request_id,
-                    task_id,
-                });
-            send_reply(outgoing, request_id, result).await;
+            send_reply(
+                outgoing,
+                request_id,
+                open_task(&state, request_id, task).await,
+            )
+            .await;
         }
         SurfaceOperation::Attach {
             task_id,
@@ -112,23 +111,11 @@ pub(crate) async fn handle_surface_operation(
             task_id,
             command_id,
         } => {
-            let result =
-                crate::command_stop::stop_command(&state, principal_id, task_id, command_id)
-                    .await
-                    .map(|outcome| ServerMessage::StopAccepted {
-                        request_id,
-                        command_id,
-                        outcome,
-                    });
+            let result = stop_command(&state, principal_id, request_id, task_id, command_id).await;
             send_reply(outgoing, request_id, result).await;
         }
         SurfaceOperation::DeleteTask { task_id } => {
-            let result = crate::task_deletion::delete_task(&state, principal_id, task_id)
-                .await
-                .map(|()| ServerMessage::TaskDeleted {
-                    request_id,
-                    task_id,
-                });
+            let result = delete_task(&state, principal_id, request_id, task_id).await;
             send_reply(outgoing, request_id, result).await;
         }
     }
@@ -221,6 +208,50 @@ pub(crate) async fn attach_surface(
         }
     });
     Ok(())
+}
+
+async fn open_task(
+    state: &CoordinatorState,
+    request_id: u64,
+    task: TaskSpec,
+) -> Result<ServerMessage, ControlError> {
+    let task_id = task.task_id;
+    crate::task_opening::open_task(state, task)
+        .await
+        .map(|()| ServerMessage::TaskOpened {
+            request_id,
+            task_id,
+        })
+}
+
+async fn delete_task(
+    state: &CoordinatorState,
+    principal_id: PrincipalId,
+    request_id: u64,
+    task_id: TaskId,
+) -> Result<ServerMessage, ControlError> {
+    crate::task_deletion::delete_task(state, principal_id, task_id)
+        .await
+        .map(|()| ServerMessage::TaskDeleted {
+            request_id,
+            task_id,
+        })
+}
+
+async fn stop_command(
+    state: &CoordinatorState,
+    principal_id: PrincipalId,
+    request_id: u64,
+    task_id: TaskId,
+    command_id: CommandId,
+) -> Result<ServerMessage, ControlError> {
+    crate::command_stop::stop_command(state, principal_id, task_id, command_id)
+        .await
+        .map(|outcome| ServerMessage::StopAccepted {
+            request_id,
+            command_id,
+            outcome,
+        })
 }
 
 #[allow(
