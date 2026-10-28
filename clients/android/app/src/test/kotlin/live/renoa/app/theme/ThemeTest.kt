@@ -17,14 +17,20 @@ class ThemeTest {
     }
 
     @Test
-    fun theThreeThemesAreMidnightEmberAndCrimsonWithMidnightFirst() {
-        assertEquals(listOf("Midnight", "Ember", "Crimson"), ThemeName.entries.map { it.name })
+    fun theDesignSystemsTwoThemesAreGraphiteDarkAndPaperLight() {
+        assertEquals(listOf("Graphite" to true, "Paper" to false), ThemeName.entries.map { it.name to it.dark })
+        assertTrue(ThemeName.Graphite.colors.background.luminance() < ThemeName.Paper.colors.background.luminance())
+    }
+
+    @Test
+    fun inkIsTheAccentThePrimaryIsTheForeground() {
+        for (theme in ThemeName.entries) assertEquals(theme.colors.foreground, theme.colors.primary, theme.name)
     }
 
     @Test
     fun everyThemeSetsEveryTokenToARealColour() {
         val tokens = RenoaColors::class.memberProperties
-        assertTrue(tokens.size >= 17, "expected the full token set, found ${tokens.size}")
+        assertTrue(tokens.size >= 15, "expected the full token set, found ${tokens.size}")
         for (theme in ThemeName.entries) {
             for (token in tokens) {
                 val value = token.get(theme.colors) as Color
@@ -35,10 +41,9 @@ class ThemeTest {
     }
 
     @Test
-    fun noTwoThemesShareAGroundOrASignature() {
+    fun noTwoThemesShareAGround() {
         val colors = ThemeName.entries.map { it.colors }
         assertEquals(colors.size, colors.map { it.background }.toSet().size)
-        assertEquals(colors.size, colors.map { it.signature }.toSet().size)
     }
 
     @Test
@@ -56,7 +61,6 @@ class ThemeTest {
                     "muted on card" to (c.mutedForeground to c.card),
                     "muted on muted" to (c.mutedForeground to c.muted),
                     "on primary" to (c.primaryForeground to c.primary),
-                    "on signature" to (c.onSignature to c.signature),
                     "failed on background" to (c.stateFailed to c.background),
                 )
             for ((name, pair) in pairs) {
@@ -76,14 +80,14 @@ class ThemeTest {
 
     @Test
     fun nextCyclesThroughEveryThemeAndComesBack() {
-        var theme = ThemeName.Midnight
+        var theme = ThemeName.Graphite
         val seen = mutableListOf<ThemeName>()
         repeat(ThemeName.entries.size) {
             seen += theme
             theme = theme.next()
         }
         assertEquals(ThemeName.entries.toList(), seen)
-        assertEquals(ThemeName.Midnight, theme)
+        assertEquals(ThemeName.Graphite, theme)
     }
 
     @Test

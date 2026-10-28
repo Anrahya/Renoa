@@ -40,6 +40,7 @@ import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.Glyphs
+import live.renoa.app.ui.RenoaButton
 import live.renoa.app.ui.PathIcon
 import kotlin.math.abs
 
@@ -95,18 +96,7 @@ fun SignInScreen(onContinue: () -> Unit) {
             Text("Your agents, in your pocket.", Modifier.padding(top = 8.dp), style = RenoaType.Body.copy(fontSize = 17.sp), color = colors.mutedForeground, textAlign = TextAlign.Center)
         }
         Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 28.dp)) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .background(colors.primary, RoundedCornerShape(16.dp))
-                    .clickable(role = Role.Button, onClick = onContinue),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PathIcon(Glyphs.PASSKEY, colors.primaryForeground, size = 20.dp)
-                Text("Continue with passkey", style = RenoaType.Label.copy(fontSize = 16.sp), color = colors.primaryForeground)
-            }
+            RenoaButton("Continue with passkey", onContinue, Modifier.fillMaxWidth(), icon = Glyphs.PASSKEY)
         }
     }
 }

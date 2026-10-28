@@ -7,22 +7,28 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import live.renoa.app.R
 
 /** Easing curves from the design: `ease` for arrivals, `spring` for a tile landing. */
 object RenoaEasing {
@@ -31,26 +37,39 @@ object RenoaEasing {
     val EaseInOut = CubicBezierEasing(.42f, 0f, .58f, 1f)
 }
 
-/** The radii the design uses; the system's own radii are small and square, the app's are soft. */
+/** The design system's radii: small and square. Pills belong to state badges only. */
 object RenoaShapes {
-    val Sheet = 28.dp
-    val Card = 20.dp
-    val Bubble = 22.dp
-    val Control = 16.dp
+    /** `radius-lg`: plates, sheets and message bubbles. */
+    val Sheet = 10.dp
+    val Card = 10.dp
+    val Bubble = 10.dp
+
+    /** `radius-md`: buttons and inputs. */
+    val Control = 6.dp
 }
 
-/** One typeface, few sizes, no monospace on screen. */
+@OptIn(ExperimentalTextApi::class)
+private fun instrument(weight: Int) =
+    Font(R.font.instrument_sans, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
+
+/** Instrument Sans for everything; IBM Plex Mono only for eyebrows and metadata, as the design system sets them. */
+private val Sans = FontFamily(instrument(400), instrument(500), instrument(600))
+private val Mono = FontFamily(Font(R.font.ibm_plex_mono_regular, FontWeight.Normal), Font(R.font.ibm_plex_mono_medium, FontWeight.Medium))
+
+/** The design system's type scale (`type-*` in tokens.json), with Display sized for a phone. */
 object RenoaType {
-    private val family = FontFamily.SansSerif
-    val Display = TextStyle(fontFamily = family, fontSize = 40.sp, lineHeight = 42.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp)
-    val Title = TextStyle(fontFamily = family, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
-    val Heading = TextStyle(fontFamily = family, fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp)
-    val Body = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 24.sp)
-    val Label = TextStyle(fontFamily = family, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold)
-    val Caption = TextStyle(fontFamily = family, fontSize = 13.sp, lineHeight = 18.sp)
+    val Display = TextStyle(fontFamily = Sans, fontSize = 40.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.035).em)
+    val Title = TextStyle(fontFamily = Sans, fontSize = 28.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.02).em)
+    val Heading = TextStyle(fontFamily = Sans, fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.01).em)
+    val Body = TextStyle(fontFamily = Sans, fontSize = 15.sp, lineHeight = 23.sp)
+    val Label = TextStyle(fontFamily = Sans, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
+    val Caption = TextStyle(fontFamily = Sans, fontSize = 13.sp, lineHeight = 19.sp)
+
+    /** `type-eyebrow`: mono capitals for kickers, times and metadata. Pass the text already upper-cased. */
+    val Eyebrow = TextStyle(fontFamily = Mono, fontSize = 11.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.08.em)
 }
 
-val LocalRenoaColors = staticCompositionLocalOf { ThemeName.Crimson.colors }
+val LocalRenoaColors = staticCompositionLocalOf { ThemeName.Graphite.colors }
 
 /** True when the person turned animations off in system settings; looping motion must stop. */
 val LocalReducedMotion = compositionLocalOf { false }
@@ -76,7 +95,7 @@ fun RenoaTheme(
 ) {
     val colors = theme.colors
     val scheme =
-        darkColorScheme(
+        (if (theme.dark) darkColorScheme() else lightColorScheme()).copy(
             primary = colors.primary,
             onPrimary = colors.primaryForeground,
             secondary = colors.secondary,
@@ -102,7 +121,7 @@ fun RenoaTheme(
         LocalReducedMotion provides reducedMotion,
         LocalMotionClock provides clock,
     ) {
-        MaterialTheme(colorScheme = scheme, shapes = shapes, typography = Typography()) { content() }
+        MaterialTheme(colorScheme = scheme, shapes = shapes, typography = Typography(bodyLarge = RenoaType.Body)) { content() }
     }
 }
 

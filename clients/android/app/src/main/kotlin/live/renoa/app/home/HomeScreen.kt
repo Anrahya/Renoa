@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -51,7 +52,6 @@ import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.AskChoices
-import live.renoa.app.ui.Aura
 import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
 import live.renoa.app.ui.RenoaMark
@@ -75,7 +75,6 @@ fun HomeScreen(
     val leadLook = remember(lead?.name) { lead?.let { AgentLook.forName(it.name) } }
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
-        Aura(leadLook?.main ?: colors.signature, Modifier.size(320.dp, 260.dp).graphicsLayer { translationX = -90.dp.toPx(); translationY = -60.dp.toPx() }, alpha = 0.3f)
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
@@ -102,15 +101,15 @@ fun HomeScreen(
     }
 }
 
-/** Each name in the note wears its agent's colour, so the owner sees who it is about at a glance. */
-private fun nameColoured(text: String, people: List<AgentSummary>, base: SpanStyle): AnnotatedString =
+/** Each name in the note is set in ink and weight, so the owner sees who it is about at a glance. Colour never sets text. */
+private fun nameColoured(text: String, people: List<AgentSummary>, base: SpanStyle, ink: Color): AnnotatedString =
     buildAnnotatedString {
         append(text)
         addStyle(base, 0, text.length)
         for (agent in people) {
             var at = text.indexOf(agent.name)
             while (at >= 0) {
-                addStyle(SpanStyle(color = AgentLook.forName(agent.name).tones[0], fontWeight = FontWeight.SemiBold), at, at + agent.name.length)
+                addStyle(SpanStyle(color = ink, fontWeight = FontWeight.SemiBold), at, at + agent.name.length)
                 at = text.indexOf(agent.name, at + agent.name.length)
             }
         }
@@ -132,7 +131,7 @@ private fun BriefingCard(lead: AgentSummary, look: AgentLook, text: String, peop
         verticalAlignment = Alignment.Top,
     ) {
         Badge(look, lead.state, 48.dp, mini = true, label = lead.name)
-        Text(nameColoured(text, people, SpanStyle(color = colors.foreground)), Modifier.weight(1f).padding(top = 2.dp), style = RenoaType.Body)
+        Text(nameColoured(text, people, SpanStyle(color = colors.foregroundSoft), colors.foreground), Modifier.weight(1f).padding(top = 2.dp), style = RenoaType.Body)
     }
 }
 
@@ -161,7 +160,7 @@ private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, onOpen: () ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(agent.name, Modifier.weight(1f), style = RenoaType.Label, color = colors.foreground)
                 glance.time?.let { Text(it, style = RenoaType.Caption, color = colors.mutedForeground) }
-                if (glance.unread) Box(Modifier.size(8.dp).background(colors.signature, CircleShape).semantics { contentDescription = "New" })
+                if (glance.unread) Box(Modifier.size(8.dp).background(colors.foreground, CircleShape).semantics { contentDescription = "New" })
             }
             val line =
                 when {
@@ -218,16 +217,16 @@ private fun MessageBar(name: String, onOpen: () -> Unit) {
         Modifier
             .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)
             .fillMaxWidth()
-            .background(colors.card, RoundedCornerShape(26.dp))
-            .border(1.dp, colors.border, RoundedCornerShape(26.dp))
+            .background(colors.card, RoundedCornerShape(RenoaShapes.Control))
+            .border(1.dp, colors.input, RoundedCornerShape(RenoaShapes.Control))
             .semantics { contentDescription = "Message $name" }
             .clickable(role = Role.Button, onClick = onOpen)
             .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Message $name", Modifier.weight(1f).padding(vertical = 10.dp), style = RenoaType.Body, color = colors.mutedForeground)
-        Box(Modifier.size(44.dp).background(colors.primary, CircleShape), contentAlignment = Alignment.Center) {
-            PathIcon(Glyphs.SEND, colors.primaryForeground, size = 20.dp, strokeWidth = 1.9f)
+        Box(Modifier.size(40.dp).background(colors.primary, RoundedCornerShape(RenoaShapes.Control)), contentAlignment = Alignment.Center) {
+            PathIcon(Glyphs.SEND, colors.primaryForeground, size = 18.dp)
         }
     }
 }

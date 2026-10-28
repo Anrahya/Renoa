@@ -31,7 +31,7 @@ abstract class ScreenTest {
 
     /** Shows [content] in a theme with the motion clock frozen at [seconds], so a picture is repeatable. */
     protected fun show(
-        theme: ThemeName = ThemeName.Midnight,
+        theme: ThemeName = ThemeName.Graphite,
         seconds: Float = 0f,
         reducedMotion: Boolean = false,
         content: @Composable () -> Unit,

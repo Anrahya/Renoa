@@ -52,8 +52,8 @@ import live.renoa.app.badge.AgentLook
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaType
-import live.renoa.app.ui.Aura
 import live.renoa.app.ui.Glyphs
+import live.renoa.app.ui.RenoaButton
 import live.renoa.app.ui.PathIcon
 
 /** Make an agent, or edit one. The two share one screen: a picture, a name, what it is for, and its switches. */
@@ -67,8 +67,6 @@ fun AgentEditorScreen(viewModel: AgentEditorViewModel, onClose: () -> Unit, onFi
     LaunchedEffect(state.finishedAgentId) { state.finishedAgentId?.let(onFinished) }
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
-        Aura(look.main, Modifier.size(280.dp, 240.dp).graphicsLayer { translationX = -40.dp.toPx(); translationY = -20.dp.toPx() }, alpha = 0.34f)
-        Aura(look.tones[2], Modifier.size(220.dp, 200.dp).graphicsLayer { translationX = 180.dp.toPx(); translationY = 20.dp.toPx() }, alpha = 0.18f, offsetSeconds = 6f)
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(44.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Close", onClick = onClose), contentAlignment = Alignment.Center) {
@@ -104,16 +102,7 @@ fun AgentEditorScreen(viewModel: AgentEditorViewModel, onClose: () -> Unit, onFi
 
 @Composable
 private fun Pill(text: String, enabled: Boolean, onClick: () -> Unit, wide: Boolean = false) {
-    val colors = Renoa.colors
-    Box(
-        Modifier
-            .then(if (wide) Modifier.fillMaxWidth().height(52.dp) else Modifier.height(40.dp))
-            .alpha(if (enabled) 1f else 0.4f)
-            .background(colors.signature, RoundedCornerShape(if (wide) 16.dp else 12.dp))
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = if (wide) 22.dp else 16.dp),
-        contentAlignment = Alignment.Center,
-    ) { Text(text, style = RenoaType.Label.copy(fontSize = if (wide) 16.sp else 14.5.sp), color = colors.onSignature) }
+    RenoaButton(text, onClick, if (wide) Modifier.fillMaxWidth() else Modifier, enabled = enabled)
 }
 
 @Composable
@@ -159,7 +148,7 @@ private fun NameField(state: EditorUiState, viewModel: AgentEditorViewModel, ali
             onValueChange = viewModel::setName,
             singleLine = true,
             textStyle = RenoaType.Title.copy(fontSize = 30.sp, lineHeight = 36.sp, color = colors.foreground, textAlign = align),
-            cursorBrush = SolidColor(colors.signature),
+            cursorBrush = SolidColor(colors.ring),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Name" },
         )
@@ -196,7 +185,7 @@ private fun Purpose(state: EditorUiState, called: String, viewModel: AgentEditor
                 value = state.purpose,
                 onValueChange = viewModel::setPurpose,
                 textStyle = RenoaType.Body.copy(color = colors.foregroundSoft),
-                cursorBrush = SolidColor(colors.signature),
+                cursorBrush = SolidColor(colors.ring),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "What $called is for" },
             )
@@ -214,7 +203,7 @@ private fun Legend(state: EditorUiState, called: String) {
     val fixed = state.abilities.any { it.kind != AbilityKind.Everyday }
     Column(Modifier.padding(start = 28.dp, end = 28.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (added.isNotEmpty()) {
-            LegendLine("$called found and added ${added.joinToString(" and ") { it.title }} itself", colors.signature)
+            LegendLine("$called found and added ${added.joinToString(" and ") { it.title }} itself", colors.foreground)
         }
         if (fixed) {
             LegendLine(if (state.creating) "Only you can switch these on" else "These are chosen when an agent is made", colors.foreground)

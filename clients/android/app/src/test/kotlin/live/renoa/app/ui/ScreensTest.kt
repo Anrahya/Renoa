@@ -74,13 +74,10 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun theFiveBadgeStatesSideBySideInMidnight() = badgesIn(ThemeName.Midnight)
+    fun theFiveBadgeStatesSideBySideInGraphite() = badgesIn(ThemeName.Graphite)
 
     @Test
-    fun theFiveBadgeStatesSideBySideInEmber() = badgesIn(ThemeName.Ember)
-
-    @Test
-    fun theFiveBadgeStatesSideBySideInCrimson() = badgesIn(ThemeName.Crimson)
+    fun theFiveBadgeStatesSideBySideInPaper() = badgesIn(ThemeName.Paper)
 
     @Test
     fun homeOpensWithTheLeadsNoteThenEveryoneAndWhatTheyNeed() {
@@ -119,6 +116,14 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithContentDescription("Meet someone new").performClick()
         assertEquals(listOf("optimus", "renoa"), opened)
         assertEquals(1, made)
+    }
+
+    @Test
+    fun homeInPaper() {
+        val model = HomeViewModel(repository)
+        show(ThemeName.Paper, seconds = 3.97f) { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
+        compose.waitForIdle()
+        snapshot("home-paper")
     }
 
     @Test

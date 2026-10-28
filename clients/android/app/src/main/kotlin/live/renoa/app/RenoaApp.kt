@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -39,7 +40,9 @@ import live.renoa.app.theme.ThemeName
 
 @Composable
 fun RenoaApp(repository: AgentRepository) {
-    var theme by rememberSaveable { mutableStateOf(ThemeName.Crimson) }
+    // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
+    var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
+    val theme = picked ?: if (isSystemInDarkTheme()) ThemeName.Graphite else ThemeName.Paper
     val navigator = rememberNavigator(Route.SignIn)
     val stores: EntryStores = viewModel()
 
@@ -65,7 +68,7 @@ fun RenoaApp(repository: AgentRepository) {
                             model,
                             onOpenChat = { navigator.push(Route.Chat(it)) },
                             onNewAgent = { navigator.push(Route.Create) },
-                            onChangeColours = { theme = theme.next() },
+                            onChangeColours = { picked = theme.next() },
                         )
                     }
                     is Route.Chat -> {

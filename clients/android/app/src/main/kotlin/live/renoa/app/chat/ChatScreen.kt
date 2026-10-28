@@ -51,7 +51,6 @@ import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.AskCard
-import live.renoa.app.ui.Aura
 import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
 
@@ -68,8 +67,6 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     LaunchedEffect(state.messages.size) { viewModel.seen() }
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
-        Aura(look.main, Modifier.size(300.dp, 260.dp).graphicsLayer { translationX = -80.dp.toPx(); translationY = -90.dp.toPx() }, alpha = 0.4f)
-        Aura(look.tones[3], Modifier.size(260.dp, 220.dp).graphicsLayer { translationX = 180.dp.toPx(); translationY = -70.dp.toPx() }, alpha = 0.25f, offsetSeconds = 6f)
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(44.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Back", onClick = onBack), contentAlignment = Alignment.Center) {
@@ -159,8 +156,8 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(colors.card, RoundedCornerShape(26.dp))
-                .border(1.dp, colors.border, RoundedCornerShape(26.dp))
+                .background(colors.card, RoundedCornerShape(RenoaShapes.Control))
+                .border(1.dp, colors.input, RoundedCornerShape(RenoaShapes.Control))
                 .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -171,7 +168,7 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
                     value = state.draft,
                     onValueChange = viewModel::onDraft,
                     textStyle = RenoaType.Body.copy(color = colors.foreground),
-                    cursorBrush = SolidColor(colors.signature),
+                    cursorBrush = SolidColor(colors.ring),
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Message $name".trim() },
                 )
@@ -179,9 +176,9 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
             val enabled = state.action != ComposerAction.Idle
             Box(
                 Modifier
-                    .size(44.dp)
-                    .alpha(if (enabled) 1f else 0.4f)
-                    .background(colors.primary, CircleShape)
+                    .size(40.dp)
+                    .alpha(if (enabled) 1f else 0.45f)
+                    .background(colors.primary, RoundedCornerShape(RenoaShapes.Control))
                     .semantics { contentDescription = if (state.action == ComposerAction.Stop) "Stop" else "Send" }
                     .clickable(enabled = enabled, role = Role.Button) {
                         if (state.action == ComposerAction.Stop) viewModel.stop() else viewModel.send()
@@ -189,9 +186,9 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
                 contentAlignment = Alignment.Center,
             ) {
                 if (state.action == ComposerAction.Stop) {
-                    Box(Modifier.size(14.dp).background(colors.primaryForeground, RoundedCornerShape(3.dp)))
+                    PathIcon(Glyphs.STOP, colors.primaryForeground, size = 16.dp)
                 } else {
-                    PathIcon(Glyphs.SEND, colors.primaryForeground, size = 20.dp, strokeWidth = 1.9f)
+                    PathIcon(Glyphs.SEND, colors.primaryForeground, size = 18.dp)
                 }
             }
         }
