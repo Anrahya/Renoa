@@ -714,6 +714,17 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun anAgentTheHostNoLongerHasIsAskedAboutOnce() = runTest {
+        val gone = Uuid.random()
+        surface.targets += TargetSummary(surface.node, "agent:$gone", "Kcal")
+        val repo = started()
+        assertEquals(listOf("Nagisa" to "", "Kcal" to ""), repo.agents.value.map { it.name to it.purpose })
+        advanceTimeBy(2.minutes)
+        runCurrent()
+        assertEquals(listOf("/v1/host/agents/$gone"), surface.hostCalls.map { it.second })
+    }
+
+    @Test
     fun aBlankPurposeIsLeftOutOfTheRequest() = runTest {
         val repo = started()
         val made = making(repo, purpose = " \n ")

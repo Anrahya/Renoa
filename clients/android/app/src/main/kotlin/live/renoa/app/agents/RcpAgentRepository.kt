@@ -37,7 +37,7 @@ import kotlin.uuid.Uuid
  *
  * Making an agent, reading its profile and the routines are Host control, carried by the same
  * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check, and
- * each Host agent's purpose once.
+ * each Host agent's purpose until the Host has answered for it.
  * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
  * follows its chat. Abilities and edits are not on the Host's agent API yet, so those calls are
  * refused as [Problem.NotYet] and nothing is sent.
@@ -221,7 +221,7 @@ class RcpAgentRepository(
         val listed =
             try {
                 hostRoutines.observe()
-            } catch (unread: RepositoryException) {
+            } catch (failed: RepositoryException) {
                 return
             }
         synchronized(lock) {
@@ -232,7 +232,11 @@ class RcpAgentRepository(
         publish()
     }
 
-    /** Reads what each followed Host agent is for, once; one the Host cannot answer for now is read on the next roster check. */
+    /**
+     * Reads what each followed Host agent is for. Once the Host answered, with the definition or with
+     * no such agent, it is not asked again this launch; any other failure is asked again on the next
+     * roster check.
+     */
     private suspend fun readPurposes() {
         val unread = synchronized(lock) { rooms.values.filter { it.attached && it.purpose == null } }
         for (room in unread) {
@@ -240,8 +244,9 @@ class RcpAgentRepository(
             val purpose =
                 try {
                     host.definition(hostId).operational.purpose.orEmpty()
-                } catch (_: RepositoryException) {
-                    continue
+                } catch (failed: RepositoryException) {
+                    if (failed.problem != Problem.NotFound) continue
+                    ""
                 }
             synchronized(lock) { room.purpose = purpose }
             publish()
