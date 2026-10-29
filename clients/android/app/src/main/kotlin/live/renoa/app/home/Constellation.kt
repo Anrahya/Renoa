@@ -115,7 +115,7 @@ internal fun Constellation(
                     // Keyed by agent, so a tile's own motion stays with it if it changes seats.
                     key(held.agent.id) {
                         Box(where.minimumInteractiveComponentSize().clickable(onClickLabel = "Open ${held.agent.name}") { onOpenChat(held.agent.id) }, contentAlignment = Alignment.Center) {
-                            Badge(held.agent.name, held.agent.state, seat, hue = AgentHue.of(held.agent.id, state.roster), arriveAfterMillis = if (assemble) 120 + i * 90 else null)
+                            Badge(held.agent, state.roster, seat, arriveAfterMillis = if (assemble) 120 + i * 90 else null)
                         }
                     }
                 SeatHolds.New ->
@@ -133,7 +133,7 @@ internal fun Constellation(
 
         if (main != null) {
             Box(Modifier.align(Alignment.Center).clickable(onClickLabel = "Talk to ${main.name}") { onOpenChat(main.id) }) {
-                Badge(main.name, main.state, hub, primary = true, arriveAfterMillis = if (assemble) 0 else null)
+                Badge(main, state.roster, hub, arriveAfterMillis = if (assemble) 0 else null)
             }
         } else {
             EmptySocket(hub, plus = true, Modifier.align(Alignment.Center).clickable(role = Role.Button, onClick = onNewAgent).semantics { contentDescription = "Make your first agent" })

@@ -49,7 +49,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import live.renoa.app.agents.Routine
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.Renoa
@@ -82,7 +81,7 @@ internal fun Dock(state: HomeUiState, next: String, onOpen: () -> Unit, modifier
         if (fresh.isNotEmpty()) {
             Box(Modifier.width(24.dp + 14.dp * (fresh.size.coerceAtMost(3) - 1))) {
                 fresh.take(3).forEachIndexed { i, agent ->
-                    Badge(agent.name, agent.state, 24.dp, Modifier.offset(x = 14.dp * i), label = "", primary = agent.id == state.main?.id, hue = AgentHue.of(agent.id, state.roster))
+                    Badge(agent, state.roster, 24.dp, Modifier.offset(x = 14.dp * i), label = "")
                 }
             }
             Spacer(Modifier.width(12.dp))
@@ -213,7 +212,7 @@ private fun RoutineBadge(state: HomeUiState, routine: Routine, size: Dp) {
     if (agent == null) {
         EmptySocket(size, plus = false)
     } else {
-        Badge(agent.name, agent.state, size, label = "", primary = agent.id == state.main?.id, hue = AgentHue.of(agent.id, state.roster))
+        Badge(agent, state.roster, size, label = "")
     }
 }
 

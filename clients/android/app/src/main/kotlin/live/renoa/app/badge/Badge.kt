@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import live.renoa.app.agents.AgentState
+import live.renoa.app.agents.AgentSummary
 import live.renoa.app.badge.BadgeFrame.Companion.DEPTH
 import live.renoa.app.badge.BadgeFrame.Companion.LIFT
 import live.renoa.app.badge.BadgeFrame.Companion.RADIUS
@@ -40,7 +41,7 @@ import live.renoa.app.theme.RenoaType
 import live.renoa.app.theme.ThemeName
 
 /** Half the canvas in tile units: room for the lift, the ring leaving the tile, and the primary agent's halo. */
-private const val HALF = RADIUS * 1.42f
+internal const val HALF = RADIUS * 1.42f
 private const val CORNER = 3f
 
 /** Phosphor Star, fill weight (MIT; see clients/android/licenses). */
@@ -54,10 +55,19 @@ private class Shapes {
 }
 
 /**
- * An agent as a tile on the board, drawn the way the landing page draws a core: an ink face with
- * its letter, a short body below it, and a shadow on the socket. An agent other than the main one
- * wears its [hue] on the face. State is motion and one round dot (see [BadgeMotion]). The [primary] agent, the one the owner talks to first, wears a star and a
- * light that runs round its edge. With [arriveAfterMillis] the tile drops into its socket once,
+ * [agent] as a tile, wearing what it wears on every screen: its hue on [roster], and, if it is
+ * the main agent, Renoa's portrait and star.
+ */
+@Composable
+fun Badge(agent: AgentSummary, roster: List<AgentSummary>, size: Dp, modifier: Modifier = Modifier, label: String = agent.name, arriveAfterMillis: Int? = null) =
+    Badge(agent.name, agent.state, size, mainAgent(roster)?.id == agent.id, AgentHue.of(agent.id, roster), modifier, label, arriveAfterMillis)
+
+/**
+ * An agent as a tile on the board, drawn the way the landing page draws a core: a face, a short
+ * body below it, and a shadow on the socket. An agent other than the main one wears its [hue] on
+ * the face with its letter. The [primary] agent, the one the owner talks to first, wears Renoa's
+ * portrait in place of a letter, a star, and a light that runs round its edge. State is motion and
+ * one round dot (see [BadgeMotion]). With [arriveAfterMillis] the tile drops into its socket once,
  * the way tiles assemble on the landing page.
  */
 @Composable
@@ -65,11 +75,11 @@ fun Badge(
     name: String,
     state: AgentState,
     size: Dp,
+    primary: Boolean,
+    hue: AgentHue,
     modifier: Modifier = Modifier,
-    primary: Boolean = false,
     label: String = name,
     arriveAfterMillis: Int? = null,
-    hue: AgentHue = AgentHue.Ink,
 ) {
     val colors = Renoa.colors
     val reduced = LocalReducedMotion.current
@@ -85,8 +95,7 @@ fun Badge(
         }
     }
     val moving = BadgeMotion.animates(state, reduced) || (primary && !reduced)
-    // The main agent wears Renoa's portrait in place of a letter.
-    val mascot = if (primary) rememberMascot() else null
+    val mascot = if (primary) renoaMascot() else null
     val words = state.describe() + if (primary) ", your main agent" else ""
 
     Canvas(
