@@ -205,14 +205,16 @@ private fun WebSettings.noForceDark() {
 }
 
 /**
- * Keeps a diagram's view where it is: any request the view asks about, as for an image or a
- * script, is answered with nothing, and no link it holds goes anywhere. What the page carries in
- * itself, such as its font, is not a request and loads.
+ * Keeps a diagram's view where it is. A data: address loads as asked: the page itself, which
+ * `loadDataWithBaseURL(null, …)` loads as one, and the font it carries. Any other request the view
+ * asks about, as for an image or a script elsewhere, is answered with an empty response and loads
+ * nothing. No link it holds goes anywhere.
  */
 private object Sealed : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = true
 
-    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) = WebResourceResponse(null, null, null)
+    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+        if (request.url.scheme.equals("data", ignoreCase = true)) null else WebResourceResponse(null, null, null)
 
     // The pages share one renderer; if it goes, each diagram becomes its code rather than the app going with it.
     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {

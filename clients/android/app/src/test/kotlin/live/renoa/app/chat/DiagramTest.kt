@@ -134,9 +134,15 @@ class DiagramTest : ScreenTest() {
         }
         assertFalse(view.isFocusable || view.isFocusableInTouchMode, "nothing to type into")
         assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(view, request("https://example.com")), "a link in the drawing goes nowhere")
-        val answer = shadow.webViewClient.shouldInterceptRequest(view, request("https://example.com/cat.png"))
-        assertNotNull(answer, "a request the view asks about is answered here, not passed on")
-        assertNull(answer.data, "and answered with nothing")
+        // The page itself, loaded as a data: address, and the font it carries pass; anything else is answered with nothing.
+        for (own in listOf("data:text/html;charset=utf-8;base64,PGh0bWw+", "data:font/ttf;base64,AAEAAA", "DATA:text/html,x")) {
+            assertNull(shadow.webViewClient.shouldInterceptRequest(view, request(own)), "$own loads")
+        }
+        for (other in listOf("https://example.com/cat.png", "http://example.com/a.js", "file:///sdcard/a.png", "content://media/external/1", "javascript:alert(1)", "about:blank")) {
+            val answer = shadow.webViewClient.shouldInterceptRequest(view, request(other))
+            assertNotNull(answer, "$other is answered here, not passed on")
+            assertNull(answer.data, "$other is answered with nothing")
+        }
 
         // Until the page has drawn, the reply holds a placeholder; then the box takes the drawing's height.
         compose.onNodeWithText(DRAWING).assertExists()
