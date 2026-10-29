@@ -13,9 +13,10 @@ are symlinks through current, so switching releases is one rename. The first
 install adopts a hand-installed layout as releases/legacy.
 
 Only services installed on this host are updated, and only those whose
-binaries, unit files, adapters or Control Room changed are restarted, after
-running agent turns finish. There is no automatic rollback: a failed health
-check leaves the new release running, keeps the backup, and says so.
+binaries, unit files, adapters or Control Room changed are restarted. The node
+is stopped before the switch, which drains it, and started after; a turn still
+unfinished then stops the deploy. There is no automatic rollback: a failed
+health check leaves the new release running, keeps the backup, and says so.
 """
 
 import argparse
@@ -43,7 +44,8 @@ DATABASES = (
     "state/node.sqlite3",
     "state/surfaces/discord/discord.sqlite3",
 )
-# Restarting these interrupts agent turns, so they wait for turns to finish.
+# These run agent turns. A turn is pinned to the runtime it was admitted under,
+# so each is stopped, which drains it, before the switch and started after.
 TURN_SERVICES = ("renoa-node.service",)
 DRAIN_TIMEOUT = 600
 SETTLE_SECONDS = 10
@@ -237,22 +239,45 @@ def unit_differs(layout: Layout, release: Path, unit: str) -> bool:
     return shipped.is_file() and (not installed.is_file() or shipped.read_bytes() != installed.read_bytes())
 
 
-def running_turns(host: Host) -> int:
+def unfinished_sessions(host: Host) -> list[str]:
+    """The Host sessions holding an operation that has not finished: one
+    running, or one queued behind it."""
     inspected = host.run("runuser", "-u", SERVICE_USER, "--", "/usr/local/bin/renoa-host", "inspect", HOME)
     if inspected.returncode != 0:
         raise DeployError(f"renoa-host inspect failed: {inspected.stderr.strip()}")
     sessions = json.loads(inspected.stdout).get("sessions", [])
-    return sum(1 for session in sessions if session.get("active_operation"))
+    return [
+        str(session.get("id"))
+        for session in sessions
+        if session.get("active_operation") or session.get("queued_operations")
+    ]
 
 
 def drain(host: Host, timeout: float) -> None:
     waited = 0.0
-    while (turns := running_turns(host)) > 0:
+    while turns := len(unfinished_sessions(host)):
         if waited >= timeout:
             raise DeployError(f"{turns} agent turn(s) still running after {int(timeout)}s; nothing was changed, retry later")
         print(f"waiting for {turns} running agent turn(s) to finish")
         host.sleep(10)
         waited += 10
+
+
+def stop_for_switch(host: Host, units: list[str]) -> None:
+    """Stops each turn service. The node drains as it stops: it finishes the
+    turns it took, and a command that arrives meanwhile waits at the
+    coordinator for the new release. A turn left unfinished would be refused
+    by a new runtime, so then the services start again on the running release
+    and the deploy stops."""
+    for unit in units:
+        host.run("systemctl", "stop", unit)
+    if sessions := unfinished_sessions(host):
+        for unit in units:
+            host.run("systemctl", "start", unit)
+        raise DeployError(
+            f"session(s) {', '.join(sessions)} still hold an unfinished turn after the node stopped; "
+            "it was started again on the running release and nothing was changed, retry later"
+        )
 
 
 def snapshot(layout: Layout, old: Path) -> None:
@@ -340,7 +365,7 @@ def health(host: Host, layout: Layout, active: list[str]) -> list[str]:
             failures.append(f"the coordinator answered {forged} to a foreign origin, not 403")
     if "renoa-node.service" in active:
         try:
-            running_turns(host)
+            unfinished_sessions(host)
         except (DeployError, json.JSONDecodeError) as error:
             failures.append(f"Host inspection failed: {error}")
     return failures
@@ -366,6 +391,7 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> 
     if not layout.current.exists():
         adopt_legacy(layout, services)
     old = layout.current.resolve()
+    stopped: list[str] = []
     try:
         for service in installed_services(layout, services):
             missing = [name for name in service["binaries"] if name not in manifest["binaries"]]
@@ -377,13 +403,18 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> 
             for service in installed_services(layout, services)
             if host.run("systemctl", "is-active", service["unit"]).stdout.strip() == "active"
         ]
-        if any(unit in TURN_SERVICES for unit in restart):
+        # Only a running service is stopped, so one the owner stopped stays stopped.
+        if turns := [unit for unit in restart if unit in TURN_SERVICES and unit in active]:
             drain(host, drain_timeout)
+            stop_for_switch(host, turns)
+            stopped = turns
         snapshot(layout, old)
         carry_assets(old, release)
     except BaseException:
         # Nothing has switched yet: the running release stays as it was.
         shutil.rmtree(release)
+        for unit in stopped:
+            host.run("systemctl", "start", unit)
         raise
     install_units(host, layout, services, release)
     link(release, layout.current)
@@ -391,7 +422,7 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> 
     point_install_paths(layout, release)
     for unit in restart:
         print(f"restarting {unit}")
-        host.run("systemctl", "try-restart", unit)
+        host.run("systemctl", "start" if unit in stopped else "try-restart", unit)
     failures = health(host, layout, active)
     record = {
         "tag": manifest["tag"],

@@ -28,6 +28,13 @@ class FakeHost(deploy.Host):
         super().__init__(root)
         self.commands: list[tuple[str, ...]] = []
         self.turns = 0
+        # A turn that raced in before the stop and was cut short by it, as the
+        # session's running operation or one queued behind it.
+        self.unfinished_after_stop: str | None = None
+        self.inactive: set[str] = set()
+        self.stopped: set[str] = set()
+        # The release `current` pointed at when each unit stopped.
+        self.current_at_stop: dict[str, str] = {}
         self.restart_during_settle: set[str] = set()
         self.probes: list[tuple[str, str]] = []
         self._settled = False
@@ -36,14 +43,21 @@ class FakeHost(deploy.Host):
         self.commands.append(args)
         stdout = ""
         if args[:2] == ("systemctl", "is-active"):
-            stdout = "active\n"
+            stdout = "inactive\n" if args[2] in self.inactive else "active\n"
+        elif args[:2] == ("systemctl", "stop"):
+            self.stopped.add(args[2])
+            self.current_at_stop[args[2]] = deploy.Layout(self).current.resolve().name
+        elif args[:2] == ("systemctl", "start"):
+            self.stopped.discard(args[2])
         elif args[:2] == ("systemctl", "show"):
             unit = args[2]
             moved = self._settled and unit in self.restart_during_settle
             stdout = f"ActiveEnterTimestampMonotonic={'2' if moved else '1'}\nActiveState=active\n"
         elif args[0] == "runuser":
-            active = {"id": "op"} if self.turns else None
-            stdout = json.dumps({"sessions": [{"active_operation": active}]})
+            cut_short = self.unfinished_after_stop if self.stopped else None
+            active = {"id": "op"} if self.turns or cut_short == "running" else None
+            queued = 1 if cut_short == "queued" else 0
+            stdout = json.dumps({"sessions": [{"id": "session-1", "queued_operations": queued, "active_operation": active}]})
         return deploy.subprocess.CompletedProcess(args, 0, stdout, "")
 
     def http_status(self, url, method="GET", headers=None):
@@ -54,7 +68,10 @@ class FakeHost(deploy.Host):
         self._settled = True
 
     def restarted(self) -> list[str]:
-        return [command[2] for command in self.commands if command[:2] == ("systemctl", "try-restart")]
+        return [command[2] for command in self.commands if command[:2] in {("systemctl", "try-restart"), ("systemctl", "start")}]
+
+    def systemctl(self, verb: str) -> list[str]:
+        return [command[2] for command in self.commands if command[:2] == ("systemctl", verb)]
 
 
 def sha(data: bytes) -> str:
@@ -192,6 +209,58 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.releases(), {"v1", "legacy"})
         self.assertEqual(self.layout.current.resolve().name, "v1")
         self.assertEqual(self.host.restarted(), ["renoa-node.service"], "only v1's restart happened")
+
+    def test_the_node_is_stopped_before_the_switch_and_started_after_it(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.commands.clear()
+
+        self.assertEqual(self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"})), 0)
+
+        self.assertEqual(self.host.current_at_stop, {"renoa-node.service": "v1"}, "stopped, so drained, before the switch")
+        self.assertEqual(self.host.systemctl("start"), ["renoa-node.service"])
+        self.assertEqual(self.host.systemctl("try-restart"), [], "a stopped unit is started, not restarted")
+        self.assertEqual(self.layout.current.resolve().name, "v2")
+
+    def test_a_turn_left_unfinished_by_the_stop_names_its_session_and_changes_nothing(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.commands.clear()
+        for unfinished in ("running", "queued"):
+            with self.subTest(unfinished):
+                self.host.commands.clear()
+                self.host.unfinished_after_stop = unfinished
+
+                with self.assertRaisesRegex(deploy.DeployError, "session-1"):
+                    self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}))
+
+                self.assertEqual(self.host.systemctl("start"), ["renoa-node.service"], "started again on the running release")
+                self.assertEqual(self.host.stopped, set())
+                self.assertEqual(self.layout.current.resolve().name, "v1")
+                self.assertEqual(self.releases(), {"v1", "legacy"})
+                self.assertFalse((self.layout.releases / "v1/snapshot").exists(), "no snapshot was taken")
+
+    def test_a_failure_after_the_stop_starts_the_node_again_on_the_running_release(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.commands.clear()
+        (self.layout.home / "state/coordinator.sqlite3").mkdir()
+
+        with self.assertRaises(Exception):
+            self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}))
+
+        self.assertEqual(self.host.systemctl("stop"), ["renoa-node.service"])
+        self.assertEqual(self.host.systemctl("start"), ["renoa-node.service"])
+        self.assertEqual(self.layout.current.resolve().name, "v1")
+        self.assertEqual(self.releases(), {"v1", "legacy"})
+
+    def test_a_node_the_owner_stopped_stays_stopped(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.commands.clear()
+        self.host.inactive = {"renoa-node.service"}
+
+        self.assertEqual(self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"})), 0)
+
+        self.assertEqual(self.host.systemctl("stop"), [])
+        self.assertEqual(self.host.systemctl("start"), [])
+        self.assertEqual(self.host.systemctl("try-restart"), ["renoa-node.service"], "which leaves a stopped unit stopped")
 
     def test_a_failed_health_check_keeps_the_new_release_running_and_every_backup(self):
         self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))

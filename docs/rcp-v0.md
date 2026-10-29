@@ -459,6 +459,8 @@ the command and its task event. A current, task-bound node sends
 `acknowledge_execution` only after local durable admission. The coordinator
 deletes the pending record, commits that deletion, and then sends
 `execution_acknowledged`. Both messages are idempotent by command identity.
+A Rust node that is draining, as a deploy stops it, admits no new delivery and
+so acknowledges none; the next node to connect receives them.
 
 Node activation takes a pending-work snapshot before the new connection becomes
 eligible for live dispatch. Command admission is serialized with that short

@@ -54,8 +54,13 @@ whose unit is installed on this host are updated, and only those whose
 binaries, unit files or adapters changed are restarted, in the order
 `release.json` lists them. A new Control Room restarts nothing: the coordinator
 reads `/opt/renoa/control-room` for every request. Restarting `renoa-node` first
-waits for running agent turns to finish (`--drain-timeout`, 600 s by default).
-Before switching, it snapshots the Host, coordinator, node and Discord SQLite
+waits for running agent turns to finish (`--drain-timeout`, 600 s by default),
+then stops the node before switching and starts it after. The node drains as it
+stops: it finishes the turns it took, and a command that arrives meanwhile waits
+at the coordinator for the new release. A turn is pinned to the runtime it was
+admitted under, so if any session still holds an unfinished turn once the node
+has stopped, the deploy names the session, starts the node again on the running
+release, and changes nothing. Before switching, it snapshots the Host, coordinator, node and Discord SQLite
 databases with SQLite's backup API, and copies `config/`, into the release
 being replaced. It then carries that release's own hashed Control Room assets
 forward, so a browser holding the previous page still loads, installs changed
