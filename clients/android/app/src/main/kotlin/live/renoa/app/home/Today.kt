@@ -17,13 +17,16 @@ private val WEEKDAY_CLOCK = DateTimeFormatter.ofPattern("EEE h:mm a", Locale.ENG
 private val WEEKDAY = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH)
 private val DATE = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
 
-fun greeting(hour: Int): String =
-    when (hour) {
-        in 5..11 -> "Good morning."
-        in 12..16 -> "Good afternoon."
-        in 17..21 -> "Good evening."
-        else -> "Good night."
-    }
+fun greeting(hour: Int, name: String? = null): String {
+    val words =
+        when (hour) {
+            in 5..11 -> "Good morning"
+            in 12..16 -> "Good afternoon"
+            in 17..21 -> "Good evening"
+            else -> "Good night"
+        }
+    return if (name == null) "$words." else "$words, $name."
+}
 
 /** "Thu 7:40 PM". */
 fun clockWords(now: ZonedDateTime): String = now.format(WEEKDAY_CLOCK)

@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 sealed interface Route {
     data object SignIn : Route
 
+    data object SignUp : Route
+
     data object Home : Route
 
     data class Chat(val agentId: String) : Route
@@ -23,6 +25,7 @@ sealed interface Route {
     fun encode(): String =
         when (this) {
             SignIn -> "signin"
+            SignUp -> "signup"
             Home -> "home"
             is Chat -> "chat/$agentId"
             is Edit -> "edit/$agentId"
@@ -33,6 +36,7 @@ sealed interface Route {
         fun parse(text: String): Route =
             when {
                 text == "signin" -> SignIn
+                text == "signup" -> SignUp
                 text == "home" -> Home
                 text == "create" -> Create
                 text.startsWith("chat/") -> Chat(text.removePrefix("chat/"))

@@ -62,6 +62,7 @@ class RcpAgentRepository(
     private val hostClient = HostClient(surface)
     private val host = HostAgents(hostClient)
     private val hostRoutines = HostRoutines(hostClient)
+    private val owner = HostOwner(hostClient)
 
     /** The automations as the Host last listed them, by id, with the revision a change starts from. */
     private val automations = LinkedHashMap<String, ObservedAutomation>()
@@ -201,6 +202,12 @@ class RcpAgentRepository(
         }
         publish()
     }
+
+    override suspend fun hasAgents(): Boolean = owner.hasAgents()
+
+    override suspend fun ownerProfile(): OwnerProfile = owner.profile()
+
+    override suspend fun saveOwnerProfile(expectedRevision: String, content: String): OwnerProfile = owner.saveProfile(expectedRevision, content)
 
     override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) {
         val automation = synchronized(lock) { automations[routineId] } ?: throw RepositoryException(Problem.NotFound, "no routine $routineId")

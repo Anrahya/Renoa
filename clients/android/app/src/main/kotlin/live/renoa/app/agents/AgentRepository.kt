@@ -91,6 +91,18 @@ interface AgentRepository {
 
     suspend fun setAbility(agentId: String, abilityId: String, lit: Boolean): AbilitySwitch
 
+    /** Whether Renoa has made any agent for the owner yet. */
+    suspend fun hasAgents(): Boolean
+
+    /** The owner's profile, which every agent that talks to them reads. */
+    suspend fun ownerProfile(): OwnerProfile
+
+    /**
+     * Replaces the owner's profile from the revision it was read at, so a change made since is a
+     * [Problem.Conflict]. Saving the same content again, as after a lost answer, succeeds.
+     */
+    suspend fun saveOwnerProfile(expectedRevision: String, content: String): OwnerProfile
+
     /** What the agents do on a schedule, as Renoa last told it. */
     val routines: StateFlow<List<Routine>>
 

@@ -64,8 +64,10 @@ fun HomeScreen(
     onNewAgent: () -> Unit,
     onChangeColours: () -> Unit,
     now: () -> ZonedDateTime = { ZonedDateTime.now() },
+    onSignUp: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
+    LaunchedEffect(state.signUp) { if (state.signUp) onSignUp() }
     // Read once per visit: the first visit assembles, later ones show the tiles in place.
     val assemble = remember { !viewModel.assembled }
     LaunchedEffect(Unit) { viewModel.markAssembled() }
@@ -97,7 +99,7 @@ fun HomeScreen(
                         Spacer(Modifier.weight(1f))
                         Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = colors.mutedForeground)
                     }
-                    Text(greeting(time.hour), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
+                    Text(greeting(time.hour, state.ownerName), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
                     DayStrip(state, time, { viewModel.open(HomePage.Routines) }, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp))
                     Constellation(state, assemble, onOpenChat, onNewAgent, { viewModel.open(HomePage.Chats) }, Modifier.height(stage))
                     TalkLine(state, onOpenChat)

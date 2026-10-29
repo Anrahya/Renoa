@@ -1,6 +1,9 @@
 package live.renoa.app.badge
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -8,8 +11,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import live.renoa.app.R
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
@@ -136,6 +142,11 @@ internal class Mascot(val drawing: SvgDrawing) {
             }
         }
 
+    /** Everything the drawing covers, strokes included, in its own units. */
+    val bounds: Rect =
+        paths.zip(drawing.shapes) { path, shape -> path.getBounds().inflate(if (shape.stroke != null) shape.strokeWidth / 2 else 0f) }
+            .reduce { a, b -> Rect(minOf(a.left, b.left), minOf(a.top, b.top), maxOf(a.right, b.right), maxOf(a.bottom, b.bottom)) }
+
     /** Draws the whole drawing in its own units. */
     fun draw(scope: DrawScope) {
         drawing.shapes.forEachIndexed { i, shape ->
@@ -152,4 +163,19 @@ internal class Mascot(val drawing: SvgDrawing) {
 internal fun renoaMascot(): Mascot {
     val resources = LocalResources.current
     return loaded ?: Mascot(readSvg(resources.openRawResource(R.raw.renoa_mascot).bufferedReader().use { it.readText() })).also { loaded = it }
+}
+
+/** Renoa from head to boots, fitted inside the space it is given and centred there. */
+@Composable
+fun MascotFigure(modifier: Modifier = Modifier) {
+    val mascot = renoaMascot()
+    Canvas(modifier.semantics { contentDescription = "Renoa" }) {
+        val b = mascot.bounds
+        val s = minOf(size.width / b.width, size.height / b.height)
+        withTransform({
+            translate((size.width - b.width * s) / 2, (size.height - b.height * s) / 2)
+            scale(s, s, Offset.Zero)
+            translate(-b.left, -b.top)
+        }) { mascot.draw(this) }
+    }
 }

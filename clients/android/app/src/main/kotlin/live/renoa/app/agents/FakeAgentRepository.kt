@@ -88,6 +88,22 @@ class FakeAgentRepository(
 
     override val routines: StateFlow<List<Routine>> = routineList.asStateFlow()
 
+    private var owner = OwnerProfile("", revisionOf(""))
+
+    override suspend fun hasAgents(): Boolean = roster.value.isNotEmpty()
+
+    override suspend fun ownerProfile(): OwnerProfile = synchronized(lock) { owner }
+
+    /** As the Host does: the same content again is no change, and a stale revision is a conflict. */
+    override suspend fun saveOwnerProfile(expectedRevision: String, content: String): OwnerProfile =
+        synchronized(lock) {
+            if (content != owner.content) {
+                if (expectedRevision != owner.revision) throw RepositoryException(Problem.Conflict, "The profile changed since it was read.")
+                owner = OwnerProfile(content, revisionOf(content))
+            }
+            owner
+        }
+
     /** Setting a routine to what it is already is no change, so a retried change changes it once. */
     override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) {
         synchronized(lock) {
@@ -340,3 +356,5 @@ class FakeAgentRepository(
         }
     }
 }
+
+private fun revisionOf(content: String): String = UUID.nameUUIDFromBytes(content.toByteArray(Charsets.UTF_8)).toString()

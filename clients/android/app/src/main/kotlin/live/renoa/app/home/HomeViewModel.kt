@@ -2,6 +2,7 @@ package live.renoa.app.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,7 @@ import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.Routine
 import live.renoa.app.agents.wordsOr
 import live.renoa.app.badge.mainAgent
+import live.renoa.app.signup.ProfileLines
 import java.util.UUID
 
 /**
@@ -37,6 +39,8 @@ private data class Local(
     val page: HomePage? = null,
     val shown: String? = null,
     val shownAt: Int = 0,
+    val ownerName: String? = null,
+    val signUp: Boolean = false,
 )
 
 data class HomeUiState(
@@ -51,6 +55,10 @@ data class HomeUiState(
     /** The handover the owner stepped to, and where it stood, so the card next to it shows once it is gone. */
     val shownKey: String? = null,
     val shownAt: Int = 0,
+    /** The owner's name from their profile, once read. */
+    val ownerName: String? = null,
+    /** Renoa has made no agent for the owner yet, so sign-up comes first. */
+    val signUp: Boolean = false,
 ) {
     val people: List<AgentSummary> get() = homeOrder(roster)
 
@@ -88,8 +96,35 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
 
     val state: StateFlow<HomeUiState> =
         combine(repository.agents, repository.briefing, repository.routines, local) { agents, briefing, routines, mine ->
-            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt)
+            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt, mine.ownerName, mine.signUp)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value))
+
+    init {
+        viewModelScope.launch { meetTheOwner() }
+    }
+
+    /**
+     * Asks Renoa whether the owner has an agent yet and what they are called, until it answers. An
+     * owner with no agent is sent to sign-up; not reaching Renoa is no answer, so it never sends anyone.
+     */
+    private suspend fun meetTheOwner() {
+        var wait = 2_000L
+        while (true) {
+            try {
+                if (!repository.hasAgents()) {
+                    local.update { it.copy(signUp = true) }
+                    return
+                }
+                val name = ProfileLines.name(repository.ownerProfile().content)
+                local.update { it.copy(ownerName = name) }
+                return
+            } catch (refused: RepositoryException) {
+                if (refused.problem != Problem.Unavailable) return
+            }
+            delay(wait)
+            wait = (wait * 2).coerceAtMost(60_000L)
+        }
+    }
 
     /** Opens a page over Home, or turns to another. It stays open while the owner visits a chat from it. */
     fun open(page: HomePage) = local.update { if (it.page == page) it else it.copy(page = page, notice = if (it.page == null) null else it.notice) }
