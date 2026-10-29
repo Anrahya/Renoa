@@ -1,5 +1,6 @@
 package live.renoa.app.signup
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -69,6 +70,8 @@ import live.renoa.app.ui.RenoaButton
 fun SignUpScreen(viewModel: SignUpViewModel, onDone: () -> Unit) {
     val state by viewModel.state.collectAsState()
     val colors = Renoa.colors
+    LaunchedEffect(state.done) { if (state.done) onDone() }
+    BackHandler(enabled = state.step == SignUpStep.Day) { viewModel.back() }
     AnimatedContent(
         targetState = state.step,
         modifier = Modifier.fillMaxSize().background(colors.background).safeDrawingPadding().imePadding(),

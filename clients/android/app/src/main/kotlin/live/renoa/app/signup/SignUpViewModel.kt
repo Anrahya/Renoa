@@ -24,7 +24,8 @@ val DAY_PHRASES = listOf("I cook at home", "I work from home", "I'm a student", 
 
 /**
  * The lines sign-up keeps in the owner's profile, which every agent reads as written. Agents may
- * rewrite the profile later, so the app reads these lines only to resume sign-up and to greet.
+ * rewrite the profile later, so the app reads these lines only to resume sign-up and to greet. A
+ * change touches one line and leaves every other byte of the profile as it was.
  */
 internal object ProfileLines {
     private const val NAME = "Name:"
@@ -41,12 +42,56 @@ internal object ProfileLines {
     private fun valueOf(content: String, key: String): String? =
         content.lineSequence().firstOrNull { it.startsWith(key) }?.removePrefix(key)?.trim()?.ifEmpty { null }
 
-    /** Sets the one line for [key], under the line for [after] when there is one, else at the top; the rest stays as it was. */
+    /**
+     * Rewrites the first line for [key] in place. Without one, the line goes under the line for
+     * [after], else under a leading front matter block or heading, else at the top.
+     */
     private fun with(content: String, key: String, value: String, after: String?): String {
-        val lines = content.lines().filterNot { it.startsWith(key) }.toMutableList()
-        val at = after?.let { a -> lines.indexOfFirst { it.startsWith(a) } + 1 } ?: 0
-        lines.add(at, "$key ${value.lines().joinToString(" ") { it.trim() }.trim()}")
-        return lines.joinToString("\n").trimEnd() + "\n"
+        val crlf = "\r\n" in content
+        val line = "$key ${value.lines().joinToString(" ") { it.trim() }.trim()}" + if (crlf) "\r" else ""
+        if (content.isEmpty()) return line + "\n"
+        val lines = content.split("\n").toMutableList()
+        val own = lines.indexOfFirst { it.startsWith(key) }
+        if (own >= 0) {
+            lines[own] = line
+            return lines.joinToString("\n")
+        }
+        val at =
+            after?.let { a -> lines.indexOfFirst { it.startsWith(a) }.takeIf { it >= 0 }?.plus(1) }
+                ?: headerEnd(lines)
+        lines.add(at, line)
+        return lines.joinToString("\n")
+    }
+
+    /** Where the profile's own header ends: after front matter between `---` lines, or after a first `#` heading. */
+    private fun headerEnd(lines: List<String>): Int {
+        if (lines.first().trimEnd() == "---") {
+            val close = lines.drop(1).indexOfFirst { it.trimEnd() == "---" }
+            if (close >= 0) return close + 2
+        }
+        return if (lines.first().startsWith("#")) 1 else 0
+    }
+}
+
+/**
+ * The owner's usual day as sentences, so a phrase they tapped in is a whole sentence of its own
+ * and can be taken out again without touching their own words.
+ */
+internal object DayWords {
+    private val END = Regex("(?<=[.!?])\\s+")
+
+    private fun sentences(day: String): List<String> = day.trim().split(END).filter { it.isNotBlank() }
+
+    private fun same(sentence: String, phrase: String) = sentence.trim().trimEnd('.', '!', '?').equals(phrase, ignoreCase = true)
+
+    fun has(day: String, phrase: String): Boolean = sentences(day).any { same(it, phrase) }
+
+    fun toggle(day: String, phrase: String): String {
+        val all = sentences(day)
+        if (all.any { same(it, phrase) }) return all.filterNot { same(it, phrase) }.joinToString(" ")
+        val last = all.lastOrNull()
+        val closed = if (last == null || last.trimEnd().last() in ".!?") all else all.dropLast(1) + "${last.trimEnd()}."
+        return (closed + "$phrase.").joinToString(" ")
     }
 }
 
@@ -65,11 +110,13 @@ data class SignUpUiState(
     val notice: String? = null,
     /** Renoa is made; the owner can go to Home. */
     val ready: Boolean = false,
+    /** The owner already has an agent, as when another phone signed up first: Home, not sign-up. */
+    val done: Boolean = false,
 ) {
     val canName: Boolean get() = !busy && name.isNotBlank()
 
-    /** The phrases already in the owner's own words. */
-    val phrases: Set<String> get() = DAY_PHRASES.filter { it in day }.toSet()
+    /** The phrases the owner's words already hold as sentences of their own. */
+    val phrases: Set<String> get() = DAY_PHRASES.filter { DayWords.has(day, it) }.toSet()
 
     companion object {
         const val MAX_NAME = 60
@@ -98,24 +145,22 @@ class SignUpViewModel(private val repository: AgentRepository, private val memor
 
     fun setDay(text: String) = _state.update { it.copy(day = text.take(SignUpUiState.MAX_DAY), notice = null) }
 
-    /** Adds the phrase to the owner's words, or takes it out again. */
-    fun togglePhrase(phrase: String) =
-        _state.update { s ->
-            val day =
-                if (phrase in s.day) {
-                    s.day.replace("$phrase.", "").replace(phrase, "").replace(Regex(" {2,}"), " ").trim()
-                } else {
-                    val start = s.day.trim()
-                    (if (start.isEmpty()) "" else start.trimEnd('.') + ". ") + "$phrase."
-                }
-            s.copy(day = day.take(SignUpUiState.MAX_DAY), notice = null)
-        }
+    /** Adds the phrase to the owner's words as a sentence, or takes that sentence out again. */
+    fun togglePhrase(phrase: String) = _state.update { it.copy(day = DayWords.toggle(it.day, phrase).take(SignUpUiState.MAX_DAY), notice = null) }
+
+    /** Back from the day to the name. */
+    fun back() = _state.update { if (it.step == SignUpStep.Day && !it.busy) it.copy(step = SignUpStep.Name, notice = null) else it }
 
     /** Reads where sign-up stands, again after a failure to reach Renoa. */
     fun resume() {
         _state.update { it.copy(step = SignUpStep.Checking, busy = true, notice = null) }
         viewModelScope.launch {
             try {
+                if (repository.hasAgents()) {
+                    finish()
+                    _state.update { it.copy(busy = false, done = true) }
+                    return@launch
+                }
                 val read = repository.ownerProfile().also { profile = it }
                 val name = ProfileLines.name(read.content)
                 when {
@@ -172,13 +217,22 @@ class SignUpViewModel(private val repository: AgentRepository, private val memor
         _state.update { it.copy(step = SignUpStep.Meet, busy = true, notice = null) }
         viewModelScope.launch {
             try {
-                val operationId = memory.operationId ?: UUID.randomUUID().toString().also { memory.operationId = it }
+                val operationId = memory.operationId ?: UUID.randomUUID().toString().also { remember(it) }
                 val lit = repository.starterAbilities().filter { it.lit }.map { it.id }.toSet()
                 repository.create(CreateAgent(operationId, RENOA, RENOA_PURPOSE, lit))
                 _state.update { it.copy(busy = false, ready = true) }
             } catch (refused: RepositoryException) {
                 _state.update { it.copy(busy = false, notice = refused.wordsOr("$RENOA could not be made. Try again.")) }
             }
+        }
+    }
+
+    /** Keeps [operationId] before the request that carries it leaves; a phone that cannot keep it cannot make Renoa safely. */
+    private fun remember(operationId: String) {
+        try {
+            memory.operationId = operationId
+        } catch (full: IllegalStateException) {
+            throw RepositoryException(Problem.Unavailable, full.message.orEmpty())
         }
     }
 

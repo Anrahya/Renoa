@@ -111,21 +111,24 @@ class HomeViewModelTest {
     }
 
     @Test
-    fun notReachingRenoaNeverSendsAnyoneToSignUpAndItAsksAgain() = runTest {
-        var reachable = false
-        val inner = FakeAgentRepository(backgroundScope, seeds = emptyList())
-        val repo =
-            object : AgentRepository by inner {
-                override suspend fun hasAgents(): Boolean = if (reachable) inner.hasAgents() else throw RepositoryException(Problem.Unavailable, "no connection")
-            }
-        val vm = HomeViewModel(repo)
-        backgroundScope.launch { vm.state.collect {} }
-        runCurrent()
-        assertFalse(vm.state.value.signUp)
-        reachable = true
-        advanceTimeBy(2_001)
-        runCurrent()
-        assertTrue(vm.state.value.signUp)
+    fun notReachingRenoaOrABusyHostNeverSendsAnyoneToSignUpAndItAsksAgain() = runTest {
+        // A Host with too many calls waiting answers with a conflict.
+        for (problem in listOf(Problem.Unavailable, Problem.Conflict)) {
+            var reachable = false
+            val inner = FakeAgentRepository(backgroundScope, seeds = emptyList())
+            val repo =
+                object : AgentRepository by inner {
+                    override suspend fun hasAgents(): Boolean = if (reachable) inner.hasAgents() else throw RepositoryException(problem, "not now")
+                }
+            val vm = HomeViewModel(repo)
+            backgroundScope.launch { vm.state.collect {} }
+            runCurrent()
+            assertFalse(vm.state.value.signUp, "$problem")
+            reachable = true
+            advanceTimeBy(2_001)
+            runCurrent()
+            assertTrue(vm.state.value.signUp, "$problem")
+        }
     }
 
     @Test

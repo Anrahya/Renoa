@@ -28,6 +28,8 @@ import java.util.UUID
 fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
     agents.sortedWith(compareBy<AgentSummary> { it.state.homeRank }.thenBy { !it.glance.unread })
 
+private const val MAX_GREETED_NAME = 40
+
 /** The pages the dock opens, in the order they are swiped through. */
 enum class HomePage(val title: String) { Chats("Chats"), Routines("Routines"), Upcoming("Upcoming") }
 
@@ -115,11 +117,13 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
                     local.update { it.copy(signUp = true) }
                     return
                 }
-                val name = ProfileLines.name(repository.ownerProfile().content)
+                // A name too long for the greeting, as an agent might have written, is left out of it.
+                val name = ProfileLines.name(repository.ownerProfile().content)?.takeIf { it.length <= MAX_GREETED_NAME }
                 local.update { it.copy(ownerName = name) }
                 return
             } catch (refused: RepositoryException) {
-                if (refused.problem != Problem.Unavailable) return
+                // Too many calls waiting on the Host is a conflict too; only a definite refusal ends the asking.
+                if (refused.problem == Problem.Invalid || refused.problem == Problem.NotFound) return
             }
             delay(wait)
             wait = (wait * 2).coerceAtMost(60_000L)

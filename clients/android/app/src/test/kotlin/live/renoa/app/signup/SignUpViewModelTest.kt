@@ -142,11 +142,18 @@ class SignUpViewModelTest {
         assertEquals(Problem.Unavailable.ownerWords, before.state.value.notice)
         assertTrue(!before.state.value.ready)
 
-        // The app was killed and opened again: a new screen, the same memory.
+        // Trying again finds the Renoa the lost answer was about.
+        before.meet()
+        runCurrent()
+        assertTrue(before.state.value.ready)
+        assertEquals(1, repo.creates.map { it.operationId }.toSet().size)
+        assertEquals(1, repo.agents.value.size)
+
+        // Opened again after being killed, sign-up sees she is there and goes Home.
         val after = signUp(repo, memory)
         runCurrent()
-        assertTrue(after.state.value.ready)
-        assertEquals(1, repo.creates.map { it.operationId }.toSet().size)
+        assertTrue(after.state.value.done)
+        assertEquals(2, repo.creates.size)
         assertEquals(1, repo.agents.value.size)
     }
 
@@ -177,6 +184,48 @@ class SignUpViewModelTest {
         runCurrent()
         assertEquals(SignUpStep.Day, vm.state.value.step)
         assertEquals("Name: Yash\nLikes dal.\n", repo.ownerProfile().content)
+    }
+
+    @Test
+    fun anOwnerWhoAlreadyHasAnAgentGoesHomeAndNothingIsMade() = runTest {
+        val repo = repo()
+        repo.create(CreateAgent("elsewhere", "Tifa", "Food", emptySet()))
+        repo.creates.clear()
+        val memory = Memory().apply { operationId = "stale" }
+        val vm = signUp(repo, memory)
+        runCurrent()
+        assertTrue(vm.state.value.done)
+        assertTrue(repo.creates.isEmpty())
+        assertNull(memory.operationId, "a stale id from an earlier sign-up is let go")
+    }
+
+    @Test
+    fun backFromTheDayReturnsToTheName() = runTest {
+        val vm = signUp(repo())
+        runCurrent()
+        vm.setName("Yash")
+        vm.saveName()
+        runCurrent()
+        vm.back()
+        assertEquals(SignUpStep.Name, vm.state.value.step)
+        assertEquals("Yash", vm.state.value.name)
+    }
+
+    @Test
+    fun aTappedPhraseIsASentenceOfItsOwnAndTheOwnersWordsStay() {
+        assertTrue(!DayWords.has("I work outside.", "I work out"))
+        assertEquals("I work outside. I work out.", DayWords.toggle("I work outside.", "I work out"))
+        assertEquals("I have kids and a dog. I have kids.", DayWords.toggle("I have kids and a dog.", "I have kids"))
+        assertTrue(DayWords.has("Up at 7. i cook at home.", "I cook at home"), "whatever the case")
+        assertEquals("Up at 7.", DayWords.toggle("Up at 7. i cook at home.", "I cook at home"))
+        assertEquals("I cook at home.", DayWords.toggle("", "I cook at home"))
+    }
+
+    @Test
+    fun aChangeTouchesOneLineAndLeavesTheRestByteForByte() {
+        assertEquals("# About me\r\nName: Yash\r\nLikes tea  \r\n", ProfileLines.withName("# About me\r\nLikes tea  \r\n", "Yash"), "under the heading, with its line endings")
+        assertEquals("---\ntitle: x\n---\nName: Yash\nbody", ProfileLines.withName("---\ntitle: x\n---\nbody", "Yash"), "under front matter")
+        assertEquals("Likes tea  \nName: Asha\nName: Rex\n", ProfileLines.withName("Likes tea  \nName: Yash\nName: Rex\n", "Asha"), "only the first, in place")
     }
 
     @Test
