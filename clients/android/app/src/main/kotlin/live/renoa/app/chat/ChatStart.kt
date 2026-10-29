@@ -10,6 +10,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import live.renoa.app.badge.Badge
@@ -27,7 +29,8 @@ val AGENT_STARTERS = listOf("What can you do?", "What should I tell you about me
 
 /**
  * A chat with nothing in it yet: the agent, what it is for, and a few ways to start. A starter
- * fills the composer rather than sending, so the owner can make it their own first.
+ * fills the composer rather than sending, so the owner can make it their own first. The starters
+ * step aside while the owner is typing, so a tap never replaces their words.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -36,11 +39,13 @@ internal fun ChatStart(state: ChatUiState, onStarter: (String) -> Unit, modifier
     val colors = Renoa.colors
     Column(modifier.fillMaxWidth().padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Badge(agent.name, agent.state, 104.dp, primary = state.main, hue = state.hue, label = "")
-        Text("Say hello to ${agent.name}", style = RenoaType.Heading, color = colors.foreground, textAlign = TextAlign.Center)
+        Text("Say hello to ${agent.name}", Modifier.semantics { heading() }, style = RenoaType.Heading, color = colors.foreground, textAlign = TextAlign.Center)
         agent.purpose.takeIf { it.isNotBlank() }?.let { Text(it, style = RenoaType.Body, color = colors.mutedForeground, textAlign = TextAlign.Center) }
-        FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-            (if (state.main) MAIN_STARTERS else AGENT_STARTERS).forEach { starter ->
-                RenoaButton(starter, { onStarter(starter) }, kind = ButtonKind.Secondary, size = ButtonSize.Sm)
+        if (state.draft.isBlank()) {
+            FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+                (if (state.main) MAIN_STARTERS else AGENT_STARTERS).forEach { starter ->
+                    RenoaButton(starter, { onStarter(starter) }, kind = ButtonKind.Secondary, size = ButtonSize.Sm)
+                }
             }
         }
     }

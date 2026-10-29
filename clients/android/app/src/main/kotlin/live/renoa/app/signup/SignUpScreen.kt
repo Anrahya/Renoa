@@ -61,6 +61,7 @@ import live.renoa.app.badge.PORTRAIT_GROUND
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaEasing
+import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.ButtonKind
 import live.renoa.app.ui.ButtonSize
@@ -204,7 +205,7 @@ private fun ColumnScope.MeetStep(state: SignUpUiState, viewModel: SignUpViewMode
                     alpha = arrival.value
                     translationY = (1f - arrival.value) * -36.dp.toPx()
                 }
-                .background(PORTRAIT_GROUND, RoundedCornerShape(28.dp)),
+                .background(PORTRAIT_GROUND, RoundedCornerShape(RenoaShapes.Card)),
             contentAlignment = Alignment.Center,
         ) { MascotFigure(Modifier.size(width = 196.dp, height = 312.dp)) }
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {

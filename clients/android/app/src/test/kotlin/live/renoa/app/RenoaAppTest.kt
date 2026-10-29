@@ -16,6 +16,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -131,6 +132,11 @@ class RenoaAppTest : ScreenTest() {
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Message Renoa").assert(hasText("Plan my meals for this week"))
         compose.onNodeWithText("Say hello to Renoa").assertIsDisplayed()
+        compose.onNodeWithText("What can you help me with?").assertDoesNotExist()
+        // The starters wait while the owner types, so a tap never replaces their words.
+        compose.onNodeWithContentDescription("Message Renoa").performTextClearance()
+        compose.waitForIdle()
+        compose.onNodeWithText("What can you help me with?").assertIsDisplayed()
     }
 
     private fun back() {

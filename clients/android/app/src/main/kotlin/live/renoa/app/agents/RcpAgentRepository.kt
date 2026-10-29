@@ -38,8 +38,8 @@ import kotlin.uuid.Uuid
  * Making an agent, reading its profile and the routines are Host control, carried by the same
  * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check.
  * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
- * follows its chat. Abilities and edits are not on the Host's agent API yet,
- * so those calls are refused as unavailable.
+ * follows its chat. Abilities and edits are not on the Host's agent API yet, so those calls are
+ * refused as [Problem.NotYet] and nothing is sent.
  */
 class RcpAgentRepository(
     private val surface: RcpSurface,
