@@ -20,7 +20,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     agent_link::{Answer, LinkSession},
-    bridge::{ExecutionTask, NodeError, NodeRuntime, finish_execution, schedule_pending},
+    bridge::{NodeError, NodeRuntime},
+    execution::{ExecutionTask, finish_execution, schedule_pending},
     live::LiveFrame,
     node_log,
 };
@@ -50,6 +51,7 @@ pub(crate) async fn serve_session(
     credentials: &DeviceCredentials,
     runtime: Arc<NodeRuntime>,
     shutdown: &CancellationToken,
+    drain: &CancellationToken,
     commits: &mut watch::Receiver<u64>,
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
@@ -60,6 +62,7 @@ pub(crate) async fn serve_session(
         credentials,
         runtime,
         shutdown,
+        drain,
         commits,
         tasks,
         running,
@@ -84,6 +87,7 @@ async fn serve_session_inner(
     credentials: &DeviceCredentials,
     runtime: Arc<NodeRuntime>,
     shutdown: &CancellationToken,
+    drain: &CancellationToken,
     commits: &mut watch::Receiver<u64>,
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
@@ -170,6 +174,7 @@ async fn serve_session_inner(
                 handle_server_message(
                     &mut socket,
                     &runtime,
+                    drain,
                     tasks,
                     running,
                     &mut publications,
@@ -179,6 +184,10 @@ async fn serve_session_inner(
                     message,
                 ).await?;
             }
+            // Drained: every command this node took has finished and it takes no
+            // more. Last, so what is ready to send goes first; the rest is sent
+            // by the next node that connects.
+            () = drain.cancelled(), if tasks.is_empty() => return Ok(SessionEnd::Shutdown),
         }
     }
 }
@@ -249,6 +258,7 @@ async fn stop(
 async fn handle_server_message(
     socket: &mut Socket,
     runtime: &Arc<NodeRuntime>,
+    drain: &CancellationToken,
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
     publications: &mut HashMap<CommandId, Publication>,
@@ -259,7 +269,7 @@ async fn handle_server_message(
 ) -> Result<(), NodeError> {
     match message {
         ServerMessage::Execute { task_id, command } => {
-            handle_execute(runtime, tasks, running, task_id, command).await?;
+            handle_execute(runtime, drain, tasks, running, task_id, command).await?;
             refresh_publications(runtime, publications).await?;
             send_pending(socket, &runtime.state, live, publications).await?;
         }
@@ -377,11 +387,25 @@ async fn acknowledge_admission(
 
 async fn handle_execute(
     runtime: &Arc<NodeRuntime>,
+    drain: &CancellationToken,
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
     task_id: TaskId,
     command: CommandEnvelope,
 ) -> Result<(), NodeError> {
+    if drain.is_cancelled() {
+        // Not admitted and so not acknowledged: the coordinator keeps it queued
+        // and sends it again to the next node that connects.
+        node_log::event(
+            "info",
+            "execution_deferred",
+            &serde_json::json!({
+                "task_id": task_id.to_string(),
+                "command_id": command.command_id.to_string(),
+            }),
+        );
+        return Ok(());
+    }
     let binding = runtime.proposed_binding(&command.target)?;
     let command_id = command.command_id;
     runtime.state.admit(task_id, command, binding).await?;

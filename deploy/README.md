@@ -53,8 +53,17 @@ refuses a release that lacks a binary of an installed service. Only services
 whose unit is installed on this host are updated, and only those whose
 binaries, unit files or adapters changed are restarted, in the order
 `release.json` lists them. A new Control Room restarts nothing: the coordinator
-reads `/opt/renoa/control-room` for every request. Restarting `renoa-node` first
-waits for running agent turns to finish (`--drain-timeout`, 600 s by default).
+reads `/opt/renoa/control-room` for every request. Restarting a running
+`renoa-node` first waits for running agent turns to finish (`--drain-timeout`,
+600 s by default), then stops the node before switching and starts it after.
+The node drains as it stops: it finishes the turns it took, and a command that
+arrives meanwhile waits at the coordinator for the new release. Once the node
+has stopped, the coordinator answers a new command `node_offline` until the new
+release starts it; the Android app keeps such a message and sends it again.
+A turn is pinned to the runtime it was admitted under, so if any session the
+Host can read still holds an unfinished turn, the deploy names the session and
+switches nothing; a node it stopped is started again on the running release.
+The deploy warns about a session the Host cannot read, which it does not check.
 Before switching, it snapshots the Host, coordinator, node and Discord SQLite
 databases with SQLite's backup API, and copies `config/`, into the release
 being replaced. It then carries that release's own hashed Control Room assets

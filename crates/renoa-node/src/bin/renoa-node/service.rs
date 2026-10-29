@@ -13,8 +13,10 @@ pub(crate) async fn serve(
     let config = config::load(config_path, credentials_path, state_directory)?;
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
+    let drain = CancellationToken::new();
     let node = RenoaNode::open(config.endpoint, config.credentials, config.host)?
-        .with_automations(config.automation_credentials)?;
+        .with_automations(config.automation_credentials)?
+        .with_drain(drain.clone());
     let shutdown = CancellationToken::new();
     let signal = wait_for_shutdown();
     tokio::pin!(signal);
@@ -32,8 +34,20 @@ pub(crate) async fn serve(
         result = &mut run => result.map_err(ServiceError::from),
         result = &mut signal => {
             result?;
-            shutdown.cancel();
-            run.await.map_err(ServiceError::from)
+            // The first signal drains: the turns the node took finish and new
+            // commands stay queued at the coordinator. A second stops at once.
+            drain.cancel();
+            log::event("info", "service_draining", &serde_json::json!({}));
+            let again = wait_for_shutdown();
+            tokio::pin!(again);
+            tokio::select! {
+                result = &mut run => result.map_err(ServiceError::from),
+                result = &mut again => {
+                    result?;
+                    shutdown.cancel();
+                    run.await.map_err(ServiceError::from)
+                }
+            }
         }
     };
     if result.is_ok() {

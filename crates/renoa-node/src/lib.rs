@@ -7,6 +7,7 @@ mod automations;
 mod backoff;
 mod bridge;
 mod control;
+mod execution;
 mod host_control;
 mod live;
 mod live_text;

@@ -16,7 +16,10 @@ UMask=0077
 ExecStart=/usr/local/bin/renoa-node serve %d/node-config %d/rcp-device /home/renoa/.renoa
 Restart=on-failure
 RestartSec=5s
-TimeoutStopSec=90s
+# Stopping drains: the turns the node took finish first. Only the node is
+# signalled, so the processes running those turns are left to finish them.
+KillMode=mixed
+TimeoutStopSec=15min
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectClock=yes
