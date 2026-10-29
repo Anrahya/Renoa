@@ -287,10 +287,13 @@ coordinator reads `RENOA_ANDROID_APPS_FILE`, a JSON file of
 with fingerprints as `keytool` prints them (one per build signature, such as a
 debug and a release certificate). Each fingerprint becomes an allowed origin
 matched by exact equality, and `/.well-known/assetlinks.json` is served with
+`delegate_permission/common.handle_all_urls` and
 `delegate_permission/common.get_login_creds` for the same package and
-fingerprints. Unset means neither: no app origin is trusted and no file is
-served. An invalid file stops `serve` at startup. This is relying-party
-configuration; no RCP frame names a platform.
+fingerprints, the relations Google's Credential Manager prerequisites list.
+`handle_all_urls` also verifies any App Links a listed app declares for this
+host. Unset means neither: no app origin is trusted and no file is served. An
+invalid file stops `serve` at startup. This is relying-party configuration; no
+RCP frame names a platform.
 
 ## Durable state and failure rules
 

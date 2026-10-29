@@ -22,6 +22,13 @@ const MAX_APPS: usize = 4;
 const MAX_FINGERPRINTS: usize = 4;
 const MAX_PACKAGE_CHARS: usize = 255;
 const FINGERPRINT_BYTES: usize = 32;
+/// The relations Google's Credential Manager prerequisites list for an app that
+/// shares sign-in credentials with a site. `handle_all_urls` also verifies any
+/// App Links a listed app declares for this host.
+const ASSET_LINK_RELATIONS: [&str; 2] = [
+    "delegate_permission/common.handle_all_urls",
+    "delegate_permission/common.get_login_creds",
+];
 
 /// The configured apps. Empty means the coordinator trusts no app origin and
 /// serves no asset links.
@@ -116,7 +123,7 @@ impl AndroidApps {
             .iter()
             .map(|app| {
                 serde_json::json!({
-                    "relation": ["delegate_permission/common.get_login_creds"],
+                    "relation": ASSET_LINK_RELATIONS,
                     "target": {
                         "namespace": "android_app",
                         "package_name": app.package_name,

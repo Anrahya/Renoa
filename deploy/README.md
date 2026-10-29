@@ -489,7 +489,7 @@ at startup with the entry or error that is wrong; unset trusts no app. The tunne
 already sends `/.well-known/assetlinks.json` to the coordinator. Check it after
 the restart with
 `curl -s https://renoa.live/.well-known/assetlinks.json`: it must list the
-package and every fingerprint. An owner without a passkey that reaches the phone
+package, every fingerprint, and both `handle_all_urls` and `get_login_creds`. An owner without a passkey that reaches the phone
 creates one with `renoa-coordinator bootstrap-passkey` and enters the token in
 the app's first sign-in; the token is single-use and 30 minutes long.
 

@@ -1352,7 +1352,10 @@ async fn asset_links_are_served_only_when_apps_are_configured() {
     assert_eq!(
         response.json::<Value>().await.expect("asset links"),
         json!([{
-            "relation": ["delegate_permission/common.get_login_creds"],
+            "relation": [
+                "delegate_permission/common.handle_all_urls",
+                "delegate_permission/common.get_login_creds",
+            ],
             "target": {
                 "namespace": "android_app",
                 "package_name": "live.renoa.app",
