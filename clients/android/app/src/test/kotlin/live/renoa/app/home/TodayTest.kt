@@ -54,12 +54,17 @@ class TodayTest {
         )
         assertEquals("Next: checkin at 9 PM", nextWords(routines, now))
         assertEquals("Nothing else is set for today", nextWords(routines.drop(1), now))
-        assertEquals("Nothing else is set for today", nextWords(listOf(routine("late", next = 19)), now), "a next run already gone by is not next")
+        val late = routine("late", next = 19, ran = 19, ranDays = -1)
+        assertEquals("Nothing else is set for today", nextWords(listOf(late), now), "a next run already gone by is not next")
+        assertEquals(emptyList(), dayMarks(listOf(late), now), "nor is it still to come on the strip")
+        assertEquals(RunOutcome.Skipped, dayMarks(listOf(routine("s", ran = 8, outcome = RunOutcome.Skipped)), now).single().ran)
     }
 
     @Test
     fun aRoutineSaysWhetherItIsPausedWhenItRunsAndWhetherItFailed() {
         assertEquals("Paused", routineStatus(routine("a", on = false), now))
+        assertEquals("Due now", routineStatus(routine("a", next = 19), now), "Renoa has not yet said when it runs after this one")
+        assertEquals("Due now", routineStatus(routine("a", next = 9, nextDays = -1), now))
         assertEquals("Next: today at 9 PM", routineStatus(routine("a", next = 21), now))
         assertEquals("Next: tomorrow at 7 AM · Last run failed", routineStatus(routine("a", next = 7, nextDays = 1, ran = 7, outcome = RunOutcome.Failed), now))
         assertEquals("Next: Sat at 10 AM", routineStatus(routine("a", next = 10, nextDays = 2), now))

@@ -110,10 +110,14 @@ internal fun Relay(
                     Spacer(Modifier.width(8.dp))
                     Text(handover.agent.name, style = RenoaType.Label, color = colors.foreground)
                     Spacer(Modifier.width(6.dp))
-                    Text(handover.kind.verb, Modifier.weight(1f), style = RenoaType.Caption, color = colors.mutedForeground, maxLines = 1)
-                    (if (handover.kind == HandoverKind.Working) "NOW" else handover.time?.uppercase())?.let {
-                        Text(it, style = RenoaType.Eyebrow, color = colors.mutedForeground)
-                    }
+                    Text(
+                        listOfNotNull(handover.kind.verb, handover.time).joinToString(" · "),
+                        Modifier.weight(1f),
+                        style = RenoaType.Caption,
+                        color = colors.mutedForeground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (list.size > 1) Stepper(index, list.size, step)
                 }
                 Text(handover.text, style = RenoaType.Heading, color = colors.foreground, maxLines = 4, overflow = TextOverflow.Ellipsis)
@@ -138,7 +142,7 @@ private fun Stepper(index: Int, count: Int, step: (Int) -> Unit) {
 private fun Arrow(glyph: String, label: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(36.dp, 48.dp)
+            .size(48.dp)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label }
             .alpha(if (enabled) 1f else 0.3f),

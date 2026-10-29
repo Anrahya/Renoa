@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -34,6 +37,7 @@ import live.renoa.app.editor.AgentEditorScreen
 import live.renoa.app.editor.AgentEditorViewModel
 import live.renoa.app.editor.EditorMode
 import live.renoa.app.home.HomeScreen
+import live.renoa.app.home.OPEN_PAGES
 import live.renoa.app.home.HomeViewModel
 import live.renoa.app.signin.SignInScreen
 import live.renoa.app.signin.SignInState
@@ -90,7 +94,7 @@ class ScreensTest : ScreenTest() {
     }
 
     private fun openPages() {
-        compose.onNodeWithContentDescription("Open chats, routines and what's coming up").performClick()
+        compose.onNode(hasClickLabel(OPEN_PAGES)).performClick()
         compose.waitForIdle()
     }
 
@@ -106,7 +110,11 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithText("Renoa and Kai'Sa · Picking three posts worth your reply…").assertIsDisplayed()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
         compose.onNodeWithText("1 of 6").assertIsDisplayed()
-        compose.onNodeWithText("New from Tifa and Optimus").assertIsDisplayed()
+        compose
+            .onNode(hasClickLabel(OPEN_PAGES))
+            .assert(hasText("New from Tifa and Optimus"))
+            .assert(hasText("Next: Posts worth a reply at 8 PM"))
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.ContentDescription))
         compose.onNodeWithText("Next: Posts worth a reply at 8 PM").assertIsDisplayed()
         snapshot("home")
     }

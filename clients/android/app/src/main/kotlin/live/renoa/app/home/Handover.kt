@@ -22,7 +22,8 @@ data class Handover(val key: String, val agent: AgentSummary, val kind: Handover
 /**
  * Everything Home could hand the owner, most important first: what needs them (a question, or an
  * agent that cannot go on), then what is for them (the main agent's note, then anything unread),
- * then who is at work. Within a kind, agents keep Home's order ([homeOrder]).
+ * then who is at work. Within a kind, agents keep Home's order ([homeOrder]). Each agent has one
+ * card, its most important; the main agent's note is the one card beside it.
  */
 fun handovers(people: List<AgentSummary>, briefing: Briefing?): List<Handover> {
     val ordered = homeOrder(people)
@@ -36,7 +37,7 @@ fun handovers(people: List<AgentSummary>, briefing: Briefing?): List<Handover> {
             agent.glance.line?.let { Handover("${agent.id}/says", agent, HandoverKind.Says, it, agent.glance.time) }
         }
     val working = ordered.filter { it.state == AgentState.Working }.map { Handover("${it.id}/working", it, HandoverKind.Working, it.glance.doing ?: "Working on it") }
-    return needs + listOfNotNull(note) + unread + working
+    return needs + listOfNotNull(note) + (unread + working).distinctBy { it.agent.id }
 }
 
 /** The first agent working with another, and that other: the pair whose wire Home lights. */

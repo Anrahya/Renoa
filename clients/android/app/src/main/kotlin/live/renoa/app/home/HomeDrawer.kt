@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,10 +33,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -55,6 +59,9 @@ import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
 import java.time.ZonedDateTime
 
+/** What tapping the dock does, as a screen reader says it. */
+internal const val OPEN_PAGES = "Open chats, routines and what's coming up"
+
 /** The bar at the bottom of Home: who wrote, and what runs next. It opens the pages. */
 @Composable
 internal fun Dock(state: HomeUiState, next: String, onOpen: () -> Unit, modifier: Modifier = Modifier) {
@@ -66,8 +73,8 @@ internal fun Dock(state: HomeUiState, next: String, onOpen: () -> Unit, modifier
             .fillMaxWidth()
             .background(colors.card, shape)
             .border(1.dp, colors.border, shape)
-            .clickable(role = Role.Button, onClick = onOpen)
-            .semantics { contentDescription = "Open chats, routines and what's coming up" }
+            // Its words are what a screen reader says; the tap says where it goes.
+            .clickable(role = Role.Button, onClickLabel = OPEN_PAGES, onClick = onOpen)
             .heightIn(min = 60.dp)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -105,9 +112,15 @@ internal fun HomeDrawer(
     val pages = HomePage.entries
     val pager = rememberPagerState(initialPage = (state.page ?: HomePage.Chats).ordinal) { pages.size }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(pager.currentPage) { onPage(pages[pager.currentPage]) }
+    val open by rememberUpdatedState(state.page)
+    val turn by rememberUpdatedState(onPage)
+    // Opened again on another page while it was still closing, the pager turns to it.
+    LaunchedEffect(state.page) { state.page?.let { if (pager.currentPage != it.ordinal) pager.scrollToPage(it.ordinal) } }
+    // A page turned by swipe or tab is the page Home reopens on; once closed, a late turn reopens nothing.
+    LaunchedEffect(pager) { snapshotFlow { pager.currentPage }.collect { if (open != null) turn(pages[it]) } }
 
-    Column(Modifier.fillMaxSize().background(colors.background).safeDrawingPadding()) {
+    // A tap that lands on no control here stops here, not on Home underneath.
+    Column(Modifier.fillMaxSize().background(colors.background).pointerInput(Unit) { detectTapGestures { } }.safeDrawingPadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             pages.forEachIndexed { i, page ->
                 val on = pager.currentPage == i

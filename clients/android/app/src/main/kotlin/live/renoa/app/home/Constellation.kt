@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -44,7 +46,7 @@ import kotlin.math.sin
 private val SEAT_ANGLES = listOf(-30.0, 210.0, 30.0, 150.0, -90.0, 90.0)
 
 /** What a seat holds: an agent, the way to meet someone new, the rest of a long roster, or nothing yet. */
-private sealed interface SeatHolds {
+internal sealed interface SeatHolds {
     data class Agent(val agent: AgentSummary) : SeatHolds
 
     data object New : SeatHolds
@@ -54,8 +56,13 @@ private sealed interface SeatHolds {
     data object Empty : SeatHolds
 }
 
-/** The seats in order. A roster longer than the seats keeps the last one for the rest, in Home's order, so whoever needs the owner is seated. */
-private fun seats(others: List<AgentSummary>): List<SeatHolds> {
+/**
+ * The seats in order. While everyone fits, each keeps the seat of its place on the roster, so no
+ * tile moves when an agent's state changes. A roster longer than the seats seats in Home's order,
+ * so whoever needs the owner is seated, and keeps the last seat for the rest.
+ */
+internal fun seats(roster: List<AgentSummary>): List<SeatHolds> {
+    val others = if (roster.size <= SEAT_ANGLES.size) roster else homeOrder(roster)
     val n = SEAT_ANGLES.size
     val seated = if (others.size > n) others.take(n - 1).map { SeatHolds.Agent(it) } + SeatHolds.More(others.size - n + 1) else others.map { SeatHolds.Agent(it) }
     return List(n) { i -> seated.getOrNull(i) ?: if (i == seated.size) SeatHolds.New else SeatHolds.Empty }
@@ -79,7 +86,7 @@ internal fun Constellation(
     val clock = LocalMotionClock.current
     val reduced = LocalReducedMotion.current
     val main = state.main
-    val holds = seats(state.people.filter { it.id != main?.id })
+    val holds = seats(state.roster.filter { it.id != main?.id })
     val pair = talking(state.roster)
 
     BoxWithConstraints(modifier.fillMaxWidth().heightIn(min = 200.dp), contentAlignment = Alignment.Center) {
@@ -105,12 +112,18 @@ internal fun Constellation(
             val where = Modifier.align(Alignment.Center).offset(at[i].x, at[i].y)
             when (held) {
                 is SeatHolds.Agent ->
-                    Box(where.clickable(onClickLabel = "Open ${held.agent.name}") { onOpenChat(held.agent.id) }) {
-                        Badge(held.agent.name, held.agent.state, seat, hue = AgentHue.of(held.agent.id, state.roster), arriveAfterMillis = if (assemble) 120 + i * 90 else null)
+                    // Keyed by agent, so a tile's own motion stays with it if it changes seats.
+                    key(held.agent.id) {
+                        Box(where.minimumInteractiveComponentSize().clickable(onClickLabel = "Open ${held.agent.name}") { onOpenChat(held.agent.id) }, contentAlignment = Alignment.Center) {
+                            Badge(held.agent.name, held.agent.state, seat, hue = AgentHue.of(held.agent.id, state.roster), arriveAfterMillis = if (assemble) 120 + i * 90 else null)
+                        }
                     }
-                SeatHolds.New -> EmptySocket(seat, plus = true, where.clickable(role = Role.Button, onClick = onNewAgent).semantics { contentDescription = "Meet someone new" })
+                SeatHolds.New ->
+                    Box(where.minimumInteractiveComponentSize().clickable(role = Role.Button, onClick = onNewAgent).semantics { contentDescription = "Meet someone new" }, contentAlignment = Alignment.Center) {
+                        EmptySocket(seat, plus = true)
+                    }
                 is SeatHolds.More ->
-                    Box(where.size(seat).clickable(role = Role.Button, onClick = onMore).semantics { contentDescription = "${held.count} more, in Chats" }, contentAlignment = Alignment.Center) {
+                    Box(where.minimumInteractiveComponentSize().clickable(role = Role.Button, onClick = onMore).semantics { contentDescription = "${held.count} more, in Chats" }, contentAlignment = Alignment.Center) {
                         EmptySocket(seat, plus = false)
                         Text("+${held.count}", style = RenoaType.Label, color = colors.foregroundSoft)
                     }
@@ -147,7 +160,7 @@ internal fun TalkLine(state: HomeUiState, onOpenChat: (String) -> Unit, modifier
     if (pair != null) {
         val (from, to) = pair
         Row(
-            modifier.fillMaxWidth().clickable(onClickLabel = "Open ${from.name}") { onOpenChat(from.id) }.padding(horizontal = 20.dp, vertical = 10.dp),
+            modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = "Open ${from.name}") { onOpenChat(from.id) }.padding(horizontal = 20.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {

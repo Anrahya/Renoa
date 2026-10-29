@@ -35,12 +35,13 @@ class HandoverTest {
                 "lead/note" to "Evening. Two things.",
                 "lead/says" to "Old news",
                 "news/says" to "Three projects",
-                "lead/working" to "Reading posts",
                 "busy/working" to "Working on it",
             ),
             list.map { it.key to it.text },
         )
         assertEquals(listOf("Dal", "Not sure"), list.first().ask?.choices)
+        assertEquals(1, list.count { it.agent.id == "asks" }, "an agent that asks and has unread words has one card, its question")
+        assertEquals(listOf("lead/note", "lead/says"), list.filter { it.agent.id == "lead" }.map { it.key }, "the main agent's note is the one card beside its own")
         assertEquals(HandoverKind.Says, list.first { it.key == "news/says" }.kind)
         assertEquals("7:30 pm", list.first { it.key == "news/says" }.time)
         assertEquals(emptyList(), handovers(emptyList(), Briefing("gone", "A note from no one")), "a note from an agent not on the roster is not shown")
@@ -56,6 +57,20 @@ class HandoverTest {
             )
         assertEquals("kaisa" to "renoa", talking(roster)?.let { (a, b) -> a.id to b.id })
         assertNull(talking(listOf(agent("idle", glance = Glance(with = "renoa")), agent("renoa"))), "only an agent at work lights a wire")
+    }
+
+    @Test
+    fun seatsFollowTheRosterWhileEveryoneFitsAndHomesOrderOnceTheyDoNot() {
+        val few = listOf(agent("a"), agent("b"), agent("c", AgentState.Wants))
+        assertEquals(
+            listOf("a", "b", "c", "new", "", ""),
+            seats(few).map { (it as? SeatHolds.Agent)?.agent?.id ?: if (it == SeatHolds.New) "new" else "" },
+            "a change of state moves no one",
+        )
+        val many = List(7) { agent("r$it") } + agent("asks", AgentState.Wants)
+        val seated = seats(many)
+        assertEquals("asks", (seated.first() as SeatHolds.Agent).agent.id, "whoever needs the owner is seated first")
+        assertEquals(SeatHolds.More(3), seated.last())
     }
 
     @Test

@@ -1,5 +1,8 @@
 package live.renoa.app.ui
 
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.foundation.layout.Box
@@ -52,3 +55,6 @@ abstract class ScreenTest {
         File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 }
+
+/** A node whose tap, as a screen reader says it, is [label]. */
+fun hasClickLabel(label: String): SemanticsMatcher = SemanticsMatcher("taps to \"$label\"") { it.config.getOrNull(SemanticsActions.OnClick)?.label == label }

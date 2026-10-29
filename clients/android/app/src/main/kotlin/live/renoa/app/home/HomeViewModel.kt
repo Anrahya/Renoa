@@ -36,6 +36,7 @@ private data class Local(
     val switching: Map<String, Boolean> = emptyMap(),
     val page: HomePage? = null,
     val shown: String? = null,
+    val shownAt: Int = 0,
 )
 
 data class HomeUiState(
@@ -47,8 +48,9 @@ data class HomeUiState(
     val switching: Map<String, Boolean> = emptyMap(),
     /** The page open over Home, or null while Home itself shows. */
     val page: HomePage? = null,
-    /** The key of the handover the owner stepped to, if it is still there. */
+    /** The handover the owner stepped to, and where it stood, so the card next to it shows once it is gone. */
     val shownKey: String? = null,
+    val shownAt: Int = 0,
 ) {
     val people: List<AgentSummary> get() = homeOrder(roster)
 
@@ -56,8 +58,13 @@ data class HomeUiState(
 
     val handovers: List<Handover> get() = handovers(roster, briefing)
 
-    /** Where the relay stands in [handovers]: the one stepped to, else the first. */
-    val shown: Int get() = handovers.indexOfFirst { it.key == shownKey }.coerceAtLeast(0)
+    /** Where the relay stands in [handovers]: the one stepped to, else whatever now stands in its place. */
+    val shown: Int
+        get() {
+            val list = handovers
+            val at = list.indexOfFirst { it.key == shownKey }
+            return if (at >= 0) at else shownAt.coerceAtMost(list.lastIndex).coerceAtLeast(0)
+        }
 
     fun agent(id: String?): AgentSummary? = roster.firstOrNull { it.id == id }
 
@@ -69,8 +76,8 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     private val local = MutableStateFlow(Local())
 
     /**
-     * Whether Home has already shown its tiles dropping in. Home stays at the bottom of the back
-     * stack, so this lives as long as the app does: coming back from a chat does not replay it.
+     * Whether Home has already shown its tiles dropping in. It lives as long as Home's place on the
+     * back stack, so coming back from a chat does not replay it.
      */
     var assembled: Boolean = false
         private set
@@ -81,16 +88,17 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
 
     val state: StateFlow<HomeUiState> =
         combine(repository.agents, repository.briefing, repository.routines, local) { agents, briefing, routines, mine ->
-            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown)
+            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value))
 
-    /** Opens a page over Home. It stays open while the owner visits a chat from it. */
-    fun open(page: HomePage) = local.update { it.copy(page = page) }
+    /** Opens a page over Home, or turns to another. It stays open while the owner visits a chat from it. */
+    fun open(page: HomePage) = local.update { if (it.page == page) it else it.copy(page = page, notice = if (it.page == null) null else it.notice) }
 
-    fun close() = local.update { it.copy(page = null) }
+    /** Closes the page. A notice shown on it goes with it. */
+    fun close() = local.update { it.copy(page = null, notice = null) }
 
     /** Steps the relay to the handover [key]. */
-    fun show(key: String) = local.update { it.copy(shown = key) }
+    fun show(key: String) = local.update { it.copy(shown = key, shownAt = state.value.handovers.indexOfFirst { h -> h.key == key }.coerceAtLeast(0)) }
 
     /** Answers an agent's question right from Home; the agent picks it up from there. */
     fun answer(agentId: String, choice: String) {
@@ -114,7 +122,7 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
             } catch (refused: RepositoryException) {
                 val words =
                     when (refused.problem) {
-                        Problem.Conflict -> "That routine was changed somewhere else. It shows how it is now."
+                        Problem.Conflict -> "That routine was changed somewhere else. Check it and try again."
                         Problem.NotFound -> "That routine is gone."
                         else -> refused.wordsOr("That routine could not be changed. Try again.")
                     }

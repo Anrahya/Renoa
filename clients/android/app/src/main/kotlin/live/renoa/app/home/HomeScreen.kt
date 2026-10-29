@@ -12,15 +12,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -77,25 +81,31 @@ fun HomeScreen(
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
         // Under an open page, Home is hidden from accessibility, so only the page is read.
-        Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (state.page != null) Modifier.clearAndSetSemantics { } else Modifier)) {
-            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .clickable(role = Role.Button, onClick = onChangeColours)
-                        .semantics { contentDescription = "Renoa, change colours" },
-                    contentAlignment = Alignment.CenterStart,
-                ) { RenoaMark(colors.foreground, 26.dp) }
-                Spacer(Modifier.weight(1f))
-                Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = colors.mutedForeground)
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().then(if (state.page != null) Modifier.clearAndSetSemantics { } else Modifier)) {
+            // The constellation takes what the rest leaves, within reason; a short screen scrolls instead of squeezing it.
+            val stage = (maxHeight - 500.dp).coerceIn(240.dp, 380.dp)
+            Column(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(48.dp)
+                                .clickable(role = Role.Button, onClick = onChangeColours)
+                                .semantics { contentDescription = "Renoa, change colours" },
+                            contentAlignment = Alignment.CenterStart,
+                        ) { RenoaMark(colors.foreground, 26.dp) }
+                        Spacer(Modifier.weight(1f))
+                        Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = colors.mutedForeground)
+                    }
+                    Text(greeting(time.hour), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
+                    DayStrip(state, time, { viewModel.open(HomePage.Routines) }, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp))
+                    Constellation(state, assemble, onOpenChat, onNewAgent, { viewModel.open(HomePage.Chats) }, Modifier.height(stage))
+                    TalkLine(state, onOpenChat)
+                    Relay(state, next, viewModel::show, onOpenChat, viewModel::answer, Modifier.padding(horizontal = 16.dp))
+                    state.notice?.takeIf { state.page == null }?.let { Text(it, Modifier.padding(start = 24.dp, top = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
+                }
+                Dock(state, next, { viewModel.open(HomePage.Chats) }, Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp))
             }
-            Text(greeting(time.hour), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
-            DayStrip(state, time, { viewModel.open(HomePage.Routines) }, Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp))
-            Constellation(state, assemble, onOpenChat, onNewAgent, { viewModel.open(HomePage.Chats) }, Modifier.weight(1f).padding(top = 8.dp))
-            TalkLine(state, onOpenChat)
-            Relay(state, next, viewModel::show, onOpenChat, viewModel::answer, Modifier.padding(horizontal = 16.dp))
-            state.notice?.takeIf { state.page == null }?.let { Text(it, Modifier.padding(start = 24.dp, top = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
-            Dock(state, next, { viewModel.open(HomePage.Chats) }, Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp))
         }
         AnimatedVisibility(
             visible = state.page != null,
@@ -122,10 +132,14 @@ private fun DayStrip(state: HomeUiState, now: ZonedDateTime, onOpen: () -> Unit,
             when (mark.ran) {
                 null -> "${mark.routine.name} at $at"
                 RunOutcome.Failed -> "${mark.routine.name} failed at $at"
-                RunOutcome.Done, RunOutcome.Skipped -> "${mark.routine.name} ran at $at"
+                RunOutcome.Skipped -> "${mark.routine.name} was skipped at $at"
+                RunOutcome.Done -> "${mark.routine.name} ran at $at"
             }
         }.ifEmpty { "Today. Nothing runs today." }
-    Column(modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Open routines", onClick = onOpen).semantics { contentDescription = words }) {
+    Column(
+        modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "Open routines", onClick = onOpen).semantics { contentDescription = words },
+        verticalArrangement = Arrangement.Center,
+    ) {
         Canvas(Modifier.fillMaxWidth().height(22.dp)) {
             val y = size.height / 2
             val bar = 4.dp.toPx()
@@ -135,13 +149,20 @@ private fun DayStrip(state: HomeUiState, now: ZonedDateTime, onOpen: () -> Unit,
             drawRoundRect(colors.input, Offset(0f, y - bar / 2), Size(nowX, bar), corner)
             for (mark in marks) {
                 val x = size.width * stripAt(mark.at.toLocalTime())
-                val ink =
-                    when (mark.ran) {
-                        RunOutcome.Failed -> colors.stateFailed
-                        else -> state.agent(mark.routine.agentId)?.let { AgentHue.of(it.id, state.roster).face(colors) } ?: colors.foreground
+                val at = Offset(x, y)
+                val ink = state.agent(mark.routine.agentId)?.let { AgentHue.of(it.id, state.roster).face(colors) } ?: colors.foreground
+                drawCircle(colors.background, 6.dp.toPx(), at)
+                when (mark.ran) {
+                    null -> drawCircle(ink, 4.dp.toPx(), at, style = Stroke(1.6.dp.toPx()))
+                    RunOutcome.Done -> drawCircle(ink, 4.5.dp.toPx(), at)
+                    // It never ran: a small mark in the strip's own grey.
+                    RunOutcome.Skipped -> drawCircle(colors.mutedForeground, 2.5.dp.toPx(), at)
+                    // The agent's dot inside a ring in the failure colour, so it shows on any agent's colour.
+                    RunOutcome.Failed -> {
+                        drawCircle(colors.stateFailed, 7.dp.toPx(), at, style = Stroke(1.6.dp.toPx()))
+                        drawCircle(ink, 3.5.dp.toPx(), at)
                     }
-                drawCircle(colors.background, 6.dp.toPx(), Offset(x, y))
-                if (mark.ran == null) drawCircle(ink, 4.dp.toPx(), Offset(x, y), style = Stroke(1.6.dp.toPx())) else drawCircle(ink, 4.5.dp.toPx(), Offset(x, y))
+                }
             }
             drawLine(colors.foreground, Offset(nowX, 1.dp.toPx()), Offset(nowX, size.height - 1.dp.toPx()), 1.5.dp.toPx())
         }

@@ -31,6 +31,12 @@ fun clockWords(now: ZonedDateTime): String = now.format(WEEKDAY_CLOCK)
 /** Where [time] sits on the day strip: 0 at 6 am, 1 at midnight. Earlier hours sit at the start. */
 fun stripAt(time: LocalTime): Float = ((time.toSecondOfDay() / 3600f - STRIP_STARTS) / STRIP_HOURS).coerceIn(0f, 1f)
 
+/**
+ * When [routine] runs next, if that is still to come. Renoa updates a routine's next run on its own
+ * clock, so for a moment after a run the next one it last said can already be past.
+ */
+fun nextRun(routine: Routine, now: ZonedDateTime): ZonedDateTime? = routine.next?.atZone(now.zone)?.takeIf { !it.isBefore(now) }
+
 /** A routine on today's strip: a run that ended today ([ran] is how), or its next run, still to come today ([ran] is null). */
 data class DayMark(val routine: Routine, val at: ZonedDateTime, val ran: RunOutcome?)
 
@@ -41,14 +47,14 @@ fun dayMarks(routines: List<Routine>, now: ZonedDateTime): List<DayMark> {
         .flatMap { routine ->
             listOfNotNull(
                 routine.lastRun?.let { run -> run.at.atZone(now.zone).takeIf { it.toLocalDate() == today }?.let { DayMark(routine, it, run.outcome) } },
-                routine.next?.atZone(now.zone)?.takeIf { it.toLocalDate() == today }?.let { DayMark(routine, it, null) },
+                nextRun(routine, now)?.takeIf { it.toLocalDate() == today }?.let { DayMark(routine, it, null) },
             )
         }.sortedBy { it.at }
 }
 
 /** "Next: GitHub check at 6:30 PM", for the first run still to come today. */
 fun nextWords(routines: List<Routine>, now: ZonedDateTime): String =
-    dayMarks(routines, now).firstOrNull { it.ran == null && !it.at.isBefore(now) }?.let { "Next: ${it.routine.name} at ${clockTime(it.at.toLocalTime())}" }
+    dayMarks(routines, now).firstOrNull { it.ran == null }?.let { "Next: ${it.routine.name} at ${clockTime(it.at.toLocalTime())}" }
         ?: "Nothing else is set for today"
 
 /** How far off a day is: the Upcoming page's headings, and how a time names its day. */
@@ -84,11 +90,12 @@ fun whenWords(at: ZonedDateTime, now: ZonedDateTime): String {
 
 /** A routine's line under its name: whether it is paused, when it runs next, and whether its last run failed. */
 fun routineStatus(routine: Routine, now: ZonedDateTime): String {
-    val next = routine.next
+    val next = nextRun(routine, now)
     val status =
         when {
             !routine.on -> "Paused"
-            next != null -> "Next: ${whenWords(next.atZone(now.zone), now)}"
+            next != null -> "Next: ${whenWords(next, now)}"
+            routine.next != null -> "Due now"
             else -> "On"
         }
     return if (routine.lastRun?.outcome == RunOutcome.Failed) "$status · Last run failed" else status
@@ -100,7 +107,7 @@ data class UpcomingGroup(val horizon: Horizon, val runs: List<Pair<Routine, Stri
 /** Every routine's next run from now on, under its [Horizon], soonest first. */
 fun upcoming(routines: List<Routine>, now: ZonedDateTime): List<UpcomingGroup> =
     routines
-        .mapNotNull { r -> r.next?.atZone(now.zone)?.takeIf { !it.isBefore(now) }?.let { r to it } }
+        .mapNotNull { r -> nextRun(r, now)?.let { r to it } }
         .sortedBy { it.second }
         .groupBy { (_, at) -> Horizon.of(at, now) }
         .map { (horizon, group) ->

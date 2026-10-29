@@ -12,8 +12,8 @@ fun mainAgent(roster: List<AgentSummary>): AgentSummary? = roster.firstOrNull { 
 
 /**
  * The colour an agent's tile wears. The main agent stays ink; the others take the landing page's
- * clay, cobalt and ochre in roster order, so each keeps its colour on every screen. Green and
- * purple are never used.
+ * clay, cobalt and ochre in roster order, so every screen gives an agent the same colour while the
+ * roster keeps its order. Green and purple are never used.
  */
 enum class AgentHue {
     Ink,
