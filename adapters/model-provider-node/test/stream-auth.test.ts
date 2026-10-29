@@ -5,7 +5,7 @@ import { test } from "node:test";
 import {
   oauthCredential,
   startFakeServer,
-  successfulChat,
+  responsesSse,
   tempDir,
 } from "./helpers.js";
 import {
@@ -16,7 +16,7 @@ import {
 
 test("expired OAuth token refreshes before the first request", async () => {
   const server = await startFakeServer();
-  server.enqueue({ sse: successfulChat("refreshed") });
+  server.enqueue({ sse: responsesSse("refreshed") });
   const directory = tempDir();
   const original = globalThis.fetch;
   const storePath = join(directory.path, "credentials.sqlite");
@@ -64,7 +64,7 @@ test("401 invalid_token refreshes once and retries the request", async () => {
     headers: { "www-authenticate": 'Bearer error="invalid_token"' },
     body: JSON.stringify({ error: { message: "invalid_token", code: "invalid_token" } }),
   });
-  server.enqueue({ sse: successfulChat("after 401") });
+  server.enqueue({ sse: responsesSse("after 401") });
   const directory = tempDir();
   const original = globalThis.fetch;
   try {
@@ -132,7 +132,7 @@ test("401 refresh failure is authentication and does not retry further", async (
 test("provider request diagnostics redact authorization headers", async () => {
   const server = await startFakeServer();
   server.enqueue({
-    sse: successfulChat("ok"),
+    sse: responsesSse("ok"),
     headers: { authorization: "Bearer leaked-token", "x-request-id": "req_ok" },
   });
   const directory = tempDir();

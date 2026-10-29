@@ -242,7 +242,8 @@
       "description": "A model provider supported by Renoa's native process adapter.",
       "enum": [
         "xai",
-        "opencode-go"
+        "opencode-go",
+        "deepseek"
       ],
       "type": "string"
     },

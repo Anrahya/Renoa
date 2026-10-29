@@ -33,28 +33,34 @@ use fake_provider::{
     serve_truncated_then_complete,
 };
 
+/// The loopback tests drive the adapter's Chat Completions transport through
+/// the `deepseek` provider, whose pinned catalog serves that API directly.
+const LOOPBACK_PROVIDER: &str = "deepseek";
+const LOOPBACK_MODEL: &str = "deepseek-flash";
+const LOOPBACK_CATALOG: &str = "adapters/model-provider-node/src/upstream/catalogs/deepseek.json";
+
 #[tokio::test]
-async fn rust_launches_the_compiled_adapter_and_consumes_its_protocol() {
+async fn rust_launches_the_compiled_adapter_for_deepseek_and_consumes_its_protocol() {
     let workspace = workspace_root();
     let adapter = compiled_adapter(&workspace);
-    let catalog = workspace.join("adapters/model-provider-node/src/upstream/catalogs/xai.json");
+    let catalog = workspace.join(LOOPBACK_CATALOG);
     let directory = tempdir().expect("temporary directory");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
     let address = listener.local_addr().expect("fake provider address");
     let server = thread::spawn(move || serve_one_chat_completion(&listener));
 
-    let mut model = load_catalog_model(&catalog, "grok-4.6");
+    let mut model = load_catalog_model(&catalog, LOOPBACK_MODEL);
     model["baseUrl"] = json!(format!("http://127.0.0.1:{}/v1", address.port()));
     let spec = serde_json::to_string(&model).expect("encode loopback model spec");
 
     let auth_store = directory.path().join("pi-auth.sqlite");
-    write_oauth_store(&auth_store);
+    write_api_key_store(&auth_store);
     let trampoline = write_loopback_trampoline(directory.path(), &adapter);
 
     let model = BridgeModel::load_with_spec(
         &trampoline,
-        "xai",
-        "grok-4.6",
+        LOOPBACK_PROVIDER,
+        LOOPBACK_MODEL,
         &auth_store,
         Some(spec),
         None,
@@ -85,8 +91,14 @@ async fn rust_launches_the_compiled_adapter_and_consumes_its_protocol() {
         vec![AssistantContent::text("from-compiled-adapter")]
     );
     assert_eq!(sampled.response.stop_reason, StopReason::Stop);
-    assert_eq!(sampled.response.metadata.provider.as_deref(), Some("xai"));
-    assert_eq!(sampled.response.metadata.model.as_deref(), Some("grok-4.6"));
+    assert_eq!(
+        sampled.response.metadata.provider.as_deref(),
+        Some(LOOPBACK_PROVIDER)
+    );
+    assert_eq!(
+        sampled.response.metadata.model.as_deref(),
+        Some(LOOPBACK_MODEL)
+    );
 }
 
 /// Builds a loopback runner over the compiled adapter and a fresh session with
@@ -98,18 +110,18 @@ async fn loopback_turn(
 ) -> (Kernel, SessionId, renoa_kernel::Runtime) {
     let workspace = workspace_root();
     let adapter = compiled_adapter(&workspace);
-    let catalog = workspace.join("adapters/model-provider-node/src/upstream/catalogs/xai.json");
-    let mut model = load_catalog_model(&catalog, "grok-4.6");
+    let catalog = workspace.join(LOOPBACK_CATALOG);
+    let mut model = load_catalog_model(&catalog, LOOPBACK_MODEL);
     model["baseUrl"] = json!(format!("http://127.0.0.1:{}/v1", address.port()));
     let spec = serde_json::to_string(&model).expect("encode loopback model spec");
     let auth_store = directory.join("pi-auth.sqlite");
-    write_oauth_store(&auth_store);
+    write_api_key_store(&auth_store);
     let trampoline = write_loopback_trampoline(directory, &adapter);
     let model = Arc::new(
         BridgeModel::load_with_spec(
             &trampoline,
-            "xai",
-            "grok-4.6",
+            LOOPBACK_PROVIDER,
+            LOOPBACK_MODEL,
             &auth_store,
             Some(spec),
             None,
@@ -119,7 +131,7 @@ async fn loopback_turn(
         .expect("compiled adapter describe"),
     );
     let revision = format!(
-        "renoa-model-provider-node/v1/xai/grok-4.6/{}/reasoning-{}",
+        "renoa-model-provider-node/v1/{LOOPBACK_PROVIDER}/{LOOPBACK_MODEL}/{}/reasoning-{}",
         model.binding_id(),
         model.reasoning().as_str()
     );
@@ -385,7 +397,7 @@ fn write_loopback_trampoline(directory: &Path, adapter: &Path) -> PathBuf {
     trampoline
 }
 
-fn write_oauth_store(path: &Path) {
+fn write_api_key_store(path: &Path) {
     let database = Connection::open(path).expect("create credential database");
     database
         .execute_batch(
@@ -403,21 +415,28 @@ fn write_oauth_store(path: &Path) {
         .execute(
             "INSERT INTO credentials (provider_id, credential_type, credential_json) VALUES (?1, ?2, ?3)",
             rusqlite::params![
-                "xai",
-                "oauth",
-                r#"{"type":"oauth","access":"access-token-old","refresh":"refresh-token-old","expires":4000000000000}"#,
+                LOOPBACK_PROVIDER,
+                "api_key",
+                r#"{"type":"api_key","key":"deepseek-test-key"}"#,
             ],
         )
-        .expect("store OAuth credential");
+        .expect("store API key credential");
 }
 
+/// Reads a chat entry from a pinned Pi catalog (data schema 6 keys entries as
+/// `chat:<model id>` under their API) and drops the fields the adapter's
+/// catalog strips before advertising a binding.
 fn load_catalog_model(path: &Path, model_id: &str) -> Value {
-    let catalog: Value = serde_json::from_slice(&fs::read(path).expect("read pinned xAI catalog"))
+    let catalog: Value = serde_json::from_slice(&fs::read(path).expect("read pinned catalog"))
         .expect("catalog JSON");
-    catalog
+    let mut model = catalog
         .get("openai-completions")
         .and_then(Value::as_object)
-        .and_then(|models| models.get(model_id).cloned())
+        .and_then(|models| models.get(&format!("chat:{model_id}")).cloned())
         .filter(Value::is_object)
-        .expect("pinned grok-4.6 catalog entry")
+        .expect("pinned Chat Completions catalog entry");
+    let fields = model.as_object_mut().expect("catalog entry object");
+    fields.remove("type");
+    fields.remove("inputLimits");
+    model
 }

@@ -1,7 +1,7 @@
 # Renoa model-provider adapter
 
 `@renoa/model-provider` is the Node process that translates Renoa's
-provider-neutral model contract into xAI and OpenCode Go API calls.
+provider-neutral model contract into xAI, OpenCode Go, and DeepSeek API calls.
 
 It is not the kernel, the durable loop, compaction, tools, ACP, Waku, or RCP.
 Those remain provider-neutral. A future adapter can replace this process if it
@@ -11,6 +11,7 @@ speaks the same stdin/stdout protocol and environment contract.
 
 - xAI/Grok over OAuth
 - OpenCode Go over its API key
+- DeepSeek over its API key
 - OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages transports
 - one retry policy
 - classified, redacted provider failures
@@ -26,10 +27,11 @@ compaction, ACP, Waku, and RCP. The Rust host launches this process for
 
 | Provider | Auth | Transports |
 | --- | --- | --- |
-| xAI | OAuth device flow | Chat Completions and Responses as advertised by the bundled catalog |
+| xAI | OAuth device flow | Responses, as advertised by the bundled catalog |
 | OpenCode Go | API key | Official Go transports only: Responses, Chat Completions, Anthropic Messages |
+| DeepSeek | API key | Chat Completions at `https://api.deepseek.com`, from the bundled catalog only |
 
-OpenCode availability comes from its official `/zen/go/v1/models` endpoint.
+OpenCode availability comes from its official `/inference/go/v1/models` endpoint.
 Limits, modalities, tool support, costs, and reasoning levels come from the
 OpenCode-owned `models.dev` catalog. Renoa accepts only known SDK transports,
 constructs the destination from fixed trusted URLs, caps both response bodies,
@@ -38,9 +40,15 @@ Anthropic and Responses models off the default Chat Completions route; transport
 is never inferred from a model name.
 
 The adapter conditionally revalidates `models.dev` with its ETag and atomically
-caches the last complete result beside the credential database. A bundled Pi
-`v0.84.2` catalog remains available even when the public inventory omits a
-previously supported or explicitly configured model. Bundled bindings always
+caches the last complete result beside the credential database. A cached model
+whose binding no longer validates, such as one learned on the retired
+`/zen/go` route, invalidates that cache file; the next successful refresh
+replaces it. A bundled Pi `v1.4.0` catalog remains available even when the
+public inventory omits a previously supported model. Bundled entries are
+advertised only when they are chat models on one of the three transports above
+and, for OpenCode Go, listed in the documented transport table; image and
+classifier entries and models on other APIs, such as OpenCode Go's Google
+Generative AI models, are not advertised. Bundled bindings always
 win, and the first validated binding learned for a new model is kept stable
 across automatic metadata refreshes. Code review, not an unannounced remote
 edit, changes an existing runtime binding.
@@ -58,9 +66,10 @@ renoa-model-provider-node/v1/{provider}/{model}/{binding}/reasoning-{level}
 An unfinished `pi/...` operation cannot execute through this adapter. There is
 no compatibility mapping; the kernel fail-closes with a runtime mismatch.
 
-Grok 4.6 and 4.7 advertise `low`, `medium`, `high`, and `xhigh` only. Those values are
-sent as Chat Completions `reasoning_effort`. The adapter does not advertise
-`off` or `minimal`.
+xAI models use the Responses API with `store: false`, send the kernel level as
+`reasoning.effort`, and request encrypted reasoning for replay. Grok 4.5, 4.6,
+and 4.7 advertise `low`, `medium`, `high`, and `xhigh`; Grok 4.3 also
+advertises `off`, sent as `none`. No xAI model advertises `minimal`.
 
 ## Prompt caching
 
@@ -144,14 +153,14 @@ pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scrip
 pnpm --dir adapters/model-provider-node build
 export RENOA_MODEL_BRIDGE="$PWD/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDERS=xai,opencode-go
+export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of xai, opencode-go, deepseek
 export RENOA_MODEL_PROVIDER=opencode-go # default for new ACP sessions
 export RENOA_MODEL=deepseek-v4-pro
 export RENOA_MODEL_REASONING=high # optional
 ```
 
-Authenticate with `pnpm --dir adapters/model-provider-node auth:xai` or
-`auth:opencode-go`. The RCP Pi node still uses `RENOA_PI_*` harness settings
+Authenticate with `pnpm --dir adapters/model-provider-node auth:xai`,
+`auth:opencode-go`, or `auth:deepseek`; API keys are read from standard input. The RCP Pi node still uses `RENOA_PI_*` harness settings
 and is not this adapter.
 
 `renoa-agent` exposes enabled models as `provider/model` ACP identities. The

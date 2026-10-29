@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -19,7 +19,7 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
-const CHARS_PER_TOKEN = 4;
+const CHARS_PER_TOKEN = 3.5;
 const ESTIMATED_IMAGE_CHARS = 4800;
 
 export function calculateContextTokens(usage: Usage): number {

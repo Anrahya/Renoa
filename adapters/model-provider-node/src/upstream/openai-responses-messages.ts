@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -65,7 +65,7 @@ export function convertToolResultOutput<TApi extends Api>(
 		.map((c) => c.text)
 		.join("\n");
 	const images = content.filter((c): c is ImageContent => c.type === "image");
-	const hasText = textResult.length > 0;
+	const hasText = textResult.trim().length > 0;
 
 	if (images.length === 0 || !model.input.includes("image")) {
 		return sanitizeSurrogates(hasText ? textResult : images.length > 0 ? "(see attached image)" : "(no tool output)");

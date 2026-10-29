@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -126,21 +126,23 @@ export function convertMessages(
 					content: sanitizeSurrogates(msg.content),
 				});
 			} else {
-				const content: ChatCompletionContentPart[] = msg.content.map((item): ChatCompletionContentPart => {
-					if (item.type === "text") {
-						return {
-							type: "text",
-							text: sanitizeSurrogates(item.text),
-						} satisfies ChatCompletionContentPartText;
-					} else {
-						return {
-							type: "image_url",
-							image_url: {
-								url: `data:${item.mimeType};base64,${item.data}`,
-							},
-						} satisfies ChatCompletionContentPartImage;
-					}
-				});
+				const content: ChatCompletionContentPart[] = msg.content
+					.filter((item) => item.type !== "text" || item.text.length > 0)
+					.map((item): ChatCompletionContentPart => {
+						if (item.type === "text") {
+							return {
+								type: "text",
+								text: sanitizeSurrogates(item.text),
+							} satisfies ChatCompletionContentPartText;
+						} else {
+							return {
+								type: "image_url",
+								image_url: {
+									url: `data:${item.mimeType};base64,${item.data}`,
+								},
+							} satisfies ChatCompletionContentPartImage;
+						}
+					});
 				if (content.length === 0) continue;
 				params.push({
 					role: "user",
@@ -268,7 +270,7 @@ export function convertMessages(
 				const hasImages = toolMsg.content.some((c) => c.type === "image");
 
 				// Always send tool result with text (or placeholder if only images)
-				const hasText = textResult.length > 0;
+				const hasText = textResult.trim().length > 0;
 				const toolResultText = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
 				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {

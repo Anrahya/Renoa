@@ -223,7 +223,7 @@ impl ModelBridgeConfig {
             return Err(ModelBridgeError::CredentialStoreNotFile(credential_store));
         }
         let provider = provider.into();
-        if provider != "xai" && provider != "opencode-go" {
+        if crate::ModelProvider::from_id(&provider).is_none() {
             return Err(ModelBridgeError::UnsupportedProvider(provider));
         }
         Ok(Self {

@@ -330,6 +330,11 @@ mod tests {
                 .expect("provider list"),
             vec![ModelProvider::Xai, ModelProvider::OpenCodeGo]
         );
+        assert_eq!(
+            parse_enabled_providers(ModelProvider::DeepSeek, Some("deepseek"))
+                .expect("DeepSeek only"),
+            vec![ModelProvider::DeepSeek]
+        );
         for invalid in ["", "xai,xai", "xai,"] {
             assert!(parse_enabled_providers(ModelProvider::OpenCodeGo, Some(invalid)).is_err());
         }

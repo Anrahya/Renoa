@@ -30,8 +30,8 @@ projects are studied for established agent-runtime mechanics.
   workspace policy, and credentials local to that node. Pi's CLI, TUI, and
   coding-agent package are not dependencies.
 - Current Alpha provider path: `adapters/model-provider-node` is Renoa-owned and
-  has no Pi runtime-package dependency. It adapts the minimal xAI and OpenCode
-  Go provider source needed from Pi `v0.84.2`; exact copied files, removals,
+  has no Pi runtime-package dependency. It adapts the minimal xAI, OpenCode
+  Go, and DeepSeek provider source needed from Pi `v1.4.0`; exact copied files, removals,
   modifications, source revision, and MIT notice are recorded beside the code
   in `adapters/model-provider-node/UPSTREAM.md`.
 - Renoa deliberately does not adopt Pi's catalog persistence, unbounded queues,

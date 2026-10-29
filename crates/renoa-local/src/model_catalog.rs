@@ -12,6 +12,8 @@ pub enum ModelProvider {
     Xai,
     #[serde(rename = "opencode-go")]
     OpenCodeGo,
+    #[serde(rename = "deepseek")]
+    DeepSeek,
 }
 
 impl ModelProvider {
@@ -20,6 +22,7 @@ impl ModelProvider {
         match value {
             "xai" => Some(Self::Xai),
             "opencode-go" => Some(Self::OpenCodeGo),
+            "deepseek" => Some(Self::DeepSeek),
             _ => None,
         }
     }
@@ -29,6 +32,7 @@ impl ModelProvider {
         match self {
             Self::Xai => "xai",
             Self::OpenCodeGo => "opencode-go",
+            Self::DeepSeek => "deepseek",
         }
     }
 
@@ -37,6 +41,7 @@ impl ModelProvider {
         match self {
             Self::Xai => "xAI",
             Self::OpenCodeGo => "OpenCode Go",
+            Self::DeepSeek => "DeepSeek",
         }
     }
 }
@@ -125,7 +130,7 @@ impl ModelChoice {
     }
 
     /// Opaque surface identity. Provider qualification prevents collisions
-    /// such as `grok-4.5`, which exists in both supported catalogs.
+    /// such as `grok-4.7`, which both the `xai` and `opencode-go` catalogs carry.
     #[must_use]
     pub fn selection_id(&self) -> String {
         format!("{}/{}", self.provider.as_str(), self.id)
@@ -243,4 +248,35 @@ fn validate_catalog(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModelProvider;
+
+    /// Every provider round-trips through its wire id, serde name, and parser.
+    #[test]
+    fn every_provider_round_trips_its_wire_id() {
+        for provider in [
+            ModelProvider::Xai,
+            ModelProvider::OpenCodeGo,
+            ModelProvider::DeepSeek,
+        ] {
+            // A new variant must be added to this list: the match is exhaustive.
+            match provider {
+                ModelProvider::Xai | ModelProvider::OpenCodeGo | ModelProvider::DeepSeek => {}
+            }
+            assert_eq!(ModelProvider::from_id(provider.as_str()), Some(provider));
+            assert_eq!(
+                serde_json::to_value(provider).expect("serialize provider"),
+                serde_json::Value::String(provider.as_str().to_owned())
+            );
+        }
+        assert_eq!(
+            ModelProvider::from_id("deepseek"),
+            Some(ModelProvider::DeepSeek)
+        );
+        assert_eq!(ModelProvider::DeepSeek.name(), "DeepSeek");
+        assert_eq!(ModelProvider::from_id("anthropic"), None);
+    }
 }

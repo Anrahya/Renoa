@@ -94,17 +94,19 @@ function parseCachedModels(value: unknown, pinned: readonly CatalogEntry[]): Mod
   }
   const pinnedIds = new Set(pinned.map((entry) => entry.id));
   const unique = new Set<string>();
-  return value.map((raw) => {
+  const models: Model<Api>[] = [];
+  for (const raw of value) {
     const id = isRecord(raw) ? raw.id : undefined;
-    if (
-      !isValidOpenCodeModelId(id) ||
-      pinnedIds.has(id) ||
-      !unique.add(id)
-    ) {
+    if (!isValidOpenCodeModelId(id) || !unique.add(id)) {
       throw new Error("invalid cached dynamic model");
     }
-    return validateModelSpec(raw, "opencode-go", id);
-  });
+    // A cache written before an upgrade may hold a model the pinned catalog
+    // now carries; the pinned entry wins and the cached one is skipped.
+    if (!pinnedIds.has(id)) {
+      models.push(validateModelSpec(raw, "opencode-go", id));
+    }
+  }
+  return models;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -21,6 +21,18 @@ import type {
 } from "./types.js";
 import { sanitizeSurrogates } from "./sanitize-unicode.js";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.js";
+import { splitErrorToolResultImages } from "./transform-messages.js";
+
+function convertImageBlock(image: ImageContent) {
+	return {
+		type: "image" as const,
+		source: {
+			type: "base64" as const,
+			media_type: image.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+			data: image.data,
+		},
+	};
+}
 
 /**
  * Convert content blocks to Anthropic API format
@@ -52,14 +64,7 @@ export function convertContentBlocks(content: (TextContent | ImageContent)[]):
 				text: sanitizeSurrogates(block.text),
 			};
 		}
-		return {
-			type: "image" as const,
-			source: {
-				type: "base64" as const,
-				media_type: block.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-				data: block.data,
-			},
-		};
+		return convertImageBlock(block);
 	});
 
 	// If only images (no text), add placeholder text block
@@ -79,11 +84,11 @@ export function normalizeToolCallId(id: string): string {
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
-export function convertToolResult(msg: ToolResultMessage): ContentBlockParam {
+export function convertToolResult(msg: ToolResultMessage, content = msg.content): ContentBlockParam {
 	return {
 		type: "tool_result",
 		tool_use_id: msg.toolCallId,
-		content: convertContentBlocks(msg.content),
+		content: convertContentBlocks(content),
 		is_error: msg.isError,
 	};
 }
@@ -117,14 +122,7 @@ export function convertMessages(
 							text: sanitizeSurrogates(item.text),
 						};
 					} else {
-						return {
-							type: "image",
-							source: {
-								type: "base64",
-								media_type: item.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-								data: item.data,
-							},
-						};
+						return convertImageBlock(item);
 					}
 				});
 				const filteredBlocks = blocks.filter((b) => {
@@ -200,13 +198,20 @@ export function convertMessages(
 			});
 		} else if (msg.role === "toolResult") {
 			const toolResults: ContentBlockParam[] = [];
+			// Anthropic rejects error tool results that contain anything but text, so their images follow
+			// all tool results of the turn, which must come first in the user message (#10794).
+			const errorImages: ContentBlockParam[] = [];
 			let j = i;
 			while (j < transformedMessages.length) {
 				const next = transformedMessages[j];
 				if (!next || next.role !== "toolResult") {
 					break;
 				}
-				toolResults.push(convertToolResult(next));
+				const split = splitErrorToolResultImages(next);
+				toolResults.push(convertToolResult(next, split?.content));
+				if (split) {
+					errorImages.push({ type: "text", text: split.caption }, ...split.images.map(convertImageBlock));
+				}
 				j++;
 			}
 
@@ -214,7 +219,7 @@ export function convertMessages(
 
 			params.push({
 				role: "user",
-				content: toolResults,
+				content: [...toolResults, ...errorImages],
 			});
 		}
 	}

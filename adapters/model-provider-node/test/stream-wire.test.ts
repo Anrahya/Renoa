@@ -14,12 +14,12 @@ import {
   withOpenCode,
 } from "./stream-support.js";
 
-test("xAI Grok 4.6 sends distinct reasoning_effort values on the chat completions wire", async () => {
+test("xAI Grok 4.6 sends distinct reasoning efforts on the Responses wire", async () => {
   const efforts = ["low", "high", "xhigh"] as const;
   const bodies: string[] = [];
   for (const effort of efforts) {
     const server = await startFakeServer();
-    server.enqueue({ sse: successfulChat(effort) });
+    server.enqueue({ sse: responsesSse(effort) });
     const directory = tempDir();
     try {
       await runStream({
@@ -33,18 +33,22 @@ test("xAI Grok 4.6 sends distinct reasoning_effort values on the chat completion
       const request = server.requests[0];
       assert.ok(request);
       assert.equal(request.method, "POST");
-      assert.equal(request.url, "/v1/chat/completions");
+      assert.equal(request.url, "/v1/responses");
       assert.match(request.headers.authorization ?? "", /^Bearer /);
       const body = JSON.parse(request.body) as {
         model?: string;
-        reasoning_effort?: string;
-        max_completion_tokens?: number;
+        reasoning?: { effort?: string };
+        include?: string[];
+        max_output_tokens?: number;
+        store?: boolean;
         stream?: boolean;
       };
       assert.equal(body.model, "grok-4.6");
-      assert.equal(body.reasoning_effort, effort);
+      assert.equal(body.reasoning?.effort, effort);
+      assert.deepEqual(body.include, ["reasoning.encrypted_content"]);
+      assert.equal(body.store, false);
       assert.equal(body.stream, true);
-      assert.equal(typeof body.max_completion_tokens, "number");
+      assert.equal(typeof body.max_output_tokens, "number");
       bodies.push(request.body);
     } finally {
       await server.close();
@@ -54,15 +58,15 @@ test("xAI Grok 4.6 sends distinct reasoning_effort values on the chat completion
   assert.equal(new Set(bodies).size, 3);
 });
 
-test("OpenCode Go Ox Alpha sends its documented chat, reasoning, and tool fields", async () => {
+test("OpenCode Go GLM-5.3 sends its documented chat, reasoning, and tool fields", async () => {
   const server = await startFakeServer();
-  server.enqueue({ sse: successfulChat("ox") });
+  server.enqueue({ sse: successfulChat("glm") });
   const directory = tempDir();
   try {
     await runStream({
       directory: directory.path,
       provider: "opencode-go",
-      modelId: "ox-alpha-free",
+      modelId: "glm-5.3",
       baseUrl: server.baseUrl,
       credential: { type: "api_key", key: "opencode-test-key" },
       reasoningLevel: "max",
@@ -79,7 +83,7 @@ test("OpenCode Go Ox Alpha sends its documented chat, reasoning, and tool fields
       max_completion_tokens?: number;
       tools?: unknown[];
     };
-    assert.equal(body.model, "ox-alpha-free");
+    assert.equal(body.model, "glm-5.3");
     assert.equal(body.reasoning_effort, "max");
     assert.equal(typeof body.max_tokens, "number");
     assert.equal(body.max_completion_tokens, undefined);
@@ -91,37 +95,37 @@ test("OpenCode Go Ox Alpha sends its documented chat, reasoning, and tool fields
 });
 
 test("each supported transport uses the official method, route, auth, and body fields", async () => {
-  const chat = await startFakeServer();
-  chat.enqueue({ sse: successfulChat("chat") });
-  const chatDir = tempDir();
+  const xai = await startFakeServer();
+  xai.enqueue({ sse: responsesSse("xai") });
+  const xaiDir = tempDir();
   try {
     await runStream({
-      directory: chatDir.path,
+      directory: xaiDir.path,
       modelId: "grok-4.6",
-      baseUrl: chat.baseUrl,
+      baseUrl: xai.baseUrl,
       credential: oauthCredential(),
       reasoningLevel: "high",
     });
-    const request = chat.requests[0];
+    const request = xai.requests[0];
     assert.ok(request);
     assert.equal(request.method, "POST");
-    assert.equal(request.url, "/v1/chat/completions");
+    assert.equal(request.url, "/v1/responses");
     assert.match(request.headers.authorization ?? "", /^Bearer access-token-old$/);
-    const chatBody = JSON.parse(request.body) as {
+    const xaiBody = JSON.parse(request.body) as {
       model?: string;
-      reasoning_effort?: string;
-      messages?: unknown[];
+      reasoning?: { effort?: string };
+      input?: unknown[];
     };
-    assert.equal(chatBody.model, "grok-4.6");
-    assert.equal(chatBody.reasoning_effort, "high");
-    assert.ok(Array.isArray(chatBody.messages));
+    assert.equal(xaiBody.model, "grok-4.6");
+    assert.equal(xaiBody.reasoning?.effort, "high");
+    assert.ok(Array.isArray(xaiBody.input));
   } finally {
-    await chat.close();
-    chatDir.close();
+    await xai.close();
+    xaiDir.close();
   }
 
   await withOpenCode(
-    "glm-5.1",
+    "glm-5.3",
     (server) => {
       server.enqueue({ sse: successfulChat("glm") });
       return server.baseUrl;
@@ -137,14 +141,14 @@ test("each supported transport uses the official method, route, auth, and body f
         max_tokens?: number;
         max_completion_tokens?: number;
       };
-      assert.equal(body.model, "glm-5.1");
+      assert.equal(body.model, "glm-5.3");
       assert.equal(typeof body.max_tokens, "number");
       assert.equal(body.max_completion_tokens, undefined);
     },
   );
 
   await withOpenCode(
-    "grok-4.5",
+    "grok-4.7",
     (server) => {
       server.enqueue({ sse: responsesSse("responses") });
       return server.baseUrl;
@@ -160,7 +164,7 @@ test("each supported transport uses the official method, route, auth, and body f
         reasoning?: { effort?: string };
         stream?: boolean;
       };
-      assert.equal(body.model, "grok-4.5");
+      assert.equal(body.model, "grok-4.7");
       assert.equal(body.stream, true);
       assert.equal(typeof body.reasoning?.effort, "string");
     },

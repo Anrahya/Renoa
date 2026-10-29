@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -53,9 +53,11 @@ export function getCacheControl(
 
 export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
+export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
 export function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
-): Required<AnthropicMessagesCompat> {
+): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
 	return {
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? true,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
@@ -71,6 +73,8 @@ export interface AnthropicOptions extends StreamOptions {
 	thinkingEnabled?: boolean;
 	thinkingBudgetTokens?: number;
 	thinkingDisplay?: AnthropicThinkingDisplay;
+	/** Effort for adaptive thinking models (`compat.forceAdaptiveThinking`). */
+	effort?: AnthropicEffort;
 	interleavedThinking?: boolean;
 	toolChoice?: "auto" | "any" | "none" | { type: "tool"; name: string };
 }
@@ -122,11 +126,20 @@ export function buildParams(
 	if (model.reasoning) {
 		if (options?.thinkingEnabled) {
 			const display: AnthropicThinkingDisplay = options.thinkingDisplay ?? "summarized";
-			params.thinking = {
-				type: "enabled",
-				budget_tokens: options.thinkingBudgetTokens || 1024,
-				display,
-			};
+			if (model.compat?.forceAdaptiveThinking === true) {
+				// Adaptive thinking: Claude decides when and how much to think.
+				params.thinking = { type: "adaptive", display };
+				if (options.effort) {
+					params.output_config = { effort: options.effort };
+				}
+			} else {
+				// Budget-based thinking for older models
+				params.thinking = {
+					type: "enabled",
+					budget_tokens: options.thinkingBudgetTokens || 1024,
+					display,
+				};
+			}
 		} else if (options?.thinkingEnabled === false && model.thinkingLevelMap?.off !== null) {
 			params.thinking = { type: "disabled" };
 		}

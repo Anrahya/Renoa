@@ -16,7 +16,7 @@ import {
 import { getSupportedThinkingLevels } from "./upstream/thinking.js";
 import type { Api, Model, ModelCost, ThinkingLevelMap } from "./upstream/types.js";
 
-const OFFICIAL_MODELS_URL = "https://opencode.ai/zen/go/v1/models";
+const OFFICIAL_MODELS_URL = "https://opencode.ai/inference/go/v1/models";
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const REQUEST_TIMEOUT_MS = 5_000;
 const MAX_OFFICIAL_BYTES = 256 * 1024;

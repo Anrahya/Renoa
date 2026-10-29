@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 
 import type { Credential } from "../src/credentials.js";
-import type { WireStreamRecord } from "../src/contract.js";
+import type { ProviderId, WireModelRequest, WireStreamRecord } from "../src/contract.js";
 import { ProviderFailure } from "../src/errors.js";
 import { loadRuntime } from "../src/runtime.js";
 import { streamModel } from "../src/stream.js";
@@ -20,13 +20,14 @@ export interface StreamOptions {
   modelId: string;
   baseUrl: string;
   credential: Credential;
-  provider?: "xai" | "opencode-go";
-  reasoningLevel?: "low" | "medium" | "high" | "xhigh" | "max";
+  provider?: ProviderId;
+  reasoningLevel?: "off" | "low" | "medium" | "high" | "xhigh" | "max";
   clock?: ManualClock;
   signal?: AbortSignal;
   releases?: number;
   emit?: (record: WireStreamRecord) => void;
   fetch?: typeof fetch;
+  request?: WireModelRequest;
 }
 
 export async function runStream(options: StreamOptions): Promise<WireStreamRecord[]> {
@@ -46,7 +47,7 @@ export async function runStream(options: StreamOptions): Promise<WireStreamRecor
   try {
     const work = streamModel({
       runtime,
-      request: userRequest(),
+      request: options.request ?? userRequest(),
       sessionId: "11111111-1111-4111-8111-111111111111",
       maxOutputTokens: 128,
       signal: abort,

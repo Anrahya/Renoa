@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -338,6 +338,20 @@ export async function processResponsesStream<TApi extends Api>(
 	}
 	if (!sawTerminalResponseEvent) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
+	}
+	// The agent runs every tool call in the final message. Refuse to hand over calls whose
+	// output_item.done never arrived: their arguments may be cut off or mixed up, e.g. when a
+	// non-compliant server omits output_index. Finished calls have their scratch buffers removed.
+	if (output.stopReason === "toolUse") {
+		for (const block of output.content) {
+			if (block.type !== "toolCall") continue;
+			const toolCall = block as StreamingToolCall;
+			if (toolCall.partialJson !== undefined) {
+				throw new Error(
+					`OpenAI Responses stream completed with an unfinished tool call: ${toolCall.name} (${toolCall.id})`,
+				);
+			}
+		}
 	}
 }
 

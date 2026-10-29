@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -27,6 +27,7 @@ import { parseStreamingJson } from "./json-parse.js";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.js";
 import { iterateAnthropicEvents } from "./anthropic-sse.js";
 import {
+	type AnthropicEffort,
 	type AnthropicOptions,
 	buildParams,
 	resolveCacheRetention,
@@ -299,6 +300,26 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	return stream;
 };
 
+function mapThinkingLevelToEffort(
+	model: Model<"anthropic-messages">,
+	level: SimpleStreamOptions["reasoning"],
+): AnthropicEffort {
+	const mapped = level ? model.thinkingLevelMap?.[level] : undefined;
+	if (typeof mapped === "string") return mapped as AnthropicEffort;
+
+	switch (level) {
+		case "minimal":
+		case "low":
+			return "low";
+		case "medium":
+			return "medium";
+		case "high":
+			return "high";
+		default:
+			return "high";
+	}
+}
+
 export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -309,6 +330,17 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	const base = buildBaseOptions(model, context, options, options?.apiKey);
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
+	}
+
+	// For models with adaptive thinking: use an effort level.
+	// For older models: use budget-based thinking.
+	if (model.compat?.forceAdaptiveThinking === true) {
+		const effort = mapThinkingLevelToEffort(model, options.reasoning);
+		return stream(model, context, {
+			...base,
+			thinkingEnabled: true,
+			effort,
+		} satisfies AnthropicOptions);
 	}
 
 	const adjusted = adjustMaxTokensForThinking(

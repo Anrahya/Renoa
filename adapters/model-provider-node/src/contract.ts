@@ -6,7 +6,13 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type ProviderId = "xai" | "opencode-go";
+export const PROVIDER_IDS = ["xai", "opencode-go", "deepseek"] as const;
+
+export type ProviderId = (typeof PROVIDER_IDS)[number];
+
+export function isProviderId(value: unknown): value is ProviderId {
+  return (PROVIDER_IDS as readonly unknown[]).includes(value);
+}
 
 export type ReasoningLevel =
   | "off"
@@ -187,6 +193,8 @@ export function providerDisplayName(provider: string): string {
       return "xAI";
     case "opencode-go":
       return "OpenCode Go";
+    case "deepseek":
+      return "DeepSeek";
     default:
       return provider;
   }

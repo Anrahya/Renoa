@@ -13,10 +13,10 @@ use serde_json::Value;
 
 const SSE: &str = concat!(
     "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,",
-    "\"model\":\"grok-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",",
+    "\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",",
     "\"content\":\"from-compiled-adapter\"},\"finish_reason\":null}]}\n\n",
     "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,",
-    "\"model\":\"grok-4.6\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],",
+    "\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],",
     "\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"total_tokens\":16,",
     "\"prompt_tokens_details\":{\"cached_tokens\":2,\"cache_write_tokens\":1}}}\n\n",
     "data: [DONE]\n\n",
@@ -26,7 +26,7 @@ const SSE: &str = concat!(
 /// the provider behavior that produced the live unknown outcome in issue #28.
 const TRUNCATED_SSE: &str = concat!(
     "data: {\"id\":\"chatcmpl-truncated\",\"object\":\"chat.completion.chunk\",\"created\":1,",
-    "\"model\":\"grok-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",",
+    "\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",",
     "\"content\":\"discarded-partial-answer\"},\"finish_reason\":null}]}\n\n",
 );
 
@@ -48,8 +48,13 @@ pub(super) fn assert_complete_chat_requests(requests: &[Vec<u8>]) {
             .map(|header_end| &request[header_end + 4..])
             .expect("HTTP body");
         let parsed: Value = serde_json::from_slice(body).expect("JSON body");
-        assert_eq!(parsed["model"], "grok-4.6");
+        assert_eq!(parsed["model"], "deepseek-flash");
         assert!(parsed.get("messages").is_some());
+        assert!(
+            parsed["max_tokens"].is_u64(),
+            "DeepSeek output cap: {parsed}"
+        );
+        assert_eq!(parsed["thinking"]["type"], "enabled");
     }
 }
 
