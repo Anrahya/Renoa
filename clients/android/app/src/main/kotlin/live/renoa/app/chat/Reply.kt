@@ -3,7 +3,9 @@ package live.renoa.app.chat
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -36,9 +38,16 @@ import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
 
-/** A finished reply, from its parse, rendered as markdown in Renoa's type and colours. */
+/**
+ * A finished reply, [text] as [parsed], rendered as markdown in Renoa's type and colours. A reply
+ * the parser could not read shows as its plain text.
+ */
 @Composable
-fun Reply(parsed: State, modifier: Modifier = Modifier) {
+fun Reply(text: String, parsed: State, modifier: Modifier = Modifier) {
+    if (parsed !is State.Success) {
+        Text(text, modifier, style = RenoaType.Body, color = Renoa.colors.foregroundSoft)
+        return
+    }
     ReplyStyle(parsed.referenceLinkHandler) { look ->
         Markdown(state = parsed, colors = look.colors, typography = look.typography, padding = look.padding, dimens = look.dimens, annotator = look.annotator, modifier = modifier)
     }
@@ -46,8 +55,9 @@ fun Reply(parsed: State, modifier: Modifier = Modifier) {
 
 /**
  * A reply still arriving. Each new piece of [text] is parsed on its own, against what came before,
- * so the reply is not parsed whole for every word. What is on screen stays until the next piece is
- * parsed, so the reply never blanks between words.
+ * so the reply is not parsed whole for every word. Text that does not carry on from what was parsed,
+ * as when the agent starts its reply again, starts a new parse; until that parse has something to
+ * show, the whole text is parsed at once instead, so the reply never blanks.
  */
 @Composable
 fun ArrivingReply(text: String, modifier: Modifier = Modifier) {
@@ -59,17 +69,23 @@ fun ArrivingReply(text: String, modifier: Modifier = Modifier) {
             val parsed = stream.content
             if (!text.startsWith(parsed)) restarts++ else if (text.length > parsed.length) stream.append(text.substring(parsed.length))
         }
-        ReplyStyle(stream.referenceLinkHandler) { look ->
-            Markdown(
-                streamingMarkdownState = stream, colors = look.colors, typography = look.typography, padding = look.padding, dimens = look.dimens, annotator = look.annotator, modifier = modifier,
-            )
+        val snapshot by stream.snapshot.collectAsState()
+        if (snapshot.stableAst.isEmpty() && snapshot.unstableAstTail.isEmpty()) {
+            Reply(text, remember(text) { parseMarkdown(text) }, modifier)
+        } else {
+            ReplyStyle(stream.referenceLinkHandler) { look ->
+                Markdown(
+                    streamingMarkdownState = stream, colors = look.colors, typography = look.typography, padding = look.padding, dimens = look.dimens, annotator = look.annotator, modifier = modifier,
+                )
+            }
         }
     }
 }
 
 /**
  * Finished replies' parses by message id, so a reply scrolled back into view is not parsed again.
- * It holds the [capacity] most recently shown; a message whose text changed is parsed afresh.
+ * It holds the [capacity] most recently shown; a message whose text changed is parsed afresh, and
+ * one the parser could not read is never kept. Main thread only: it is not synchronised.
  */
 internal class ParsedReplies(private val capacity: Int = 200) {
     private val parses =
@@ -77,7 +93,8 @@ internal class ParsedReplies(private val capacity: Int = 200) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<String, State>>) = size > capacity
         }
 
-    fun of(id: String, text: String): State = parses[id]?.takeIf { it.first == text }?.second ?: parseMarkdown(text).also { parses[id] = text to it }
+    fun of(id: String, text: String): State =
+        parses[id]?.takeIf { it.first == text }?.second ?: parseMarkdown(text).also { if (it is State.Success) parses[id] = text to it }
 }
 
 /** Everything the markdown renderer takes to draw a reply Renoa's way. */

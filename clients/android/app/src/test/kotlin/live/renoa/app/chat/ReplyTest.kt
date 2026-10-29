@@ -5,7 +5,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import com.mikepenz.markdown.model.State
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 
@@ -49,5 +51,15 @@ class ReplyTest {
         parses.of("a", "**one, edited**")
         parses.of("c", "three")
         assertNotSame(b, parses.of("b", "two"), "the least recently shown went first")
+    }
+
+    @Test
+    fun aReplyTheParserCannotReadIsNotKept() {
+        val parses = ParsedReplies()
+        // Quotes nested this deep overflow the parser's stack.
+        val deep = ">".repeat(100_000) + " x"
+        val first = parses.of("a", deep)
+        assertIs<State.Error>(first)
+        assertNotSame(first, parses.of("a", deep), "an unreadable reply is tried again, not kept")
     }
 }

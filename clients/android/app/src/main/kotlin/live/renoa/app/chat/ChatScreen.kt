@@ -226,7 +226,7 @@ private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedR
         // The owner's own words stay plain; an agent's reply is markdown.
         Speaker.Agent -> {
             val modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f)
-            if (streaming) ArrivingReply(message.text, modifier) else Reply(parses.of(message.id, message.text), modifier)
+            if (streaming) ArrivingReply(message.text, modifier) else Reply(message.text, parses.of(message.id, message.text), modifier)
         }
     }
 }

@@ -103,6 +103,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import live.renoa.app.agents.StreamingReply
 import live.renoa.app.chat.ArrivingReply
+import live.renoa.app.chat.Reply
+import com.mikepenz.markdown.model.State as MarkdownState
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
@@ -403,7 +405,7 @@ class ScreensTest : ScreenTest() {
 
         // Anything else is its words alone: nothing that looks tappable, nothing that is.
         val other = textOf(compose.onNode(hasText("Not for here:", substring = true)))
-        assertEquals("Not for here: call them, run, a file, an app or me@example.com.", other.text)
+        assertEquals("Not for here: call them, run, a file, an app, https://x.com or me@example.com.", other.text)
         assertEquals(emptyList(), other.getLinkAnnotations(0, other.length))
         assertTrue(other.spanStyles.none { it.item.textDecoration == TextDecoration.Underline }, "no link styling")
         snapshot("chat-markdown")
@@ -453,6 +455,33 @@ class ScreensTest : ScreenTest() {
         open = false
         compose.waitForIdle()
         assertEquals(0, wifi.activeLockCount)
+    }
+
+    @Test
+    fun aReplyTheAgentStartsAgainShowsInEveryFrameAndThenShowsTheNewText() {
+        var text by mutableStateOf("abc")
+        compose.mainClock.autoAdvance = false
+        show { ArrivingReply(text, Modifier.testTag("reply")) }
+        compose.mainClock.advanceTimeByFrame()
+        val drawn = hasAnyAncestor(hasTestTag("reply")) and SemanticsMatcher.keyIsDefined(SemanticsProperties.Text)
+        for (more in listOf("abc and", "abc and some", "abc and some more words")) {
+            compose.runOnUiThread { text = more }
+            compose.mainClock.advanceTimeByFrame()
+        }
+        // The agent starts again: the new text does not carry on from the old, with no empty text between.
+        compose.runOnUiThread { text = "x" }
+        repeat(4) {
+            compose.mainClock.advanceTimeByFrame()
+            assertTrue(compose.onAllNodes(drawn, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty(), "frame $it after the restart is blank")
+        }
+        compose.onNode(hasText("x") and hasAnyAncestor(hasTestTag("reply")), useUnmergedTree = true).assertExists()
+        compose.onAllNodes(hasText("abc", substring = true), useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun aReplyTheParserCannotReadShowsAsItsPlainText() {
+        show { Reply("**Still** here", MarkdownState.Error(StackOverflowError())) }
+        compose.onNodeWithText("**Still** here").assertIsDisplayed()
     }
 
     @Test
@@ -714,7 +743,7 @@ private val MARKDOWN_REPLY =
 
     Recipe at [the blog](https://example.com/dal), [the shout](HTTP://example.com/up) or www.example.com.
 
-    Not for here: [call them](tel:5551234), [run](javascript:alert(1)), [a file](content://media/1), [an app](intent://scan#Intent;end) or <me@example.com>.
+    Not for here: [call them](tel:5551234), [run](javascript:alert(1)), [a file](content://media/1), [an app](intent://scan#Intent;end), [https://x.com](tel:1) or <me@example.com>.
     """.trimIndent()
 
 /** A reply cut off mid-fence, so that streamed in it passes through every kind of unfinished markdown. */
