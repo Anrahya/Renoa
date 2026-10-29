@@ -104,8 +104,9 @@ class FakeAgentRepository(
             val today = at.with(seed.at)
             val ran = if (today.isAfter(at)) today.minusDays(1) else today
             val on = routineOn.getValue(seed.id)
+            val daily = ObservedSchedule("cron", expression = "${seed.at.minute} ${seed.at.hour} * * *", timezone = at.zone.id)
             Routine(
-                seed.id, FakeWorld.idFor(seed.agentName), seed.name, seed.schedule, on,
+                seed.id, FakeWorld.idFor(seed.agentName), seed.name, scheduleWords(daily, at.zone), on,
                 next = if (on) ran.plusDays(1).toInstant() else null,
                 lastRun = if (on) LastRun(ran.toInstant(), RunOutcome.Done) else null,
             )

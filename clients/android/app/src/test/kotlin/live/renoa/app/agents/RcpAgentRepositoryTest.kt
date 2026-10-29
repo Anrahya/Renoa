@@ -6,6 +6,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -98,6 +99,9 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     /** When set, the next observation ends with it instead of reaching the Host. */
     var observationFailure: Exception? = null
+
+    /** When set, the next observation reads the automations, then answers only once this completes. */
+    var observationHeld: CompletableDeferred<Unit>? = null
 
     /** When set, the next attach drops the connection after applying this many events. */
     var dropAttachAfter: Int? = null
@@ -220,7 +224,11 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
                 observationFailure = null
                 throw it
             }
-            val listed = automations ?: return HostAnswer(404, "{\"error\":\"not found\"}")
+            val listed = automations?.toList() ?: return HostAnswer(404, "{\"error\":\"not found\"}")
+            observationHeld?.let {
+                observationHeld = null
+                it.await()
+            }
             return HostAnswer(200, buildJsonObject { put("automations", JsonArray(listed)) }.toString())
         }
         hostCalls += Triple(method, path, body)
@@ -664,7 +672,7 @@ class RcpAgentRepositoryTest {
             put("revision", revision)
             put("next_due_ms", NEXT)
             put("pending_runs", 0)
-            lastRun?.let { put("last_run", it) }
+            put("last_run", lastRun ?: JsonNull)
         }
 
     @Test
@@ -672,7 +680,9 @@ class RcpAgentRepositoryTest {
         val tifa = Uuid.random()
         surface.targets += TargetSummary(surface.node, "agent:$tifa", "Tifa")
         val ran = buildJsonObject { put("id", Uuid.random().toString()); put("status", "failed"); put("due_ms", NEXT - 86_400_000); put("finished_at_ms", NEXT - 86_000_000) }
-        surface.automations = mutableListOf(automation("dinner", tifa, "30 19 * * *", lastRun = ran), automation("brief", Uuid.random(), "0 7 * * 1-5", enabled = false))
+        // The Host sends null for a finish time it did not keep.
+        val skipped = buildJsonObject { put("id", Uuid.random().toString()); put("status", "skipped"); put("due_ms", NEXT - 3_600_000); put("finished_at_ms", JsonNull) }
+        surface.automations = mutableListOf(automation("dinner", tifa, "30 19 * * *", lastRun = ran), automation("brief", Uuid.random(), "0 7 * * 1-5", enabled = false, lastRun = skipped))
         val repo = started()
 
         val (dinner, brief) = repo.routines.value
@@ -680,7 +690,7 @@ class RcpAgentRepositoryTest {
         assertNull(brief.agentId, "an agent that is not on the roster is not guessed")
         assertFalse(brief.on)
         assertNull(brief.next, "a routine that is off runs at no time")
-        assertNull(brief.lastRun)
+        assertEquals(LastRun(Instant.ofEpochMilli(NEXT - 3_600_000), RunOutcome.Skipped), brief.lastRun, "without a finish time, it is when the run was due")
     }
 
     @Test
@@ -689,10 +699,17 @@ class RcpAgentRepositoryTest {
         assertTrue(repo.routines.value.isEmpty(), "a Host that lists none shows none, and the chats still open")
         assertEquals(1, repo.agents.value.size)
 
-        surface.automations = mutableListOf(automation("a", Uuid.random(), "0 9 * * *"))
+        val optimus = Uuid.random()
+        surface.automations = mutableListOf(automation("a", optimus, "0 9 * * *"))
         advanceTimeBy(1.minutes)
         runCurrent()
         assertEquals(listOf("a"), repo.routines.value.map { it.id })
+        assertNull(repo.routines.value.single().agentId)
+
+        surface.targets += TargetSummary(surface.node, "agent:$optimus", "Optimus")
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals("${surface.node}/agent:$optimus", repo.routines.value.single().agentId, "the agent's id once it is on the roster")
 
         surface.automations?.add(automation("b", Uuid.random(), "0 10 * * *"))
         surface.observationFailure = RcpException(RcpErrorCode.NodeOffline, "Host offline", 1)
@@ -729,6 +746,27 @@ class RcpAgentRepositoryTest {
         assertTrue(repo.routines.value.single().on, "the conflict read the routine again")
 
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.setRoutine("gone", on = true, Uuid.random().toString()) }.problem)
+    }
+
+    @Test
+    fun anObservationThatAnswersAfterASwitchDoesNotUndoIt() = runTest {
+        surface.automations = mutableListOf(automation("a", Uuid.random(), "0 9 * * *", revision = 4))
+        val repo = started()
+        val held = CompletableDeferred<Unit>()
+        surface.observationHeld = held
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertTrue(surface.observationHeld == null, "the roster check has read revision 4 and waits")
+
+        repo.setRoutine("a", on = false, Uuid.random().toString())
+        held.complete(Unit)
+        runCurrent()
+        assertFalse(repo.routines.value.single().on, "the older answer does not turn it back on")
+
+        repo.setRoutine("a", on = true, Uuid.random().toString())
+        val sent = Json.parseToJsonElement(checkNotNull(surface.hostCalls.last().third)).jsonObject
+        assertEquals("5", sent.getValue("expected_revision").jsonPrimitive.content, "the next change starts from the newer revision")
+        assertTrue(repo.routines.value.single().on)
     }
 }
 

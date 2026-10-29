@@ -73,7 +73,7 @@ internal data class ObservedSchedule(val kind: String, val at: String? = null, v
 internal data class ObservedRun(
     val status: RunOutcome,
     @SerialName("due_ms") val dueMs: Long,
-    /** Absent for runs recorded before the Host kept it. */
+    /** Null for runs recorded before the Host kept it. */
     @SerialName("finished_at_ms") val finishedAtMs: Long? = null,
 )
 
@@ -89,7 +89,9 @@ internal class HostRoutines(private val host: HostClient) {
 
     /**
      * Turns [automation] on or off from the revision the app last read, so a change made elsewhere
-     * meanwhile is a conflict, not an overwrite. Returns the automation as the Host now has it.
+     * meanwhile is a conflict, not an overwrite. Returns [automation] with the revision, state and
+     * next run from the Host's receipt; a repeated [operationId] gets the first receipt back, which
+     * can be older than a later change.
      */
     suspend fun setEnabled(automation: ObservedAutomation, on: Boolean, operationId: String): ObservedAutomation {
         val body =

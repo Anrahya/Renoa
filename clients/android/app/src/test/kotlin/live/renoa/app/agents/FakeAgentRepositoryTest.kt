@@ -422,6 +422,7 @@ class FakeAgentRepositoryTest {
         val repo = FakeAgentRepository(backgroundScope, FakeWorld.demo(), now = { evening })
         val github = repo.routines.value.first { it.id == "github" }
         assertEquals("optimus", github.agentId)
+        assertEquals("Every day at 6:30 PM", github.schedule)
         assertEquals(evening.withHour(18).withMinute(30).toInstant(), github.lastRun?.at, "6:30 PM has passed, so it ran today")
         assertEquals(evening.withHour(18).withMinute(30).plusDays(1).toInstant(), github.next)
         val checkin = repo.routines.value.first { it.id == "checkin" }

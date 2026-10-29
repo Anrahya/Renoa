@@ -24,12 +24,12 @@ private val DATE = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)
  * A Host schedule in plain words, such as "Every day at 6:30 PM", "Every weekday at 7:30 AM" or
  * "Every Thursday at 7:15 PM". A cron schedule's times are read in its own timezone, which is named
  * when its clock differs from [here]'s; a one-off time is shown in [here]. A shape this does not
- * know reads [ON_A_SCHEDULE] rather than a guess.
+ * know, or a timezone the phone cannot read, reads [ON_A_SCHEDULE] rather than a guess.
  */
 internal fun scheduleWords(schedule: ObservedSchedule, here: ZoneId): String =
     when (schedule.kind) {
         "once" -> schedule.at?.let { once(it, here) }
-        "cron" -> schedule.expression?.let(::cron)?.let { it + zoneNote(schedule.timezone, here) }
+        "cron" -> schedule.expression?.let(::cron)?.let { words -> zoneNote(schedule.timezone, here)?.let { words + it } }
         else -> null
     } ?: ON_A_SCHEDULE
 
@@ -53,7 +53,9 @@ private fun cron(expression: String): String? {
         if (day != "*" || weekday != "*") return null
         return when {
             hour == "*" -> if (m == 0) "Every hour, on the hour" else "Every hour at $m minutes past"
-            hour.startsWith("*/") -> hour.removePrefix("*/").toIntOrNull()?.takeIf { it in 2..23 }?.let { "Every $it hours" }
+            // The Host counts a step from midnight each day, so only a step that divides the day keeps its gap.
+            hour.startsWith("*/") ->
+                hour.removePrefix("*/").toIntOrNull()?.takeIf { it in 2..12 && 24 % it == 0 }?.let { if (m == 0) "Every $it hours, on the hour" else "Every $it hours at $m minutes past" }
             else -> null
         }
     }
@@ -61,7 +63,8 @@ private fun cron(expression: String): String? {
     return when {
         day == "*" && weekday == "*" -> "Every day $at"
         day == "*" -> days(weekday)?.let { "$it $at" }
-        weekday == "*" -> day.toIntOrNull()?.takeIf { it in 1..31 }?.let { "On the ${ordinal(it)} of every month $at" }
+        // A day some months lack is skipped in those months, so it is not "every month".
+        weekday == "*" -> day.toIntOrNull()?.takeIf { it in 1..28 }?.let { "On the ${ordinal(it)} of every month $at" }
         else -> null
     }
 }
@@ -102,13 +105,16 @@ private fun ordinal(n: Int): String =
             else -> "th"
         }
 
-/** ", Kolkata time" when the schedule's timezone keeps a different clock from [here]; nothing when it is the same. */
-private fun zoneNote(timezone: String?, here: ZoneId): String {
+/**
+ * ", New York time" when the schedule's timezone keeps a different clock from [here], nothing when it
+ * is the same, and null when the phone cannot read it, so the times are not shown on the wrong clock.
+ */
+private fun zoneNote(timezone: String?, here: ZoneId): String? {
     val zone =
         try {
-            ZoneId.of(timezone ?: return "")
+            ZoneId.of(timezone ?: return null)
         } catch (unknown: DateTimeException) {
-            return ""
+            return null
         }
     if (zone.rules == here.rules) return ""
     return ", ${zone.id.substringAfterLast('/').replace('_', ' ')} time"

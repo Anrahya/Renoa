@@ -35,8 +35,9 @@ import kotlin.uuid.Uuid
  * on every roster check.
  *
  * Making an agent, reading its profile and the routines are Host control, carried by the same
- * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check. A new agent is an `agent:<id>` target once its node next advertises; [create]
- * waits for that and follows its chat. Abilities and edits are not on the Host's agent API yet,
+ * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check.
+ * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
+ * follows its chat. Abilities and edits are not on the Host's agent API yet,
  * so those calls are refused as unavailable.
  */
 class RcpAgentRepository(
@@ -182,7 +183,10 @@ class RcpAgentRepository(
         }
     }
 
-    /** Reads the routines again. While the Host cannot be read, the last ones stay. */
+    /**
+     * Reads the routines again. While the Host cannot be read, the last ones stay. The Host answers
+     * calls in any order, so a routine the app already holds at a newer revision keeps it.
+     */
     private suspend fun readRoutines() {
         val listed =
             try {
@@ -191,8 +195,9 @@ class RcpAgentRepository(
                 return
             }
         synchronized(lock) {
+            val held = automations.toMap()
             automations.clear()
-            listed.forEach { automations[it.id] = it }
+            listed.forEach { read -> automations[read.id] = held[read.id]?.takeIf { it.revision > read.revision } ?: read }
         }
         publish()
     }
@@ -208,7 +213,11 @@ class RcpAgentRepository(
                 if (refused.problem == Problem.Conflict || refused.problem == Problem.NotFound) readRoutines()
                 throw refused
             }
-        synchronized(lock) { automations[routineId] = changed }
+        synchronized(lock) {
+            // A read that answered meanwhile may have dropped the routine or seen a newer revision; either stands.
+            val held = automations[routineId]
+            if (held != null && held.revision < changed.revision) automations[routineId] = changed
+        }
         publish()
     }
 

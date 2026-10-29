@@ -13,8 +13,8 @@ class AgentSeed(
     val doing: String = "Thinking about what you said",
 )
 
-/** A scripted routine: what it is, and the time of day it runs, from which the fake works out its runs. */
-class RoutineSeed(val id: String, val agentName: String, val name: String, val schedule: String, val at: LocalTime, val on: Boolean = true)
+/** A scripted routine that runs every day at [at], from which the fake works out its words and runs. */
+class RoutineSeed(val id: String, val agentName: String, val name: String, val at: LocalTime, val on: Boolean = true)
 
 /** The scripted roster the app shows until the real repository exists. */
 object FakeWorld {
@@ -68,12 +68,12 @@ object FakeWorld {
     /** What the demo agents do every day. */
     fun routines(): List<RoutineSeed> =
         listOf(
-            RoutineSeed("brief", "Renoa", "Morning brief", "Every day at 7:30 AM", LocalTime.of(7, 30)),
-            RoutineSeed("lunch", "Tifa", "Lunch photo", "Every day at 1 PM", LocalTime.of(13, 0), on = false),
-            RoutineSeed("github", "Optimus", "GitHub check", "Every day at 6:30 PM", LocalTime.of(18, 30)),
-            RoutineSeed("prices", "Nagisa", "Prices and groceries", "Every day at 7:15 PM", LocalTime.of(19, 15)),
-            RoutineSeed("posts", "Kai'Sa", "Posts worth a reply", "Every day at 8 PM", LocalTime.of(20, 0)),
-            RoutineSeed("checkin", "Renoa", "Evening check-in", "Every day at 9 PM", LocalTime.of(21, 0)),
+            RoutineSeed("brief", "Renoa", "Morning brief", LocalTime.of(7, 30)),
+            RoutineSeed("lunch", "Tifa", "Lunch photo", LocalTime.of(13, 0), on = false),
+            RoutineSeed("github", "Optimus", "GitHub check", LocalTime.of(18, 30)),
+            RoutineSeed("prices", "Nagisa", "Prices and groceries", LocalTime.of(19, 15)),
+            RoutineSeed("posts", "Kai'Sa", "Posts worth a reply", LocalTime.of(20, 0)),
+            RoutineSeed("checkin", "Renoa", "Evening check-in", LocalTime.of(21, 0)),
         )
 
     /** The owner's own day: food, posting, new projects, groceries and deals. No meetings, no flights. */
