@@ -3,6 +3,7 @@ package live.renoa.app.agents
 import kotlinx.coroutines.test.runTest
 import live.renoa.rcp.PendingTextCommand
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,6 +48,25 @@ class SavedOutboxTest {
         val next = command("hello")
         outbox.enqueueCommand(next)
         assertEquals(listOf(next), SavedOutbox(file).pendingCommands())
+    }
+
+    @Test
+    fun anOutboxThatCannotBeReadAtAllIsLeftAloneAndRefusesNewMessages() = runTest {
+        file.mkdir()
+        assertFailsWith<IOException>("not taken for an empty outbox") { SavedOutbox(file).pendingCommands() }
+        assertFailsWith<IllegalStateException> { SavedOutbox(file).enqueueCommand(command("hello")) }
+        assertTrue(file.isDirectory, "not written over")
+    }
+
+    @Test
+    fun forgettingClearsTheOutboxOnDiskAndAnyHalfWrittenOne() = runTest {
+        val outbox = SavedOutbox(file)
+        outbox.enqueueCommand(command("hello"))
+        File(dir, "outbox.json.new").writeText("[]")
+        outbox.forget()
+        assertTrue(outbox.pendingCommands().isEmpty())
+        assertTrue(SavedOutbox(file).pendingCommands().isEmpty())
+        assertEquals(emptyList(), dir.list()?.toList())
     }
 
     @Test

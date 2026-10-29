@@ -159,12 +159,13 @@ class RcpAgentRepository(
      * and replays only what follows. One agent that cannot be opened does not hold up the others.
      */
     private suspend fun follow(targets: List<TargetSummary>) = following.withLock {
-        val unsent = state.pendingCommands()
         for (target in targets) {
             val room = synchronized(lock) { rooms.getOrPut(agentId(target)) { Room(target, chatTaskId(target.nodeId, target.target)) } }
             if (room.attached) continue
-            // Sent before the app last closed, as far as this launch knows: shown until its record arrives.
-            unsent.filter { it.taskId == room.taskId }.takeIf { it.isNotEmpty() }?.let { mine -> update(room) { mine.forEach { sending(it.commandId, it.text) } } }
+            // Sent before the app last closed: shown until its record arrives. Read once the room exists,
+            // so a refusal from here on reaches the room and outlasts this read.
+            val unsent = state.pendingCommands().filter { it.taskId == room.taskId }
+            if (unsent.isNotEmpty()) update(room) { unsent.forEach { sending(it.commandId, it.text) } }
             try {
                 surface.openTask(room.taskId, target.nodeId, target.target)
                 surface.attach(room.taskId, live = { commandId, activity -> update(room) { live(commandId, activity) } }) { event ->

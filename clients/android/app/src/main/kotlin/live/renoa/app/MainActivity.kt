@@ -25,6 +25,7 @@ import live.renoa.rcp.WebSocketRcpSurface
 class RenoaApplication : Application() {
     private var repository: AgentRepository? = null
     private var scope: CoroutineScope? = null
+    private var outbox: SavedOutbox? = null
 
     /**
      * The owner's Renoa, connected on first use and kept while the process lives. The first use
@@ -34,7 +35,7 @@ class RenoaApplication : Application() {
     fun repository(): AgentRepository =
         repository ?: run {
             val saved = checkNotNull(SignInStore(this).load()?.takeIf { it.origin == RENOA_ORIGIN }) { "not signed in" }
-            val state = SavedOutbox(outbox())
+            val state = SavedOutbox(outboxFile())
             val authentication = Authentication.Device(saved.credentials) { bytes -> DeviceKeys.getOrCreate().sign(bytes) }
             val surface = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication, state)
             val running = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -42,6 +43,7 @@ class RenoaApplication : Application() {
                 it.start()
                 repository = it
                 scope = running
+                outbox = state
             }
         }
 
@@ -51,18 +53,20 @@ class RenoaApplication : Application() {
      * with a new key.
      */
     suspend fun signOut() {
-        synchronized(this) {
-            scope?.cancel()
-            scope = null
-            repository = null
-        }
+        val held =
+            synchronized(this) {
+                scope?.cancel()
+                scope = null
+                repository = null
+                outbox.also { outbox = null }
+            }
         DeviceKeys.forget()
         SignInStore(this).clear()
         SavedSignUp(this).operationId = null
-        outbox().delete()
+        (held ?: SavedOutbox(outboxFile())).forget()
     }
 
-    private fun outbox() = File(filesDir, "outbox")
+    private fun outboxFile() = File(filesDir, "outbox")
 }
 
 class MainActivity : ComponentActivity() {
