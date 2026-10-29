@@ -93,6 +93,9 @@ interface AgentRepository {
     /** Sends again, under its own identity, a message the app stopped sending ([ChatMessage.notSent]). */
     suspend fun retry(agentId: String, messageId: String)
 
+    /** Deletes a message the app stopped sending; it is never sent. */
+    suspend fun discard(agentId: String, messageId: String)
+
     /** Answers the agent's question with one of its choices. The answer is kept as the owner's message. */
     suspend fun answer(agentId: String, choice: String)
 

@@ -175,14 +175,10 @@ class WebSocketRcpSurface(
         request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) })
             .let { HostAnswer(it.status, it.body) }
 
-    override suspend fun retryPendingCommands(taskId: Uuid): List<Uuid> {
+    override suspend fun resendPending(command: PendingTextCommand) {
         connected()
-        val admitted = mutableListOf<Uuid>()
-        for (command in state.pendingCommands().filter { it.taskId == taskId }) {
-            sendPending(command)
-            admitted += command.commandId
-        }
-        return admitted
+        if (state.pendingCommands().none { it.commandId == command.commandId }) return
+        sendPending(command)
     }
 
     override fun close() {

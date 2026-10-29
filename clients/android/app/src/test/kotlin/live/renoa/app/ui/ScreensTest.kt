@@ -337,8 +337,9 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun aMessageThatDidNotSendSaysSoAndATapSendsItAgain() {
+    fun aMessageThatDidNotSendSaysSoAndCanBeSentAgainOrDeleted() {
         val retried = mutableListOf<String>()
+        val deleted = mutableListOf<String>()
         val notSent =
             object : AgentRepository by repository {
                 override fun conversation(agentId: String) =
@@ -346,6 +347,10 @@ class ScreensTest : ScreenTest() {
 
                 override suspend fun retry(agentId: String, messageId: String) {
                     retried += messageId
+                }
+
+                override suspend fun discard(agentId: String, messageId: String) {
+                    deleted += messageId
                 }
             }
         val model = ChatViewModel(notSent, "tifa")
@@ -356,6 +361,9 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithText("Book the table for eight.").performClick()
         compose.waitForIdle()
         assertEquals(listOf("m1"), retried)
+        compose.onNodeWithText("Delete").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("m1"), deleted)
     }
 
     @Test

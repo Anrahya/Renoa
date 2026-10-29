@@ -145,6 +145,11 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         }
     }
 
+    /** Deletes a message that did not go. */
+    fun discard(messageId: String) {
+        viewModelScope.launch { runCatching { repository.discard(agentId, messageId) } }
+    }
+
     fun stop() {
         viewModelScope.launch {
             try {

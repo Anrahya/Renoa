@@ -151,6 +151,9 @@ class FakeAgentRepository(
     /** Every message here is kept the moment it is sent, so none is ever left unsent. */
     override suspend fun retry(agentId: String, messageId: String) = Unit
 
+    /** As for [retry], there is never one to delete. */
+    override suspend fun discard(agentId: String, messageId: String) = Unit
+
     override suspend fun answer(agentId: String, choice: String) {
         val room = room(agentId)
         synchronized(lock) {

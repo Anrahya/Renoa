@@ -2,6 +2,7 @@ package live.renoa.app.agents
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.PendingTextCommand
@@ -36,8 +38,8 @@ import kotlin.uuid.Uuid
  * [state] is the outbox [surface] writes to. A message the coordinator refused is dropped; any other
  * failure leaves it there, and it is sent again with the same identity after the next connect and
  * on every roster check, as [UnsentMessages] decides. A message it gives up stays in the chat marked
- * [ChatMessage.notSent] until [retry]. A message the outbox held when the chat opened shows until it
- * arrives.
+ * [ChatMessage.notSent] until [retry] or [discard]. A message the outbox held when the chat opened
+ * shows until it arrives.
  *
  * Making an agent, reading its profile and the routines are Host control, carried by the same
  * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check, and
@@ -70,9 +72,13 @@ class RcpAgentRepository(
     private val rooms = LinkedHashMap<String, Room>()
     private val roster = MutableStateFlow<List<AgentSummary>>(emptyList())
     private val unsent =
-        UnsentMessages(surface, state, clock) { taskId, change ->
-            synchronized(lock) { rooms.values.firstOrNull { it.taskId == taskId } }?.let { update(it, change) }
-        }
+        UnsentMessages(
+            surface,
+            state,
+            clock,
+            shown = { taskId -> synchronized(lock) { rooms.values.any { it.taskId == taskId && it.attached } } },
+            dropped = { taskId, change -> synchronized(lock) { rooms.values.firstOrNull { it.taskId == taskId } }?.let { update(it, change) } },
+        )
     private val hostClient = HostClient(surface)
     private val host = HostAgents(hostClient)
     private val hostRoutines = HostRoutines(hostClient)
@@ -143,6 +149,7 @@ class RcpAgentRepository(
                     runCatching { surface.disconnect() }
                 }
                 linkState.value = Link.Lost
+                unsent.connectionLost()
                 // Live text is not replayed, so a draft cut by the drop would be glued to text from after it.
                 synchronized(lock) { rooms.values.toList() }.forEach { update(it) { connectionLost() } }
                 delay(retryAfter(attempt++))
@@ -161,8 +168,8 @@ class RcpAgentRepository(
             if (room.attached) continue
             // Sent before the app last closed: shown until its record arrives. Read once the room exists,
             // so a refusal from here on reaches the room and outlasts this read.
-            val unsent = state.pendingCommands().filter { it.taskId == room.taskId }
-            if (unsent.isNotEmpty()) update(room) { unsent.forEach { sending(it.commandId, it.text) } }
+            val held = state.pendingCommands().filter { it.taskId == room.taskId }
+            if (held.isNotEmpty()) update(room) { held.forEach { sending(it.commandId, it.text) } }
             try {
                 surface.openTask(room.taskId, target.nodeId, target.target)
                 surface.attach(room.taskId, live = { commandId, activity -> update(room) { live(commandId, activity) } }) { event ->
@@ -306,7 +313,7 @@ class RcpAgentRepository(
         } catch (failure: Exception) {
             if (failure !is RcpException || !failure.refusesTheRequest) {
                 // Answered but not taken: the wait to give it up starts now.
-                if (failure is RcpException && failure.requestId != null) unsent.notTaken(submission.commandId)
+                if (failure is RcpException && failure.answered) unsent.notTaken(submission.commandId)
                 return
             }
             state.removeCommand(submission.commandId)
@@ -316,8 +323,8 @@ class RcpAgentRepository(
     }
 
     /**
-     * Puts the message back in the outbox under its own identity, shows it as sending again, and sends
-     * its chat's unsent messages now. One that cannot go now waits, as any unsent message does.
+     * Shows the message as sending again and sends it now under its own identity. One that cannot go
+     * yet waits, as any unsent message does; a refusal takes it out of the chat and throws.
      */
     override suspend fun retry(agentId: String, messageId: String) {
         val room = room(agentId)
@@ -326,17 +333,24 @@ class RcpAgentRepository(
         update(room) { text = resend(commandId) }
         val words = text ?: return
         try {
-            state.enqueueCommand(PendingTextCommand(commandId, room.taskId, words))
-        } catch (unkept: IllegalStateException) {
-            update(room) { notSent(commandId) }
-            throw RepositoryException(Problem.Unavailable, unkept.message.orEmpty())
+            unsent.retry(PendingTextCommand(commandId, room.taskId, words))
+        } catch (refused: RcpException) {
+            update(room) { refused(commandId) }
+            throw refused.asProblem()
         }
-        try {
-            unsent.send(room.taskId)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (lost: Exception) {
-            // The connection is down; the message goes after the next connect.
+    }
+
+    /** Takes the message out of the outbox and the chat together, even if the caller is cancelled. */
+    override suspend fun discard(agentId: String, messageId: String) {
+        val room = room(agentId)
+        val commandId = Uuid.parseOrNull(messageId) ?: return
+        withContext(NonCancellable) {
+            var deleted = false
+            update(room) { deleted = delete(commandId) }
+            if (deleted) {
+                state.removeCommand(commandId)
+                unsent.forget(commandId)
+            }
         }
     }
 

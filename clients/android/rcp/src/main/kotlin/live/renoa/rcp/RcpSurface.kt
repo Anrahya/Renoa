@@ -99,11 +99,11 @@ interface RcpSurface {
     suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer
 
     /**
-     * Resends [taskId]'s pending commands in the order they were enqueued, each with its original
-     * identity, and returns the ones admitted. It stops at the first that fails, so a task's commands
-     * never arrive out of order, and another task's never wait behind them.
+     * Sends [command] again with its original identity if the outbox still holds it, and removes it
+     * once the coordinator admitted it. Safe to repeat: the coordinator converges on one command, and
+     * one no longer in the outbox is not sent. The caller decides the order and when to stop.
      */
-    suspend fun retryPendingCommands(taskId: Uuid): List<Uuid>
+    suspend fun resendPending(command: PendingTextCommand)
 
     fun close()
 }

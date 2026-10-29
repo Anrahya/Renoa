@@ -44,7 +44,7 @@ class OutboxTest : CoordinatorTest() {
         assertIs<Disconnected>(surface.awaitDisconnect())
 
         surface.connect()
-        assertEquals(listOf(submission.commandId), surface.retryPendingCommands(taskId))
+        surface.resendPending(state.pendingCommands().single())
 
         val frames = coordinator.framesOfType("submit")
         assertEquals(2, frames.size)
@@ -56,32 +56,28 @@ class OutboxTest : CoordinatorTest() {
     }
 
     @Test
-    fun retryingWithNothingPendingSendsNothing() = eventually {
+    fun resendingACommandTheOutboxNoLongerHoldsSendsNothing() = eventually {
         val surface = client()
         surface.connect()
-        assertEquals(emptyList(), surface.retryPendingCommands(Uuid.random()))
+        surface.resendPending(PendingTextCommand(Uuid.random(), coordinator.seedTask(), "already admitted or dropped"))
         assertEquals(0, coordinator.framesOfType("submit").size)
     }
 
     @Test
-    fun retryStopsAtATasksFirstRejectionAndOtherTasksDoNotWaitBehindIt() = eventually {
+    fun aRejectedResendLeavesTheOutboxAsItWas() = eventually {
         val known = coordinator.seedTask()
-        val unknown = Uuid.random()
-        val first = PendingTextCommand(Uuid.random(), unknown, "for a task that is gone")
-        val second = PendingTextCommand(Uuid.random(), unknown, "after it, for the same task")
+        val gone = PendingTextCommand(Uuid.random(), Uuid.random(), "for a task that is gone")
         val other = PendingTextCommand(Uuid.random(), known, "for a task that exists")
-        state.enqueueCommand(first)
-        state.enqueueCommand(second)
+        state.enqueueCommand(gone)
         state.enqueueCommand(other)
         val surface = client()
         surface.connect()
 
-        assertEquals(RcpErrorCode.NotFound, assertFailsWith<RcpException> { surface.retryPendingCommands(unknown) }.code)
-        assertEquals(1, coordinator.framesOfType("submit").size, "the second command must wait behind the first")
-        assertEquals(listOf(first, second, other), state.pendingCommands())
+        assertEquals(RcpErrorCode.NotFound, assertFailsWith<RcpException> { surface.resendPending(gone) }.code)
+        assertEquals(listOf(gone, other), state.pendingCommands(), "the caller decides what a refusal drops")
 
-        assertEquals(listOf(other.commandId), surface.retryPendingCommands(known))
-        assertEquals(listOf(first, second), state.pendingCommands())
+        surface.resendPending(other)
+        assertEquals(listOf(gone), state.pendingCommands())
     }
 
     @Test
@@ -98,7 +94,8 @@ class OutboxTest : CoordinatorTest() {
         surface.deleteTask(gone)
 
         assertEquals(listOf(unsentToKept), state.pendingCommands())
-        assertEquals(listOf(unsentToKept.commandId), surface.retryPendingCommands(kept))
+        surface.resendPending(unsentToKept)
+        assertEquals(emptyList(), state.pendingCommands())
     }
 
     @Test

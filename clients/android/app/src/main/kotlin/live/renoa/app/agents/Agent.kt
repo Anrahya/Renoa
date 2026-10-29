@@ -62,7 +62,10 @@ data class Briefing(val agentId: String, val text: String)
 
 enum class Speaker { Owner, Agent }
 
-/** [notSent]: the app stopped sending the owner's message because Renoa could not take it; [AgentRepository.retry] sends it again. */
+/**
+ * [notSent]: the app stopped sending the owner's message because Renoa could not take it.
+ * [AgentRepository.retry] sends it again and [AgentRepository.discard] deletes it.
+ */
 data class ChatMessage(val id: String, val speaker: Speaker, val text: String, val notSent: Boolean = false)
 
 /**
