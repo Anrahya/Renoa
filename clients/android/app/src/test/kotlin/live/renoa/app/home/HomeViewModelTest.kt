@@ -3,6 +3,7 @@ package live.renoa.app.home
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import live.renoa.app.MainDispatcherRule
@@ -91,6 +92,43 @@ class HomeViewModelTest {
         assertEquals(words.getValue(Problem.Unavailable), vm.state.value.notice, "turning the page keeps it")
         vm.close()
         assertNull(vm.state.value.notice, "it does not follow the owner back to Home")
+    }
+
+    @Test
+    fun anOwnerWithNoAgentIsSentToSignUpAndOneWithAgentsIsGreetedByName() = runTest {
+        val empty = HomeViewModel(FakeAgentRepository(backgroundScope, seeds = emptyList()))
+        backgroundScope.launch { empty.state.collect {} }
+        runCurrent()
+        assertTrue(empty.state.value.signUp)
+
+        val repo = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        repo.saveOwnerProfile(repo.ownerProfile().revision, "Name: Yash\n")
+        val known = HomeViewModel(repo)
+        backgroundScope.launch { known.state.collect {} }
+        runCurrent()
+        assertFalse(known.state.value.signUp)
+        assertEquals("Yash", known.state.value.ownerName)
+    }
+
+    @Test
+    fun notReachingRenoaOrABusyHostNeverSendsAnyoneToSignUpAndItAsksAgain() = runTest {
+        // A Host with too many calls waiting answers with a conflict.
+        for (problem in listOf(Problem.Unavailable, Problem.Conflict)) {
+            var reachable = false
+            val inner = FakeAgentRepository(backgroundScope, seeds = emptyList())
+            val repo =
+                object : AgentRepository by inner {
+                    override suspend fun hasAgents(): Boolean = if (reachable) inner.hasAgents() else throw RepositoryException(problem, "not now")
+                }
+            val vm = HomeViewModel(repo)
+            backgroundScope.launch { vm.state.collect {} }
+            runCurrent()
+            assertFalse(vm.state.value.signUp, "$problem")
+            reachable = true
+            advanceTimeBy(2_001)
+            runCurrent()
+            assertTrue(vm.state.value.signUp, "$problem")
+        }
     }
 
     @Test

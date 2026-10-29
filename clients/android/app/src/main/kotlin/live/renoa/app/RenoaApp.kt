@@ -24,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -44,6 +45,9 @@ import live.renoa.app.signin.SignInCode
 import live.renoa.app.signin.SignInScreen
 import live.renoa.app.signin.SignInState
 import live.renoa.app.signin.SignInViewModel
+import live.renoa.app.signup.SavedSignUp
+import live.renoa.app.signup.SignUpScreen
+import live.renoa.app.signup.SignUpViewModel
 import live.renoa.app.theme.RenoaTheme
 import live.renoa.app.theme.SystemBars
 import live.renoa.app.theme.Renoa
@@ -85,6 +89,11 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
                         LaunchedEffect(model.state) { if (model.state == SignInState.SignedIn) navigator.resetTo(Route.Home) }
                         SignInScreen(model.state, model.code, { model.code = it }) { model.submit(Passkeys.of(activity)) }
                     }
+                    Route.SignUp -> {
+                        val memory = SavedSignUp(LocalContext.current.applicationContext)
+                        val model: SignUpViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { SignUpViewModel(repository(), memory) } })
+                        SignUpScreen(model, onDone = { navigator.resetTo(Route.Home) })
+                    }
                     Route.Home -> {
                         val model: HomeViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { HomeViewModel(repository()) } })
                         HomeScreen(
@@ -92,6 +101,7 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
                             onOpenChat = { navigator.push(Route.Chat(it)) },
                             onNewAgent = { navigator.push(Route.Create) },
                             onChangeColours = { picked = theme.next() },
+                            onSignUp = { navigator.resetTo(Route.SignUp) },
                         )
                     }
                     is Route.Chat -> {

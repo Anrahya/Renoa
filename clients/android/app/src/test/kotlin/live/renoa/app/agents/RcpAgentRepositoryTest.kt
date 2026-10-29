@@ -1,5 +1,6 @@
 package live.renoa.app.agents
 
+import java.security.MessageDigest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -219,6 +220,24 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         targets += TargetSummary(node, "agent:$agentId", hostAgents.getValue(agentId).getValue("name").jsonPrimitive.content)
     }
 
+    /** The owner's USER.md and its revision, which the Host derives from the content: 64 lowercase hex characters. */
+    var profile = ""
+    val profileEdits = mutableListOf<JsonObject>()
+
+    private fun profileCall(method: HostMethod, body: String?): HostAnswer {
+        val answer = { HostAnswer(200, buildJsonObject { put("content", profile); put("revision", revisionOf(profile)) }.toString()) }
+        if (method == HostMethod.Get) return answer()
+        val edit = Json.parseToJsonElement(checkNotNull(body)).jsonObject.also { profileEdits += it }
+        val content = edit.getValue("content").jsonPrimitive.content
+        if (content != profile) {
+            if (edit.getValue("expected_revision").jsonPrimitive.content != revisionOf(profile)) {
+                return HostAnswer(409, "{\"error\":\"revision_conflict\"}")
+            }
+            profile = content
+        }
+        return answer()
+    }
+
     override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer {
         check(online) { "RCP client is not connected" }
         if (method == HostMethod.Get && path == "/v1/host") {
@@ -232,8 +251,9 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
                 observationHeld = null
                 it.await()
             }
-            return HostAnswer(200, buildJsonObject { put("automations", JsonArray(listed)) }.toString())
+            return HostAnswer(200, buildJsonObject { put("automations", JsonArray(listed)); put("agents", JsonArray(hostAgents.values.toList())) }.toString())
         }
+        if (path == "/v1/host/profile") return profileCall(method, body)
         hostCalls += Triple(method, path, body)
         hostFailure?.let {
             hostFailure = null
@@ -448,6 +468,23 @@ class RcpAgentRepositoryTest {
         assertTrue(state.pendingCommands().isEmpty())
         assertEquals(listOf("second"), surface.admitted.map { it.text })
         assertEquals(listOf("second"), repo.chat(nagisa).messages.map { it.text })
+    }
+
+    @Test
+    fun theOwnersProfileAndWhetherTheyHaveAnAgentComeFromTheHost() = runTest {
+        surface.automations = mutableListOf()
+        val repo = started()
+        assertFalse(repo.hasAgents())
+        surface.hostAgents["a"] = buildJsonObject { put("id", "a"); put("name", "Renoa") }
+        assertTrue(repo.hasAgents())
+
+        val empty = repo.ownerProfile()
+        assertEquals(OwnerProfile("", revisionOf("")), empty)
+        val saved = repo.saveOwnerProfile(empty.revision, "Name: Yash\n")
+        assertEquals(OwnerProfile("Name: Yash\n", revisionOf("Name: Yash\n")), saved)
+        assertEquals(setOf("expected_revision", "content"), surface.profileEdits.single().keys)
+        assertEquals(saved, repo.saveOwnerProfile(empty.revision, "Name: Yash\n"), "a repeat of a save that landed")
+        assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.saveOwnerProfile(empty.revision, "Name: Asha\n") }.problem)
     }
 
     @Test
@@ -814,3 +851,5 @@ class RcpAgentRepositoryTest {
 
 private const val NEXT = 1_793_293_200_000L
 private val KOLKATA = ZoneId.of("Asia/Kolkata")
+
+private fun revisionOf(content: String): String = MessageDigest.getInstance("SHA-256").digest(content.toByteArray()).joinToString("") { "%02x".format(it) }

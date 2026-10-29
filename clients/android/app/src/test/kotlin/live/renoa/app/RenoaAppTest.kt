@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.filter
@@ -46,11 +47,41 @@ class RenoaAppTest : ScreenTest() {
     @After
     fun tearDown() = scope.coroutineContext[Job]!!.cancel()
 
-    private fun start() {
+    private fun start(with: FakeAgentRepository = repository) {
         // The phone's animation scale is off, so no badge loops and the screen can settle.
         Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-        compose.setContent { RenoaApp({ repository }, signedIn = true, signingIn = { _, _ -> }) }
+        compose.setContent { RenoaApp({ with }, signedIn = true, signingIn = { _, _ -> }) }
         compose.waitForIdle()
+    }
+
+    @Test
+    fun aNewOwnerSignsUpMeetsRenoaAndLandsOnHomeWithHer() {
+        val fresh = FakeAgentRepository(scope, seeds = emptyList())
+        start(fresh)
+        compose.onNodeWithText("Hi. What should I call you?").assertIsDisplayed()
+        compose.onNodeWithText("Next").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Your name").performTextInput("Yash")
+        snapshot("sign-up-1")
+        compose.onNodeWithText("Next").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithText("How does a usual day go for you, Yash?").assertIsDisplayed()
+        compose.onNodeWithText("I work out").performClick()
+        compose.waitForIdle()
+        snapshot("sign-up-2")
+        compose.onNodeWithText("Next").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithText("I'm Renoa.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Renoa").assertIsDisplayed()
+        snapshot("sign-up-3")
+        compose.onNodeWithText("Go to Home").assertIsEnabled().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("Renoa"), fresh.agents.value.map { it.name })
+        compose.onNode(hasContentDescription("your main agent", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText(", Yash.", substring = true)).assertIsDisplayed()
+        assertEquals(1, ViewModelProvider(compose.activity)[EntryStores::class.java].held, "only Home is on the stack, so back leaves the app, not sign-up")
     }
 
     private fun back() {
