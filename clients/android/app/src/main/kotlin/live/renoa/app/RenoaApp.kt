@@ -66,19 +66,25 @@ internal val MAX_CONTENT_WIDTH = 600.dp
  * When Renoa refuses this phone's sign-in, [signedOut] forgets it and the app goes back to sign-in.
  */
 @Composable
-internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, signingIn: suspend (SignInCode, Passkeys) -> Unit, signedOut: () -> Unit = {}) {
+internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, signingIn: suspend (SignInCode, Passkeys) -> Unit, signedOut: suspend () -> Unit = {}) {
     // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
     var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
     val theme = picked ?: if (isSystemInDarkTheme()) ThemeName.Graphite else ThemeName.Paper
     val navigator = rememberNavigator(if (signedIn) Route.Home else Route.SignIn)
     val stores: EntryStores = viewModel()
+    // Starting over drops every screen below the top at once; the top one lets go of its own as it leaves.
+    val startOver = { route: Route ->
+        val below = navigator.entries.dropLast(1)
+        navigator.resetTo(route)
+        below.forEach { stores.release(it.id) }
+    }
     var wasSignedOut by rememberSaveable { mutableStateOf(false) }
     if (navigator.top != Route.SignIn) {
         LaunchedEffect(Unit) {
             repository().link.first { it == Link.SignedOut }
             signedOut()
             wasSignedOut = true
-            navigator.resetTo(Route.SignIn)
+            startOver(Route.SignIn)
         }
     }
 
@@ -103,13 +109,13 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
                     Route.SignIn -> {
                         val model: SignInViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { SignInViewModel(signingIn, if (wasSignedOut) SignInState.Failed(SIGNED_OUT) else SignInState.Ready) } })
                         val activity = checkNotNull(LocalActivity.current) { "sign-in needs its activity" }
-                        LaunchedEffect(model.state) { if (model.state == SignInState.SignedIn) navigator.resetTo(Route.Home) }
+                        LaunchedEffect(model.state) { if (model.state == SignInState.SignedIn) startOver(Route.Home) }
                         SignInScreen(model.state, model.code, { model.code = it }) { model.submit(Passkeys.of(activity)) }
                     }
                     Route.SignUp -> {
                         val memory = SavedSignUp(LocalContext.current.applicationContext)
                         val model: SignUpViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { SignUpViewModel(repository(), memory) } })
-                        SignUpScreen(model, onDone = { navigator.resetTo(Route.Home) })
+                        SignUpScreen(model, onDone = { startOver(Route.Home) })
                     }
                     Route.Home -> {
                         val model: HomeViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { HomeViewModel(repository()) } })
@@ -118,7 +124,7 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
                             onOpenChat = { navigator.push(Route.Chat(it)) },
                             onNewAgent = { navigator.push(Route.Create) },
                             onChangeColours = { picked = theme.next() },
-                            onSignUp = { navigator.resetTo(Route.SignUp) },
+                            onSignUp = { startOver(Route.SignUp) },
                         )
                     }
                     is Route.Chat -> {

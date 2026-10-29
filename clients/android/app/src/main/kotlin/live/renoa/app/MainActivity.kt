@@ -15,6 +15,7 @@ import live.renoa.app.signin.DeviceKeys
 import live.renoa.app.signin.RENOA_ORIGIN
 import live.renoa.app.signin.SignInStore
 import live.renoa.app.signin.SignInViewModel
+import live.renoa.app.signup.SavedSignUp
 import live.renoa.rcp.Authentication
 import live.renoa.rcp.InMemoryRcpState
 import live.renoa.rcp.WebSocketRcpSurface
@@ -44,13 +45,19 @@ class RenoaApplication : Application() {
             }
         }
 
-    /** Forgets this phone's sign-in and the Renoa it connected to, so signing in again starts afresh. */
-    @Synchronized
-    fun signOut() {
-        scope?.cancel()
-        scope = null
-        repository = null
+    /**
+     * Forgets this phone's sign-in, the Renoa it connected to, and its device key, which Renoa
+     * refuses for good once it signed the phone out; signing in again starts afresh with a new key.
+     */
+    suspend fun signOut() {
+        synchronized(this) {
+            scope?.cancel()
+            scope = null
+            repository = null
+        }
+        DeviceKeys.forget()
         SignInStore(this).clear()
+        SavedSignUp(this).operationId = null
     }
 }
 

@@ -32,6 +32,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.agents.Link
+import live.renoa.app.ui.LOST_AFTER_MILLIS
 import live.renoa.app.ui.LOST_WORDS
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithText
@@ -68,15 +69,22 @@ class RenoaAppTest : ScreenTest() {
 
         repository.setLink(Link.Lost)
         compose.waitForIdle()
+        compose.onAllNodesWithText(LOST_WORDS).assertCountEquals(0)
+        compose.mainClock.advanceTimeBy(LOST_AFTER_MILLIS / 2)
+        compose.onAllNodesWithText(LOST_WORDS).assertCountEquals(0)
+        compose.mainClock.advanceTimeBy(LOST_AFTER_MILLIS)
+        compose.waitForIdle()
         compose.onNodeWithText(LOST_WORDS).assertIsDisplayed()
         onHome("Tifa, wants you").performClick()
         compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(LOST_AFTER_MILLIS + 500)
+        compose.waitForIdle()
         compose.onNodeWithText(LOST_WORDS).assertIsDisplayed()
-        back()
         repository.setLink(Link.Connected)
         compose.waitForIdle()
         compose.onAllNodesWithText(LOST_WORDS).assertCountEquals(0)
 
+        // Signed out from a chat: Home below it lets go of its view models too.
         repository.setLink(Link.SignedOut)
         compose.waitForIdle()
         assertEquals(1, forgotten, "the sign-in is forgotten once")

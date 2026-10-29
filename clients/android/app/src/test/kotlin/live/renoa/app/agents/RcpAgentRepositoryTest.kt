@@ -480,6 +480,39 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun onlyTheHandshakeRefusingTheSignInTwiceRunningSignsThePhoneOut() = runTest {
+        val repo = started()
+        surface.signInRefused = RcpException(RcpErrorCode.AuthenticationFailed, "glitch", null)
+        surface.drop()
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        surface.signInRefused = null
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(Link.Connected, repo.link.value, "a single refusal, then a connection")
+        surface.signInRefused = RcpException(RcpErrorCode.AuthenticationFailed, "another glitch", null)
+        surface.drop()
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(Link.Lost, repo.link.value, "a connection in between starts the count again")
+        surface.signInRefused = null
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        for (other in listOf(RcpException(RcpErrorCode.Internal, "store busy", null), RcpException(RcpErrorCode.AuthenticationFailed, "a reply, not the handshake", 7))) {
+            surface.signInRefused = other
+            surface.drop()
+            advanceTimeBy(30.seconds)
+            runCurrent()
+            assertEquals(Link.Lost, repo.link.value, "$other")
+            surface.signInRefused = null
+            advanceTimeBy(5.seconds)
+            runCurrent()
+            assertEquals(Link.Connected, repo.link.value, "$other keeps trying")
+        }
+    }
+
+    @Test
     fun theOwnersProfileAndWhetherTheyHaveAnAgentComeFromTheHost() = runTest {
         surface.automations = mutableListOf()
         val repo = started()
@@ -524,6 +557,9 @@ class RcpAgentRepositoryTest {
             assertEquals(Link.Connected, repo.link.value)
             surface.signInRefused = refusal
             surface.drop()
+            advanceTimeBy(5.seconds)
+            runCurrent()
+            assertEquals(Link.Lost, repo.link.value, "refused once could be a glitch")
             advanceTimeBy(5.seconds)
             runCurrent()
             assertEquals(Link.SignedOut, repo.link.value, "$refusal")
