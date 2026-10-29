@@ -564,6 +564,103 @@ async fn the_owner_reads_and_edits_their_profile_for_agent_creation() {
     .await;
 }
 
+const APP_INSTRUCTIONS: &str = include_str!("../../renoa-local/prompts/app-v1/system.md");
+const APP_SOUL: &str = include_str!("../../renoa-local/prompts/app-v1/SOUL.md");
+
+/// The request the Android app sends when the owner makes an agent.
+#[tokio::test]
+async fn an_app_agent_speaks_from_its_soul_and_reads_the_owners_profile() {
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let empty = f.browser.json_of("/v1/host/profile").await;
+        let profile = json!({"expected_revision": empty["revision"], "content": "Vegetarian. Lives in Pune.\n"});
+        let saved = f
+            .browser
+            .write(Method::PUT, "/v1/host/profile", ORIGIN, &profile)
+            .send()
+            .await
+            .expect("save profile");
+        assert_eq!(saved.status(), StatusCode::OK);
+
+        let body = json!({
+            "operation_id": Uuid::new_v4(),
+            "preset_id": "renoa.app.v1",
+            "name": "Kcal",
+            "purpose": "Count my calories.",
+        });
+        let created = f.browser.post("/v1/host/agents", &body).await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let record = created.json::<Value>().await.expect("receipt")["record"].clone();
+        assert_eq!(record["preset_id"], "renoa.app.v1");
+        assert_eq!(
+            record["operational"]["documents"],
+            json!({"soul": true, "user": true})
+        );
+        assert_eq!(
+            record["operational"]["behavior"]["workspace_instructions"],
+            "off"
+        );
+        assert_eq!(record["tool_selection"]["tools"], json!([]));
+        let id = AgentId::from_uuid(
+            Uuid::parse_str(record["id"].as_str().expect("agent id")).expect("uuid"),
+        );
+        let soul = f
+            .root()
+            .join("agents")
+            .join(id.to_string())
+            .join("SOUL.md");
+        assert_eq!(
+            std::fs::read_to_string(soul).expect("published SOUL.md"),
+            APP_SOUL
+        );
+
+        // Workspace rules stay out of an everyday helper's prompt.
+        let workspace = f.host.agent_workspace(id).await.expect("workspace");
+        std::fs::write(workspace.join("AGENTS.md"), "WORKSPACE_RULE_MARKER\n").expect("rules");
+        let session = f
+            .host
+            .ensure_agent_session(id, &workspace, Uuid::new_v4())
+            .await
+            .expect("session");
+        session
+            .execute_turn_observed_with_cancellation(
+                Uuid::new_v4(),
+                vec![ContentBlock::text("What should I eat tonight?")],
+                TurnObservation::now().expect("clock"),
+                Arc::new(Quiet),
+                CancellationToken::new(),
+                Speaker::Principal(f.owner.as_uuid()),
+            )
+            .await
+            .expect("turn");
+        let request: Value = serde_json::from_slice(
+            &std::fs::read(f.system.files.path().join("request.json")).expect("request"),
+        )
+        .expect("request JSON");
+        let prompt = request["system_prompt"].as_str().expect("system prompt");
+        assert!(prompt.starts_with(APP_INSTRUCTIONS.trim_end()), "{prompt}");
+        assert!(prompt.contains("What you were made for:\nCount my calories."));
+        assert!(prompt.contains(APP_SOUL.trim_end()), "{prompt}");
+        assert!(prompt.contains("Vegetarian. Lives in Pune."), "{prompt}");
+        assert!(!prompt.contains("WORKSPACE_RULE_MARKER"), "{prompt}");
+        let tools: Vec<&str> = request["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("tool name"))
+            .collect();
+        let options = f.browser.json_of("/v1/host/agents/options").await;
+        let machine = options["native_tools"].as_array().expect("native tools");
+        assert!(!machine.is_empty());
+        for name in machine {
+            let name = name.as_str().expect("native tool name");
+            assert!(!tools.contains(&name), "{name} is a machine tool");
+        }
+        f.close().await;
+    }))
+    .await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn a_profile_save_that_cannot_apply_is_refused_not_offered_as_a_retry() {

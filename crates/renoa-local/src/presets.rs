@@ -19,10 +19,14 @@ pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v3";
 pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v3";
 /// The seed general purpose agents can use.
 pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
+/// The seed for the everyday helpers people make in the app.
+pub(crate) const APP_PRESET_ID: &str = "renoa.app.v1";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
 const ARCEE_SOUL: &str = include_str!("../prompts/arcee-v1/SOUL.md");
+const APP_INSTRUCTIONS: &str = include_str!("../prompts/app-v1/system.md");
+const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
 
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
@@ -46,6 +50,10 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
 ];
 
 const GENERAL_CAPABILITY_BASELINE: &[BuiltInCapability] = &[];
+
+// An everyday helper works through plugins, which every agent receives. The
+// machine tools act on a Host workspace that a person in the app never sees.
+const APP_CAPABILITY_BASELINE: &[BuiltInCapability] = &[];
 
 /// One immutable creation seed.
 pub(crate) struct AgentPreset {
@@ -161,6 +169,23 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             capability_baseline: GENERAL_CAPABILITY_BASELINE,
             host_plugins_off: &[],
         },
+        AgentPreset {
+            id: preset_id(APP_PRESET_ID),
+            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, and no machine tools.",
+            instructions: APP_INSTRUCTIONS,
+            behavior: AgentBehavior {
+                workspace_instructions: WorkspaceInstructions::Off,
+                automatic_compaction: None,
+            },
+            documents: Some(AgentDocuments {
+                soul: true,
+                user: true,
+            }),
+            soul_default: Some(APP_SOUL),
+            provider_restriction: None,
+            capability_baseline: APP_CAPABILITY_BASELINE,
+            host_plugins_off: &[],
+        },
     ];
     presets
         .into_iter()
@@ -196,16 +221,28 @@ fn preset_id(value: &str) -> AgentPresetId {
 
 #[cfg(test)]
 mod tests {
-    use super::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, preset};
+    use super::{ALPHA_PRESET_ID, APP_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, preset};
     use crate::{AgentDefinitionError, AgentPresetId};
+
+    const STATIC_PRESET_IDS: [&str; 4] = [
+        ALPHA_PRESET_ID,
+        APP_PRESET_ID,
+        ARCEE_PRESET_ID,
+        GENERAL_PRESET_ID,
+    ];
 
     #[test]
     fn every_static_preset_id_resolves() {
-        for id in [ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID] {
+        for id in STATIC_PRESET_IDS {
             let id = AgentPresetId::new(id).expect("portable preset id");
             let preset = preset(&id).expect("registered preset");
             assert_eq!(preset.id(), &id);
         }
+        assert_eq!(
+            super::catalog().count(),
+            STATIC_PRESET_IDS.len(),
+            "every registered preset has a static id"
+        );
         let unregistered = AgentPresetId::new("renoa.unregistered.v1").expect("portable preset id");
         assert!(matches!(
             preset(&unregistered),
@@ -215,7 +252,7 @@ mod tests {
 
     #[test]
     fn templates_supply_defaults_and_accept_explicit_instructions() {
-        for id in [ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID] {
+        for id in STATIC_PRESET_IDS {
             let template = preset(&AgentPresetId::new(id).expect("id")).expect("template");
             assert!(!template.instructions(None).is_empty());
             assert_eq!(template.instructions(Some("Do the job.")), "Do the job.");

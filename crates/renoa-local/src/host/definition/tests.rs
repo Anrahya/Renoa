@@ -12,7 +12,7 @@ use crate::{
     AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, LocalHostError, ModelProvider,
     host::HostInitialization,
     host::automations::AutomationSchedule,
-    presets::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID},
+    presets::{ALPHA_PRESET_ID, APP_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID},
 };
 
 const VECTOR_OPERATION: Uuid = Uuid::from_u128(0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f);
@@ -105,6 +105,12 @@ async fn preset_capability_baselines_keep_the_existing_exact_runtime_selections(
         PresetExpectation {
             preset_id: GENERAL_PRESET_ID,
             agent_name: "General",
+            instructions: None,
+            capabilities: &[],
+        },
+        PresetExpectation {
+            preset_id: APP_PRESET_ID,
+            agent_name: "Helper",
             instructions: None,
             capabilities: &[],
         },
