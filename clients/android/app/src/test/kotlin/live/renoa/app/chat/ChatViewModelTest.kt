@@ -12,6 +12,7 @@ import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.agents.FakeWorld
+import live.renoa.app.badge.AgentHue
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.Reply
 import live.renoa.app.agents.ReplyScript
@@ -76,6 +77,17 @@ class ChatViewModelTest {
     }
 
     // --- sending ---
+
+    @Test
+    fun aChatWearsItsAgentsColourFromHome() = runTest {
+        val seen =
+            listOf("renoa", "kaisa", "nagisa").map { id ->
+                val (vm, _) = model(id)
+                runCurrent()
+                Triple(id, vm.state.value.hue, vm.state.value.main)
+            }
+        assertEquals(listOf(Triple("renoa", AgentHue.Ink, true), Triple("kaisa", AgentHue.Cobalt, false), Triple("nagisa", AgentHue.Clay, false)), seen)
+    }
 
     @Test
     fun sendingTrimsTheWordsEmptiesTheComposerAndKeepsTheMessage() = runTest {

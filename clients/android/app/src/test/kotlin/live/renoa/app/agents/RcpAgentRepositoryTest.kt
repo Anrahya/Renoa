@@ -103,6 +103,9 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     /** When set, the next observation reads the automations, then answers only once this completes. */
     var observationHeld: CompletableDeferred<Unit>? = null
 
+    /** When set, the next switch is applied at once, but its receipt arrives only once this completes. */
+    var switchHeld: CompletableDeferred<Unit>? = null
+
     /** When set, the next attach drops the connection after applying this many events. */
     var dropAttachAfter: Int? = null
 
@@ -240,7 +243,14 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             hostAnswer = null
             return it
         }
-        if (method == HostMethod.Post && path.startsWith("/v1/host/automations/") && path.endsWith("/enabled")) return enable(path, checkNotNull(body))
+        if (method == HostMethod.Post && path.startsWith("/v1/host/automations/") && path.endsWith("/enabled")) {
+            val receipt = enable(path, checkNotNull(body))
+            switchHeld?.let {
+                switchHeld = null
+                it.await()
+            }
+            return receipt
+        }
         if (method == HostMethod.Post && path == "/v1/host/agents") {
             val request = Json.parseToJsonElement(checkNotNull(body)).jsonObject
             val operation = request.getValue("operation_id").jsonPrimitive.content
@@ -746,6 +756,38 @@ class RcpAgentRepositoryTest {
         assertTrue(repo.routines.value.single().on, "the conflict read the routine again")
 
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.setRoutine("gone", on = true, Uuid.random().toString()) }.problem)
+    }
+
+    @Test
+    fun aSwitchsReceiptThatArrivesLateDoesNotUndoANewerRead() = runTest {
+        surface.automations = mutableListOf(automation("a", Uuid.random(), "0 9 * * *", revision = 4), automation("b", Uuid.random(), "0 10 * * *", revision = 4))
+        val repo = started()
+
+        // Switched off, then changed back elsewhere before the receipt arrives: the newer read stands.
+        val first = CompletableDeferred<Unit>()
+        surface.switchHeld = first
+        val switchingOff = async { repo.setRoutine("a", on = false, Uuid.random().toString()) }
+        runCurrent()
+        assertTrue(surface.switchHeld == null, "the Host has applied revision 5 and its receipt waits")
+        surface.automations?.set(0, automation("a", Uuid.random(), "0 9 * * *", enabled = true, revision = 6))
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        first.complete(Unit)
+        switchingOff.await()
+        assertTrue(repo.routines.value.first { it.id == "a" }.on, "the receipt for revision 5 does not replace revision 6")
+
+        // Switched off, then removed elsewhere before the receipt arrives: it stays gone.
+        val second = CompletableDeferred<Unit>()
+        surface.switchHeld = second
+        val switchingB = async { repo.setRoutine("b", on = false, Uuid.random().toString()) }
+        runCurrent()
+        assertTrue(surface.switchHeld == null)
+        surface.automations?.removeAt(1)
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        second.complete(Unit)
+        switchingB.await()
+        assertEquals(listOf("a"), repo.routines.value.map { it.id }, "a routine a newer read dropped is not brought back")
     }
 
     @Test

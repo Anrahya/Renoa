@@ -75,7 +75,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (agent != null) Badge(agent.name, agent.state, 50.dp, primary = agent.primary, arriveAfterMillis = 0)
+                    if (agent != null) Badge(agent.name, agent.state, 50.dp, primary = state.main, arriveAfterMillis = 0, hue = state.hue)
                     Text(agent?.name.orEmpty(), style = RenoaType.Heading, color = colors.foreground)
                 }
             }
@@ -99,7 +99,7 @@ private fun Messages(state: ChatUiState, old: Set<String>, risen: MutableSet<Str
         if (agent != null && state.working && state.streaming == null) {
             item(key = "working") {
                 Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Badge(agent.name, agent.state, 56.dp, primary = agent.primary)
+                    Badge(agent.name, agent.state, 56.dp, primary = state.main, hue = state.hue)
                     WorkingLine(colors.foreground, agent.glance.doing, colors.mutedForeground)
                 }
             }

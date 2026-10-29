@@ -22,6 +22,10 @@ enum class AgentState {
                 Resting -> 3
                 Asleep -> 4
             }
+
+    /** Whether the owner is the one who has to act: the agent asked something, or cannot go on without them. */
+    val needsOwner: Boolean
+        get() = homeRank <= Stuck.homeRank
 }
 
 /** An agent as the roster shows it. */

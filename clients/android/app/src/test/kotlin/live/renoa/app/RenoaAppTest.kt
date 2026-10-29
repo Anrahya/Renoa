@@ -7,6 +7,10 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -17,6 +21,8 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import android.graphics.drawable.ColorDrawable
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowCompat
+import live.renoa.app.home.OPEN_PAGES
+import live.renoa.app.ui.hasClickLabel
 import live.renoa.app.theme.ThemeName
 import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.CoroutineScope
@@ -52,14 +58,20 @@ class RenoaAppTest : ScreenTest() {
         compose.waitForIdle()
     }
 
-    /** Home is a list, so whoever is asked for may first need scrolling to. */
-    private fun onHome(description: String): SemanticsNodeInteraction {
-        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasContentDescription(description))
+    private fun onHome(description: String): SemanticsNodeInteraction = compose.onNodeWithContentDescription(description)
+
+    /** Everyone is in Chats, behind the dock; [description] may need scrolling to. The page stays open after. */
+    private fun inChats(description: String): SemanticsNodeInteraction {
+        if (compose.onAllNodesWithContentDescription("Back to Home").fetchSemanticsNodes().isEmpty()) {
+            compose.onNode(hasClickLabel(OPEN_PAGES)).performClick()
+            compose.waitForIdle()
+        }
+        compose.onAllNodes(hasScrollToNodeAction()).filter(hasAnyAncestor(hasScrollToNodeAction())).onFirst().performScrollToNode(hasContentDescription(description))
         return compose.onNodeWithContentDescription(description)
     }
 
     private fun meetSomeoneNew() {
-        onHome("Meet someone new").performClick()
+        inChats("Meet someone new").performClick()
     }
 
     private fun makeAnAgent(name: String) {
@@ -76,7 +88,8 @@ class RenoaAppTest : ScreenTest() {
         start()
         makeAnAgent("Mira")
         back()
-        onHome("Mira, resting").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back to Home").assertIsDisplayed()
+        inChats("Mira, resting").assertIsDisplayed()
 
         meetSomeoneNew()
         compose.waitForIdle()
@@ -87,8 +100,8 @@ class RenoaAppTest : ScreenTest() {
 
         compose.onNodeWithContentDescription("Message Kira").assertIsDisplayed()
         back()
-        onHome("Mira, resting").assertIsDisplayed()
-        onHome("Kira, resting").assertIsDisplayed()
+        inChats("Mira, resting").assertIsDisplayed()
+        inChats("Kira, resting").assertIsDisplayed()
     }
 
     @Test
@@ -134,7 +147,7 @@ class RenoaAppTest : ScreenTest() {
         compose.onNodeWithText("Continue with passkey").performClick()
         compose.waitForIdle()
         assertEquals(listOf<SignInCode>(SignInCode.Setup("ab12cd"), SignInCode.Setup("ab12cd")), codes)
-        onHome("Meet someone new").assertIsDisplayed()
+        inChats("Meet someone new").assertIsDisplayed()
     }
 
     @Test
