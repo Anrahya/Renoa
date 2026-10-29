@@ -8,10 +8,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * Keeps Wi-Fi out of power save while the chat is on screen. Idle, a phone's Wi-Fi holds incoming
- * packets for seconds and lets them through in a burst, so a streaming reply stalls mid-word until
- * the owner touches the screen. Android honours the lock only while the app is in front and the
- * screen is on, and it has no low-latency mode before Android 10.
+ * Asks Android to keep Wi-Fi out of power save while the chat is on screen. Idle, a phone's Wi-Fi
+ * can hold incoming packets for seconds and let them through in a burst, so a streaming reply stalls
+ * mid-word until the owner touches the screen. Android's rule is that it honours the lock only while
+ * the app is in front with the screen on; before Android 10 there is no low-latency lock, so none is
+ * taken. A lock that cannot be taken is skipped: the chat opens either way.
  */
 @Composable
 fun QuickWifi() {
@@ -20,10 +21,12 @@ fun QuickWifi() {
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager?
         val lock =
             if (wifi != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "renoa:chat").apply {
-                    setReferenceCounted(false)
-                    acquire()
-                }
+                runCatching {
+                    wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "renoa:chat").apply {
+                        setReferenceCounted(false)
+                        acquire()
+                    }
+                }.getOrNull()
             } else {
                 null
             }
