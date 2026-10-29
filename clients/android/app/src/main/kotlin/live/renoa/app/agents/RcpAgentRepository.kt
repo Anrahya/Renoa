@@ -36,7 +36,8 @@ import kotlin.uuid.Uuid
  * on every roster check. A message the outbox held when the chat opened shows until it arrives.
  *
  * Making an agent, reading its profile and the routines are Host control, carried by the same
- * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check.
+ * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check, and
+ * each Host agent's purpose once.
  * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
  * follows its chat. Abilities and edits are not on the Host's agent API yet, so those calls are
  * refused as [Problem.NotYet] and nothing is sent.
@@ -55,6 +56,9 @@ class RcpAgentRepository(
 
         /** Set once [RcpSurface.attach] returned; from then on [RcpSurface.connect] re-attaches it. */
         var attached = false
+
+        /** What the agent is for, as the Host keeps it; null until read. */
+        var purpose: String? = null
     }
 
     private val lock = Any()
@@ -98,6 +102,7 @@ class RcpAgentRepository(
                     linkState.value = Link.Connected
                     refusals = 0
                     readRoutines()
+                    readPurposes()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
                     coroutineScope {
@@ -109,6 +114,7 @@ class RcpAgentRepository(
                                     sendUnsent()
                                     follow(surface.listTargets())
                                     readRoutines()
+                                    readPurposes()
                                 }
                             }
                         surface.awaitDisconnect()
@@ -196,7 +202,7 @@ class RcpAgentRepository(
         synchronized(lock) {
             roster.value =
                 rooms.filterValues { it.attached }.map { (id, room) ->
-                    AgentSummary(id, room.target.name, purpose = "", state = room.journal.state, glance = room.journal.glance)
+                    AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = room.journal.state, glance = room.journal.glance)
                 }
             val zone = here()
             routineList.value =
@@ -224,6 +230,22 @@ class RcpAgentRepository(
             listed.forEach { read -> automations[read.id] = held[read.id]?.takeIf { it.revision > read.revision } ?: read }
         }
         publish()
+    }
+
+    /** Reads what each followed Host agent is for, once; one the Host cannot answer for now is read on the next roster check. */
+    private suspend fun readPurposes() {
+        val unread = synchronized(lock) { rooms.values.filter { it.attached && it.purpose == null } }
+        for (room in unread) {
+            val hostId = hostAgentId(agentId(room.target)) ?: continue
+            val purpose =
+                try {
+                    host.definition(hostId).operational.purpose.orEmpty()
+                } catch (_: RepositoryException) {
+                    continue
+                }
+            synchronized(lock) { room.purpose = purpose }
+            publish()
+        }
     }
 
     override suspend fun hasAgents(): Boolean = owner.hasAgents()
@@ -346,6 +368,8 @@ class RcpAgentRepository(
         if (synchronized(lock) { rooms[agentId(joined)]?.attached } != true) {
             throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but its chat could not be opened")
         }
+        synchronized(lock) { rooms[agentId(joined)]?.purpose = record.operational.purpose.orEmpty() }
+        publish()
         return record.profile(agentId(joined))
     }
 
