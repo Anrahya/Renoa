@@ -82,7 +82,7 @@ internal fun Dock(state: HomeUiState, next: String, onOpen: () -> Unit, modifier
         if (fresh.isNotEmpty()) {
             Box(Modifier.width(24.dp + 14.dp * (fresh.size.coerceAtMost(3) - 1))) {
                 fresh.take(3).forEachIndexed { i, agent ->
-                    Badge(agent.name, agent.state, 24.dp, Modifier.offset(x = 14.dp * i), label = "", hue = AgentHue.of(agent.id, state.roster))
+                    Badge(agent.name, agent.state, 24.dp, Modifier.offset(x = 14.dp * i), label = "", primary = agent.id == state.main?.id, hue = AgentHue.of(agent.id, state.roster))
                 }
             }
             Spacer(Modifier.width(12.dp))

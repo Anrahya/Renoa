@@ -1,6 +1,7 @@
 package live.renoa.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
@@ -79,6 +80,23 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithContentDescription("Tifa Working, working").assertIsDisplayed()
         compose.onNodeWithContentDescription("Tifa Wants, wants you").assertIsDisplayed()
         snapshot("badges-${theme.name.lowercase()}")
+    }
+
+    @Test
+    fun theMainAgentWearsRenoasPortraitAndOthersTheirLetter() {
+        val skin = 0xFFF6D9C4.toInt()
+        show {
+            Column(Modifier.background(Renoa.colors.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(40.dp)) {
+                Badge("Renoa", AgentState.Resting, 140.dp, primary = true)
+                Badge("Renoa", AgentState.Resting, 140.dp)
+            }
+        }
+        val picture = picture()
+        fun skinIn(rows: IntRange) = (0 until picture.width step 2).any { x -> rows.step(2).any { y -> picture.getPixel(x, y) == skin } }
+        val half = (20 + 140 + 20) * picture.density / 160
+        assertTrue(skinIn(0 until half), "her face is drawn in the main agent's tile")
+        assertTrue(!skinIn(half until picture.height), "another agent keeps its letter")
+        snapshot("badge-portrait")
     }
 
     @Test

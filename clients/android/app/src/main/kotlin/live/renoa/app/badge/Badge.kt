@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.PathParser
@@ -36,6 +37,7 @@ import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaColors
 import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaType
+import live.renoa.app.theme.ThemeName
 
 /** Half the canvas in tile units: room for the lift, the ring leaving the tile, and the primary agent's halo. */
 private const val HALF = RADIUS * 1.42f
@@ -83,6 +85,8 @@ fun Badge(
         }
     }
     val moving = BadgeMotion.animates(state, reduced) || (primary && !reduced)
+    // The main agent wears Renoa's portrait in place of a letter.
+    val mascot = if (primary) rememberMascot() else null
     val words = state.describe() + if (primary) ", your main agent" else ""
 
     Canvas(
@@ -97,12 +101,12 @@ fun Badge(
         // Arriving, a tile falls the last 1.6 lifts into its socket, as on the landing page.
         val drop = (1f - arrival.value) * 1.6f
         withTransform({ translate(this.size.width / 2, this.size.height / 2 + LIFT * 0.3f * scale); scale(scale, scale, Offset.Zero) }) {
-            drawTile(frame, frame.lift + drop, shapes, letter, colors, hue.face(colors) ?: colors.foreground, if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
+            drawTile(frame, frame.lift + drop, shapes, letter, mascot, colors, hue.face(colors) ?: colors.foreground, if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
         }
     }
 }
 
-private fun DrawScope.drawTile(frame: BadgeFrame, lift: Float, shapes: Shapes, letter: TextLayoutResult, colors: RenoaColors, face: Color, sweep: Float?) {
+private fun DrawScope.drawTile(frame: BadgeFrame, lift: Float, shapes: Shapes, letter: TextLayoutResult, mascot: Mascot?, colors: RenoaColors, face: Color, sweep: Float?) {
     val up = -lift * LIFT
     if (!frame.retiring) {
         // The shadow stays on the socket and softens as the tile rises.
@@ -118,17 +122,30 @@ private fun DrawScope.drawTile(frame: BadgeFrame, lift: Float, shapes: Shapes, l
         if (sweep != null) drawHalo(shapes.halo, colors.foreground, sweep)
         if (frame.retiring) {
             drawPath(shapes.face, colors.muted)
-            drawPath(shapes.face, colors.border, style = Stroke(1.25f))
         } else {
             withTransform({ translate(0f, DEPTH) }) { drawPath(shapes.face, Color.Black) }
             drawPath(shapes.face, face)
+        }
+        if (mascot != null) {
+            // Her head and shoulders fill the face on Paper's light ground in either theme, cut to the hexagon.
+            clipPath(shapes.face) {
+                drawPath(shapes.face, PORTRAIT_GROUND)
+                val crop = mascot.drawing.portrait
+                val s = RADIUS * 2 / crop.width
+                withTransform({ scale(s, s, Offset.Zero); translate(-crop.center.x, -crop.center.y) }) { mascot.draw(this) }
+            }
+        } else {
+            drawText(
+                letter,
+                color = if (frame.retiring) colors.mutedForeground else colors.primaryForeground,
+                topLeft = Offset(-letter.size.width / 2f, -letter.size.height / 2f),
+            )
+        }
+        if (frame.retiring) {
+            drawPath(shapes.face, colors.border, style = Stroke(1.25f))
+        } else {
             drawPath(shapes.face, if (frame.failed) colors.stateFailed else face, style = Stroke(if (frame.failed) 2.5f else 1.25f))
         }
-        drawText(
-            letter,
-            color = if (frame.retiring) colors.mutedForeground else colors.primaryForeground,
-            topLeft = Offset(-letter.size.width / 2f, -letter.size.height / 2f),
-        )
         if (sweep != null) {
             val s = 14f / 256f
             withTransform({ translate(-RADIUS * 0.92f, -RADIUS * 0.98f); scale(s, s, Offset.Zero) }) {
@@ -178,4 +195,7 @@ internal fun AgentState.describe(): String =
     }
 
 private val UNIT_DENSITY = Density(1f, 1f)
+
+/** What a portrait sits on: Paper's muted ground, the same in both themes. */
+private val PORTRAIT_GROUND = ThemeName.Paper.colors.muted
 private val LETTER_STYLE = RenoaType.Title.copy(fontSize = 30.sp, lineHeight = 30.sp)

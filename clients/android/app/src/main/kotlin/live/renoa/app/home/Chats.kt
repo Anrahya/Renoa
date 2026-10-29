@@ -53,7 +53,7 @@ internal fun ChatsPage(state: HomeUiState, onOpenChat: (String) -> Unit, onAnswe
             PersonRow(
                 agent,
                 AgentHue.of(agent.id, state.roster),
-                agent.id == state.main?.id,
+                state.main?.id,
                 state.agent(agent.glance.with),
                 onOpen = { onOpenChat(agent.id) },
                 onAnswer = { onAnswer(agent.id, it) },
@@ -65,7 +65,7 @@ internal fun ChatsPage(state: HomeUiState, onOpenChat: (String) -> Unit, onAnswe
 }
 
 @Composable
-private fun PersonRow(agent: AgentSummary, hue: AgentHue, main: Boolean, partner: AgentSummary?, onOpen: () -> Unit, onAnswer: (String) -> Unit, partnerHue: (AgentSummary) -> AgentHue) {
+private fun PersonRow(agent: AgentSummary, hue: AgentHue, mainId: String?, partner: AgentSummary?, onOpen: () -> Unit, onAnswer: (String) -> Unit, partnerHue: (AgentSummary) -> AgentHue) {
     val colors = Renoa.colors
     val glance = agent.glance
     Row(
@@ -77,9 +77,9 @@ private fun PersonRow(agent: AgentSummary, hue: AgentHue, main: Boolean, partner
         verticalAlignment = Alignment.Top,
     ) {
         Box(Modifier.size(54.dp)) {
-            Badge(agent.name, agent.state, 54.dp, primary = main, hue = hue)
+            Badge(agent.name, agent.state, 54.dp, primary = agent.id == mainId, hue = hue)
             if (partner != null) {
-                Badge(partner.name, partner.state, 26.dp, Modifier.align(Alignment.BottomEnd).offset(6.dp, 6.dp), label = "", hue = partnerHue(partner))
+                Badge(partner.name, partner.state, 26.dp, Modifier.align(Alignment.BottomEnd).offset(6.dp, 6.dp), label = "", primary = partner.id == mainId, hue = partnerHue(partner))
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

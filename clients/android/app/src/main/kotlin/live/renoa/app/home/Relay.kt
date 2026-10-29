@@ -106,7 +106,7 @@ internal fun Relay(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Badge(handover.agent.name, handover.agent.state, 28.dp, label = "", hue = AgentHue.of(handover.agent.id, state.roster))
+                    Badge(handover.agent.name, handover.agent.state, 28.dp, label = "", primary = handover.agent.id == state.main?.id, hue = AgentHue.of(handover.agent.id, state.roster))
                     Spacer(Modifier.width(8.dp))
                     Text(handover.agent.name, style = RenoaType.Label, color = colors.foreground)
                     Spacer(Modifier.width(6.dp))
