@@ -466,6 +466,20 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun aMessageLeftInTheOutboxWhenTheAppClosedShowsOnceAndGoesAfterTheLaunch() = runTest {
+        val left = PendingTextCommand(Uuid.random(), chat.taskId, "hello")
+        state.enqueueCommand(left)
+        surface.answers += Answer.Refuse(RcpErrorCode.NodeOffline)
+        val repo = started()
+        assertEquals(listOf(left.commandId.toString() to "hello"), repo.chat(nagisa).messages.map { it.id to it.text }, "shown while it waits")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf(left.commandId), surface.admitted.map { it.commandId }, "under the identity it was first sent with")
+        assertEquals(listOf("hello"), repo.chat(nagisa).messages.map { it.text }, "and shown once")
+    }
+
+    @Test
     fun aMessageRefusedOnTheRetryIsDroppedAndTheRestStillGo() = runTest {
         val repo = started()
         surface.answers += listOf(Answer.Lose, Answer.Refuse(RcpErrorCode.Conflict))
