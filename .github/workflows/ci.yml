@@ -118,4 +118,6 @@ jobs:
             clients/android/**/*.gradle.kts
             clients/android/gradle/libs.versions.toml
             clients/android/gradle/wrapper/gradle-wrapper.properties
+      # The app compiles against SDK 37, which the runner image may not carry yet.
+      - run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --install "platforms;android-37.0"
       - run: ./gradlew assembleDebug testDebugUnitTest :rcp:test lint --console=plain

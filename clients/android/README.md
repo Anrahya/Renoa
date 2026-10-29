@@ -22,7 +22,7 @@ The Kotlin app shell. Two modules:
 
 ## Build
 
-Needs JDK 21 and the Android SDK (platform 36). From this directory:
+Needs JDK 21 and the Android SDK (platform `android-37.0`). From this directory:
 
 ```sh
 ./gradlew assembleDebug testDebugUnitTest :rcp:test lint
@@ -33,6 +33,11 @@ Needs JDK 21 and the Android SDK (platform 36). From this directory:
 The screen tests run under Robolectric and write pictures to `app/build/screens`, so the
 screens can be looked at without a phone or emulator.
 
-Versions are pinned in `gradle/libs.versions.toml`. The newest AndroidX releases need
-compileSdk 37, so the app stays on the Compose BOM and AndroidX versions that fit SDK 36; lint
-therefore has the three "newer version available" checks switched off in `app/build.gradle.kts`.
+Versions are pinned in `gradle/libs.versions.toml`. The app compiles against SDK 37 and still
+targets 36, and some pinned AndroidX and OkHttp versions trail the newest releases; lint therefore
+has the three "newer version available" checks switched off in `app/build.gradle.kts`.
+
+Agent replies render as markdown through `multiplatform-markdown-renderer` (core and Material 3
+modules only). An image shows as its description, and only web links are links; they open in the
+phone's browser. The Compose BOM is kept on the Compose release that library is built against, so
+the app carries one Compose version.
