@@ -246,16 +246,35 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
     // above has no filesystem effect, while the row still cannot become visible
     // before its documents exist. A crash between the two publishes again on the
     // retry, and the identical files are adopted.
-    if let Some((enabled, soul)) = documents {
-        crate::documents::AgentDocumentStore::publish(
+    let publication = match documents {
+        Some((enabled, soul)) => crate::documents::AgentDocumentStore::publish(
             data_directory,
             definition.id,
             *enabled,
             soul,
-        )?;
-    }
-    transaction.commit().map_err(catalog_error)?;
+        )?,
+        None => None,
+    };
+    #[cfg(test)]
+    super::commit_fault::inject(&transaction, *operation_id).map_err(catalog_error)?;
+    commit_or_withdraw(transaction, publication)?;
     Ok(definition.clone())
+}
+
+/// Commits a transaction after its `SOUL.md` publication. When the commit fails
+/// the row change rolled back, so the file this attempt created goes too.
+pub(super) fn commit_or_withdraw(
+    transaction: rusqlite::Transaction<'_>,
+    publication: Option<crate::documents::SoulPublication>,
+) -> Result<(), LocalHostError> {
+    let Err(error) = transaction.commit() else {
+        return Ok(());
+    };
+    let failure = catalog_error(error);
+    if let Some(publication) = publication {
+        publication.withdraw(failure.to_string())?;
+    }
+    Err(failure)
 }
 
 /// Replays one creation, or reports a conflict when the stored operation used a

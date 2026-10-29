@@ -2,7 +2,8 @@
 //!
 //! A preset is a versioned creation seed. Creation snapshots it into the
 //! agent's own operational definition, and runtime resolution never consults a
-//! preset again. Changing preset content requires a new preset id.
+//! preset again. Changing preset content requires a new preset id; a test pins
+//! each preset's instructions and default `SOUL.md` to its id.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -49,11 +50,10 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::Find,
 ];
 
-const GENERAL_CAPABILITY_BASELINE: &[BuiltInCapability] = &[];
-
-// An everyday helper works through plugins, which every agent receives. The
-// machine tools act on a Host workspace that a person in the app never sees.
-const APP_CAPABILITY_BASELINE: &[BuiltInCapability] = &[];
+// The general and app presets grant no native file or shell tool. An everyday
+// helper works through plugins, which every agent receives; the native tools act
+// on a Host workspace that a person in the app never sees.
+const NO_NATIVE_TOOLS: &[BuiltInCapability] = &[];
 
 /// One immutable creation seed.
 pub(crate) struct AgentPreset {
@@ -118,7 +118,16 @@ impl AgentPreset {
 }
 
 static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|| {
-    let presets = [
+    seeds()
+        .into_iter()
+        .map(|preset| (preset.id.clone(), preset))
+        .collect()
+});
+
+/// Every preset as written. Collecting into [`PRESETS`] would silently keep only
+/// the last of two equal ids, so a test checks that nothing is dropped.
+fn seeds() -> [AgentPreset; 4] {
+    [
         AgentPreset {
             // Static preset ids are constants in this file, so construction
             // cannot fail at runtime.
@@ -157,7 +166,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
         },
         AgentPreset {
             id: preset_id(GENERAL_PRESET_ID),
-            description: "A general purpose agent with helpful assistant instructions and no machine tools. Explicit settings replace template defaults.",
+            description: "A general purpose agent with helpful assistant instructions and no native file or shell tools. Explicit settings replace template defaults.",
             instructions: "You are a helpful assistant. Complete the assigned task and report the result clearly.",
             behavior: AgentBehavior {
                 workspace_instructions: WorkspaceInstructions::Off,
@@ -166,12 +175,12 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             documents: None,
             soul_default: None,
             provider_restriction: None,
-            capability_baseline: GENERAL_CAPABILITY_BASELINE,
+            capability_baseline: NO_NATIVE_TOOLS,
             host_plugins_off: &[],
         },
         AgentPreset {
             id: preset_id(APP_PRESET_ID),
-            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, and no machine tools.",
+            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, and no native file or shell tools.",
             instructions: APP_INSTRUCTIONS,
             behavior: AgentBehavior {
                 workspace_instructions: WorkspaceInstructions::Off,
@@ -183,15 +192,11 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             }),
             soul_default: Some(APP_SOUL),
             provider_restriction: None,
-            capability_baseline: APP_CAPABILITY_BASELINE,
+            capability_baseline: NO_NATIVE_TOOLS,
             host_plugins_off: &[],
         },
-    ];
-    presets
-        .into_iter()
-        .map(|preset| (preset.id.clone(), preset))
-        .collect()
-});
+    ]
+}
 
 /// Every registered creation preset, in identity order.
 pub(crate) fn catalog() -> impl Iterator<Item = &'static AgentPreset> {
@@ -221,26 +226,76 @@ fn preset_id(value: &str) -> AgentPresetId {
 
 #[cfg(test)]
 mod tests {
-    use super::{ALPHA_PRESET_ID, APP_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, preset};
-    use crate::{AgentDefinitionError, AgentPresetId};
+    use std::fmt::Write as _;
 
-    const STATIC_PRESET_IDS: [&str; 4] = [
-        ALPHA_PRESET_ID,
-        APP_PRESET_ID,
-        ARCEE_PRESET_ID,
-        GENERAL_PRESET_ID,
+    use super::{
+        ALPHA_PRESET_ID, APP_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, PRESETS, preset, seeds,
+    };
+    use crate::{AgentDefinitionError, AgentPresetId, atomic_file::content_hash};
+
+    /// Every preset id with the SHA-256 of its instructions and default
+    /// `SOUL.md`. Agents snapshot a preset at creation, so changed text needs a
+    /// new preset id, never a new digest under an old one.
+    const FROZEN: [(&str, &str, Option<&str>); 4] = [
+        (
+            ALPHA_PRESET_ID,
+            "6dffe8edd7c94fcf6fb7bcda351714d671badda5533495f80251b4c68edb3194",
+            None,
+        ),
+        (
+            APP_PRESET_ID,
+            "4493f36d0aa84775a12ad52dd86d765903485f816dccdb16f0a64c5babd63e80",
+            Some("7b14e1d869cdf3578de62d0a5f8eddc1da71571878b88d58fc85600ae286ad9f"),
+        ),
+        (
+            ARCEE_PRESET_ID,
+            "48462133177f6d68525cb7ba700cc3cfb6b0ffdcf87f9773c2040c2da98a0a58",
+            Some("ec44979b6960ec7d2192f8f3d284b3ed9ec122c846ce7417a0d316cc430a25bf"),
+        ),
+        (
+            GENERAL_PRESET_ID,
+            "55afe297f8f3a3c970d10ef4e66c0f7055978f530a6e89cc21082b560e443cb3",
+            None,
+        ),
     ];
+
+    fn sha256(text: &str) -> String {
+        let mut hex = String::with_capacity(64);
+        for byte in content_hash(text.as_bytes()) {
+            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        hex
+    }
+
+    #[test]
+    fn preset_text_is_frozen_under_its_id() {
+        for (id, instructions, soul) in FROZEN {
+            let preset = preset(&AgentPresetId::new(id).expect("id")).expect("registered preset");
+            let changed = format!("`{id}` changed; give the new text a new preset id");
+            assert_eq!(sha256(preset.instructions), instructions, "{changed}");
+            assert_eq!(
+                preset.soul_default().map(sha256).as_deref(),
+                soul,
+                "{changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_preset_is_dropped_by_a_duplicate_id() {
+        assert_eq!(PRESETS.len(), seeds().len(), "two presets share an id");
+    }
 
     #[test]
     fn every_static_preset_id_resolves() {
-        for id in STATIC_PRESET_IDS {
+        for (id, ..) in FROZEN {
             let id = AgentPresetId::new(id).expect("portable preset id");
             let preset = preset(&id).expect("registered preset");
             assert_eq!(preset.id(), &id);
         }
         assert_eq!(
             super::catalog().count(),
-            STATIC_PRESET_IDS.len(),
+            FROZEN.len(),
             "every registered preset has a static id"
         );
         let unregistered = AgentPresetId::new("renoa.unregistered.v1").expect("portable preset id");
@@ -252,7 +307,7 @@ mod tests {
 
     #[test]
     fn templates_supply_defaults_and_accept_explicit_instructions() {
-        for id in STATIC_PRESET_IDS {
+        for (id, ..) in FROZEN {
             let template = preset(&AgentPresetId::new(id).expect("id")).expect("template");
             assert!(!template.instructions(None).is_empty());
             assert_eq!(template.instructions(Some("Do the job.")), "Do the job.");

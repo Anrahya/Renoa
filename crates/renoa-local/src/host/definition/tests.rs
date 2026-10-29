@@ -638,6 +638,90 @@ async fn a_creation_that_fails_validation_publishes_no_documents() {
     );
 }
 
+fn app_agent(operation: Uuid) -> AgentCreateRequest {
+    AgentCreateRequest::from_preset(
+        operation,
+        AgentPresetId::new(APP_PRESET_ID).expect("preset id"),
+        "Kcal",
+    )
+}
+
+/// A commit that fails after publication takes back the `SOUL.md` it wrote and
+/// the directories it made, and the retry converges on one agent.
+#[tokio::test]
+async fn a_failed_commit_withdraws_the_soul_it_published() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let operation = Uuid::new_v4();
+    let agents = directory.path().join("data/agents");
+    let agents_existed = agents.exists();
+    super::commit_fault::arm(operation);
+    let failed = host
+        .create_agent(
+            creator.clone(),
+            origin,
+            app_agent(operation),
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(
+        matches!(failed, Err(LocalHostError::HostCatalog(_))),
+        "{failed:?}"
+    );
+    assert!(host.list_agents().await.expect("agents").is_empty());
+    assert!(
+        !agents
+            .join(derived_agent_id(operation).to_string())
+            .exists(),
+        "a failed commit leaves no document directory behind"
+    );
+    assert_eq!(agents.exists(), agents_existed);
+
+    let agent = host
+        .create_agent(
+            creator,
+            origin,
+            app_agent(operation),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("the retry commits");
+    assert!(agents.join(agent.id.to_string()).join("SOUL.md").is_file());
+}
+
+/// A file this attempt adopted was there before it, so a failed commit keeps it.
+#[tokio::test]
+async fn a_failed_commit_keeps_a_soul_it_only_adopted() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let operation = Uuid::new_v4();
+    let earlier = host
+        .create_agent(
+            creator.clone(),
+            origin,
+            app_agent(Uuid::new_v4()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("an earlier agent publishes the default soul");
+    let agents = directory.path().join("data/agents");
+    let earlier = agents.join(earlier.id.to_string()).join("SOUL.md");
+    let root = agents.join(derived_agent_id(operation).to_string());
+    fs::create_dir(&root).expect("a crashed attempt's root");
+    fs::copy(&earlier, root.join("SOUL.md")).expect("a crashed attempt's soul");
+
+    super::commit_fault::arm(operation);
+    host.create_agent(
+        creator,
+        origin,
+        app_agent(operation),
+        CancellationToken::new(),
+    )
+    .await
+    .expect_err("the commit fails");
+    assert!(root.join("SOUL.md").is_file(), "an adopted file stays");
+}
+
 #[tokio::test]
 async fn concurrent_identical_creates_converge_on_one_agent() {
     let directory = tempdir().expect("fixture");
@@ -716,5 +800,6 @@ async fn agents_from_one_preset_own_independent_selections() {
 
 mod management;
 mod migrations;
+mod preset_move;
 mod purpose;
 mod resolution;

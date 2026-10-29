@@ -38,9 +38,11 @@ identity `renoa.personal.arcee.v3`; Telegram is only its first surface. A
 caller-defined agent uses the explicit creation schema; `renoa.general.v1` is an optional general template.
 `renoa.app.v1` seeds the everyday helpers people make in the Android app: plain-spoken
 instructions, its own `SOUL.md` from a neutral default, the person's `USER.md`, no
-workspace instructions, and no machine tools. Every agent is
+workspace instructions, and no native file or shell tools; Host plugins such as Git,
+skills and agent management stay available, as for every agent. Every agent is
 one durable, provider-neutral `AgentDefinition`: identity and creation provenance,
-an optional creation preset id, the complete core operational document, the exact
+an optional preset id (the creation preset, or the preset a later
+`move-to-preset` applied), the complete core operational document, the exact
 tool selection, and the exact selected Host connection ids. Creation snapshots
 the preset into that definition; runtime resolution never consults a preset again.
 [`schemas/agent-definition.schema.json`](schemas/agent-definition.schema.json)
@@ -49,10 +51,15 @@ generated from the Rust type, and a test fails when the two differ.
 
 The operational document may carry a `purpose`: what the agent is for, in the
 words of whoever made it, the owner or a parent agent. It is 1 to 1,024 bytes, not blank, with no control
-character but newline. The agent's system prompt shows it right after the
-instructions, in a `<purpose>` block; an app shows it where a browser shows the
+character but newline. An app shows it where a browser shows the
 instructions. An agent without one has no `purpose` key, so its stored creation
 request replays unchanged.
+
+Each turn composes the system prompt from the stored definition in this order:
+the instructions; an `<identity>` block, `Your name is <name>.`, so a rename
+reaches the next turn; the `<purpose>` block; the agent's `SOUL.md`; the person's
+`USER.md`, which renders empty, with the revision of empty content, until that
+person has a profile; and, when enabled, the workspace `AGENTS.md`.
 
 An Arcee agent's stable system rules are part of its stored definition. When
 that definition enables the Soul, the Host publishes an owner-editable `SOUL.md`
@@ -500,7 +507,9 @@ workspace-instruction policy, an optional document set, an optional
 automatic-compaction policy, and the compiled Host plugins a new agent starts
 with off. Creation copies the applicable values into
 the agent's own operational document, so a preset change requires a new preset id
-and never rewrites an existing agent. A session manifest persists the exact agent
+and never rewrites an existing agent; a test pins each preset's instructions and
+default `SOUL.md` to its id. Only the owner's `move-to-preset` command moves an
+existing agent onto a newer preset. A session manifest persists the exact agent
 id; Host catalog storage holds the definition. Loading fails closed when the agent
 definition is absent or corrupt. Caller-defined agents store their own
 instructions, and every agent definition is stored in `host.sqlite3` and resolved
@@ -924,6 +933,7 @@ renoa-host <config.json> provision <provision.json>
 renoa-host <config.json> agent-tools <edit.json>
 renoa-host <config.json> reset <backup-directory>
 renoa-host <config.json> rename-agent <agent-id> <expected-name> <name> <operation-id>
+renoa-host <config.json> move-to-preset <agent-id> <preset-id>
 ```
 
 `inspect` opens the existing data root read-only and prints the Host snapshot.
@@ -934,7 +944,16 @@ by it. Its document is the canonical creation request in camelCase JSON, for
 example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v3","name":"Alpha"}`,
 with optional `instructions`, `tools`, `connections`, and `automation`. `agent-tools`
 applies one revision-checked capability edit. `rename-agent` applies one
-expected-current-name-checked display-name edit with an explicit operation id. `reset` is the
+expected-current-name-checked display-name edit with an explicit operation id.
+`move-to-preset` gives an existing agent a preset's current instructions,
+behavior, and documents, and records that preset id on the live definition; the
+creation receipt keeps the definition the agent was created with. It keeps the
+agent's identity, name, purpose, tools, connections, model, sessions, and
+history, publishes the preset's default `SOUL.md` only when the agent has none,
+and never replaces an existing one. It validates before writing, withdraws the
+file it published when the commit fails, and changes nothing for an agent that
+already follows the preset. A running node may keep serving the agent: the next
+turn uses the new definition. `reset` is the
 bounded clean-break reset described below. None of these commands needs an
 executable model bridge.
 

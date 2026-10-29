@@ -16,8 +16,11 @@ use crate::{
     AgentToolSelection, capabilities, stable_id::stable_id,
 };
 
+#[cfg(test)]
+mod commit_fault;
 mod create;
 mod manage;
+mod preset_move;
 mod resolve;
 pub(in crate::host) mod schema;
 mod store;
@@ -26,6 +29,7 @@ mod store;
 mod tests;
 
 pub(crate) use manage::binding as agent_manage_binding;
+pub use preset_move::PresetMove;
 pub use resolve::ResolvedAgentDefinition;
 pub(crate) use resolve::resolve_definition;
 
@@ -434,7 +438,7 @@ impl LocalHost {
             check_cancellation(&cancellation)?;
             definition.name.clone_from(&edit.name);
             definition.validate()?;
-            store::set_name(&transaction, edit.id, &definition.name)?;
+            store::update_root(&transaction, &definition)?;
             let result_json = serde_json::to_string(&definition)?;
             store::insert_rename_receipt(
                 &transaction,

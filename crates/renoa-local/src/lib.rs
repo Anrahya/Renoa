@@ -61,7 +61,7 @@ pub use documents::UserProfile;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
     AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate, MAX_AGENT_PAGE,
-    RenameAgent, ResolvedAgentDefinition, derived_agent_id,
+    PresetMove, RenameAgent, ResolvedAgentDefinition, derived_agent_id,
 };
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
