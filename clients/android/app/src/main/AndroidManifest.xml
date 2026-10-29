@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Holding the chat's low-latency Wi-Fi lock. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".RenoaApplication"
