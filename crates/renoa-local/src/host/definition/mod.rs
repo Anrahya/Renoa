@@ -387,15 +387,7 @@ impl LocalHost {
         edit: RenameAgent,
         cancellation: CancellationToken,
     ) -> Result<AgentDefinition, LocalHostError> {
-        if edit.name.trim().is_empty()
-            || edit.name.len() > crate::agent_definition::MAX_NAME_BYTES
-            || edit.name.trim() != edit.name
-        {
-            return Err(LocalHostError::InvalidRequest(
-                "agent name must contain 1-512 bytes without leading or trailing whitespace"
-                    .to_owned(),
-            ));
-        }
+        crate::agent_definition::check_name(&edit.name)?;
         if operation.is_nil() {
             return Err(LocalHostError::InvalidRequest(
                 "agent rename requires a non-nil operation id".to_owned(),

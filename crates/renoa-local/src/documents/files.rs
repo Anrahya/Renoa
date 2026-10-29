@@ -329,7 +329,9 @@ pub(super) fn publish_document(
             #[cfg(test)]
             let failure = failure.or_else(|| injected_post_persist_failure(path));
             if let Some(error) = failure {
-                return Err(discard_publication(path, &published, error));
+                return Err(
+                    discard_publication(path, &published, error).unwrap_or_else(|cleanup| cleanup)
+                );
             }
             match published.identity.matches_path(path) {
                 Ok(true) => {}
@@ -340,11 +342,14 @@ pub(super) fn publish_document(
                 }
                 Err(source) => {
                     let error = document_io("verify published agent document", path, source);
-                    return Err(discard_publication(path, &published, error));
+                    return Err(discard_publication(path, &published, error)
+                        .unwrap_or_else(|cleanup| cleanup));
                 }
             }
             if let Err(error) = require_regular_file(path) {
-                return Err(discard_publication(path, &published, error));
+                return Err(
+                    discard_publication(path, &published, error).unwrap_or_else(|cleanup| cleanup)
+                );
             }
             Ok(Published::Created(published))
         }
@@ -383,28 +388,27 @@ fn injected_post_persist_failure(path: &Path) -> Option<AgentDefinitionError> {
     })
 }
 
-/// Removes one document this attempt installed and returns the failure that
-/// followed it, or an error naming both problems when the removal fails too.
-fn discard_publication(
+/// Removes one document this attempt installed after `failure` and hands that
+/// failure back, or an error naming both problems when the removal fails too.
+/// A file already gone counts as removed.
+pub(super) fn discard_publication<E: std::fmt::Display>(
     path: &Path,
     published: &PublishedFile,
-    failure: AgentDefinitionError,
-) -> AgentDefinitionError {
+    failure: E,
+) -> Result<E, AgentDefinitionError> {
     match remove_published(path, published) {
-        Ok(()) => failure,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => failure,
-        Err(error) => AgentDefinitionError::PublicationCleanup {
-            path: path.to_path_buf(),
-            failure: failure.to_string(),
-            cleanup: error.to_string(),
-        },
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(AgentDefinitionError::PublicationCleanup {
+                path: path.to_path_buf(),
+                failure: failure.to_string(),
+                cleanup: error.to_string(),
+            })
+        }
+        _ => Ok(failure),
     }
 }
 
-pub(super) fn remove_published(
-    path: &Path,
-    published: &PublishedFile,
-) -> Result<(), std::io::Error> {
+fn remove_published(path: &Path, published: &PublishedFile) -> Result<(), std::io::Error> {
     match fs::symlink_metadata(path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

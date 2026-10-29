@@ -39,10 +39,10 @@ async fn a_moved_agent_takes_the_preset_seed_and_keeps_everything_it_owns() {
         .expect("move");
     assert!(moved.changed);
     let after = moved.definition;
-    let preset = presets::preset(&app()).expect("preset");
+    let seed = presets::preset(&app()).expect("preset").seed();
     assert_eq!(after.preset_id, Some(app()));
-    assert_eq!(after.operational.instructions, preset.instructions(None));
-    assert_eq!(after.operational.documents, preset.documents());
+    assert_eq!(after.operational.instructions, seed.instructions);
+    assert_eq!(after.operational.documents, seed.documents);
     assert_eq!(
         after.operational.behavior.workspace_instructions,
         WorkspaceInstructions::Off
@@ -64,7 +64,7 @@ async fn a_moved_agent_takes_the_preset_seed_and_keeps_everything_it_owns() {
     );
     assert_eq!(
         fs::read_to_string(soul_path(&directory, &after)).expect("published SOUL.md"),
-        preset.soul_default().expect("default soul")
+        seed.soul.expect("default soul")
     );
     let prompt = host
         .resolve_definition(after.id)
@@ -174,7 +174,7 @@ async fn an_existing_soul_is_kept() {
     assert_eq!(fs::read_to_string(&soul).expect("soul"), written);
     assert_ne!(
         Some(written.as_str()),
-        presets::preset(&app()).expect("preset").soul_default()
+        presets::preset(&app()).expect("preset").seed().soul
     );
 }
 
@@ -211,4 +211,83 @@ async fn a_failed_commit_leaves_no_residue_and_the_retry_converges() {
         .expect("the retry converges");
     assert!(moved.changed);
     assert!(root.join("SOUL.md").is_file());
+}
+
+/// An agent already on the preset whose SOUL.md went missing, for example
+/// after an earlier run as another user was cleaned up, gets it back.
+#[tokio::test]
+async fn a_repeated_move_restores_a_missing_soul() {
+    let (directory, host) = fixture();
+    let agent = general_agent(&host, Uuid::new_v4()).await;
+    let first = host
+        .move_agent_to_preset(agent.id, app())
+        .await
+        .expect("move");
+    let soul = soul_path(&directory, &agent);
+    fs::remove_file(&soul).expect("lose SOUL.md");
+
+    let repaired = host
+        .move_agent_to_preset(agent.id, app())
+        .await
+        .expect("repair");
+    assert!(repaired.changed, "the restored SOUL.md is a change");
+    assert_eq!(repaired.definition, first.definition);
+    assert_eq!(
+        fs::read_to_string(&soul).expect("restored SOUL.md"),
+        presets::preset(&app())
+            .expect("preset")
+            .seed()
+            .soul
+            .expect("default soul")
+    );
+    let again = host
+        .move_agent_to_preset(agent.id, app())
+        .await
+        .expect("no-op");
+    assert!(!again.changed);
+}
+
+#[tokio::test]
+async fn a_caller_that_does_not_own_the_data_directory_is_refused_first() {
+    let (directory, host) = fixture();
+    let agent = general_agent(&host, Uuid::new_v4()).await;
+    let effective = nix::unistd::geteuid().as_raw();
+    super::super::preset_move::owner_fault::pretend(
+        &directory.path().join("data"),
+        effective.wrapping_add(1),
+    );
+
+    let refused = host.move_agent_to_preset(agent.id, app()).await;
+    assert!(
+        matches!(&refused, Err(LocalHostError::InvalidRequest(message))
+            if message.contains("owner of the Host data directory")),
+        "{refused:?}"
+    );
+    assert_eq!(
+        host.agent_definition(agent.id).await.expect("read"),
+        Some(agent.clone())
+    );
+    assert!(!soul_path(&directory, &agent).exists());
+}
+
+/// An existing SOUL.md the Host cannot read fails the move closed: neither the
+/// row nor the file changes.
+#[tokio::test]
+async fn an_unreadable_soul_fails_closed() {
+    let (directory, host) = fixture();
+    let agent = general_agent(&host, Uuid::new_v4()).await;
+    let soul = soul_path(&directory, &agent);
+    fs::create_dir_all(soul.parent().expect("agent directory")).expect("agent directory");
+    fs::write(&soul, [0xff, 0xfe, b'\n']).expect("not UTF-8");
+
+    let refused = host.move_agent_to_preset(agent.id, app()).await;
+    assert!(
+        matches!(refused, Err(LocalHostError::Definition(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        host.agent_definition(agent.id).await.expect("read"),
+        Some(agent.clone())
+    );
+    assert_eq!(fs::read(&soul).expect("SOUL.md"), [0xff, 0xfe, b'\n']);
 }

@@ -1,15 +1,18 @@
-//! Publication of a new agent's default `SOUL.md`, and its withdrawal when the
-//! creation that published it does not commit.
+//! Publication of an agent's default `SOUL.md`, and its withdrawal when the
+//! operation that published it does not commit.
 
-use std::path::{Path, PathBuf};
+use std::{
+    convert::identity,
+    path::{Path, PathBuf},
+};
 
 use renoa_kernel::AgentId;
 
 use super::{
     AgentDocumentStore,
     files::{
-        Publication, PublicationRoot, Published, PublishedFile, SOUL_FILE, publication_root,
-        publication_state, publish_document, remove_published, restrict_directory,
+        Publication, PublicationRoot, Published, PublishedFile, SOUL_FILE, discard_publication,
+        publication_root, publication_state, publish_document, restrict_directory,
     },
 };
 use crate::{AgentDefinitionError, AgentDocuments};
@@ -34,29 +37,30 @@ impl std::fmt::Debug for SoulPublication {
 }
 
 impl SoulPublication {
+    /// Whether this publication wrote the file, rather than adopting one.
+    #[must_use]
+    pub(crate) const fn created(&self) -> bool {
+        self.created.is_some()
+    }
+
     /// Removes the file and the empty directories this publication created,
-    /// after `failure` stopped the creation. An adopted file stays, because this
-    /// attempt did not write it.
+    /// after `failure` stopped the operation, and hands `failure` back. An
+    /// adopted file stays, because this attempt did not write it.
     ///
     /// # Errors
     ///
     /// Returns an error naming both `failure` and the removal when the created
     /// file cannot be removed.
-    pub(crate) fn withdraw(self, failure: String) -> Result<(), AgentDefinitionError> {
-        let cleanup = self.created.as_ref().and_then(|published| {
-            remove_published(&self.path, published)
-                .err()
-                .filter(|error| error.kind() != std::io::ErrorKind::NotFound)
-        });
+    pub(crate) fn withdraw<E: std::fmt::Display>(
+        self,
+        failure: E,
+    ) -> Result<E, AgentDefinitionError> {
+        let withdrawn = match &self.created {
+            Some(published) => discard_publication(&self.path, published, failure),
+            None => Ok(failure),
+        };
         self.root.cleanup_empty();
-        match cleanup {
-            Some(error) => Err(AgentDefinitionError::PublicationCleanup {
-                path: self.path,
-                failure,
-                cleanup: error.to_string(),
-            }),
-            None => Ok(()),
-        }
+        withdrawn
     }
 }
 
@@ -115,10 +119,7 @@ impl AgentDocumentStore {
         if !publication.root.was_created()
             && let Err(error) = restrict_directory(&publication.root.path)
         {
-            return Err(publication
-                .withdraw(error.to_string())
-                .err()
-                .unwrap_or(error));
+            return Err(publication.withdraw(error).unwrap_or_else(identity));
         }
         Ok(Some(publication))
     }

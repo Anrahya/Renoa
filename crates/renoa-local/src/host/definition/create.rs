@@ -60,9 +60,10 @@ impl LocalHost {
             .as_ref()
             .map(presets::preset)
             .transpose()?;
+        let seed = preset.map(presets::AgentPreset::seed);
         let documents = request
             .documents
-            .or_else(|| preset.and_then(presets::AgentPreset::documents));
+            .or_else(|| seed.and_then(|seed| seed.documents));
         if let Some(model) = &request.model {
             model.validate()?;
             let models =
@@ -78,7 +79,7 @@ impl LocalHost {
             creator,
             created_via: origin,
             preset_id: request.preset_id.clone(),
-            operational: operational_definition(&request, preset, documents)?,
+            operational: operational_definition(&request, seed, documents)?,
             tool_selection: AgentToolSelection {
                 revision: 1,
                 tools: resolve_selection(
@@ -114,14 +115,8 @@ impl LocalHost {
             operation_id: request.operation_id,
             request_json,
             result_json,
-            documents: documents.map(|enabled| {
-                (
-                    enabled,
-                    preset
-                        .and_then(presets::AgentPreset::soul_default)
-                        .unwrap_or_default(),
-                )
-            }),
+            documents: documents
+                .map(|enabled| (enabled, seed.and_then(|seed| seed.soul).unwrap_or_default())),
             automation,
             host_plugins_off: preset.map_or(&[], presets::AgentPreset::host_plugins_off),
             cancellation,
@@ -130,26 +125,26 @@ impl LocalHost {
     }
 }
 
+/// The preset's seed with the request's explicit choices on top.
 fn operational_definition(
     request: &AgentCreateRequest,
-    preset: Option<&presets::AgentPreset>,
+    seed: Option<presets::Seed>,
     documents: Option<AgentDocuments>,
 ) -> Result<AgentOperationalDefinition, LocalHostError> {
+    let instructions = request
+        .instructions
+        .clone()
+        .or_else(|| seed.map(|seed| seed.instructions.to_owned()))
+        .ok_or(crate::AgentDefinitionError::EmptyInstructions)?;
     Ok(AgentOperationalDefinition {
-        instructions: match preset {
-            Some(preset) => preset.instructions(request.instructions.as_deref()),
-            None => request
-                .instructions
-                .clone()
-                .ok_or(crate::AgentDefinitionError::EmptyInstructions)?,
-        },
+        instructions,
         behavior: request.behavior.unwrap_or_else(|| {
-            preset.map_or(
+            seed.map_or(
                 crate::AgentBehavior {
                     workspace_instructions: crate::WorkspaceInstructions::Off,
                     automatic_compaction: None,
                 },
-                presets::AgentPreset::behavior,
+                |seed| seed.behavior,
             )
         }),
         purpose: request.purpose.clone(),
@@ -157,7 +152,7 @@ fn operational_definition(
         provider_restriction: if request.model.is_some() {
             None
         } else {
-            preset.and_then(presets::AgentPreset::provider_restriction)
+            seed.and_then(|seed| seed.provider_restriction)
         },
         model: request.model.clone(),
     })
@@ -271,10 +266,10 @@ pub(super) fn commit_or_withdraw(
         return Ok(());
     };
     let failure = catalog_error(error);
-    if let Some(publication) = publication {
-        publication.withdraw(failure.to_string())?;
-    }
-    Err(failure)
+    Err(match publication {
+        Some(publication) => publication.withdraw(failure).unwrap_or_else(Into::into),
+        None => failure,
+    })
 }
 
 /// Replays one creation, or reports a conflict when the stored operation used a

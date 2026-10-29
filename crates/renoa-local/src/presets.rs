@@ -2,8 +2,9 @@
 //!
 //! A preset is a versioned creation seed. Creation snapshots it into the
 //! agent's own operational definition, and runtime resolution never consults a
-//! preset again. Changing preset content requires a new preset id; a test pins
-//! each preset's instructions and default `SOUL.md` to its id.
+//! preset again. Changing preset content requires a new preset id. A test pins
+//! each preset's seed to a digest as a tripwire against editing a released
+//! preset in place; nothing enforces it at runtime.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -55,14 +56,40 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
 // on a Host workspace that a person in the app never sees.
 const NO_NATIVE_TOOLS: &[BuiltInCapability] = &[];
 
+/// The documents a preset keeps. A soul is named by its default text, so a
+/// preset cannot keep a `SOUL.md` without a default to publish.
+#[derive(Clone, Copy)]
+struct PresetDocuments {
+    user: bool,
+    soul: Option<&'static str>,
+}
+
+impl PresetDocuments {
+    const NONE: Self = Self {
+        user: false,
+        soul: None,
+    };
+}
+
+/// What a preset gives an agent: its operational seed and default `SOUL.md`.
+/// Creation applies its request's choices on top; a move applies it as is.
+#[derive(Clone, Copy)]
+pub(crate) struct Seed {
+    pub(crate) instructions: &'static str,
+    pub(crate) behavior: AgentBehavior,
+    pub(crate) documents: Option<AgentDocuments>,
+    pub(crate) provider_restriction: Option<ModelProvider>,
+    /// Present exactly when `documents` keeps a soul.
+    pub(crate) soul: Option<&'static str>,
+}
+
 /// One immutable creation seed.
 pub(crate) struct AgentPreset {
     id: AgentPresetId,
     description: &'static str,
     instructions: &'static str,
     behavior: AgentBehavior,
-    documents: Option<AgentDocuments>,
-    soul_default: Option<&'static str>,
+    documents: PresetDocuments,
     provider_restriction: Option<ModelProvider>,
     capability_baseline: &'static [BuiltInCapability],
     /// Compiled Host plugins a new agent starts with turned off.
@@ -81,25 +108,20 @@ impl AgentPreset {
         self.description
     }
 
+    /// The one owner of what this preset seeds into an agent's definition.
     #[must_use]
-    pub(crate) const fn behavior(&self) -> AgentBehavior {
-        self.behavior
-    }
-
-    #[must_use]
-    pub(crate) const fn documents(&self) -> Option<AgentDocuments> {
-        self.documents
-    }
-
-    /// The `SOUL.md` a new agent from this preset starts with.
-    #[must_use]
-    pub(crate) const fn soul_default(&self) -> Option<&'static str> {
-        self.soul_default
-    }
-
-    #[must_use]
-    pub(crate) const fn provider_restriction(&self) -> Option<ModelProvider> {
-        self.provider_restriction
+    pub(crate) fn seed(&self) -> Seed {
+        let documents = AgentDocuments {
+            soul: self.documents.soul.is_some(),
+            user: self.documents.user,
+        };
+        Seed {
+            instructions: self.instructions,
+            behavior: self.behavior,
+            documents: documents.any().then_some(documents),
+            provider_restriction: self.provider_restriction,
+            soul: self.documents.soul,
+        }
     }
 
     #[must_use]
@@ -110,10 +132,6 @@ impl AgentPreset {
     #[must_use]
     pub(crate) const fn capability_baseline(&self) -> &'static [BuiltInCapability] {
         self.capability_baseline
-    }
-
-    pub(crate) fn instructions(&self, supplied: Option<&str>) -> String {
-        supplied.unwrap_or(self.instructions).to_owned()
     }
 }
 
@@ -138,8 +156,7 @@ fn seeds() -> [AgentPreset; 4] {
                 workspace_instructions: WorkspaceInstructions::ProjectAgentsFile,
                 automatic_compaction: None,
             },
-            documents: None,
-            soul_default: None,
+            documents: PresetDocuments::NONE,
             provider_restriction: None,
             capability_baseline: ALPHA_CAPABILITY_BASELINE,
             host_plugins_off: &[HostPluginId::Time],
@@ -155,11 +172,10 @@ fn seeds() -> [AgentPreset; 4] {
                     target_input_tokens: non_zero(ARCEE_COMPACTION_TARGET),
                 }),
             },
-            documents: Some(AgentDocuments {
-                soul: true,
+            documents: PresetDocuments {
                 user: true,
-            }),
-            soul_default: Some(ARCEE_SOUL),
+                soul: Some(ARCEE_SOUL),
+            },
             provider_restriction: Some(ModelProvider::OpenCodeGo),
             capability_baseline: ARCEE_CAPABILITY_BASELINE,
             host_plugins_off: &[],
@@ -172,8 +188,7 @@ fn seeds() -> [AgentPreset; 4] {
                 workspace_instructions: WorkspaceInstructions::Off,
                 automatic_compaction: None,
             },
-            documents: None,
-            soul_default: None,
+            documents: PresetDocuments::NONE,
             provider_restriction: None,
             capability_baseline: NO_NATIVE_TOOLS,
             host_plugins_off: &[],
@@ -186,11 +201,10 @@ fn seeds() -> [AgentPreset; 4] {
                 workspace_instructions: WorkspaceInstructions::Off,
                 automatic_compaction: None,
             },
-            documents: Some(AgentDocuments {
-                soul: true,
+            documents: PresetDocuments {
                 user: true,
-            }),
-            soul_default: Some(APP_SOUL),
+                soul: Some(APP_SOUL),
+            },
             provider_restriction: None,
             capability_baseline: NO_NATIVE_TOOLS,
             host_plugins_off: &[],
@@ -233,50 +247,74 @@ mod tests {
     };
     use crate::{AgentDefinitionError, AgentPresetId, atomic_file::content_hash};
 
-    /// Every preset id with the SHA-256 of its instructions and default
-    /// `SOUL.md`. Agents snapshot a preset at creation, so changed text needs a
-    /// new preset id, never a new digest under an old one.
-    const FROZEN: [(&str, &str, Option<&str>); 4] = [
+    /// A tripwire, not enforcement: every preset id with the SHA-256 of its
+    /// whole seed. Agents snapshot a seed at creation and a move rewrites one
+    /// from it, so a released preset's seed changes only under a new id; this
+    /// fails when someone edits one in place.
+    const FROZEN: [(&str, &str); 4] = [
         (
             ALPHA_PRESET_ID,
-            "6dffe8edd7c94fcf6fb7bcda351714d671badda5533495f80251b4c68edb3194",
-            None,
+            "257ee0931c8a7911a24f7440cfbf0ad9cff3705b6d07381726b5abacc4c9461e",
         ),
         (
             APP_PRESET_ID,
-            "ebf93c935ba357aff3626ce2078e83601b3e97f96bbd94153d6c8dcc6039c554",
-            Some("7b14e1d869cdf3578de62d0a5f8eddc1da71571878b88d58fc85600ae286ad9f"),
+            "30e0141bd2ace813033b37426413d6ec3852593a6726c9d7560382f51f13a0f4",
         ),
         (
             ARCEE_PRESET_ID,
-            "48462133177f6d68525cb7ba700cc3cfb6b0ffdcf87f9773c2040c2da98a0a58",
-            Some("ec44979b6960ec7d2192f8f3d284b3ed9ec122c846ce7417a0d316cc430a25bf"),
+            "8f00d277ea0646784ad401f11bb89624fdf4b9ecd185cd4bc78d4c6bc531b804",
         ),
         (
             GENERAL_PRESET_ID,
-            "55afe297f8f3a3c970d10ef4e66c0f7055978f530a6e89cc21082b560e443cb3",
-            None,
+            "b2bf09664f28cbdd40065ea3602cfa2637d214d713cf7115b2432027fc1fa001",
         ),
     ];
 
-    fn sha256(text: &str) -> String {
+    fn seed_digest(id: &str) -> String {
+        let seed = preset(&AgentPresetId::new(id).expect("id"))
+            .expect("registered preset")
+            .seed();
+        // Serialized directly, never through `serde_json::Value`, whose key
+        // order depends on which serde_json features the build unifies.
+        let encoded = serde_json::to_string(&(
+            seed.instructions,
+            seed.behavior,
+            seed.documents,
+            seed.provider_restriction,
+            seed.soul,
+        ))
+        .expect("a seed encodes");
         let mut hex = String::with_capacity(64);
-        for byte in content_hash(text.as_bytes()) {
+        for byte in content_hash(encoded.as_bytes()) {
             write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
         }
         hex
     }
 
     #[test]
-    fn preset_text_is_frozen_under_its_id() {
-        for (id, instructions, soul) in FROZEN {
-            let preset = preset(&AgentPresetId::new(id).expect("id")).expect("registered preset");
-            let changed = format!("`{id}` changed; give the new text a new preset id");
-            assert_eq!(sha256(preset.instructions), instructions, "{changed}");
+    fn every_preset_seed_is_pinned_to_its_id() {
+        let changed: Vec<String> = FROZEN
+            .iter()
+            .filter_map(|(id, pinned)| {
+                let digest = seed_digest(id);
+                (digest != *pinned).then(|| format!("{id} is now {digest}"))
+            })
+            .collect();
+        assert!(
+            changed.is_empty(),
+            "a preset seed changed; give it a new preset id: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn a_seed_keeps_a_soul_exactly_when_it_has_a_default() {
+        for preset in super::catalog() {
+            let seed = preset.seed();
             assert_eq!(
-                preset.soul_default().map(sha256).as_deref(),
-                soul,
-                "{changed}"
+                seed.documents.is_some_and(|documents| documents.soul),
+                seed.soul.is_some(),
+                "{}",
+                preset.id().as_str()
             );
         }
     }
@@ -306,11 +344,9 @@ mod tests {
     }
 
     #[test]
-    fn templates_supply_defaults_and_accept_explicit_instructions() {
-        for (id, ..) in FROZEN {
-            let template = preset(&AgentPresetId::new(id).expect("id")).expect("template");
-            assert!(!template.instructions(None).is_empty());
-            assert_eq!(template.instructions(Some("Do the job.")), "Do the job.");
+    fn every_template_supplies_instructions() {
+        for preset in super::catalog() {
+            assert!(!preset.seed().instructions.trim().is_empty());
         }
     }
 
@@ -318,26 +354,28 @@ mod tests {
     fn the_arcee_preset_keeps_today_operational_behavior() {
         let id = AgentPresetId::new(ARCEE_PRESET_ID).expect("portable preset id");
         let preset = preset(&id).expect("registered preset");
-        let behavior = preset.behavior();
+        let seed = preset.seed();
         assert!(preset.host_plugins_off().is_empty());
-        assert!(behavior.loads_project_instructions());
-        assert!(behavior.automatic_compaction.is_some());
+        assert!(seed.behavior.loads_project_instructions());
+        assert!(seed.behavior.automatic_compaction.is_some());
         assert_eq!(
-            preset.provider_restriction(),
+            seed.provider_restriction,
             Some(crate::ModelProvider::OpenCodeGo)
         );
-        let documents = preset.documents().expect("documents");
+        let documents = seed.documents.expect("documents");
         assert!(documents.soul && documents.user);
-        assert!(preset.soul_default().is_some());
+        assert!(seed.soul.is_some());
     }
 
     #[test]
-    fn the_general_template_has_no_machine_access() {
+    fn the_general_template_has_no_native_tools_or_documents() {
         let id = AgentPresetId::new(GENERAL_PRESET_ID).expect("portable preset id");
         let preset = preset(&id).expect("registered preset");
+        let seed = preset.seed();
         assert!(preset.host_plugins_off().is_empty());
-        assert!(!preset.behavior().loads_project_instructions());
-        assert!(preset.documents().is_none());
-        assert_eq!(preset.provider_restriction(), None);
+        assert!(preset.capability_baseline().is_empty());
+        assert!(!seed.behavior.loads_project_instructions());
+        assert!(seed.documents.is_none());
+        assert_eq!(seed.provider_restriction, None);
     }
 }

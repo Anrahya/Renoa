@@ -59,7 +59,10 @@ Each turn composes the system prompt from the stored definition in this order:
 the instructions; an `<identity>` block, `Your name is <name>.`, so a rename
 reaches the next turn; the `<purpose>` block; the agent's `SOUL.md`; the person's
 `USER.md`, which renders empty, with the revision of empty content, until that
-person has a profile; and, when enabled, the workspace `AGENTS.md`.
+person has a profile; and, when enabled, the workspace `AGENTS.md`. Because the
+name is quoted into that block, a name is 1 to 512 bytes on one line with no
+surrounding whitespace, control character, `<`, or `>`; creation, rename, and
+every read of a stored row apply that one rule.
 
 An Arcee agent's stable system rules are part of its stored definition. When
 that definition enables the Soul, the Host publishes an owner-editable `SOUL.md`
@@ -507,8 +510,9 @@ workspace-instruction policy, an optional document set, an optional
 automatic-compaction policy, and the compiled Host plugins a new agent starts
 with off. Creation copies the applicable values into
 the agent's own operational document, so a preset change requires a new preset id
-and never rewrites an existing agent; a test pins each preset's instructions and
-default `SOUL.md` to its id. Only the owner's `move-to-preset` command moves an
+and never rewrites an existing agent. A test pins a digest of each preset's
+whole seed to its id, as a tripwire against editing a released preset in place;
+nothing enforces it at runtime. Only the owner's `move-to-preset` command moves an
 existing agent onto a newer preset. A session manifest persists the exact agent
 id; Host catalog storage holds the definition. Loading fails closed when the agent
 definition is absent or corrupt. Caller-defined agents store their own
@@ -950,10 +954,12 @@ behavior, and documents, and records that preset id on the live definition; the
 creation receipt keeps the definition the agent was created with. It keeps the
 agent's identity, name, purpose, tools, connections, model, sessions, and
 history, publishes the preset's default `SOUL.md` only when the agent has none,
-and never replaces an existing one. It validates before writing, withdraws the
-file it published when the commit fails, and changes nothing for an agent that
-already follows the preset. A running node may keep serving the agent: the next
-turn uses the new definition. `reset` is the
+and never replaces an existing one. It refuses to run as anyone but the owner
+of the data directory, so every file it writes stays readable to the Host. It
+validates before writing and withdraws the file it published when the commit
+fails. For an agent already on the preset it leaves the row alone and only
+restores a missing `SOUL.md`. A running node may keep serving the agent: the
+next turn uses the new definition. `reset` is the
 bounded clean-break reset described below. None of these commands needs an
 executable model bridge.
 
