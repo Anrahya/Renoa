@@ -16,7 +16,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -81,6 +83,9 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     /** The Host's agents by id, and the agent each operation made, under an id of its own as on the Host. */
     val hostAgents = LinkedHashMap<String, JsonObject>()
     val made = LinkedHashMap<String, String>()
+
+    /** When set, opening this target drops the connection, once, as when it drops partway through the roster. */
+    var dropOnOpen: String? = null
 
     /** When set, the next open fails with it, as when the connection drops mid-open. */
     var openFailure: Exception? = null
@@ -166,6 +171,11 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     override suspend fun openTask(taskId: Uuid, nodeId: Uuid, target: String) {
         check(online)
         if (target in unopenable) throw RcpException(RcpErrorCode.NodeOffline, "offline", 1)
+        if (target == dropOnOpen) {
+            dropOnOpen = null
+            drop()
+            throw Disconnected("dropped mid-roster")
+        }
         openGate?.await()
         openFailure?.let {
             openFailure = null
@@ -348,9 +358,14 @@ class RcpAgentRepositoryTest {
     private val nagisa get() = "${surface.node}/nagisa"
     private val chat get() = surface.journal("nagisa")
 
-    private fun TestScope.started() =
+    private val homeFile = java.nio.file.Files.createTempDirectory("home").toFile().resolve("home")
+
+    /** What this phone keeps of Home for [owner], written as soon as it is asked to. */
+    private fun TestScope.kept(owner: String = "renoa.test me") = SavedHome(homeFile, owner, io = UnconfinedTestDispatcher(testScheduler))
+
+    private fun TestScope.started(home: SavedHome? = null) =
         RcpAgentRepository(
-            surface, state, backgroundScope, retryAfter = { 5.seconds }, rosterEvery = 1.minutes, here = { KOLKATA }, clock = testScheduler.timeSource,
+            surface, state, backgroundScope, retryAfter = { 5.seconds }, rosterEvery = 1.minutes, here = { KOLKATA }, clock = testScheduler.timeSource, home = home,
         ).also {
             it.start()
             runCurrent()
@@ -765,6 +780,57 @@ class RcpAgentRepositoryTest {
         surface.record(chat.ended(command))
         repo.stop(nagisa)
         assertEquals(listOf(command), surface.stopped)
+    }
+
+    @Test
+    fun whatHomeLastShowedShowsUntilRenoaAnswersThenTheLiveRosterReplacesItAndIsKept() = runTest {
+        val gone = "${surface.node}/gone"
+        kept().keep(flowOf(HomeSnapshot(listOf(AgentSummary(gone, "Kept", "", AgentState.Working, Glance(line = "See you", doing = "Cooking", with = nagisa))), emptyList())))
+        surface.refuseConnects = 1
+        val repo = started(kept())
+        assertTrue(repo.rosterKnown.value)
+        assertEquals(listOf(AgentSummary(gone, "Kept", "", AgentState.Resting, Glance(line = "See you"))), repo.agents.value, "kept, and no one shown mid-task")
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.send(gone, "hello") }.problem, "a kept agent waits for Renoa")
+
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(listOf("Nagisa"), repo.agents.value.map { it.name })
+        assertEquals(listOf("Nagisa"), kept().load()?.agents?.map { it.name }, "kept for the next launch")
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.send(gone, "hello") }.problem, "once Renoa has answered, it is gone")
+    }
+
+    @Test
+    fun aRosterCheckCutShortLeavesWhatHomeLastShowedInPlace() = runTest {
+        kept().keep(flowOf(HomeSnapshot(listOf(AgentSummary(nagisa, "Nagisa", "", AgentState.Resting), AgentSummary("${surface.node}/kaede", "Kaede", "", AgentState.Resting)), emptyList())))
+        surface.targets += TargetSummary(surface.node, "kaede", "Kaede")
+        surface.dropOnOpen = "kaede"
+        val repo = started(kept())
+        assertEquals(listOf("Nagisa", "Kaede"), repo.agents.value.map { it.name }, "not the half of the roster that attached")
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(listOf("Nagisa", "Kaede"), repo.agents.value.map { it.name })
+        assertEquals(Link.Connected, repo.link.value)
+    }
+
+    @Test
+    fun withNothingKeptNoOneIsKnownUntilRenoaAnswers() = runTest {
+        surface.refuseConnects = 1
+        val repo = started(kept())
+        assertFalse(repo.rosterKnown.value)
+        assertTrue(repo.agents.value.isEmpty())
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertTrue(repo.rosterKnown.value)
+        assertEquals(listOf("Nagisa"), repo.agents.value.map { it.name })
+    }
+
+    @Test
+    fun anotherSignInsHomeIsNeverShown() = runTest {
+        kept(owner = "renoa.test someone-else").keep(flowOf(HomeSnapshot(listOf(AgentSummary("theirs", "Theirs", "", AgentState.Resting)), emptyList())))
+        surface.refuseConnects = 1
+        val repo = started(kept())
+        assertFalse(repo.rosterKnown.value)
+        assertTrue(repo.agents.value.isEmpty())
     }
 
     @Test

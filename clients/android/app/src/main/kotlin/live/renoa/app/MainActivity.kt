@@ -12,6 +12,7 @@ import kotlinx.coroutines.cancel
 import java.io.File
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.RcpAgentRepository
+import live.renoa.app.agents.SavedHome
 import live.renoa.app.agents.SavedOutbox
 import live.renoa.app.signin.DeviceKeys
 import live.renoa.app.signin.RENOA_ORIGIN
@@ -26,6 +27,7 @@ class RenoaApplication : Application() {
     private var repository: AgentRepository? = null
     private var scope: CoroutineScope? = null
     private var outbox: SavedOutbox? = null
+    private var home: SavedHome? = null
 
     /**
      * The owner's Renoa, connected on first use and kept while the process lives. The first use
@@ -36,37 +38,48 @@ class RenoaApplication : Application() {
         repository ?: run {
             val saved = checkNotNull(SignInStore(this).load()?.takeIf { it.origin == RENOA_ORIGIN }) { "not signed in" }
             val state = SavedOutbox(outboxFile())
+            // Kept per sign-in: a device id belongs to one principal, so another owner's Home never shows.
+            val device = saved.credentials.deviceId
+            val kept = SavedHome(homeFile(), owner = "${saved.origin} $device")
             val authentication = Authentication.Device(saved.credentials) { bytes -> DeviceKeys.getOrCreate().sign(bytes) }
             val surface = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication, state)
             val running = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            RcpAgentRepository(surface, state, running).also {
+            RcpAgentRepository(surface, state, running, home = kept).also {
                 it.start()
                 repository = it
                 scope = running
                 outbox = state
+                home = kept
             }
         }
 
     /**
-     * Forgets this phone's sign-in, the Renoa it connected to, its unsent messages, and its device
-     * key, which Renoa refuses for good once it signed the phone out; signing in again starts afresh
-     * with a new key.
+     * Forgets this phone's sign-in, the Renoa it connected to, its unsent messages, the Home it kept,
+     * and its device key, which Renoa refuses for good once it signed the phone out; signing in again
+     * starts afresh with a new key.
      */
     suspend fun signOut() {
-        val held =
+        val (held, kept) =
             synchronized(this) {
                 scope?.cancel()
                 scope = null
                 repository = null
-                outbox.also { outbox = null }
+                (outbox to home).also {
+                    outbox = null
+                    home = null
+                }
             }
         DeviceKeys.forget()
         SignInStore(this).clear()
         SavedSignUp(this).operationId = null
         (held ?: SavedOutbox(outboxFile())).forget()
+        // Forgetting drops whatever is kept, whoever it was kept for.
+        (kept ?: SavedHome(homeFile(), owner = "")).forget()
     }
 
     private fun outboxFile() = File(filesDir, "outbox")
+
+    private fun homeFile() = File(filesDir, "home")
 }
 
 class MainActivity : ComponentActivity() {

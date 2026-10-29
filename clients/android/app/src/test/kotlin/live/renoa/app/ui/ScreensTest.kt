@@ -76,10 +76,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollToIndex
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import live.renoa.app.agents.Link
 import live.renoa.app.chat.Reveal
 import live.renoa.app.chat.RevealText
 import live.renoa.app.chat.Revealed
 import live.renoa.app.theme.RenoaType
+import live.renoa.app.home.CHECKING_IN
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
@@ -274,6 +284,34 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
+    fun beforeRenoaFirstAnswersHomeWaitsQuietlyRatherThanLookingEmpty() {
+        val known = MutableStateFlow(false)
+        val waiting =
+            object : AgentRepository by FakeAgentRepository(scope, seeds = emptyList(), routineSeeds = emptyList()) {
+                override val rosterKnown = known
+                override val link = MutableStateFlow(Link.Connecting)
+
+                override suspend fun hasAgents(): Boolean = awaitCancellation()
+            }
+        val model = HomeViewModel(waiting)
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
+        compose.waitForIdle()
+        compose.onNodeWithText(CHECKING_IN).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Today.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Make your first agent").assertDoesNotExist()
+        compose.onNodeWithText("Nobody is here yet.").assertDoesNotExist()
+        compose.onNode(hasClickLabel(OPEN_PAGES)).assertDoesNotExist()
+        snapshot("home-connecting")
+
+        // Once Renoa says no one is here, Home says so and offers to make someone.
+        known.value = true
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Today. Nothing runs today.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Make your first agent").assertIsDisplayed()
+        compose.onNodeWithText(CHECKING_IN).assertDoesNotExist()
+    }
+
+    @Test
     fun theColourChangeLivesOnTheMark() {
         var changed = 0
         home(onChangeColours = { changed++ })
@@ -292,6 +330,24 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithContentDescription("Stop").assertIsEnabled()
         snapshot("chat-working")
     }
+
+    /** Optimus's chat as [talk] holds it; what the owner sends joins it at once, and is listed in [sent]. */
+    private fun chatWith(talk: MutableStateFlow<Conversation>, sent: MutableList<String> = mutableListOf()) =
+        object : AgentRepository by repository {
+            override fun conversation(agentId: String) = talk
+
+            override suspend fun send(agentId: String, text: String) {
+                sent += text
+                talk.update { it.copy(messages = it.messages + ChatMessage("sent-${it.messages.size}", Speaker.Owner, text)) }
+            }
+        }
+
+    /** A conversation far longer than the screen, oldest first. */
+    private fun longChat() =
+        List(30) { i -> if (i % 2 == 0) ChatMessage("m$i", Speaker.Owner, "Question $i about the week ahead?") else ChatMessage("m$i", Speaker.Agent, "Answer $i. Here is what I found for you, in a few lines.") }
+
+    private fun agentSays(talk: MutableStateFlow<Conversation>, id: String, text: String) =
+        compose.runOnUiThread { talk.update { it.copy(messages = it.messages + ChatMessage(id, Speaker.Agent, text)) } }
 
     @Test
     fun messagesAlreadyThereWhenAChatOpensShowWholeAtOnce() {
@@ -321,6 +377,54 @@ class ScreensTest : ScreenTest() {
             val shown = compose.onNodeWithTag("reply").fetchSemanticsNode().config[Revealed]
             if (frame >= lagFrames) assertTrue(shown >= arrived[frame - lagFrames], "frame $frame: $shown shown, ${arrived[frame - lagFrames]} due")
         }
+    }
+
+    @Test
+    fun theKeyboardsSendSendsPutsTheKeyboardAwayAndBringsTheMessageIntoView() {
+        val talk = MutableStateFlow(Conversation(longChat()))
+        val sent = mutableListOf<String>()
+        val model = ChatViewModel(chatWith(talk, sent), "optimus")
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        val field = compose.onNodeWithContentDescription("Message Optimus")
+        field.performImeAction()
+        compose.waitForIdle()
+        assertEquals(emptyList(), sent, "nothing typed, nothing sent")
+        field.assertIsFocused()
+
+        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(29)
+        compose.onNodeWithText("Answer 29. Here is what I found for you, in a few lines.").assertDoesNotExist()
+        field.performTextInput("Book the table for eight")
+        field.assertIsFocused()
+        field.performImeAction()
+        compose.waitForIdle()
+        assertEquals(listOf("Book the table for eight"), sent)
+        compose.onNodeWithText("Book the table for eight").assertIsDisplayed()
+        field.assertIsNotFocused()
+
+        // The newest message keeps a gap above the composer.
+        val list = compose.onNode(hasScrollToIndexAction()).fetchSemanticsNode().boundsInRoot
+        val newest = compose.onNodeWithText("Book the table for eight").fetchSemanticsNode().boundsInRoot
+        assertTrue(list.bottom - newest.bottom >= with(compose.density) { 16.dp.toPx() } - 0.5f, "${list.bottom - newest.bottom} px under the newest message")
+        snapshot("chat-sent")
+    }
+
+    @Test
+    fun aReplyArrivingAtTheBottomIsFollowedAndOneArrivingWhileReadingWaitsBelow() {
+        val talk = MutableStateFlow(Conversation(longChat()))
+        val model = ChatViewModel(chatWith(talk), "optimus")
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        agentSays(talk, "first", "Here is the first of them.")
+        compose.waitForIdle()
+        compose.onNodeWithText("Here is the first of them.").assertIsDisplayed()
+
+        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(30)
+        compose.waitForIdle()
+        agentSays(talk, "second", "And here is the second.")
+        compose.waitForIdle()
+        compose.onNodeWithText("And here is the second.").assertDoesNotExist()
+        compose.onNodeWithText("Question 0 about the week ahead?").assertIsDisplayed()
     }
 
     @Test

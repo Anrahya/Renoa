@@ -23,12 +23,14 @@ enum class RunOutcome {
     Skipped,
 }
 
-data class LastRun(val at: Instant, val outcome: RunOutcome)
+@Serializable
+data class LastRun(@Serializable(with = InstantMillis::class) val at: Instant, val outcome: RunOutcome)
 
 /**
  * Something an agent does on a schedule, as the owner sees it: an automation on the Host.
  * [agentId] is the roster's id for the agent that runs it, or null while that agent is not on the roster.
  */
+@Serializable
 data class Routine(
     val id: String,
     val agentId: String?,
@@ -37,7 +39,7 @@ data class Routine(
     val schedule: String,
     val on: Boolean,
     /** When it runs next, or null while it is off. */
-    val next: Instant?,
+    @Serializable(with = InstantMillis::class) val next: Instant?,
     val lastRun: LastRun?,
 )
 

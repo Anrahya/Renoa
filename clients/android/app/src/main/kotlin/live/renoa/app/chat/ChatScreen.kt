@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,24 +20,31 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -44,6 +52,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Speaker
 import live.renoa.app.badge.Badge
@@ -62,6 +71,20 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     val state by viewModel.state.collectAsState()
     val colors = Renoa.colors
     val agent = state.agent
+    val list = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val reduced = LocalReducedMotion.current
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    // Sending, from the button or the keyboard, puts the keyboard away so the conversation is in view, and goes to the newest message.
+    val send = {
+        if (state.action == ComposerAction.Send) {
+            viewModel.send()
+            keyboard?.hide()
+            focus.clearFocus()
+            scope.launch { list.toNewest(reduced) }
+        }
+    }
     // Messages already here when the chat first loads show whole; only later ones rise, and only once.
     val old = remember(state.loaded) { if (state.loaded) (state.messages.map { it.id } + listOfNotNull(state.streaming?.id)).toHashSet() else emptySet() }
     val risen = remember { mutableSetOf<String>() }
@@ -88,17 +111,25 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
                 }
             } else {
-                Messages(state, old, risen, onRetry = viewModel::retry, onDiscard = viewModel::discard, Modifier.weight(1f))
+                Messages(state, list, old, risen, onRetry = viewModel::retry, onDiscard = viewModel::discard, Modifier.weight(1f))
             }
             state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
-            Composer(state, agent?.name.orEmpty(), viewModel)
+            Composer(state, agent?.name.orEmpty(), viewModel, send)
         }
     }
 }
 
+/** The newest item, at the bottom: an animated scroll there, or a jump with reduced motion. */
+private suspend fun LazyListState.toNewest(reduced: Boolean) = if (reduced) scrollToItem(0) else animateScrollToItem(0)
+
+/**
+ * The conversation, newest at the bottom. While the owner is at the bottom, whatever arrives next
+ * is brought into view; while they have scrolled up to read, it waits below.
+ */
 @Composable
 private fun Messages(
     state: ChatUiState,
+    list: LazyListState,
     old: Set<String>,
     risen: MutableSet<String>,
     onRetry: (String) -> Unit,
@@ -107,23 +138,33 @@ private fun Messages(
 ) {
     val colors = Renoa.colors
     val agent = state.agent
+    val reduced = LocalReducedMotion.current
+    val showsWorking = agent != null && state.working && state.streaming == null
+    // A reply still arriving is the same item as the message it becomes, so nothing jumps when it is whole.
+    val streaming = state.streaming?.let { ChatMessage(it.id, Speaker.Agent, it.text) }
+    val shown = if (streaming != null) state.messages + streaming else state.messages
+    val newest = if (showsWorking) WORKING else shown.lastOrNull()?.id
+    val atBottom by remember { derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0 } }
+    // Read as this item arrives, before the list lays it out: whether the owner was at the bottom until now.
+    val follow = atBottom
+    LaunchedEffect(newest) { if (follow) list.toNewest(reduced) }
     LazyColumn(
         modifier.fillMaxWidth(),
+        state = list,
+        // Room under the newest message, so it does not sit on the composer, and a little over the oldest.
+        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
         reverseLayout = true,
         verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.Top),
     ) {
         // Reversed layout: the first item sits at the bottom, nearest the composer.
-        if (agent != null && state.working && state.streaming == null) {
-            item(key = "working") {
+        if (showsWorking) {
+            item(key = WORKING) {
                 Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Badge(agent.name, agent.state, 56.dp, primary = state.main, hue = state.hue)
                     WorkingLine(colors.foreground, agent.glance.doing, colors.mutedForeground)
                 }
             }
         }
-        // A reply still arriving is the same item as the message it becomes, so nothing jumps when it is whole.
-        val streaming = state.streaming?.let { ChatMessage(it.id, Speaker.Agent, it.text) }
-        val shown = if (streaming != null) state.messages + streaming else state.messages
         items(shown.asReversed(), key = { it.id }) { message ->
             val fresh = message.id !in old && message.id !in risen
             SideEffect { risen += message.id }
@@ -139,6 +180,9 @@ private fun Rise(animate: Boolean, content: @Composable () -> Unit) {
     LaunchedEffect(Unit) { if (progress.value < 1f) progress.animateTo(1f, tween(800, easing = RenoaEasing.Ease)) }
     Box(Modifier.graphicsLayer { alpha = progress.value; translationY = (1f - progress.value) * 14.dp.toPx() }) { content() }
 }
+
+/** The key of the line that says the agent is working, the list's newest item while it shows. */
+private const val WORKING = "working"
 
 @Composable
 private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
@@ -178,7 +222,7 @@ private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean
 }
 
 @Composable
-private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel) {
+private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel, send: () -> Unit) {
     val colors = Renoa.colors
     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)) {
         LinkLine(state.link, Modifier.padding(start = 8.dp, bottom = 6.dp))
@@ -202,6 +246,7 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
                     textStyle = RenoaType.Body.copy(color = colors.foreground),
                     cursorBrush = SolidColor(colors.ring),
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { send() }),
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Message $name".trim() },
                 )
             }
@@ -213,7 +258,7 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
                     .background(colors.primary, RoundedCornerShape(RenoaShapes.Composer - 6.dp))
                     .semantics { contentDescription = if (state.action == ComposerAction.Stop) "Stop" else "Send" }
                     .clickable(enabled = enabled, role = Role.Button) {
-                        if (state.action == ComposerAction.Stop) viewModel.stop() else viewModel.send()
+                        if (state.action == ComposerAction.Stop) viewModel.stop() else send()
                     },
                 contentAlignment = Alignment.Center,
             ) {

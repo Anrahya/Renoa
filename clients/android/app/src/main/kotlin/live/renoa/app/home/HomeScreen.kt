@@ -56,7 +56,8 @@ import java.time.ZonedDateTime
 /**
  * Home is the owner's day with their agents: the day so far and what runs in it, the main agent
  * with everyone round her, one thing at a time handed over, and a bar that opens the chats,
- * routines and what's coming up.
+ * routines and what's coming up. Until it is [HomeUiState.known] who is here, the seats stand
+ * empty and nothing is handed over.
  */
 @Composable
 fun HomeScreen(
@@ -105,10 +106,10 @@ fun HomeScreen(
                     DayStrip(state, time, { viewModel.open(HomePage.Routines) }, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp))
                     Constellation(state, assemble, onOpenChat, onNewAgent, { viewModel.open(HomePage.Chats) }, Modifier.height(stage))
                     TalkLine(state, onOpenChat)
-                    Relay(state, next, viewModel::show, onOpenChat, viewModel::answer, Modifier.padding(horizontal = 16.dp))
+                    if (state.known) Relay(state, next, viewModel::show, onOpenChat, viewModel::answer, Modifier.padding(horizontal = 16.dp))
                     state.notice?.takeIf { state.page == null }?.let { Text(it, Modifier.padding(start = 24.dp, top = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
                 }
-                Dock(state, next, { viewModel.open(HomePage.Chats) }, Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp))
+                if (state.known) Dock(state, next, { viewModel.open(HomePage.Chats) }, Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp))
             }
         }
         AnimatedVisibility(
@@ -131,15 +132,21 @@ private fun DayStrip(state: HomeUiState, now: ZonedDateTime, onOpen: () -> Unit,
     val colors = Renoa.colors
     val marks = dayMarks(state.routines, now)
     val words =
-        marks.joinToString(prefix = "Today. ", separator = ". ") { mark ->
-            val at = clockTime(mark.at.toLocalTime())
-            when (mark.ran) {
-                null -> "${mark.routine.name} at $at"
-                RunOutcome.Failed -> "${mark.routine.name} failed at $at"
-                RunOutcome.Skipped -> "${mark.routine.name} was skipped at $at"
-                RunOutcome.Done -> "${mark.routine.name} ran at $at"
-            }
-        }.ifEmpty { "Today. Nothing runs today." }
+        when {
+            marks.isNotEmpty() ->
+                marks.joinToString(prefix = "Today. ", separator = ". ") { mark ->
+                    val at = clockTime(mark.at.toLocalTime())
+                    when (mark.ran) {
+                        null -> "${mark.routine.name} at $at"
+                        RunOutcome.Failed -> "${mark.routine.name} failed at $at"
+                        RunOutcome.Skipped -> "${mark.routine.name} was skipped at $at"
+                        RunOutcome.Done -> "${mark.routine.name} ran at $at"
+                    }
+                }
+            // Nothing can be said of the day before Renoa has said what runs in it.
+            state.known -> "Today. Nothing runs today."
+            else -> "Today."
+        }
     Column(
         modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "Open routines", onClick = onOpen).semantics { contentDescription = words },
         verticalArrangement = Arrangement.Center,

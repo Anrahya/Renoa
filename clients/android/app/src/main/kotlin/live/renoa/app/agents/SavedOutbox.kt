@@ -11,7 +11,6 @@ import kotlinx.serialization.json.Json
 import live.renoa.rcp.PendingTextCommand
 import live.renoa.rcp.RcpState
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import kotlin.uuid.Uuid
 
@@ -20,10 +19,9 @@ import kotlin.uuid.Uuid
  * goes after the next launch, under the identity it was first sent with. The cursors stay in memory:
  * the chat is rebuilt from a full replay on every launch, so they live only as long as it does.
  *
- * Every change rewrites [file] whole: written to a sibling, synced, then renamed over it, so an app
- * killed at any point leaves the old outbox or the new one. A file whose contents cannot be read
- * counts as an empty outbox. One that cannot be read at all is left as it is, and new messages are
- * refused until it can be.
+ * Every change rewrites [file] whole, as [replaceAtomically] does, so an app killed at any point
+ * leaves the old outbox or the new one. A file whose contents cannot be read counts as an empty
+ * outbox. One that cannot be read at all is left as it is, and new messages are refused until it can be.
  *
  * A change and its write finish together even when the caller is cancelled, so the outbox in memory
  * and the one on disk never part.
@@ -32,7 +30,6 @@ internal class SavedOutbox(private val file: File) : RcpState {
     @Serializable
     private data class Saved(val commandId: String, val taskId: String, val text: String)
 
-    private val next = File(file.parentFile, file.name + ".new")
     private val lock = Any()
     private val cursors = HashMap<Uuid, Long>()
 
@@ -80,7 +77,7 @@ internal class SavedOutbox(private val file: File) : RcpState {
     /** Forgets every unsent message, on disk too. A write already under way finishes first, so it cannot bring them back. */
     suspend fun forget() = changed {
         pending = LinkedHashMap()
-        next.delete()
+        file.replacement.delete()
         file.delete()
     }
 
@@ -102,11 +99,7 @@ internal class SavedOutbox(private val file: File) : RcpState {
 
     private fun write(all: Map<Uuid, PendingTextCommand>) {
         val saved = all.values.map { Saved(it.commandId.toString(), it.taskId.toString(), it.text) }
-        FileOutputStream(next).use { out ->
-            out.write(Json.encodeToString(ListSerializer(Saved.serializer()), saved).toByteArray(Charsets.UTF_8))
-            out.fd.sync()
-        }
-        if (!next.renameTo(file)) throw IOException("could not replace $file")
+        file.replaceAtomically(Json.encodeToString(ListSerializer(Saved.serializer()), saved).toByteArray(Charsets.UTF_8))
     }
 
     private companion object {

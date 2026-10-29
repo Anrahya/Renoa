@@ -71,7 +71,7 @@ internal fun seats(roster: List<AgentSummary>): List<SeatHolds> {
 /**
  * The main agent in the middle with the others on hex seats round her, each wired to her. While
  * two agents work together, a packet runs along the wire between them. Tapping anyone opens
- * their chat.
+ * their chat. While it is not yet known who is here, every seat stands empty and offers nothing.
  */
 @Composable
 internal fun Constellation(
@@ -86,7 +86,7 @@ internal fun Constellation(
     val clock = LocalMotionClock.current
     val reduced = LocalReducedMotion.current
     val main = state.main
-    val holds = seats(state.roster.filter { it.id != main?.id })
+    val holds = if (state.known) seats(state.roster.filter { it.id != main?.id }) else List(SEAT_ANGLES.size) { SeatHolds.Empty }
     val pair = talking(state.roster)
 
     BoxWithConstraints(modifier.fillMaxWidth().heightIn(min = 200.dp), contentAlignment = Alignment.Center) {
@@ -135,8 +135,10 @@ internal fun Constellation(
             Box(Modifier.align(Alignment.Center).clickable(onClickLabel = "Talk to ${main.name}") { onOpenChat(main.id) }) {
                 Badge(main, state.roster, hub, arriveAfterMillis = if (assemble) 0 else null)
             }
-        } else {
+        } else if (state.known) {
             EmptySocket(hub, plus = true, Modifier.align(Alignment.Center).clickable(role = Role.Button, onClick = onNewAgent).semantics { contentDescription = "Make your first agent" })
+        } else {
+            EmptySocket(hub, plus = false, Modifier.align(Alignment.Center))
         }
     }
 }
@@ -150,6 +152,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPacket(from: Of
     drawLine(ink.copy(alpha = 0.55f), p, p + back, 1.6.dp.toPx())
     drawCircle(ink, radius, p)
 }
+
+/** What Home says while it waits to hear who is here. */
+internal const val CHECKING_IN = "Checking in with your agents…"
 
 /** The line under the constellation: who is working together right now, or how to talk to the main agent. */
 @Composable
@@ -177,6 +182,7 @@ internal fun TalkLine(state: HomeUiState, onOpenChat: (String) -> Unit, modifier
     } else {
         val hint =
             when {
+                !state.known -> CHECKING_IN
                 main == null -> "Make your first agent to begin"
                 state.roster.size == 1 -> "Tap ${main.name} to talk"
                 else -> "Tap ${main.name} to talk, or anyone else for their chat"

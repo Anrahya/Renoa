@@ -1,9 +1,12 @@
 package live.renoa.app.agents
 
+import kotlinx.serialization.Serializable
+
 /**
  * What an agent is doing, as the owner sees it. This is the one place the five states live:
  * the badge, Home and Chat all read it, and none of them keeps its own list.
  */
+@Serializable
 enum class AgentState {
     Resting,
     Working,
@@ -29,6 +32,7 @@ enum class AgentState {
 }
 
 /** An agent as the roster shows it. */
+@Serializable
 data class AgentSummary(
     val id: String,
     val name: String,
@@ -41,12 +45,14 @@ data class AgentSummary(
 )
 
 /** A question only the owner can answer, with the answers the agent offers. */
+@Serializable
 data class Ask(val question: String, val choices: List<String>)
 
 /**
  * What Home shows about an agent at a glance. [line] is the last thing it said, or when it wakes
  * if it is asleep; [doing] is a plain line about what it is doing while it works.
  */
+@Serializable
 data class Glance(
     val line: String? = null,
     val time: String? = null,

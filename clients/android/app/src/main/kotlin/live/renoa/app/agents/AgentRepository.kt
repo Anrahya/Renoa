@@ -82,6 +82,12 @@ interface AgentRepository {
 
     val agents: StateFlow<List<AgentSummary>>
 
+    /**
+     * Whether [agents] and [routines] hold what Renoa last said: its answer, or the last one kept on
+     * this phone. Until then they are empty because nothing is known yet, not because there is nothing.
+     */
+    val rosterKnown: StateFlow<Boolean>
+
     /** The note at the top of Home, or null when there is nothing to say. */
     val briefing: StateFlow<Briefing?>
 
