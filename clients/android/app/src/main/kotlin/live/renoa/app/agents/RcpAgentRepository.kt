@@ -33,7 +33,7 @@ import kotlin.uuid.Uuid
  *
  * [state] is the outbox [surface] writes to. A message the coordinator refused is dropped; any other
  * failure leaves it there, and it is sent again with the same identity after the next connect and
- * on every roster check.
+ * on every roster check. A message the outbox held when the chat opened shows until it arrives.
  *
  * Making an agent, reading its profile and the routines are Host control, carried by the same
  * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check.
@@ -162,6 +162,10 @@ class RcpAgentRepository(
         for (target in targets) {
             val room = synchronized(lock) { rooms.getOrPut(agentId(target)) { Room(target, chatTaskId(target.nodeId, target.target)) } }
             if (room.attached) continue
+            // Sent before the app last closed: shown until its record arrives. Read once the room exists,
+            // so a refusal from here on reaches the room and outlasts this read.
+            val unsent = state.pendingCommands().filter { it.taskId == room.taskId }
+            if (unsent.isNotEmpty()) update(room) { unsent.forEach { sending(it.commandId, it.text) } }
             try {
                 surface.openTask(room.taskId, target.nodeId, target.target)
                 surface.attach(room.taskId, live = { commandId, activity -> update(room) { live(commandId, activity) } }) { event ->
@@ -270,7 +274,8 @@ class RcpAgentRepository(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (offline: IllegalStateException) {
-                // Nothing reached the outbox: the client refuses a message while it is not connected.
+                // Nothing reached the outbox: the client refuses a message while it is not connected,
+                // and the outbox refuses one it cannot keep.
                 throw RepositoryException(Problem.Unavailable, offline.message.orEmpty())
             } catch (tooLong: IllegalArgumentException) {
                 throw RepositoryException(Problem.Invalid, tooLong.message.orEmpty())

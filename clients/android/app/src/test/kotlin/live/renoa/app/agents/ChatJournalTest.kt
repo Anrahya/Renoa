@@ -174,5 +174,7 @@ class ChatJournalTest {
         chat.sending(refused, "never")
         chat.refused(refused)
         assertEquals(1, chat.conversation.messages.size)
+        chat.sending(refused, "never")
+        assertEquals(1, chat.conversation.messages.size, "an older read of the outbox does not bring it back")
     }
 }

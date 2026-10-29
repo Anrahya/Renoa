@@ -31,6 +31,9 @@ internal class ChatJournal {
 
     /** Messages the owner sent that the coordinator has not admitted yet, by command. */
     private val unsent = LinkedHashMap<Uuid, String>()
+
+    /** Commands the coordinator refused, so a late [sending] from an older read of the outbox cannot bring one back. */
+    private val refusals = HashSet<Uuid>()
     private var draft: Draft? = null
     private var seen: String? = null
 
@@ -99,11 +102,12 @@ internal class ChatJournal {
 
     /** Shows a message the owner sent until its record arrives; it keeps the record's id, so nothing jumps. */
     fun sending(commandId: Uuid, text: String) {
-        if (messages.none { it.id == commandId.toString() }) unsent[commandId] = text
+        if (commandId !in refusals && messages.none { it.id == commandId.toString() }) unsent[commandId] = text
     }
 
     /** The coordinator refused the message, so it will never arrive. */
     fun refused(commandId: Uuid) {
+        refusals += commandId
         unsent.remove(commandId)
     }
 
