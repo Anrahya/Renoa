@@ -40,39 +40,8 @@ fun hexPath(cx: Float, cy: Float, r: Float, corner: Float): Path =
         close()
     }
 
-/** Axial hex coordinates: [q] runs along the row, [r] down the slanted column. */
-data class Seat(val q: Int, val r: Int)
-
-/** Seats spiral out from the centre, ring by ring, the way the sign-in tiles fill. */
-object HexSpiral {
-    private val directions = listOf(Seat(1, 0), Seat(1, -1), Seat(0, -1), Seat(-1, 0), Seat(-1, 1), Seat(0, 1))
-
-    /** The seat for the [index]th tile: 0 is the centre, then 6 around it, then 12, and so on. */
-    fun seat(index: Int): Seat {
-        require(index >= 0) { "seat index must not be negative, got $index" }
-        if (index == 0) return Seat(0, 0)
-        var ring = 1
-        var first = 1
-        while (index >= first + 6 * ring) {
-            first += 6 * ring
-            ring++
-        }
-        var offset = index - first
-        var seat = Seat(directions[0].q * ring, directions[0].r * ring)
-        if (offset == 0) return seat
-        // From the ring's first seat, walk `ring` steps in each of the directions 2, 3, 4, 5, 0, 1.
-        for (leg in 0 until 6) {
-            val d = directions[(leg + 2) % 6]
-            repeat(ring) {
-                seat = Seat(seat.q + d.q, seat.r + d.r)
-                offset--
-                if (offset == 0) return seat
-            }
-        }
-        error("seat $index is outside ring $ring")
-    }
-
-    /** The centre of [seat] when a tile has circumradius [radius]. */
-    fun centre(seat: Seat, radius: Float): Pt =
-        Pt(radius * 1.5f * seat.q, radius * sqrt(3f) * (seat.r + seat.q / 2f))
+/** Axial hex coordinates on a board of flat-top tiles: [q] runs along the row, [r] down the slanted column. */
+data class Seat(val q: Int, val r: Int) {
+    /** The centre of this seat when a tile has circumradius [radius]. */
+    fun centre(radius: Float): Pt = Pt(radius * 1.5f * q, radius * sqrt(3f) * (r + q / 2f))
 }

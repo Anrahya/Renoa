@@ -4,7 +4,6 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class HexTest {
@@ -36,42 +35,12 @@ class HexTest {
     }
 
     @Test
-    fun theSpiralFillsTheSeatsInTheOrderTheDesignUses() {
-        val design =
-            listOf(
-                0 to 0, 1 to 0, 1 to -1, 0 to -1, -1 to 0, -1 to 1, 0 to 1,
-                2 to 0, 2 to -1, 2 to -2, 1 to -2, 0 to -2, -1 to -1, -2 to 0, -2 to 1, -2 to 2, -1 to 2, 0 to 2, 1 to 1,
-            )
-        assertEquals(design, (0 until design.size).map { HexSpiral.seat(it).let { s -> s.q to s.r } })
-    }
-
-    @Test
-    fun noTwoTilesShareASeatAndEveryTileTouchesTheCrowdAroundIt() {
-        val seats = (0 until 300).map { HexSpiral.seat(it) }
-        assertEquals(300, seats.toSet().size)
-        for ((i, seat) in seats.withIndex().drop(1)) {
-            val touching = seats.take(i).any { other ->
-                val dq = seat.q - other.q
-                val dr = seat.r - other.r
-                // Axial neighbours differ by one of six steps.
-                (dq to dr) in listOf(1 to 0, 1 to -1, 0 to -1, -1 to 0, -1 to 1, 0 to 1)
-            }
-            assertTrue(touching, "seat $i at $seat floats free of the tiles before it")
-        }
-    }
-
-    @Test
     fun neighbouringTilesAreOneTileApartCentreToCentre() {
         val r = 29.5f
-        val a = HexSpiral.centre(HexSpiral.seat(0), r)
-        for (i in 1..6) {
-            val b = HexSpiral.centre(HexSpiral.seat(i), r)
+        val a = Seat(0, 0).centre(r)
+        for ((q, s) in listOf(1 to 0, 1 to -1, 0 to -1, -1 to 0, -1 to 1, 0 to 1)) {
+            val b = Seat(q, s).centre(r)
             near(hypot(b.x - a.x, b.y - a.y), r * 1.7320508f)
         }
-    }
-
-    @Test
-    fun aNegativeSeatIsRefused() {
-        assertFailsWith<IllegalArgumentException> { HexSpiral.seat(-1) }
     }
 }
