@@ -76,11 +76,9 @@ class RcpAgentRepository(
     private val lock = Any()
     private val rooms = LinkedHashMap<String, Room>()
 
-    /** The attached agents. The screens see [shown], which is [kept] until the first roster check answers. */
+    /** The attached agents. The screens see [shown], which keeps the last launch's until the first roster check answers. */
     private val roster = MutableStateFlow<List<AgentSummary>>(emptyList())
-    private val kept = home?.load()
-    private val shown = MutableStateFlow(kept?.agents.orEmpty())
-    private val rosterHeard = MutableStateFlow(false)
+    private val shown = ShownHome(home)
     private val unsent =
         UnsentMessages(
             surface,
@@ -96,9 +94,8 @@ class RcpAgentRepository(
 
     /** The automations as the Host last listed them, by id, with the revision a change starts from. */
     private val automations = LinkedHashMap<String, ObservedAutomation>()
-    private val routineList = MutableStateFlow(kept?.routines.orEmpty())
 
-    /** Set once the Host has listed the automations; until then the [kept] routines show. */
+    /** Set once the Host has listed the automations; until then the kept routines show. */
     private var routinesHeard = false
 
     /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
@@ -108,25 +105,20 @@ class RcpAgentRepository(
 
     override val link: StateFlow<Link> = linkState.asStateFlow()
 
-    override val agents: StateFlow<List<AgentSummary>> = shown.asStateFlow()
+    override val agents: StateFlow<List<AgentSummary>> = shown.agents.asStateFlow()
 
-    override val rosterKnown: StateFlow<Boolean> = if (kept != null) MutableStateFlow(true).asStateFlow() else rosterHeard.asStateFlow()
+    override val rosterKnown: StateFlow<Boolean> = shown.known
 
     override val briefing: StateFlow<Briefing?> = MutableStateFlow<Briefing?>(null).asStateFlow()
 
-    override val routines: StateFlow<List<Routine>> = routineList.asStateFlow()
+    override val routines: StateFlow<List<Routine>> = shown.routines.asStateFlow()
 
     /**
      * Connects, follows every agent's chat, and reconnects after a drop, until [scope] is cancelled
      * or Renoa refuses this phone's sign-in, which no retry can fix.
      */
     fun start() {
-        home?.let { store ->
-            scope.launch {
-                rosterHeard.first { it }
-                store.keep(combine(shown, routineList, ::HomeSnapshot))
-            }
-        }
+        scope.launch { shown.keep() }
         scope.launch {
             var attempt = 0
             var refusals = 0
@@ -135,7 +127,7 @@ class RcpAgentRepository(
                     surface.connect()
                     unsent.send()
                     follow(surface.listTargets())
-                    rosterHeard.value = true
+                    shown.heard.value = true
                     publish()
                     linkState.value = Link.Connected
                     refusals = 0
@@ -225,10 +217,10 @@ class RcpAgentRepository(
                 rooms.filterValues { it.attached }.map { (id, room) ->
                     AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = room.journal.state, glance = room.journal.glance)
                 }
-            if (rosterHeard.value) shown.value = roster.value
+            shown.show(rooms.keys, roster.value)
             if (!routinesHeard) return
             val zone = here()
-            routineList.value =
+            shown.routines.value =
                 automations.values.map { automation ->
                     val agent = rooms.entries.firstOrNull { (_, room) -> room.attached && room.target.target == "$AGENT_TARGET${automation.agentId}" }
                     automation.routine(agent?.key, zone)
@@ -302,16 +294,22 @@ class RcpAgentRepository(
         publish()
     }
 
-    private fun room(agentId: String): Room =
-        synchronized(lock) { rooms[agentId] } ?: throw RepositoryException(unknown(rosterHeard.value), "no agent $agentId")
+    /** The agent's chat, once it is followed. One Renoa lists whose chat could not be opened yet is [Problem.Unavailable]. */
+    private fun room(agentId: String): Room {
+        val room = synchronized(lock) { rooms[agentId]?.takeIf { it.attached } }
+        return room ?: throw RepositoryException(unknown(shown.heard.value && synchronized(lock) { agentId !in rooms }), "no agent $agentId")
+    }
 
     /** Something the app does not hold is gone once Renoa has said what there is; before that, Renoa was not reached. */
     private fun unknown(heard: Boolean) = if (heard) Problem.NotFound else Problem.Unavailable
 
-    /** Waits for the agent to join the roster, as after a restart that reopened its chat before the first connect. */
+    /**
+     * Waits for the agent's chat to be followed, as after a restart that reopened it before the first
+     * connect. Once Renoa has answered without the agent, it is [Problem.NotFound].
+     */
     override fun conversation(agentId: String): Flow<Conversation> =
         flow {
-            roster.first { agents -> agents.any { it.id == agentId } }
+            combine(roster, shown.heard) { agents, heard -> agents.any { it.id == agentId } || (heard && synchronized(lock) { agentId !in rooms }) }.first { it }
             emitAll(room(agentId).conversation)
         }
 

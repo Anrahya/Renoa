@@ -82,6 +82,41 @@ class ChatViewModelTest {
     // --- sending ---
 
     @Test
+    fun aChatOpensOnItsAgentAndComposerBeforeRenoaAnswersAndASendFailsCleanly() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val waiting =
+            object : AgentRepository by inner {
+                override fun conversation(agentId: String) = kotlinx.coroutines.flow.flow<live.renoa.app.agents.Conversation> { kotlinx.coroutines.awaitCancellation() }
+
+                override suspend fun send(agentId: String, text: String) = throw RepositoryException(Problem.Unavailable, "not reached")
+            }
+        val vm = ChatViewModel(waiting, "nagisa").also { vm -> backgroundScope.launch { vm.state.collect {} } }
+        runCurrent()
+        assertEquals("Nagisa", vm.state.value.agent?.name, "the header shows")
+        assertFalse(vm.state.value.loaded)
+        assertFalse(vm.state.value.empty, "not offered a start: the chat is not known yet")
+        vm.onDraft("hello")
+        assertEquals("hello", vm.state.value.draft)
+        vm.send()
+        runCurrent()
+        assertEquals("hello", vm.state.value.draft, "the words come back")
+        assertEquals(Problem.Unavailable.ownerWords, vm.state.value.notice)
+    }
+
+    @Test
+    fun aChatWhoseAgentIsGoneIsEmptyRatherThanStuck() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val gone =
+            object : AgentRepository by inner {
+                override fun conversation(agentId: String) = kotlinx.coroutines.flow.flow<live.renoa.app.agents.Conversation> { throw RepositoryException(Problem.NotFound, "gone") }
+            }
+        val vm = ChatViewModel(gone, "nagisa").also { vm -> backgroundScope.launch { vm.state.collect {} } }
+        runCurrent()
+        assertTrue(vm.state.value.loaded)
+        assertTrue(vm.state.value.messages.isEmpty())
+    }
+
+    @Test
     fun aChatWearsItsAgentsColourFromHome() = runTest {
         val seen =
             listOf("renoa", "kaisa", "nagisa").map { id ->

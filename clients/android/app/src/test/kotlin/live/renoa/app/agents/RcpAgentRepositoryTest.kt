@@ -813,6 +813,29 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun anAgentWhoseChatCannotBeOpenedKeepsItsPlaceAndAnAgentRenoaNoLongerListsLeaves() = runTest {
+        val kaede = "${surface.node}/kaede"
+        val gone = "${surface.node}/gone"
+        kept().keep(flowOf(HomeSnapshot(listOf(AgentSummary(kaede, "Kaede", "", AgentState.Resting), AgentSummary(nagisa, "Nagisa", "", AgentState.Resting), AgentSummary(gone, "Gone", "", AgentState.Resting)), emptyList())))
+        surface.targets = listOf(TargetSummary(surface.node, "kaede", "Kaede"), TargetSummary(surface.node, "nagisa", "Nagisa"))
+        surface.unopenable += "kaede"
+        val repo = started(kept())
+        assertEquals(listOf("Kaede", "Nagisa"), repo.agents.value.map { it.name }, "refused, Kaede keeps her place; Gone is not listed")
+        assertEquals(listOf("Kaede", "Nagisa"), kept().load()?.agents?.map { it.name }, "and the kept roster does not shrink")
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.send(kaede, "hello") }.problem, "her chat waits for her node")
+        val chat = backgroundScope.async { repo.chat(kaede) }
+        runCurrent()
+        assertFalse(chat.isCompleted)
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.chat(gone) }.problem, "a chat Renoa no longer lists is gone, not waiting")
+
+        surface.unopenable -= "kaede"
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertTrue(chat.isCompleted, "her chat opens once her node takes it")
+        assertEquals(listOf("Kaede", "Nagisa"), repo.agents.value.map { it.name })
+    }
+
+    @Test
     fun withNothingKeptNoOneIsKnownUntilRenoaAnswers() = runTest {
         surface.refuseConnects = 1
         val repo = started(kept())

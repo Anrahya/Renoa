@@ -22,9 +22,17 @@ class SavedHomeTest {
     @Test
     fun whatHomeShowedIsReadBackForTheSameSignInOnly() = runTest {
         SavedHome(file, "a", UnconfinedTestDispatcher(testScheduler)).keep(flowOf(home))
-        assertEquals(home, SavedHome(file, "a").load())
+        val read = SavedHome(file, "a").load()
+        assertEquals(home.copy(agents = home.agents.map { it.copy(glance = it.glance.copy(ask = null)) }), read, "all but the question, which may have been answered since")
+        assertNull(read?.agents?.single()?.glance?.ask)
         assertNull(SavedHome(file, "b").load(), "another sign-in reads nothing")
         assertEquals(listOf("home"), dir.list()?.toList(), "nothing is left beside it")
+    }
+
+    @Test
+    fun aRosterWithNoOneDoesNotReplaceTheOneKept() = runTest {
+        SavedHome(file, "a", UnconfinedTestDispatcher(testScheduler)).keep(flowOf(home, HomeSnapshot(emptyList(), listOf(routine))))
+        assertEquals(listOf("Renoa"), SavedHome(file, "a").load()?.agents?.map { it.name })
     }
 
     @Test

@@ -331,14 +331,13 @@ class ScreensTest : ScreenTest() {
         snapshot("chat-working")
     }
 
-    /** Optimus's chat as [talk] holds it; what the owner sends joins it at once, and is listed in [sent]. */
+    /** Optimus's chat as [talk] holds it. What the owner sends is listed in [sent]; it joins the chat only when the test adds it. */
     private fun chatWith(talk: MutableStateFlow<Conversation>, sent: MutableList<String> = mutableListOf()) =
         object : AgentRepository by repository {
             override fun conversation(agentId: String) = talk
 
             override suspend fun send(agentId: String, text: String) {
                 sent += text
-                talk.update { it.copy(messages = it.messages + ChatMessage("sent-${it.messages.size}", Speaker.Owner, text)) }
             }
         }
 
@@ -399,8 +398,11 @@ class ScreensTest : ScreenTest() {
         field.performImeAction()
         compose.waitForIdle()
         assertEquals(listOf("Book the table for eight"), sent)
-        compose.onNodeWithText("Book the table for eight").assertIsDisplayed()
         field.assertIsNotFocused()
+        // The message shows once the repository has it, a moment after the send, and the list goes to it.
+        compose.runOnUiThread { talk.update { it.copy(messages = it.messages + ChatMessage("sent", Speaker.Owner, "Book the table for eight")) } }
+        compose.waitForIdle()
+        compose.onNodeWithText("Book the table for eight").assertIsDisplayed()
 
         // The newest message keeps a gap above the composer.
         val list = compose.onNode(hasScrollToIndexAction()).fetchSemanticsNode().boundsInRoot

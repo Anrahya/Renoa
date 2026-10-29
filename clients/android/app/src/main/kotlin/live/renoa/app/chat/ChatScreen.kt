@@ -36,7 +36,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -52,7 +51,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Speaker
 import live.renoa.app.badge.Badge
@@ -72,17 +70,14 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     val colors = Renoa.colors
     val agent = state.agent
     val list = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-    val reduced = LocalReducedMotion.current
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    // Sending, from the button or the keyboard, puts the keyboard away so the conversation is in view, and goes to the newest message.
+    // Sending, from the button or the keyboard, puts the keyboard away so the conversation is in view; the list goes to the message once it shows.
     val send = {
         if (state.action == ComposerAction.Send) {
             viewModel.send()
             keyboard?.hide()
             focus.clearFocus()
-            scope.launch { list.toNewest(reduced) }
         }
     }
     // Messages already here when the chat first loads show whole; only later ones rise, and only once.
@@ -106,7 +101,11 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     Text(agent?.name.orEmpty(), style = RenoaType.Heading, color = colors.foreground)
                 }
             }
-            if (state.empty) {
+            if (!state.loaded) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(OPENING, style = RenoaType.Caption, color = colors.mutedForeground)
+                }
+            } else if (state.empty) {
                 Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
                     ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
                 }
@@ -122,9 +121,12 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
 /** The newest item, at the bottom: an animated scroll there, or a jump with reduced motion. */
 private suspend fun LazyListState.toNewest(reduced: Boolean) = if (reduced) scrollToItem(0) else animateScrollToItem(0)
 
+/** What the chat says until it has been read, as while Renoa cannot be reached. */
+internal const val OPENING = "Connecting to Renoa…"
+
 /**
- * The conversation, newest at the bottom. While the owner is at the bottom, whatever arrives next
- * is brought into view; while they have scrolled up to read, it waits below.
+ * The conversation, newest at the bottom. What the owner just said is brought into view, and so is
+ * whatever arrives while they are at the bottom; while they have scrolled up to read, it waits below.
  */
 @Composable
 private fun Messages(
@@ -145,9 +147,10 @@ private fun Messages(
     val shown = if (streaming != null) state.messages + streaming else state.messages
     val newest = if (showsWorking) WORKING else shown.lastOrNull()?.id
     val atBottom by remember { derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0 } }
-    // Read as this item arrives, before the list lays it out: whether the owner was at the bottom until now.
-    val follow = atBottom
-    LaunchedEffect(newest) { if (follow) list.toNewest(reduced) }
+    // Read as this item arrives, before the list lays it out: whether the owner was at the bottom until now, or just spoke.
+    val follow = atBottom || shown.lastOrNull()?.let { it.speaker == Speaker.Owner && it.id !in old } == true
+    // Keyed on the last message too: what the owner says while the agent works sits under the working line.
+    LaunchedEffect(newest, shown.lastOrNull()?.id) { if (follow) list.toNewest(reduced) }
     LazyColumn(
         modifier.fillMaxWidth(),
         state = list,
