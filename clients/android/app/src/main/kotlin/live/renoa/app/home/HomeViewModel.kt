@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.Briefing
+import live.renoa.app.agents.Link
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.Routine
@@ -61,6 +62,7 @@ data class HomeUiState(
     val ownerName: String? = null,
     /** Renoa has made no agent for the owner yet, so sign-up comes first. */
     val signUp: Boolean = false,
+    val link: Link = Link.Connected,
 ) {
     val people: List<AgentSummary> get() = homeOrder(roster)
 
@@ -97,9 +99,9 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     }
 
     val state: StateFlow<HomeUiState> =
-        combine(repository.agents, repository.briefing, repository.routines, local) { agents, briefing, routines, mine ->
-            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt, mine.ownerName, mine.signUp)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value))
+        combine(repository.agents, repository.briefing, repository.routines, local, repository.link) { agents, briefing, routines, mine, link ->
+            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt, mine.ownerName, mine.signUp, link)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value, link = repository.link.value))
 
     init {
         viewModelScope.launch { meetTheOwner() }

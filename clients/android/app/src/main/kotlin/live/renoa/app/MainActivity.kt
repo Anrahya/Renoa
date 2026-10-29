@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.RcpAgentRepository
 import live.renoa.app.signin.DeviceKeys
@@ -21,6 +22,7 @@ import live.renoa.rcp.WebSocketRcpSurface
 /** Owns what outlives a screen. */
 class RenoaApplication : Application() {
     private var repository: AgentRepository? = null
+    private var scope: CoroutineScope? = null
 
     /**
      * The owner's Renoa, connected on first use and kept while the process lives. The first use
@@ -34,11 +36,22 @@ class RenoaApplication : Application() {
             val state = InMemoryRcpState()
             val authentication = Authentication.Device(saved.credentials) { bytes -> DeviceKeys.getOrCreate().sign(bytes) }
             val surface = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication, state)
-            RcpAgentRepository(surface, state, CoroutineScope(SupervisorJob() + Dispatchers.Default)).also {
+            val running = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            RcpAgentRepository(surface, state, running).also {
                 it.start()
                 repository = it
+                scope = running
             }
         }
+
+    /** Forgets this phone's sign-in and the Renoa it connected to, so signing in again starts afresh. */
+    @Synchronized
+    fun signOut() {
+        scope?.cancel()
+        scope = null
+        repository = null
+        SignInStore(this).clear()
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -50,6 +63,6 @@ class MainActivity : ComponentActivity() {
         val store = SignInStore(applicationContext)
         // A credential from another Renoa, as after a build that signs in elsewhere, does not count.
         val signedIn = store.load()?.origin == RENOA_ORIGIN
-        setContent { RenoaApp(application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store)) }
+        setContent { RenoaApp(application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut) }
     }
 }

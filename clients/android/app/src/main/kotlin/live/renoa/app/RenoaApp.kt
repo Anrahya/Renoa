@@ -29,7 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.flow.first
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.agents.Link
 import live.renoa.app.chat.ChatScreen
 import live.renoa.app.chat.ChatViewModel
 import live.renoa.app.editor.AgentEditorScreen
@@ -53,17 +55,32 @@ import live.renoa.app.theme.SystemBars
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.ThemeName
 
+/** What sign-in says after Renoa stopped accepting this phone. */
+internal const val SIGNED_OUT = "This phone was signed out. Sign in again to carry on."
+
 /** The widest the screens grow; past it, the theme's ground fills the sides. */
 internal val MAX_CONTENT_WIDTH = 600.dp
 
-/** The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then. */
+/**
+ * The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then.
+ * When Renoa refuses this phone's sign-in, [signedOut] forgets it and the app goes back to sign-in.
+ */
 @Composable
-internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, signingIn: suspend (SignInCode, Passkeys) -> Unit) {
+internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, signingIn: suspend (SignInCode, Passkeys) -> Unit, signedOut: () -> Unit = {}) {
     // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
     var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
     val theme = picked ?: if (isSystemInDarkTheme()) ThemeName.Graphite else ThemeName.Paper
     val navigator = rememberNavigator(if (signedIn) Route.Home else Route.SignIn)
     val stores: EntryStores = viewModel()
+    var wasSignedOut by rememberSaveable { mutableStateOf(false) }
+    if (navigator.top != Route.SignIn) {
+        LaunchedEffect(Unit) {
+            repository().link.first { it == Link.SignedOut }
+            signedOut()
+            wasSignedOut = true
+            navigator.resetTo(Route.SignIn)
+        }
+    }
 
     RenoaTheme(theme) {
         SystemBars(theme)
@@ -84,7 +101,7 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
                 DisposableEffect(Unit) { onDispose { if (navigator.entries.none { it.id == entry.id }) stores.release(entry.id) } }
                 when (val route = entry.route) {
                     Route.SignIn -> {
-                        val model: SignInViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { SignInViewModel(signingIn) } })
+                        val model: SignInViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { SignInViewModel(signingIn, if (wasSignedOut) SignInState.Failed(SIGNED_OUT) else SignInState.Ready) } })
                         val activity = checkNotNull(LocalActivity.current) { "sign-in needs its activity" }
                         LaunchedEffect(model.state) { if (model.state == SignInState.SignedIn) navigator.resetTo(Route.Home) }
                         SignInScreen(model.state, model.code, { model.code = it }) { model.submit(Passkeys.of(activity)) }

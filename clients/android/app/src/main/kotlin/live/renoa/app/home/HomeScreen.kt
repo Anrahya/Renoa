@@ -49,6 +49,7 @@ import live.renoa.app.agents.clockTime
 import live.renoa.app.badge.AgentHue
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaType
+import live.renoa.app.ui.LinkLine
 import live.renoa.app.ui.RenoaMark
 import java.time.ZonedDateTime
 
@@ -100,6 +101,7 @@ fun HomeScreen(
                         Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = colors.mutedForeground)
                     }
                     Text(greeting(time.hour, state.ownerName), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
+                    LinkLine(state.link, Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp))
                     DayStrip(state, time, { viewModel.open(HomePage.Routines) }, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp))
                     Constellation(state, assemble, onOpenChat, onNewAgent, { viewModel.open(HomePage.Chats) }, Modifier.height(stage))
                     TalkLine(state, onOpenChat)

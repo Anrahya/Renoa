@@ -31,6 +31,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.FakeAgentRepository
+import live.renoa.app.agents.Link
+import live.renoa.app.ui.LOST_WORDS
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import live.renoa.app.nav.EntryStores
 import live.renoa.app.ui.ScreenTest
 import live.renoa.app.signin.SignInCode
@@ -52,6 +56,32 @@ class RenoaAppTest : ScreenTest() {
         Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
         compose.setContent { RenoaApp({ with }, signedIn = true, signingIn = { _, _ -> }) }
         compose.waitForIdle()
+    }
+
+    @Test
+    fun aPhoneRenoaNoLongerAcceptsGoesBackToSignInAndSaysWhy() {
+        var forgotten = 0
+        Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        compose.setContent { RenoaApp({ repository }, signedIn = true, signingIn = { _, _ -> }, signedOut = { forgotten++ }) }
+        compose.waitForIdle()
+        onHome("Tifa, wants you").assertIsDisplayed()
+
+        repository.setLink(Link.Lost)
+        compose.waitForIdle()
+        compose.onNodeWithText(LOST_WORDS).assertIsDisplayed()
+        onHome("Tifa, wants you").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText(LOST_WORDS).assertIsDisplayed()
+        back()
+        repository.setLink(Link.Connected)
+        compose.waitForIdle()
+        compose.onAllNodesWithText(LOST_WORDS).assertCountEquals(0)
+
+        repository.setLink(Link.SignedOut)
+        compose.waitForIdle()
+        assertEquals(1, forgotten, "the sign-in is forgotten once")
+        compose.onNodeWithText(SIGNED_OUT).assertIsDisplayed()
+        assertEquals(1, ViewModelProvider(compose.activity)[EntryStores::class.java].held, "sign-in alone, so back leaves the app")
     }
 
     @Test

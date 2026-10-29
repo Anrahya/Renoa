@@ -49,6 +49,7 @@ import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
+import live.renoa.app.ui.LinkLine
 import live.renoa.app.ui.AskCard
 import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
@@ -148,6 +149,7 @@ private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean
 private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel) {
     val colors = Renoa.colors
     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)) {
+        LinkLine(state.link, Modifier.padding(start = 8.dp, bottom = 6.dp))
         state.notice?.let {
             Text(it, Modifier.padding(start = 8.dp, bottom = 6.dp), style = RenoaType.Caption, color = colors.stateFailed)
         }

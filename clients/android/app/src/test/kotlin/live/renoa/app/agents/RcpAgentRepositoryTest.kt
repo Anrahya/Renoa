@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.ApplyLiveActivity
 import live.renoa.rcp.CommandSubmission
 import live.renoa.rcp.Disconnected
@@ -132,8 +133,13 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         ended.complete(Disconnected("dropped"))
     }
 
+    /** Set when the coordinator no longer accepts this phone's sign-in. */
+    var signInRefused: Exception? = null
+    var closed = false
+
     override suspend fun connect() {
         connects++
+        signInRefused?.let { throw it }
         if (refuseConnects-- > 0) throw Disconnected("refused")
         ended = CompletableDeferred()
         online = true
@@ -330,7 +336,10 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             command.commandId
         }
 
-    override fun close() = drop()
+    override fun close() {
+        closed = true
+        drop()
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -485,6 +494,45 @@ class RcpAgentRepositoryTest {
         assertEquals(setOf("expected_revision", "content"), surface.profileEdits.single().keys)
         assertEquals(saved, repo.saveOwnerProfile(empty.revision, "Name: Yash\n"), "a repeat of a save that landed")
         assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.saveOwnerProfile(empty.revision, "Name: Asha\n") }.problem)
+    }
+
+    @Test
+    fun theLinkSaysWhetherRenoaCanBeReached() = runTest {
+        surface.refuseConnects = 1
+        val repo = RcpAgentRepository(surface, state, backgroundScope, retryAfter = { 5.seconds }, rosterEvery = 1.minutes, here = { KOLKATA })
+        assertEquals(Link.Connecting, repo.link.value)
+        repo.start()
+        runCurrent()
+        assertEquals(Link.Lost, repo.link.value, "a connection that failed")
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(Link.Connected, repo.link.value)
+        surface.drop()
+        runCurrent()
+        assertEquals(Link.Lost, repo.link.value, "a connection that dropped")
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(Link.Connected, repo.link.value)
+    }
+
+    @Test
+    fun aRefusedSignInSignsThePhoneOutAndNothingRetriesIt() = runTest {
+        for (refusal in listOf(RcpException(RcpErrorCode.AuthenticationFailed, "unknown device", null), DeviceKeyRequired("no key"))) {
+            surface.signInRefused = null
+            surface.closed = false
+            val repo = started()
+            assertEquals(Link.Connected, repo.link.value)
+            surface.signInRefused = refusal
+            surface.drop()
+            advanceTimeBy(5.seconds)
+            runCurrent()
+            assertEquals(Link.SignedOut, repo.link.value, "$refusal")
+            assertTrue(surface.closed, "the client is closed")
+            val tries = surface.connects
+            advanceTimeBy(5.minutes)
+            runCurrent()
+            assertEquals(tries, surface.connects, "no retry can fix a refused sign-in")
+        }
     }
 
     @Test

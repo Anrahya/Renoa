@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
@@ -71,13 +72,20 @@ class RcpAgentRepository(
     /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
     private val following = Mutex()
 
+    private val linkState = MutableStateFlow(Link.Connecting)
+
+    override val link: StateFlow<Link> = linkState.asStateFlow()
+
     override val agents: StateFlow<List<AgentSummary>> = roster.asStateFlow()
 
     override val briefing: StateFlow<Briefing?> = MutableStateFlow<Briefing?>(null).asStateFlow()
 
     override val routines: StateFlow<List<Routine>> = routineList.asStateFlow()
 
-    /** Connects, follows every agent's chat, and reconnects after a drop, until [scope] is cancelled. */
+    /**
+     * Connects, follows every agent's chat, and reconnects after a drop, until [scope] is cancelled
+     * or Renoa refuses this phone's sign-in, which no retry can fix.
+     */
     fun start() {
         scope.launch {
             var attempt = 0
@@ -86,6 +94,7 @@ class RcpAgentRepository(
                     surface.connect()
                     sendUnsent()
                     follow(surface.listTargets())
+                    linkState.value = Link.Connected
                     readRoutines()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
@@ -106,9 +115,15 @@ class RcpAgentRepository(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
+                    if (failure.signsOut) {
+                        linkState.value = Link.SignedOut
+                        surface.close()
+                        return@launch
+                    }
                     // A connection that failed partway is closed before the next attempt.
                     runCatching { surface.disconnect() }
                 }
+                linkState.value = Link.Lost
                 // Live text is not replayed, so a draft cut by the drop would be glued to text from after it.
                 synchronized(lock) { rooms.values.toList() }.forEach { update(it) { connectionLost() } }
                 delay(retryAfter(attempt++))
@@ -383,3 +398,7 @@ internal fun RcpException.asProblem(): RepositoryException {
         }
     return RepositoryException(problem, message.orEmpty())
 }
+
+/** A refused sign-in: the device credential is no longer accepted, or the key it was issued for is gone. */
+private val Exception.signsOut: Boolean
+    get() = this is DeviceKeyRequired || (this is RcpException && code == RcpErrorCode.AuthenticationFailed)

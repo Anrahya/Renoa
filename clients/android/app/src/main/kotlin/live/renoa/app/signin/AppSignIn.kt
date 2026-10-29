@@ -88,8 +88,9 @@ internal fun deviceLabel(name: String?): String {
 /** One sign-in: a passkey and this installation's device key, then the credential kept for later. */
 internal class SignInViewModel(
     private val signIn: suspend (SignInCode, Passkeys) -> Unit,
+    initial: SignInState = SignInState.Ready,
 ) : ViewModel() {
-    var state by mutableStateOf<SignInState>(SignInState.Ready)
+    var state by mutableStateOf(initial)
         private set
 
     /** What the person typed. It lives here, not in saved state, because a setup code is a secret. */

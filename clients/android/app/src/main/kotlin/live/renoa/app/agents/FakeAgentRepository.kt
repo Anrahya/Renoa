@@ -90,6 +90,15 @@ class FakeAgentRepository(
 
     private var owner = OwnerProfile("", revisionOf(""))
 
+    private val linkState = MutableStateFlow(Link.Connected)
+
+    override val link: StateFlow<Link> = linkState.asStateFlow()
+
+    /** Sets how the app is connected, as a dropped connection or a sign-out elsewhere would. */
+    fun setLink(link: Link) {
+        linkState.value = link
+    }
+
     override suspend fun hasAgents(): Boolean = roster.value.isNotEmpty()
 
     override suspend fun ownerProfile(): OwnerProfile = synchronized(lock) { owner }
