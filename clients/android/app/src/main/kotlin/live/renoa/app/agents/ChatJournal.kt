@@ -32,8 +32,11 @@ internal class ChatJournal {
     /** Messages the owner sent that the coordinator has not admitted yet, by command. */
     private val unsent = LinkedHashMap<Uuid, String>()
 
-    /** Commands the coordinator refused, so a late [sending] from an older read of the outbox cannot bring one back. */
-    private val refusals = HashSet<Uuid>()
+    /** Commands that will never arrive, refused or deleted, so a late [sending] from an older read of the outbox cannot bring one back. */
+    private val gone = HashSet<Uuid>()
+
+    /** Messages in [unsent] the app stopped sending, until the owner sends them again. */
+    private val notSent = HashSet<Uuid>()
     private var draft: Draft? = null
     private var seen: String? = null
 
@@ -49,6 +52,7 @@ internal class ChatJournal {
                 messages += ChatMessage(kind.command.commandId.toString(), Speaker.Owner, input.text)
                 latestCommand = kind.command.commandId
                 unsent.remove(kind.command.commandId)
+                notSent.remove(kind.command.commandId)
             }
             is TaskEventKind.ExecutionRecorded ->
                 when (val activity = kind.event.kind) {
@@ -102,19 +106,36 @@ internal class ChatJournal {
 
     /** Shows a message the owner sent until its record arrives; it keeps the record's id, so nothing jumps. */
     fun sending(commandId: Uuid, text: String) {
-        if (commandId !in refusals && messages.none { it.id == commandId.toString() }) unsent[commandId] = text
+        if (commandId !in gone && messages.none { it.id == commandId.toString() }) unsent[commandId] = text
     }
 
     /** The coordinator refused the message, so it will never arrive. */
     fun refused(commandId: Uuid) {
-        refusals += commandId
+        gone += commandId
         unsent.remove(commandId)
+        notSent.remove(commandId)
+    }
+
+    /** The app stopped sending the message. It stays, marked, so the owner can send it again. */
+    fun notSent(commandId: Uuid) {
+        if (commandId in unsent) notSent += commandId
+    }
+
+    /** The words of a message the app stopped sending, now sent again; null if there is none. */
+    fun resend(commandId: Uuid): String? = unsent[commandId]?.takeIf { notSent.remove(commandId) }
+
+    /** The owner deleted a message the app stopped sending. Returns whether there was one. */
+    fun delete(commandId: Uuid): Boolean {
+        if (!notSent.remove(commandId)) return false
+        unsent.remove(commandId)
+        gone += commandId
+        return true
     }
 
     val conversation: Conversation
         get() =
             Conversation(
-                messages + unsent.map { (commandId, text) -> ChatMessage(commandId.toString(), Speaker.Owner, text) },
+                messages + unsent.map { (commandId, text) -> ChatMessage(commandId.toString(), Speaker.Owner, text, notSent = commandId in notSent) },
                 draft?.takeIf { it.text.isNotEmpty() }?.let { StreamingReply(messageId(it.commandId, it.index), it.text) },
             )
 

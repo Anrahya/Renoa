@@ -98,8 +98,12 @@ interface RcpSurface {
      */
     suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer
 
-    /** Resends every pending command with its original identity and returns the ones admitted. */
-    suspend fun retryPendingCommands(): List<Uuid>
+    /**
+     * Sends [command] again with its original identity if the outbox still holds it, and removes it
+     * once the coordinator admitted it. Safe to repeat: the coordinator converges on one command, and
+     * one no longer in the outbox is not sent. The caller decides the order and when to stop.
+     */
+    suspend fun resendPending(command: PendingTextCommand)
 
     fun close()
 }

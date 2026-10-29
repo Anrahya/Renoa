@@ -330,11 +330,10 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         return HostAnswer(200, receipt.toString())
     }
 
-    override suspend fun retryPendingCommands(): List<Uuid> =
-        state.pendingCommands().map { command ->
-            deliver(command)
-            command.commandId
-        }
+    override suspend fun resendPending(command: PendingTextCommand) {
+        check(online)
+        if (state.pendingCommands().any { it.commandId == command.commandId }) deliver(command)
+    }
 
     override fun close() {
         closed = true
@@ -350,7 +349,9 @@ class RcpAgentRepositoryTest {
     private val chat get() = surface.journal("nagisa")
 
     private fun TestScope.started() =
-        RcpAgentRepository(surface, state, backgroundScope, retryAfter = { 5.seconds }, rosterEvery = 1.minutes, here = { KOLKATA }).also {
+        RcpAgentRepository(
+            surface, state, backgroundScope, retryAfter = { 5.seconds }, rosterEvery = 1.minutes, here = { KOLKATA }, clock = testScheduler.timeSource,
+        ).also {
             it.start()
             runCurrent()
         }
@@ -491,6 +492,125 @@ class RcpAgentRepositoryTest {
         assertTrue(state.pendingCommands().isEmpty())
         assertEquals(listOf("second"), surface.admitted.map { it.text })
         assertEquals(listOf("second"), repo.chat(nagisa).messages.map { it.text })
+    }
+
+    private val offline = Answer.Refuse(RcpErrorCode.NodeOffline)
+
+    /** Sends "hello" to Nagisa, whose node cannot take it, and lets a minute of answers give it up. */
+    private suspend fun TestScope.givenUp(repo: RcpAgentRepository): PendingTextCommand {
+        surface.answers += listOf(offline, offline)
+        repo.send(nagisa, "hello")
+        val hello = state.pendingCommands().single()
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf(true), repo.chat(nagisa).messages.map { it.notSent })
+        return hello
+    }
+
+    @Test
+    fun aMessageRenoaCannotTakeForAMinuteIsGivenUpAndAnotherChatDoesNotWaitBehindIt() = runTest {
+        surface.targets += TargetSummary(surface.node, "kaede", "Kaede")
+        val repo = started()
+        advanceTimeBy(1.seconds)
+        // In turn: the send, Nagisa's message at the next check, Kaede's at the same check, Nagisa's at the one after.
+        surface.answers += listOf(offline, offline, Answer.Admit, offline)
+        repo.send(nagisa, "hello")
+        val hello = state.pendingCommands().single()
+        state.enqueueCommand(PendingTextCommand(Uuid.random(), surface.journal("kaede").taskId, "hi"))
+
+        advanceTimeBy(59.seconds)
+        runCurrent()
+        assertEquals(listOf("hi"), surface.admitted.map { it.text }, "Kaede's message did not wait behind Nagisa's")
+        assertEquals(listOf(hello), state.pendingCommands(), "59 seconds of answers is not enough to give up")
+        assertEquals(listOf(false), repo.chat(nagisa).messages.map { it.notSent })
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf(ChatMessage(hello.commandId.toString(), Speaker.Owner, "hello", notSent = true)), repo.chat(nagisa).messages)
+        assertEquals(listOf(hello), state.pendingCommands(), "kept, so a relaunch tries it again")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("hi"), surface.admitted.map { it.text }, "given up, so not sent again")
+    }
+
+    @Test
+    fun aMessageThatDidNotSendGoesAgainUnderItsOwnIdentityWhenRetried() = runTest {
+        val repo = started()
+        val hello = givenUp(repo)
+        surface.answers += offline
+
+        repo.retry(nagisa, hello.commandId.toString())
+        assertEquals(listOf(hello), state.pendingCommands(), "the node still cannot take it, so it waits again")
+        assertEquals(listOf(false), repo.chat(nagisa).messages.map { it.notSent }, "shown as sending, not as given up")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf(hello), surface.admitted, "under the identity it was first sent with")
+        assertEquals(listOf(hello.commandId.toString() to false), repo.chat(nagisa).messages.map { it.id to it.notSent }, "and shown once")
+        assertTrue(state.pendingCommands().isEmpty())
+    }
+
+    @Test
+    fun aRetryRenoaRefusesSaysWhyAndTakesTheMessageAway() = runTest {
+        val repo = started()
+        val hello = givenUp(repo)
+        surface.answers += Answer.Refuse(RcpErrorCode.NotFound)
+
+        val refused = assertFailsWith<RepositoryException> { repo.retry(nagisa, hello.commandId.toString()) }
+
+        assertEquals(Problem.NotFound, refused.problem)
+        assertTrue(repo.chat(nagisa).messages.isEmpty())
+        assertTrue(state.pendingCommands().isEmpty())
+    }
+
+    @Test
+    fun aMessageThatDidNotSendCanBeDeletedAndIsNeverSent() = runTest {
+        val repo = started()
+        val hello = givenUp(repo)
+
+        repo.discard(nagisa, hello.commandId.toString())
+
+        assertTrue(repo.chat(nagisa).messages.isEmpty())
+        assertTrue(state.pendingCommands().isEmpty())
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertTrue(surface.admitted.isEmpty())
+    }
+
+    @Test
+    fun timeThePhoneCannotReachRenoaDoesNotCountTowardGivingUp() = runTest {
+        val repo = started()
+        surface.answers += listOf(offline, offline, offline)
+        repo.send(nagisa, "hello")
+        surface.drop()
+        // Five minutes of reconnects refused, one every five seconds.
+        surface.refuseConnects = 60
+        advanceTimeBy(5.minutes + 5.seconds)
+        runCurrent()
+        assertEquals(listOf("hello"), state.pendingCommands().map { it.text }, "answered again once back, which starts the wait over")
+        assertEquals(listOf(false), repo.chat(nagisa).messages.map { it.notSent })
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf(true), repo.chat(nagisa).messages.map { it.notSent }, "a minute of answers on one connection")
+    }
+
+    @Test
+    fun aMessageIsGivenUpOnlyWhereTheOwnerCanSeeItsChat() = runTest {
+        val kaedeChat = surface.journal("kaede").taskId
+        val hi = PendingTextCommand(Uuid.random(), kaedeChat, "hi")
+        state.enqueueCommand(hi)
+        repeat(6) { surface.answers += offline }
+        val repo = started()
+        advanceTimeBy(3.minutes)
+        runCurrent()
+        assertEquals(listOf(hi), state.pendingCommands(), "Kaede is not advertised, so there is no chat to say it did not go")
+
+        surface.targets += TargetSummary(surface.node, "kaede", "Kaede")
+        advanceTimeBy(2.minutes)
+        runCurrent()
+        assertEquals(listOf(hi.commandId.toString() to true), repo.chat("${surface.node}/kaede").messages.map { it.id to it.notSent })
     }
 
     @Test

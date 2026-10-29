@@ -2,6 +2,7 @@ package live.renoa.app.agents
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -14,8 +15,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import live.renoa.rcp.DeviceKeyRequired
+import live.renoa.rcp.PendingTextCommand
 import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
@@ -25,6 +28,7 @@ import java.time.ZoneId
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
 
 /**
@@ -33,7 +37,9 @@ import kotlin.uuid.Uuid
  *
  * [state] is the outbox [surface] writes to. A message the coordinator refused is dropped; any other
  * failure leaves it there, and it is sent again with the same identity after the next connect and
- * on every roster check. A message the outbox held when the chat opened shows until it arrives.
+ * on every roster check, as [UnsentMessages] decides. A message it gives up stays in the chat marked
+ * [ChatMessage.notSent] until [retry] or [discard]. A message the outbox held when the chat opened
+ * shows until it arrives.
  *
  * Making an agent, reading its profile and the routines are Host control, carried by the same
  * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check, and
@@ -49,6 +55,7 @@ class RcpAgentRepository(
     private val retryAfter: (attempt: Int) -> Duration = { attempt -> (1L shl minOf(attempt, 5)).seconds },
     private val rosterEvery: Duration = 1.minutes,
     private val here: () -> ZoneId = { ZoneId.systemDefault() },
+    private val clock: TimeSource = TimeSource.Monotonic,
 ) : AgentRepository {
     private class Room(val target: TargetSummary, val taskId: Uuid) {
         val journal = ChatJournal()
@@ -64,6 +71,14 @@ class RcpAgentRepository(
     private val lock = Any()
     private val rooms = LinkedHashMap<String, Room>()
     private val roster = MutableStateFlow<List<AgentSummary>>(emptyList())
+    private val unsent =
+        UnsentMessages(
+            surface,
+            state,
+            clock,
+            shown = { taskId -> synchronized(lock) { rooms.values.any { it.taskId == taskId && it.attached } } },
+            dropped = { taskId, change -> synchronized(lock) { rooms.values.firstOrNull { it.taskId == taskId } }?.let { update(it, change) } },
+        )
     private val hostClient = HostClient(surface)
     private val host = HostAgents(hostClient)
     private val hostRoutines = HostRoutines(hostClient)
@@ -97,7 +112,7 @@ class RcpAgentRepository(
             while (true) {
                 try {
                     surface.connect()
-                    sendUnsent()
+                    unsent.send()
                     follow(surface.listTargets())
                     linkState.value = Link.Connected
                     refusals = 0
@@ -111,7 +126,7 @@ class RcpAgentRepository(
                             launch {
                                 while (true) {
                                     delay(rosterEvery)
-                                    sendUnsent()
+                                    unsent.send()
                                     follow(surface.listTargets())
                                     readRoutines()
                                     readPurposes()
@@ -134,27 +149,10 @@ class RcpAgentRepository(
                     runCatching { surface.disconnect() }
                 }
                 linkState.value = Link.Lost
+                unsent.connectionLost()
                 // Live text is not replayed, so a draft cut by the drop would be glued to text from after it.
                 synchronized(lock) { rooms.values.toList() }.forEach { update(it) { connectionLost() } }
                 delay(retryAfter(attempt++))
-            }
-        }
-    }
-
-    /**
-     * Sends what the outbox still holds. The client sends in order, so a refusal is for the first one
-     * left; anything else stops here and leaves the rest for the next try.
-     */
-    private suspend fun sendUnsent() {
-        while (true) {
-            try {
-                surface.retryPendingCommands()
-                return
-            } catch (failure: RcpException) {
-                if (!failure.refusesTheRequest) return
-                val first = state.pendingCommands().firstOrNull() ?: return
-                state.removeCommand(first.commandId)
-                synchronized(lock) { rooms.values.firstOrNull { it.taskId == first.taskId } }?.let { room -> update(room) { refused(first.commandId) } }
             }
         }
     }
@@ -170,8 +168,8 @@ class RcpAgentRepository(
             if (room.attached) continue
             // Sent before the app last closed: shown until its record arrives. Read once the room exists,
             // so a refusal from here on reaches the room and outlasts this read.
-            val unsent = state.pendingCommands().filter { it.taskId == room.taskId }
-            if (unsent.isNotEmpty()) update(room) { unsent.forEach { sending(it.commandId, it.text) } }
+            val held = state.pendingCommands().filter { it.taskId == room.taskId }
+            if (held.isNotEmpty()) update(room) { held.forEach { sending(it.commandId, it.text) } }
             try {
                 surface.openTask(room.taskId, target.nodeId, target.target)
                 surface.attach(room.taskId, live = { commandId, activity -> update(room) { live(commandId, activity) } }) { event ->
@@ -313,10 +311,46 @@ class RcpAgentRepository(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            if (failure !is RcpException || !failure.refusesTheRequest) return
+            if (failure !is RcpException || !failure.refusesTheRequest) {
+                // Answered but not taken: the wait to give it up starts now.
+                if (failure is RcpException && failure.answered) unsent.notTaken(submission.commandId)
+                return
+            }
             state.removeCommand(submission.commandId)
             update(room) { refused(submission.commandId) }
             throw failure.asProblem()
+        }
+    }
+
+    /**
+     * Shows the message as sending again and sends it now under its own identity. One that cannot go
+     * yet waits, as any unsent message does; a refusal takes it out of the chat and throws.
+     */
+    override suspend fun retry(agentId: String, messageId: String) {
+        val room = room(agentId)
+        val commandId = Uuid.parseOrNull(messageId) ?: return
+        var text: String? = null
+        update(room) { text = resend(commandId) }
+        val words = text ?: return
+        try {
+            unsent.retry(PendingTextCommand(commandId, room.taskId, words))
+        } catch (refused: RcpException) {
+            update(room) { refused(commandId) }
+            throw refused.asProblem()
+        }
+    }
+
+    /** Takes the message out of the outbox and the chat together, even if the caller is cancelled. */
+    override suspend fun discard(agentId: String, messageId: String) {
+        val room = room(agentId)
+        val commandId = Uuid.parseOrNull(messageId) ?: return
+        withContext(NonCancellable) {
+            var deleted = false
+            update(room) { deleted = delete(commandId) }
+            if (deleted) {
+                state.removeCommand(commandId)
+                unsent.forget(commandId)
+            }
         }
     }
 
@@ -391,20 +425,6 @@ class RcpAgentRepository(
     override suspend fun setAbility(agentId: String, abilityId: String, lit: Boolean): AbilitySwitch = notYet()
 
     private fun notYet(): Nothing = throw RepositoryException(Problem.NotYet, "the Host cannot change this from the app yet")
-
-    /**
-     * Whether the coordinator answered this request with a refusal that a retry cannot change. An
-     * error with no request ends the connection, and one like `node_offline` or `internal` may pass.
-     */
-    private val RcpException.refusesTheRequest: Boolean
-        get() =
-            requestId != null &&
-                when (code) {
-                    RcpErrorCode.InvalidMessage, RcpErrorCode.InvalidRole, RcpErrorCode.NotFound, RcpErrorCode.Conflict -> true
-                    RcpErrorCode.AuthenticationFailed, RcpErrorCode.NodeOffline, RcpErrorCode.Internal,
-                    RcpErrorCode.ReplayRequired, RcpErrorCode.VersionMismatch,
-                    -> false
-                }
 
     private fun agentId(target: TargetSummary) = "${target.nodeId}/${target.target}"
 

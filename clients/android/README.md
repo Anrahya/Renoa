@@ -25,8 +25,10 @@ The Kotlin app shell. Two modules:
 Needs JDK 21 and the Android SDK (platform 36). From this directory:
 
 ```sh
-./gradlew assembleDebug testDebugUnitTest lint
+./gradlew assembleDebug testDebugUnitTest :rcp:test lint
 ```
+
+`:rcp:test` runs the RCP client's own tests; `testDebugUnitTest` covers only the app.
 
 The screen tests run under Robolectric and write pictures to `app/build/screens`, so the
 screens can be looked at without a phone or emulator.

@@ -118,4 +118,4 @@ jobs:
             clients/android/**/*.gradle.kts
             clients/android/gradle/libs.versions.toml
             clients/android/gradle/wrapper/gradle-wrapper.properties
-      - run: ./gradlew assembleDebug testDebugUnitTest lint --console=plain
+      - run: ./gradlew assembleDebug testDebugUnitTest :rcp:test lint --console=plain

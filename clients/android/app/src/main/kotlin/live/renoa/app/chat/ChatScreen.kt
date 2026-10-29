@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -87,7 +88,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
                 }
             } else {
-                Messages(state, old, risen, Modifier.weight(1f))
+                Messages(state, old, risen, onRetry = viewModel::retry, onDiscard = viewModel::discard, Modifier.weight(1f))
             }
             state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
             Composer(state, agent?.name.orEmpty(), viewModel)
@@ -96,7 +97,14 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
 }
 
 @Composable
-private fun Messages(state: ChatUiState, old: Set<String>, risen: MutableSet<String>, modifier: Modifier) {
+private fun Messages(
+    state: ChatUiState,
+    old: Set<String>,
+    risen: MutableSet<String>,
+    onRetry: (String) -> Unit,
+    onDiscard: (String) -> Unit,
+    modifier: Modifier,
+) {
     val colors = Renoa.colors
     val agent = state.agent
     LazyColumn(
@@ -119,7 +127,7 @@ private fun Messages(state: ChatUiState, old: Set<String>, risen: MutableSet<Str
         items(shown.asReversed(), key = { it.id }) { message ->
             val fresh = message.id !in old && message.id !in risen
             SideEffect { risen += message.id }
-            Rise(fresh) { MessageRow(message, complete = message.id != state.streaming?.id, animate = fresh) }
+            Rise(fresh) { MessageRow(message, complete = message.id != state.streaming?.id, animate = fresh, onRetry, onDiscard) }
         }
     }
 }
@@ -133,20 +141,36 @@ private fun Rise(animate: Boolean, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean) {
+private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
     val colors = Renoa.colors
     when (message.speaker) {
         Speaker.Owner ->
-            Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp), contentAlignment = Alignment.CenterEnd) {
-                Text(
-                    message.text,
-                    Modifier
-                        .widthIn(max = 300.dp)
-                        .background(colors.secondary, RoundedCornerShape(RenoaShapes.Bubble, RenoaShapes.Bubble, 6.dp, RenoaShapes.Bubble))
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    style = RenoaType.Body,
-                    color = colors.foreground,
-                )
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.End) {
+                // A message that did not go is the retry button, with its line under it.
+                Column(
+                    if (message.notSent) Modifier.clickable(role = Role.Button, onClickLabel = "Retry") { onRetry(message.id) } else Modifier,
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        message.text,
+                        Modifier
+                            .widthIn(max = 300.dp)
+                            .background(colors.secondary, RoundedCornerShape(RenoaShapes.Bubble, RenoaShapes.Bubble, 6.dp, RenoaShapes.Bubble))
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        style = RenoaType.Body,
+                        color = colors.foreground,
+                    )
+                    if (message.notSent) Text("Didn't send · Tap to retry", style = RenoaType.Caption, color = colors.stateFailed)
+                }
+                if (message.notSent) {
+                    Box(
+                        Modifier.heightIn(min = 48.dp).clickable(role = Role.Button) { onDiscard(message.id) }.padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("Delete", style = RenoaType.Caption, color = colors.mutedForeground)
+                    }
+                }
             }
         Speaker.Agent ->
             RevealText(message.text, complete, animate, RenoaType.Body, colors.foregroundSoft, Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f))
