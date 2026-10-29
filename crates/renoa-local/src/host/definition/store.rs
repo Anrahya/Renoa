@@ -360,14 +360,23 @@ pub(super) fn set_connections(
     Ok(())
 }
 
-pub(super) fn set_name(
+/// Rewrites the root row's editable columns from `definition`: its name, preset
+/// and operational document. Identity and creation provenance never change.
+pub(super) fn update_root(
     transaction: &Transaction<'_>,
-    agent: AgentId,
-    name: &str,
+    definition: &AgentDefinition,
 ) -> Result<(), HostCatalogError> {
+    let operational =
+        serde_json::to_string(&definition.operational).map_err(|error| invalid_json(&error))?;
     transaction.execute(
-        "UPDATE host_agents SET name = ?2 WHERE agent_id = ?1",
-        params![agent.to_string(), name],
+        "UPDATE host_agents SET name = ?2, preset_id = ?3, operational_json = ?4
+         WHERE agent_id = ?1",
+        params![
+            definition.id.to_string(),
+            definition.name,
+            definition.preset_id.as_ref().map(AgentPresetId::as_str),
+            operational,
+        ],
     )?;
     Ok(())
 }

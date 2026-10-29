@@ -389,7 +389,7 @@ A device that proved its key may call the owner's Host, as a browser does under
   "request_id": 46,
   "method": "POST",
   "path": "/v1/host/agents",
-  "body": "{\"operation_id\":\"00000000-0000-0000-0000-000000000091\",\"preset_id\":\"renoa.general.v1\",\"name\":\"Scout\",\"purpose\":\"Find what is new in my field each week.\"}"
+  "body": "{\"operation_id\":\"00000000-0000-0000-0000-000000000091\",\"preset_id\":\"renoa.app.v1\",\"name\":\"Scout\",\"purpose\":\"Find what is new in my field each week.\"}"
 }
 ```
 

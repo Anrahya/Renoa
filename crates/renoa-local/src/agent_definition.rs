@@ -231,6 +231,24 @@ impl AgentOperationalDefinition {
     }
 }
 
+/// A name is one line of plain text the system prompt can quote: not blank, at
+/// most [`MAX_NAME_BYTES`], no surrounding whitespace, and no control character
+/// or angle bracket that could end or open a prompt block.
+///
+/// # Errors
+///
+/// Returns [`AgentDefinitionError::InvalidName`] for any other name.
+pub(crate) fn check_name(name: &str) -> Result<(), AgentDefinitionError> {
+    let invalid = name.trim().is_empty()
+        || name.trim() != name
+        || name.len() > MAX_NAME_BYTES
+        || name.chars().any(|c| c.is_control() || c == '<' || c == '>');
+    if invalid {
+        return Err(AgentDefinitionError::InvalidName);
+    }
+    Ok(())
+}
+
 /// A purpose is plain text: not blank, at most [`MAX_PURPOSE_BYTES`], and no
 /// control character other than a newline.
 fn check_purpose(purpose: &str) -> Result<(), AgentDefinitionError> {
@@ -281,12 +299,7 @@ impl AgentDefinition {
     /// connection set. Tool names are validated against the Host capability
     /// inventory by the caller that owns that inventory.
     pub fn validate(&self) -> Result<(), AgentDefinitionError> {
-        if self.name.trim().is_empty() || self.name.trim() != self.name {
-            return Err(AgentDefinitionError::InvalidName);
-        }
-        if self.name.len() > MAX_NAME_BYTES {
-            return Err(AgentDefinitionError::InvalidName);
-        }
+        check_name(&self.name)?;
         self.operational.validate()?;
         self.creator.validate()?;
         if self.tool_selection.revision <= 0 {
@@ -323,7 +336,9 @@ pub enum AgentDefinitionError {
         "agent preset id must be 1-{MAX_PRESET_ID_BYTES} ASCII letters, digits, '_', '-', or '.'"
     )]
     InvalidPresetId,
-    #[error("agent name must contain 1-{MAX_NAME_BYTES} bytes without surrounding whitespace")]
+    #[error(
+        "agent name must be 1-{MAX_NAME_BYTES} bytes on one line, without surrounding whitespace, control characters, '<' or '>'. Send a short plain name such as News"
+    )]
     InvalidName,
     #[error("agent instructions must not be empty")]
     EmptyInstructions,

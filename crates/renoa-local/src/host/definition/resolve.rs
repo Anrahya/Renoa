@@ -87,16 +87,20 @@ impl ResolvedAgentDefinition {
             None
         };
         let purpose = self.definition.operational.purpose.as_deref();
-        if purpose.is_none() && documents.is_none() && project.is_none() {
-            return Ok(base.trim_end().to_owned());
-        }
+        let name = &self.definition.name;
         let capacity = base.len()
+            + name.len()
             + purpose.map_or(0, str::len)
             + documents.as_ref().map_or(0, String::len)
             + project.as_ref().map_or(0, String::len)
-            + 192;
+            + 256;
         let mut prompt = String::with_capacity(capacity);
         prompt.push_str(base.trim_end());
+        // The name is read from the stored row on every turn, so a rename
+        // reaches the next turn's prompt.
+        prompt.push_str("\n\n<identity>\nYour name is ");
+        prompt.push_str(name);
+        prompt.push_str(".\n</identity>");
         if let Some(purpose) = purpose {
             prompt.push_str("\n\n<purpose>\nWhat you were made for:\n");
             prompt.push_str(purpose.trim());

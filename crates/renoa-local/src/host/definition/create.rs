@@ -60,9 +60,10 @@ impl LocalHost {
             .as_ref()
             .map(presets::preset)
             .transpose()?;
+        let seed = preset.map(presets::AgentPreset::seed);
         let documents = request
             .documents
-            .or_else(|| preset.and_then(presets::AgentPreset::documents));
+            .or_else(|| seed.and_then(|seed| seed.documents));
         if let Some(model) = &request.model {
             model.validate()?;
             let models =
@@ -78,7 +79,7 @@ impl LocalHost {
             creator,
             created_via: origin,
             preset_id: request.preset_id.clone(),
-            operational: operational_definition(&request, preset, documents)?,
+            operational: operational_definition(&request, seed, documents)?,
             tool_selection: AgentToolSelection {
                 revision: 1,
                 tools: resolve_selection(
@@ -114,14 +115,8 @@ impl LocalHost {
             operation_id: request.operation_id,
             request_json,
             result_json,
-            documents: documents.map(|enabled| {
-                (
-                    enabled,
-                    preset
-                        .and_then(presets::AgentPreset::soul_default)
-                        .unwrap_or_default(),
-                )
-            }),
+            documents: documents
+                .map(|enabled| (enabled, seed.and_then(|seed| seed.soul).unwrap_or_default())),
             automation,
             host_plugins_off: preset.map_or(&[], presets::AgentPreset::host_plugins_off),
             cancellation,
@@ -130,26 +125,26 @@ impl LocalHost {
     }
 }
 
+/// The preset's seed with the request's explicit choices on top.
 fn operational_definition(
     request: &AgentCreateRequest,
-    preset: Option<&presets::AgentPreset>,
+    seed: Option<presets::Seed>,
     documents: Option<AgentDocuments>,
 ) -> Result<AgentOperationalDefinition, LocalHostError> {
+    let instructions = request
+        .instructions
+        .clone()
+        .or_else(|| seed.map(|seed| seed.instructions.to_owned()))
+        .ok_or(crate::AgentDefinitionError::EmptyInstructions)?;
     Ok(AgentOperationalDefinition {
-        instructions: match preset {
-            Some(preset) => preset.instructions(request.instructions.as_deref()),
-            None => request
-                .instructions
-                .clone()
-                .ok_or(crate::AgentDefinitionError::EmptyInstructions)?,
-        },
+        instructions,
         behavior: request.behavior.unwrap_or_else(|| {
-            preset.map_or(
+            seed.map_or(
                 crate::AgentBehavior {
                     workspace_instructions: crate::WorkspaceInstructions::Off,
                     automatic_compaction: None,
                 },
-                presets::AgentPreset::behavior,
+                |seed| seed.behavior,
             )
         }),
         purpose: request.purpose.clone(),
@@ -157,7 +152,7 @@ fn operational_definition(
         provider_restriction: if request.model.is_some() {
             None
         } else {
-            preset.and_then(presets::AgentPreset::provider_restriction)
+            seed.and_then(|seed| seed.provider_restriction)
         },
         model: request.model.clone(),
     })
@@ -246,16 +241,35 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
     // above has no filesystem effect, while the row still cannot become visible
     // before its documents exist. A crash between the two publishes again on the
     // retry, and the identical files are adopted.
-    if let Some((enabled, soul)) = documents {
-        crate::documents::AgentDocumentStore::publish(
+    let publication = match documents {
+        Some((enabled, soul)) => crate::documents::AgentDocumentStore::publish(
             data_directory,
             definition.id,
             *enabled,
             soul,
-        )?;
-    }
-    transaction.commit().map_err(catalog_error)?;
+        )?,
+        None => None,
+    };
+    #[cfg(test)]
+    super::commit_fault::inject(&transaction, *operation_id).map_err(catalog_error)?;
+    commit_or_withdraw(transaction, publication)?;
     Ok(definition.clone())
+}
+
+/// Commits a transaction after its `SOUL.md` publication. When the commit fails
+/// the row change rolled back, so the file this attempt created goes too.
+pub(super) fn commit_or_withdraw(
+    transaction: rusqlite::Transaction<'_>,
+    publication: Option<crate::documents::SoulPublication>,
+) -> Result<(), LocalHostError> {
+    let Err(error) = transaction.commit() else {
+        return Ok(());
+    };
+    let failure = catalog_error(error);
+    Err(match publication {
+        Some(publication) => publication.withdraw(failure).unwrap_or_else(Into::into),
+        None => failure,
+    })
 }
 
 /// Replays one creation, or reports a conflict when the stored operation used a

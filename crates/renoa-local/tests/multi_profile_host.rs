@@ -229,7 +229,7 @@ if (action === "describe") {
 }
 if (action !== "stream") process.exit(2);
 const request = JSON.parse(input);
-if (request.system_prompt !== "You are Relay, a concise messaging agent.") {
+if (request.system_prompt !== "You are Relay, a concise messaging agent.\n\n<identity>\nYour name is Relay.\n</identity>") {
   process.stderr.write("Host sent the wrong agent instructions");
   process.exit(3);
 }

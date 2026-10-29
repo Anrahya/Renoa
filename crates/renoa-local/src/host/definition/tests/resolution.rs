@@ -72,9 +72,33 @@ async fn resolution_composes_the_stored_definition_with_workspace_rules() {
     assert!(resolved.document_binding().is_none());
     assert_eq!(
         resolved.system_prompt(&workspace).expect("compose prompt"),
-        "Do the assigned job.",
-        "resolution uses the stored instructions and never a preset"
+        "Do the assigned job.\n\n<identity>\nYour name is Resolved.\n</identity>",
+        "resolution uses the stored instructions and name, never a preset"
     );
+
+    // A rename reaches the next resolution, which is what the next turn runs.
+    host.rename_agent(
+        specialist.id,
+        Uuid::new_v4(),
+        RenameAgent {
+            id: specialist.id,
+            expected_name: "Resolved".to_owned(),
+            name: "Renamed".to_owned(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .expect("rename");
+    let renamed = resolve_definition(&host.config, specialist.id)
+        .await
+        .expect("resolve after the rename")
+        .system_prompt(&workspace)
+        .expect("compose prompt");
+    assert!(
+        renamed.contains("<identity>\nYour name is Renamed.\n</identity>"),
+        "{renamed}"
+    );
+    assert!(!renamed.contains("Resolved"), "{renamed}");
 
     // A document-backed preset composes documents and workspace rules.
     let operator = host

@@ -21,7 +21,8 @@ use renoa_kernel::AgentId;
 use renoa_local::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AutomationMutation,
     AutomationRecord, AutomationSchedule, AutomationSpec, LocalHost, LocalHostAdapters,
-    LocalModelConfiguration, LocalTurnOutcome, ModelProvider, Speaker, TurnObservation,
+    LocalModelConfiguration, LocalTurnOutcome, ModelProvider, RenameAgent, Speaker,
+    TurnObservation,
 };
 use renoa_node::{NodeError, RenoaNode};
 use renoa_protocol::PrincipalId;
@@ -564,6 +565,225 @@ async fn the_owner_reads_and_edits_their_profile_for_agent_creation() {
     .await;
 }
 
+const APP_INSTRUCTIONS: &str = include_str!("../../renoa-local/prompts/app-v1/system.md");
+const APP_SOUL: &str = include_str!("../../renoa-local/prompts/app-v1/SOUL.md");
+
+/// The prompt that makes the fixture model save a fact with `agent_documents`.
+const REMEMBER: &str = "Remember that I am vegetarian.";
+/// A person with no profile yet: an empty `USER.md` block carries the revision
+/// the first save needs.
+const EMPTY_USER: &str = "<user source=\"USER.md\" revision=\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\">\n\n</user>";
+
+async fn owner_turn(
+    f: &Fixture,
+    id: AgentId,
+    session: Uuid,
+    text: &str,
+) -> (LocalTurnOutcome, Value) {
+    let workspace = f.host.agent_workspace(id).await.expect("workspace");
+    let session = f
+        .host
+        .ensure_agent_session(id, &workspace, session)
+        .await
+        .expect("session");
+    let outcome = session
+        .execute_turn_observed_with_cancellation(
+            Uuid::new_v4(),
+            vec![ContentBlock::text(text)],
+            TurnObservation::now().expect("clock"),
+            Arc::new(Quiet),
+            CancellationToken::new(),
+            Speaker::Principal(f.owner.as_uuid()),
+        )
+        .await
+        .expect("turn");
+    let request = serde_json::from_slice(
+        &std::fs::read(f.system.files.path().join("request.json")).expect("request"),
+    )
+    .expect("request JSON");
+    (outcome, request)
+}
+
+/// Makes an agent through the owner's Host route, as the app does.
+async fn make_agent(f: &Fixture, body: &Value) -> (AgentId, Value) {
+    let created = f.browser.post("/v1/host/agents", body).await;
+    assert_eq!(created.status(), StatusCode::OK);
+    let record = created.json::<Value>().await.expect("receipt")["record"].clone();
+    let id = AgentId::from_uuid(
+        Uuid::parse_str(record["id"].as_str().expect("agent id")).expect("uuid"),
+    );
+    (id, record)
+}
+
+/// Every native file or shell tool the Host offers is absent from the request.
+async fn assert_no_native_tools(f: &Fixture, request: &Value) {
+    let tools: Vec<&str> = request["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name"))
+        .collect();
+    let options = f.browser.json_of("/v1/host/agents/options").await;
+    let native = options["native_tools"].as_array().expect("native tools");
+    assert!(!native.is_empty());
+    for name in native {
+        let name = name.as_str().expect("native tool name");
+        assert!(!tools.contains(&name), "{name} is a native tool");
+    }
+}
+
+/// The request the Android app sends when the owner makes an agent.
+#[tokio::test]
+async fn an_app_agent_speaks_from_its_soul_and_keeps_the_owners_profile() {
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let body = json!({
+            "operation_id": Uuid::new_v4(),
+            "preset_id": "renoa.app.v1",
+            "name": "Kcal",
+            "purpose": "Count my calories.",
+        });
+        let (id, record) = make_agent(&f, &body).await;
+        assert_eq!(record["preset_id"], "renoa.app.v1");
+        assert_eq!(
+            record["operational"]["documents"],
+            json!({"soul": true, "user": true})
+        );
+        assert_eq!(
+            record["operational"]["behavior"]["workspace_instructions"],
+            "off"
+        );
+        assert_eq!(record["tool_selection"]["tools"], json!([]));
+        let soul = f.root().join("agents").join(id.to_string()).join("SOUL.md");
+        assert_eq!(
+            std::fs::read_to_string(soul).expect("published SOUL.md"),
+            APP_SOUL
+        );
+
+        // Workspace rules stay out of an everyday helper's prompt.
+        let workspace = f.host.agent_workspace(id).await.expect("workspace");
+        std::fs::write(workspace.join("AGENTS.md"), "WORKSPACE_RULE_MARKER\n").expect("rules");
+
+        // With no profile yet, the agent finds agent_documents through plugin
+        // search and saves the owner's first fact with tool_execute.
+        let session = Uuid::new_v4();
+        let (saved, request) = owner_turn(&f, id, session, REMEMBER).await;
+        assert!(
+            matches!(saved, LocalTurnOutcome::Completed { ref output, .. } if output == "Saved."),
+            "{saved:?}"
+        );
+        let first = request["system_prompt"].as_str().expect("system prompt");
+        assert!(first.contains(EMPTY_USER), "{first}");
+        let profile = f
+            .root()
+            .join("users")
+            .join(f.owner.as_uuid().to_string())
+            .join("USER.md");
+        assert_eq!(
+            std::fs::read_to_string(profile).expect("saved USER.md"),
+            "Vegetarian.\n"
+        );
+
+        let (_, request) = owner_turn(&f, id, session, "What should I eat tonight?").await;
+        let prompt = request["system_prompt"].as_str().expect("system prompt");
+        let rest = prompt
+            .strip_prefix(APP_INSTRUCTIONS.trim_end())
+            .expect("the prompt opens with the app instructions");
+        let at = |marker: &str| {
+            rest.find(marker)
+                .unwrap_or_else(|| panic!("{marker}: {prompt}"))
+        };
+        let order = [
+            at("\n\n<identity>\nYour name is Kcal.\n</identity>"),
+            at("\n<purpose>\nWhat you were made for:\nCount my calories.\n</purpose>"),
+            at("<soul source=\"SOUL.md\""),
+            at("<user source=\"USER.md\""),
+        ];
+        assert_eq!(order[0], 0, "the identity follows the instructions");
+        assert!(
+            order.is_sorted(),
+            "instructions, identity, purpose, soul, user: {prompt}"
+        );
+        assert!(rest.contains(APP_SOUL.trim_end()), "{prompt}");
+        assert!(rest.contains("\nVegetarian.\n</user>"), "{prompt}");
+        assert!(!prompt.contains("WORKSPACE_RULE_MARKER"), "{prompt}");
+        assert_no_native_tools(&f, &request).await;
+
+        // A rename reaches the next turn of the same session.
+        f.host
+            .rename_agent(
+                id,
+                Uuid::new_v4(),
+                RenameAgent {
+                    id,
+                    expected_name: "Kcal".to_owned(),
+                    name: "Plate".to_owned(),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("rename");
+        let (_, request) = owner_turn(&f, id, session, "And tomorrow?").await;
+        let renamed = request["system_prompt"].as_str().expect("system prompt");
+        assert!(
+            renamed.contains("<identity>\nYour name is Plate.\n</identity>"),
+            "{renamed}"
+        );
+        assert!(!renamed.contains("Your name is Kcal."), "{renamed}");
+        f.close().await;
+    }))
+    .await;
+}
+
+/// The owner's agent was made from `renoa.general.v1` before the app preset.
+/// Moving it while the node serves it keeps its session and history, and its
+/// next turn runs on the app preset.
+#[tokio::test]
+async fn a_served_general_agent_moves_onto_the_app_preset_between_turns() {
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let body = json!({
+            "operation_id": Uuid::new_v4(),
+            "preset_id": "renoa.general.v1",
+            "name": "Renoa",
+        });
+        let (id, record) = make_agent(&f, &body).await;
+        let session = Uuid::new_v4();
+        let (_, before) = owner_turn(&f, id, session, "FIRST_TURN_MARKER").await;
+        assert!(
+            !before["system_prompt"]
+                .as_str()
+                .expect("prompt")
+                .contains("<soul")
+        );
+
+        let moved = f
+            .host
+            .move_agent_to_preset(id, AgentPresetId::new("renoa.app.v1").expect("preset id"))
+            .await
+            .expect("move");
+        assert!(moved.changed);
+        let soul = f.root().join("agents").join(id.to_string()).join("SOUL.md");
+        assert_eq!(std::fs::read_to_string(soul).expect("SOUL.md"), APP_SOUL);
+
+        let (_, after) = owner_turn(&f, id, session, "What should I eat tonight?").await;
+        let prompt = after["system_prompt"].as_str().expect("prompt");
+        assert!(prompt.starts_with(APP_INSTRUCTIONS.trim_end()), "{prompt}");
+        assert!(prompt.contains(APP_SOUL.trim_end()), "{prompt}");
+        assert!(prompt.contains(EMPTY_USER), "{prompt}");
+        assert!(
+            after["messages"].to_string().contains("FIRST_TURN_MARKER"),
+            "the session keeps its history"
+        );
+        let definition = f.browser.json_of(&format!("/v1/host/agents/{id}")).await;
+        assert_eq!(definition["name"], "Renoa");
+        assert_eq!(definition["preset_id"], "renoa.app.v1");
+        assert_eq!(definition["tool_selection"], record["tool_selection"]);
+        f.close().await;
+    }))
+    .await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn a_profile_save_that_cannot_apply_is_refused_not_offered_as_a_retry() {
@@ -823,6 +1043,26 @@ let input=''; for await (const part of process.stdin) input+=part;
 const action=process.env.RENOA_MODEL_ACTION; const spec=process.env.RENOA_MODEL_SPEC;
 if(action==='catalog') { process.stdout.write(JSON.stringify({ok:true,response:{models:[{id:'fixture-model',name:'Fixture',reasoning_levels:['high'],context_window_tokens:1000000,model_spec:{id:'fixture-model'}}]}})); }
 else if(action==='describe') { process.stdout.write(JSON.stringify({ok:true,response:{context_window_tokens:1000000,max_output_tokens:8192,model_spec:spec,model_binding_id:createHash('sha256').update(spec).digest('hex'),reasoning_level:'high'}})); }
-else if(action==='stream') { fs.writeFileSync(new URL('./request.json',import.meta.url),input); process.stdout.write(JSON.stringify({event:'completed',response:{content:[{type:'text',text:'Owner-created agent ran.'}],stop_reason:'stop',usage:{input:8,output:4,cache_read:0,cache_write:0},metadata:{api:'test',provider:process.env.RENOA_MODEL_PROVIDER,model:JSON.parse(spec).id}}})+'\n'); }
+else if(action==='stream') {
+ fs.writeFileSync(new URL('./request.json',import.meta.url),input);
+ const request=JSON.parse(input);
+ const lastUser=request.messages.findLastIndex(message=>message.role==='user');
+ const results=request.messages.slice(lastUser+1).filter(message=>message.role==='tool').map(message=>message.result);
+ const reply=(content,stop_reason)=>process.stdout.write(JSON.stringify({event:'completed',response:{content,stop_reason,usage:{input:8,output:4,cache_read:0,cache_write:0},metadata:{api:'test',provider:process.env.RENOA_MODEL_PROVIDER,model:JSON.parse(spec).id}}})+'\n');
+ const call=(id,name,args)=>reply([{type:'tool_call',id,name,arguments:args}],'tool_use');
+ if(request.messages[lastUser].content[0].text!=='Remember that I am vegetarian.') reply([{type:'text',text:'Owner-created agent ran.'}],'stop');
+ else if(results.length===0) call('find','plugin_search',{query:'agent_documents'});
+ else {
+  const last=results.at(-1); if(last.is_error) throw Error(JSON.stringify(last));
+  const value=last.name==='plugin_search' ? JSON.parse(last.content[0].text) : null;
+  const match=value?.tool_matches?.find(tool=>tool.name==='agent_documents') ?? value;
+  if(!value) reply([{type:'text',text:'Saved.'}],'stop');
+  else if(!match.input_schema) call('schema','plugin_search',{reference:match.reference});
+  else {
+   const revision=request.system_prompt.match(/<user source=.USER\.md. revision=.([a-f0-9]{64})/)[1];
+   call('save','tool_execute',{reference:match.reference,arguments:{document:'user',expected_revision:revision,content:'Vegetarian.\n'}});
+  }
+ }
+}
 else process.exit(2);
 ";

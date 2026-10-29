@@ -16,8 +16,11 @@ use crate::{
     AgentToolSelection, capabilities, stable_id::stable_id,
 };
 
+#[cfg(test)]
+mod commit_fault;
 mod create;
 mod manage;
+mod preset_move;
 mod resolve;
 pub(in crate::host) mod schema;
 mod store;
@@ -26,6 +29,7 @@ mod store;
 mod tests;
 
 pub(crate) use manage::binding as agent_manage_binding;
+pub use preset_move::PresetMove;
 pub use resolve::ResolvedAgentDefinition;
 pub(crate) use resolve::resolve_definition;
 
@@ -383,15 +387,7 @@ impl LocalHost {
         edit: RenameAgent,
         cancellation: CancellationToken,
     ) -> Result<AgentDefinition, LocalHostError> {
-        if edit.name.trim().is_empty()
-            || edit.name.len() > crate::agent_definition::MAX_NAME_BYTES
-            || edit.name.trim() != edit.name
-        {
-            return Err(LocalHostError::InvalidRequest(
-                "agent name must contain 1-512 bytes without leading or trailing whitespace"
-                    .to_owned(),
-            ));
-        }
+        crate::agent_definition::check_name(&edit.name)?;
         if operation.is_nil() {
             return Err(LocalHostError::InvalidRequest(
                 "agent rename requires a non-nil operation id".to_owned(),
@@ -434,7 +430,7 @@ impl LocalHost {
             check_cancellation(&cancellation)?;
             definition.name.clone_from(&edit.name);
             definition.validate()?;
-            store::set_name(&transaction, edit.id, &definition.name)?;
+            store::update_root(&transaction, &definition)?;
             let result_json = serde_json::to_string(&definition)?;
             store::insert_rename_receipt(
                 &transaction,

@@ -2,7 +2,9 @@
 //!
 //! A preset is a versioned creation seed. Creation snapshots it into the
 //! agent's own operational definition, and runtime resolution never consults a
-//! preset again. Changing preset content requires a new preset id.
+//! preset again. Changing preset content requires a new preset id. A test pins
+//! each preset's seed to a digest as a tripwire against editing a released
+//! preset in place; nothing enforces it at runtime.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -19,10 +21,14 @@ pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v3";
 pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v3";
 /// The seed general purpose agents can use.
 pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
+/// The seed for the everyday helpers people make in the app.
+pub(crate) const APP_PRESET_ID: &str = "renoa.app.v1";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
 const ARCEE_SOUL: &str = include_str!("../prompts/arcee-v1/SOUL.md");
+const APP_INSTRUCTIONS: &str = include_str!("../prompts/app-v1/system.md");
+const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
 
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
@@ -45,7 +51,37 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::Find,
 ];
 
-const GENERAL_CAPABILITY_BASELINE: &[BuiltInCapability] = &[];
+// The general and app presets grant no native file or shell tool. An everyday
+// helper works through plugins, which every agent receives; the native tools act
+// on a Host workspace that a person in the app never sees.
+const NO_NATIVE_TOOLS: &[BuiltInCapability] = &[];
+
+/// The documents a preset keeps. A soul is named by its default text, so a
+/// preset cannot keep a `SOUL.md` without a default to publish.
+#[derive(Clone, Copy)]
+struct PresetDocuments {
+    user: bool,
+    soul: Option<&'static str>,
+}
+
+impl PresetDocuments {
+    const NONE: Self = Self {
+        user: false,
+        soul: None,
+    };
+}
+
+/// What a preset gives an agent: its operational seed and default `SOUL.md`.
+/// Creation applies its request's choices on top; a move applies it as is.
+#[derive(Clone, Copy)]
+pub(crate) struct Seed {
+    pub(crate) instructions: &'static str,
+    pub(crate) behavior: AgentBehavior,
+    pub(crate) documents: Option<AgentDocuments>,
+    pub(crate) provider_restriction: Option<ModelProvider>,
+    /// Present exactly when `documents` keeps a soul.
+    pub(crate) soul: Option<&'static str>,
+}
 
 /// One immutable creation seed.
 pub(crate) struct AgentPreset {
@@ -53,8 +89,7 @@ pub(crate) struct AgentPreset {
     description: &'static str,
     instructions: &'static str,
     behavior: AgentBehavior,
-    documents: Option<AgentDocuments>,
-    soul_default: Option<&'static str>,
+    documents: PresetDocuments,
     provider_restriction: Option<ModelProvider>,
     capability_baseline: &'static [BuiltInCapability],
     /// Compiled Host plugins a new agent starts with turned off.
@@ -73,25 +108,20 @@ impl AgentPreset {
         self.description
     }
 
+    /// The one owner of what this preset seeds into an agent's definition.
     #[must_use]
-    pub(crate) const fn behavior(&self) -> AgentBehavior {
-        self.behavior
-    }
-
-    #[must_use]
-    pub(crate) const fn documents(&self) -> Option<AgentDocuments> {
-        self.documents
-    }
-
-    /// The `SOUL.md` a new agent from this preset starts with.
-    #[must_use]
-    pub(crate) const fn soul_default(&self) -> Option<&'static str> {
-        self.soul_default
-    }
-
-    #[must_use]
-    pub(crate) const fn provider_restriction(&self) -> Option<ModelProvider> {
-        self.provider_restriction
+    pub(crate) fn seed(&self) -> Seed {
+        let documents = AgentDocuments {
+            soul: self.documents.soul.is_some(),
+            user: self.documents.user,
+        };
+        Seed {
+            instructions: self.instructions,
+            behavior: self.behavior,
+            documents: documents.any().then_some(documents),
+            provider_restriction: self.provider_restriction,
+            soul: self.documents.soul,
+        }
     }
 
     #[must_use]
@@ -103,14 +133,19 @@ impl AgentPreset {
     pub(crate) const fn capability_baseline(&self) -> &'static [BuiltInCapability] {
         self.capability_baseline
     }
-
-    pub(crate) fn instructions(&self, supplied: Option<&str>) -> String {
-        supplied.unwrap_or(self.instructions).to_owned()
-    }
 }
 
 static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|| {
-    let presets = [
+    seeds()
+        .into_iter()
+        .map(|preset| (preset.id.clone(), preset))
+        .collect()
+});
+
+/// Every preset as written. Collecting into [`PRESETS`] would silently keep only
+/// the last of two equal ids, so a test checks that nothing is dropped.
+fn seeds() -> [AgentPreset; 4] {
+    [
         AgentPreset {
             // Static preset ids are constants in this file, so construction
             // cannot fail at runtime.
@@ -121,8 +156,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
                 workspace_instructions: WorkspaceInstructions::ProjectAgentsFile,
                 automatic_compaction: None,
             },
-            documents: None,
-            soul_default: None,
+            documents: PresetDocuments::NONE,
             provider_restriction: None,
             capability_baseline: ALPHA_CAPABILITY_BASELINE,
             host_plugins_off: &[HostPluginId::Time],
@@ -138,35 +172,45 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
                     target_input_tokens: non_zero(ARCEE_COMPACTION_TARGET),
                 }),
             },
-            documents: Some(AgentDocuments {
-                soul: true,
+            documents: PresetDocuments {
                 user: true,
-            }),
-            soul_default: Some(ARCEE_SOUL),
+                soul: Some(ARCEE_SOUL),
+            },
             provider_restriction: Some(ModelProvider::OpenCodeGo),
             capability_baseline: ARCEE_CAPABILITY_BASELINE,
             host_plugins_off: &[],
         },
         AgentPreset {
             id: preset_id(GENERAL_PRESET_ID),
-            description: "A general purpose agent with helpful assistant instructions and no machine tools. Explicit settings replace template defaults.",
+            description: "A general purpose agent with helpful assistant instructions and no native file or shell tools. Explicit settings replace template defaults.",
             instructions: "You are a helpful assistant. Complete the assigned task and report the result clearly.",
             behavior: AgentBehavior {
                 workspace_instructions: WorkspaceInstructions::Off,
                 automatic_compaction: None,
             },
-            documents: None,
-            soul_default: None,
+            documents: PresetDocuments::NONE,
             provider_restriction: None,
-            capability_baseline: GENERAL_CAPABILITY_BASELINE,
+            capability_baseline: NO_NATIVE_TOOLS,
             host_plugins_off: &[],
         },
-    ];
-    presets
-        .into_iter()
-        .map(|preset| (preset.id.clone(), preset))
-        .collect()
-});
+        AgentPreset {
+            id: preset_id(APP_PRESET_ID),
+            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, and no native file or shell tools.",
+            instructions: APP_INSTRUCTIONS,
+            behavior: AgentBehavior {
+                workspace_instructions: WorkspaceInstructions::Off,
+                automatic_compaction: None,
+            },
+            documents: PresetDocuments {
+                user: true,
+                soul: Some(APP_SOUL),
+            },
+            provider_restriction: None,
+            capability_baseline: NO_NATIVE_TOOLS,
+            host_plugins_off: &[],
+        },
+    ]
+}
 
 /// Every registered creation preset, in identity order.
 pub(crate) fn catalog() -> impl Iterator<Item = &'static AgentPreset> {
@@ -196,16 +240,102 @@ fn preset_id(value: &str) -> AgentPresetId {
 
 #[cfg(test)]
 mod tests {
-    use super::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, preset};
-    use crate::{AgentDefinitionError, AgentPresetId};
+    use std::fmt::Write as _;
+
+    use super::{
+        ALPHA_PRESET_ID, APP_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, PRESETS, preset, seeds,
+    };
+    use crate::{AgentDefinitionError, AgentPresetId, atomic_file::content_hash};
+
+    /// A tripwire, not enforcement: every preset id with the SHA-256 of its
+    /// whole seed. Agents snapshot a seed at creation and a move rewrites one
+    /// from it, so a released preset's seed changes only under a new id; this
+    /// fails when someone edits one in place.
+    const FROZEN: [(&str, &str); 4] = [
+        (
+            ALPHA_PRESET_ID,
+            "257ee0931c8a7911a24f7440cfbf0ad9cff3705b6d07381726b5abacc4c9461e",
+        ),
+        (
+            APP_PRESET_ID,
+            "30e0141bd2ace813033b37426413d6ec3852593a6726c9d7560382f51f13a0f4",
+        ),
+        (
+            ARCEE_PRESET_ID,
+            "8f00d277ea0646784ad401f11bb89624fdf4b9ecd185cd4bc78d4c6bc531b804",
+        ),
+        (
+            GENERAL_PRESET_ID,
+            "b2bf09664f28cbdd40065ea3602cfa2637d214d713cf7115b2432027fc1fa001",
+        ),
+    ];
+
+    fn seed_digest(id: &str) -> String {
+        let seed = preset(&AgentPresetId::new(id).expect("id"))
+            .expect("registered preset")
+            .seed();
+        // Serialized directly, never through `serde_json::Value`, whose key
+        // order depends on which serde_json features the build unifies.
+        let encoded = serde_json::to_string(&(
+            seed.instructions,
+            seed.behavior,
+            seed.documents,
+            seed.provider_restriction,
+            seed.soul,
+        ))
+        .expect("a seed encodes");
+        let mut hex = String::with_capacity(64);
+        for byte in content_hash(encoded.as_bytes()) {
+            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        hex
+    }
+
+    #[test]
+    fn every_preset_seed_is_pinned_to_its_id() {
+        let changed: Vec<String> = FROZEN
+            .iter()
+            .filter_map(|(id, pinned)| {
+                let digest = seed_digest(id);
+                (digest != *pinned).then(|| format!("{id} is now {digest}"))
+            })
+            .collect();
+        assert!(
+            changed.is_empty(),
+            "a preset seed changed; give it a new preset id: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn a_seed_keeps_a_soul_exactly_when_it_has_a_default() {
+        for preset in super::catalog() {
+            let seed = preset.seed();
+            assert_eq!(
+                seed.documents.is_some_and(|documents| documents.soul),
+                seed.soul.is_some(),
+                "{}",
+                preset.id().as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn no_preset_is_dropped_by_a_duplicate_id() {
+        assert_eq!(PRESETS.len(), seeds().len(), "two presets share an id");
+    }
 
     #[test]
     fn every_static_preset_id_resolves() {
-        for id in [ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID] {
+        for (id, ..) in FROZEN {
             let id = AgentPresetId::new(id).expect("portable preset id");
             let preset = preset(&id).expect("registered preset");
             assert_eq!(preset.id(), &id);
         }
+        assert_eq!(
+            super::catalog().count(),
+            FROZEN.len(),
+            "every registered preset has a static id"
+        );
         let unregistered = AgentPresetId::new("renoa.unregistered.v1").expect("portable preset id");
         assert!(matches!(
             preset(&unregistered),
@@ -214,11 +344,9 @@ mod tests {
     }
 
     #[test]
-    fn templates_supply_defaults_and_accept_explicit_instructions() {
-        for id in [ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID] {
-            let template = preset(&AgentPresetId::new(id).expect("id")).expect("template");
-            assert!(!template.instructions(None).is_empty());
-            assert_eq!(template.instructions(Some("Do the job.")), "Do the job.");
+    fn every_template_supplies_instructions() {
+        for preset in super::catalog() {
+            assert!(!preset.seed().instructions.trim().is_empty());
         }
     }
 
@@ -226,26 +354,28 @@ mod tests {
     fn the_arcee_preset_keeps_today_operational_behavior() {
         let id = AgentPresetId::new(ARCEE_PRESET_ID).expect("portable preset id");
         let preset = preset(&id).expect("registered preset");
-        let behavior = preset.behavior();
+        let seed = preset.seed();
         assert!(preset.host_plugins_off().is_empty());
-        assert!(behavior.loads_project_instructions());
-        assert!(behavior.automatic_compaction.is_some());
+        assert!(seed.behavior.loads_project_instructions());
+        assert!(seed.behavior.automatic_compaction.is_some());
         assert_eq!(
-            preset.provider_restriction(),
+            seed.provider_restriction,
             Some(crate::ModelProvider::OpenCodeGo)
         );
-        let documents = preset.documents().expect("documents");
+        let documents = seed.documents.expect("documents");
         assert!(documents.soul && documents.user);
-        assert!(preset.soul_default().is_some());
+        assert!(seed.soul.is_some());
     }
 
     #[test]
-    fn the_general_template_has_no_machine_access() {
+    fn the_general_template_has_no_native_tools_or_documents() {
         let id = AgentPresetId::new(GENERAL_PRESET_ID).expect("portable preset id");
         let preset = preset(&id).expect("registered preset");
+        let seed = preset.seed();
         assert!(preset.host_plugins_off().is_empty());
-        assert!(!preset.behavior().loads_project_instructions());
-        assert!(preset.documents().is_none());
-        assert_eq!(preset.provider_restriction(), None);
+        assert!(preset.capability_baseline().is_empty());
+        assert!(!seed.behavior.loads_project_instructions());
+        assert!(seed.documents.is_none());
+        assert_eq!(seed.provider_restriction, None);
     }
 }

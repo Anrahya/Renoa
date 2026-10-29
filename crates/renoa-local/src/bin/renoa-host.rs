@@ -111,10 +111,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if !((args.len() == 6 && args[1] == "rename-agent")
+        || (args.len() == 4 && args[1] == "move-to-preset")
         || (args.len() == 3
             && (args[1] == "provision" || args[1] == "agent-tools" || args[1] == "reset")))
     {
-        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> (provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id>)").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> (provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id> | move-to-preset <agent-id> <preset-id>)").into());
     }
     let c = Config::read(std::path::Path::new(&args[0]))?;
     // A reset owns its own cutover, so it must run before the Host opens: an
@@ -152,9 +153,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let text = |index: usize| {
         args[index]
             .to_str()
-            .ok_or_else(|| std::io::Error::other("rename arguments must be UTF-8"))
+            .ok_or_else(|| std::io::Error::other("agent arguments must be UTF-8"))
     };
     let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
+    if args.len() == 4 {
+        let moved = host
+            .move_agent_to_preset(id, AgentPresetId::new(text(3)?)?)
+            .await?;
+        println!("{}", serde_json::to_string(&moved)?);
+        return Ok(());
+    }
     let result = host
         .rename_agent(
             id,
