@@ -21,6 +21,8 @@ import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.StreamingReply
 import live.renoa.app.agents.wordsOr
+import live.renoa.app.badge.AgentHue
+import live.renoa.app.badge.mainAgent
 
 /** What the composer's round button does right now. */
 enum class ComposerAction {
@@ -42,6 +44,9 @@ data class ChatUiState(
     val notice: String? = null,
     /** False until the chat has been read once; a screen opening on it waits for this to tell old messages from new. */
     val loaded: Boolean = false,
+    /** The colour the agent wears on every screen, and whether it is the owner's main agent. */
+    val hue: AgentHue = AgentHue.Ink,
+    val main: Boolean = false,
 ) {
     val working: Boolean get() = agent?.state == AgentState.Working
 
@@ -63,7 +68,10 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
 
     val state: StateFlow<ChatUiState> =
         combine(repository.agents, conversation(), draft, notice) { agents, conversation, draft, notice ->
-            ChatUiState(agents.firstOrNull { it.id == agentId }, conversation.messages, conversation.streaming, draft, notice, loaded = true)
+            ChatUiState(
+                agents.firstOrNull { it.id == agentId }, conversation.messages, conversation.streaming, draft, notice, loaded = true,
+                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId,
+            )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     /** An agent that is gone has an empty chat rather than a crash. */

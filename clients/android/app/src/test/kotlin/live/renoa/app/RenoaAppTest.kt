@@ -7,6 +7,10 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -52,9 +56,15 @@ class RenoaAppTest : ScreenTest() {
         compose.waitForIdle()
     }
 
-    /** Home is a list, so whoever is asked for may first need scrolling to. */
+    /** Home seats only some of the agents; everyone is in Chats, behind the dock, which may need scrolling to. */
     private fun onHome(description: String): SemanticsNodeInteraction {
-        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasContentDescription(description))
+        if (compose.onAllNodesWithContentDescription(description).fetchSemanticsNodes().isEmpty()) {
+            if (compose.onAllNodesWithContentDescription("Back to Home").fetchSemanticsNodes().isEmpty()) {
+                compose.onNodeWithContentDescription("Open chats, routines and what's coming up").performClick()
+                compose.waitForIdle()
+            }
+            compose.onAllNodes(hasScrollToNodeAction()).filter(hasAnyAncestor(hasScrollToNodeAction())).onFirst().performScrollToNode(hasContentDescription(description))
+        }
         return compose.onNodeWithContentDescription(description)
     }
 

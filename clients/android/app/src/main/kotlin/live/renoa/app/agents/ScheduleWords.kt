@@ -36,7 +36,7 @@ internal fun scheduleWords(schedule: ObservedSchedule, here: ZoneId): String =
 private fun once(at: String, here: ZoneId): String? =
     try {
         val time = OffsetDateTime.parse(at).atZoneSameInstant(here)
-        "Once, on ${time.format(DATE)} at ${clock(time.toLocalTime())}"
+        "Once, on ${time.format(DATE)} at ${clockTime(time.toLocalTime())}"
     } catch (unreadable: DateTimeParseException) {
         null
     }
@@ -59,7 +59,7 @@ private fun cron(expression: String): String? {
             else -> null
         }
     }
-    val at = "at ${clock(LocalTime.of(h, m))}"
+    val at = "at ${clockTime(LocalTime.of(h, m))}"
     return when {
         day == "*" && weekday == "*" -> "Every day $at"
         day == "*" -> days(weekday)?.let { "$it $at" }
@@ -91,9 +91,11 @@ private fun days(field: String): String? {
 private fun weekday(text: String): Int? =
     text.toIntOrNull()?.takeIf { it in 0..7 } ?: DAY_NAMES.indexOfFirst { it.equals(text, ignoreCase = true) }.takeIf { it >= 0 }
 
-private fun listed(words: List<String>): String = if (words.size < 3) words.joinToString(" and ") else words.dropLast(1).joinToString(", ") + " and " + words.last()
+/** "A", "A and B", or "A, B and C". */
+internal fun listed(words: List<String>): String = if (words.size < 3) words.joinToString(" and ") else words.dropLast(1).joinToString(", ") + " and " + words.last()
 
-private fun clock(time: LocalTime): String = time.format(if (time.minute == 0) HOUR else CLOCK)
+/** A time of day as the app writes it: "6:30 PM", or "7 PM" on the hour. */
+internal fun clockTime(time: LocalTime): String = time.format(if (time.minute == 0) HOUR else CLOCK)
 
 private fun ordinal(n: Int): String =
     n.toString() +

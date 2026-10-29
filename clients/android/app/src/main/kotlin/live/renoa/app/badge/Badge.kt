@@ -53,8 +53,8 @@ private class Shapes {
 
 /**
  * An agent as a tile on the board, drawn the way the landing page draws a core: an ink face with
- * its letter, a short body below it, and a shadow on the socket. State is motion and one round dot
- * (see [BadgeMotion]). The [primary] agent, the one the owner talks to first, wears a star and a
+ * its letter, a short body below it, and a shadow on the socket. An agent other than the main one
+ * wears its [hue] on the face. State is motion and one round dot (see [BadgeMotion]). The [primary] agent, the one the owner talks to first, wears a star and a
  * light that runs round its edge. With [arriveAfterMillis] the tile drops into its socket once,
  * the way tiles assemble on the landing page.
  */
@@ -67,6 +67,7 @@ fun Badge(
     primary: Boolean = false,
     label: String = name,
     arriveAfterMillis: Int? = null,
+    hue: AgentHue = AgentHue.Ink,
 ) {
     val colors = Renoa.colors
     val reduced = LocalReducedMotion.current
@@ -96,12 +97,12 @@ fun Badge(
         // Arriving, a tile falls the last 1.6 lifts into its socket, as on the landing page.
         val drop = (1f - arrival.value) * 1.6f
         withTransform({ translate(this.size.width / 2, this.size.height / 2 + LIFT * 0.3f * scale); scale(scale, scale, Offset.Zero) }) {
-            drawTile(frame, frame.lift + drop, shapes, letter, colors, if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
+            drawTile(frame, frame.lift + drop, shapes, letter, colors, hue.face(colors) ?: colors.foreground, if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
         }
     }
 }
 
-private fun DrawScope.drawTile(frame: BadgeFrame, lift: Float, shapes: Shapes, letter: TextLayoutResult, colors: RenoaColors, sweep: Float?) {
+private fun DrawScope.drawTile(frame: BadgeFrame, lift: Float, shapes: Shapes, letter: TextLayoutResult, colors: RenoaColors, face: Color, sweep: Float?) {
     val up = -lift * LIFT
     if (!frame.retiring) {
         // The shadow stays on the socket and softens as the tile rises.
@@ -110,7 +111,7 @@ private fun DrawScope.drawTile(frame: BadgeFrame, lift: Float, shapes: Shapes, l
     frame.ring?.let { p ->
         val r = 1f + 0.38f * p
         withTransform({ translate(0f, up); scale(r, r, Offset.Zero) }) {
-            drawPath(shapes.face, colors.foreground.copy(alpha = 0.55f * (1f - p)), style = Stroke(1.6f / r))
+            drawPath(shapes.face, face.copy(alpha = 0.55f * (1f - p)), style = Stroke(1.6f / r))
         }
     }
     withTransform({ translate(0f, up) }) {
@@ -120,8 +121,8 @@ private fun DrawScope.drawTile(frame: BadgeFrame, lift: Float, shapes: Shapes, l
             drawPath(shapes.face, colors.border, style = Stroke(1.25f))
         } else {
             withTransform({ translate(0f, DEPTH) }) { drawPath(shapes.face, Color.Black) }
-            drawPath(shapes.face, colors.foreground)
-            drawPath(shapes.face, if (frame.failed) colors.stateFailed else colors.foreground, style = Stroke(if (frame.failed) 2.5f else 1.25f))
+            drawPath(shapes.face, face)
+            drawPath(shapes.face, if (frame.failed) colors.stateFailed else face, style = Stroke(if (frame.failed) 2.5f else 1.25f))
         }
         drawText(
             letter,

@@ -12,6 +12,9 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -53,7 +56,7 @@ import kotlin.test.assertEquals
 
 class ScreensTest : ScreenTest() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-    private val repository by lazy { FakeAgentRepository(scope) }
+    private val repository by lazy { FakeAgentRepository(scope, now = { EVENING }) }
 
     @After
     fun tearDown() = scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
@@ -80,59 +83,115 @@ class ScreensTest : ScreenTest() {
     @Test
     fun theFiveBadgeStatesSideBySideInPaper() = badgesIn(ThemeName.Paper)
 
-    @Test
-    fun homeOpensWithTheLeadsNoteThenEveryoneAndWhatTheyNeed() {
+    private fun home(theme: ThemeName = ThemeName.Graphite, seconds: Float = 0f, onOpenChat: (String) -> Unit = {}, onNewAgent: () -> Unit = {}, onChangeColours: () -> Unit = {}) {
         val model = HomeViewModel(repository)
-        show(seconds = 3.97f) { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
+        show(theme, seconds) { HomeScreen(model, onOpenChat, onNewAgent, onChangeColours, now = { EVENING }) }
         compose.waitForIdle()
-        compose.onNodeWithText("Evening, Yash. Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").assertIsDisplayed()
+    }
+
+    private fun openPages() {
+        compose.onNodeWithContentDescription("Open chats, routines and what's coming up").performClick()
+        compose.waitForIdle()
+    }
+
+    @Test
+    fun homeShowsTheDayRenoaWithEveryoneAndTheOneThingThatNeedsTheOwner() {
+        home(seconds = 3.97f)
+        compose.onNodeWithText("Good evening.").assertIsDisplayed()
+        compose.onNodeWithText("THU 7:40 PM").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Today. Morning brief ran at 7:30 AM. GitHub check ran at 6:30 PM. Prices and groceries ran at 7:15 PM. Posts worth a reply at 8 PM. Evening check-in at 9 PM").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Renoa, working, your main agent").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Tifa, wants you").assertIsDisplayed()
+        compose.onNodeWithContentDescription("3 more, in Chats").assertIsDisplayed()
+        compose.onNodeWithText("Renoa and Kai'Sa · Picking three posts worth your reply…").assertIsDisplayed()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
-        compose.onNodeWithText("Dal and a salad").assertIsDisplayed()
-        compose.onNodeWithText("With Kai'Sa · Picking three posts worth your reply…").assertIsDisplayed()
-        assertEquals(2, compose.onAllNodesWithContentDescription("Renoa, working, your main agent").fetchSemanticsNodes().size, "her note and her row")
+        compose.onNodeWithText("1 of 6").assertIsDisplayed()
+        compose.onNodeWithText("New from Tifa and Optimus").assertIsDisplayed()
+        compose.onNodeWithText("Next: Posts worth a reply at 8 PM").assertIsDisplayed()
         snapshot("home")
     }
 
     @Test
-    fun answeringFromHomePutsTheQuestionAway() {
-        val model = HomeViewModel(repository)
-        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
+    fun theOneThingStepsThroughTheRestAndAQuestionIsAnsweredInPlace() {
+        home()
+        compose.onNodeWithContentDescription("Previous").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Next").performClick()
         compose.waitForIdle()
+        compose.onNodeWithText("I couldn't open last month's statement. Can you send it again?").assertIsDisplayed()
+        compose.onNodeWithText("2 of 6").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Previous").performClick()
+        compose.waitForIdle()
+
         compose.onNodeWithText("Dal and a salad").performClick()
         compose.waitForIdle()
         compose.onNodeWithText("Dal and a salad").assertDoesNotExist()
-        compose.onNodeWithText("Not sure yet").assertDoesNotExist()
+        compose.onNodeWithText("I couldn't open last month's statement. Can you send it again?").assertIsDisplayed()
     }
 
     @Test
-    fun tappingSomeoneOpensTheirChatAndTheLastRowMakesSomeoneNew() {
+    fun tappingSomeoneOpensTheirChatAndTheRestAreInChats() {
         val opened = mutableListOf<String>()
         var made = 0
-        val model = HomeViewModel(repository)
-        show { HomeScreen(model, onOpenChat = { opened += it }, onNewAgent = { made++ }, onChangeColours = {}) }
+        home(onOpenChat = { opened += it }, onNewAgent = { made++ })
+        compose.onNodeWithContentDescription("Optimus, resting").performClick()
+        compose.onNodeWithContentDescription("Renoa, working, your main agent").performClick()
+        compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").performClick()
+        assertEquals(listOf("optimus", "renoa", "tifa"), opened)
+
+        compose.onNodeWithContentDescription("3 more, in Chats").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Optimus").performClick()
-        compose.onNodeWithText("Evening, Yash. Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").performClick()
-        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasContentDescription("Meet someone new"))
+        val chats = compose.onAllNodes(hasScrollToNodeAction()).filter(hasAnyAncestor(hasScrollToNodeAction())).onFirst()
+        chats.performScrollToNode(hasContentDescription("Echo, asleep"))
+        compose.onNodeWithContentDescription("Echo, asleep").performClick()
+        chats.performScrollToNode(hasContentDescription("Meet someone new"))
         compose.onNodeWithContentDescription("Meet someone new").performClick()
-        assertEquals(listOf("optimus", "renoa"), opened)
+        assertEquals("echo", opened.last())
         assertEquals(1, made)
+
+        compose.onNodeWithContentDescription("Back to Home").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Optimus, resting").assertIsDisplayed()
+    }
+
+    @Test
+    fun aRoutineIsTurnedOnFromItsPageAndWhatIsComingUpIsListed() {
+        home()
+        openPages()
+        compose.onNodeWithText("Routines").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Tifa · Every day at 1 PM").assertIsDisplayed()
+        compose.onNodeWithText("Paused").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Lunch photo").performClick()
+        compose.waitForIdle()
+        assertTrue(repository.routines.value.first { it.id == "lunch" }.on)
+        compose.onNodeWithText("Next: tomorrow at 1 PM").assertIsDisplayed()
+
+        compose.onNodeWithText("Upcoming").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("LATER TODAY").assertIsDisplayed()
+        compose.onNodeWithText("Posts worth a reply").assertIsDisplayed()
+        compose.onNodeWithText("TOMORROW").assertIsDisplayed()
+        snapshot("home-upcoming")
+
+        compose.activity.onBackPressedDispatcher.onBackPressed()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Tifa, wants you").assertIsDisplayed()
+        compose.onNodeWithText("Upcoming").assertDoesNotExist()
     }
 
     @Test
     fun homeInPaper() {
-        val model = HomeViewModel(repository)
-        show(ThemeName.Paper, seconds = 3.97f) { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
-        compose.waitForIdle()
+        home(ThemeName.Paper, seconds = 3.97f)
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
         snapshot("home-paper")
+        openPages()
+        snapshot("home-chats-paper")
     }
 
     @Test
     fun theColourChangeLivesOnTheMark() {
         var changed = 0
-        val model = HomeViewModel(repository)
-        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = { changed++ }) }
+        home(onChangeColours = { changed++ })
         compose.onNodeWithContentDescription("Renoa, change colours").performClick()
         assertEquals(1, changed)
     }
@@ -263,3 +322,6 @@ class ScreensTest : ScreenTest() {
         snapshot("sign-in-paper")
     }
 }
+
+/** Thursday 29 October 2026, 7:40 PM, when the demo evening is set. */
+private val EVENING = java.time.ZonedDateTime.of(2026, 10, 29, 19, 40, 0, 0, java.time.ZoneId.of("Asia/Kolkata"))

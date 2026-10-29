@@ -7,14 +7,17 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import live.renoa.app.agents.AgentRepository
-import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.Briefing
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
+import live.renoa.app.agents.Routine
 import live.renoa.app.agents.wordsOr
+import live.renoa.app.badge.mainAgent
+import java.util.UUID
 
 /**
  * Everyone, in the order Home lists them: whoever needs the owner first ([AgentState.homeRank]),
@@ -23,19 +26,47 @@ import live.renoa.app.agents.wordsOr
 fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
     agents.sortedWith(compareBy<AgentSummary> { it.state.homeRank }.thenBy { !it.glance.unread })
 
-data class HomeUiState(
-    val briefing: Briefing? = null,
-    val people: List<AgentSummary> = emptyList(),
-    val notice: String? = null,
-) {
-    fun agent(id: String?): AgentSummary? = people.firstOrNull { it.id == id }
+/** The pages the dock opens, in the order they are swiped through. */
+enum class HomePage(val title: String) { Chats("Chats"), Routines("Routines"), Upcoming("Upcoming") }
 
-    /** Who the briefing is from, and who "Message …" at the bottom reaches. */
-    val lead: AgentSummary? get() = agent(briefing?.agentId)
+/** What Home keeps of its own while the owner is in a chat and back. */
+private data class Local(
+    val notice: String? = null,
+    /** Routines being switched, with the state asked for, shown until Renoa answers. */
+    val switching: Map<String, Boolean> = emptyMap(),
+    val page: HomePage? = null,
+    val shown: String? = null,
+)
+
+data class HomeUiState(
+    /** Every agent, as the roster has them; [people] is Home's order. */
+    val roster: List<AgentSummary> = emptyList(),
+    val briefing: Briefing? = null,
+    val routines: List<Routine> = emptyList(),
+    val notice: String? = null,
+    val switching: Map<String, Boolean> = emptyMap(),
+    /** The page open over Home, or null while Home itself shows. */
+    val page: HomePage? = null,
+    /** The key of the handover the owner stepped to, if it is still there. */
+    val shownKey: String? = null,
+) {
+    val people: List<AgentSummary> get() = homeOrder(roster)
+
+    val main: AgentSummary? get() = mainAgent(roster)
+
+    val handovers: List<Handover> get() = handovers(roster, briefing)
+
+    /** Where the relay stands in [handovers]: the one stepped to, else the first. */
+    val shown: Int get() = handovers.indexOfFirst { it.key == shownKey }.coerceAtLeast(0)
+
+    fun agent(id: String?): AgentSummary? = roster.firstOrNull { it.id == id }
+
+    /** Whether the routine shows as on: what the owner just asked for, else what Renoa last said. */
+    fun isOn(routine: Routine): Boolean = switching[routine.id] ?: routine.on
 }
 
 class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
-    private val notice = MutableStateFlow<String?>(null)
+    private val local = MutableStateFlow(Local())
 
     /**
      * Whether Home has already shown its tiles dropping in. Home stays at the bottom of the back
@@ -49,18 +80,47 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     }
 
     val state: StateFlow<HomeUiState> =
-        combine(repository.agents, repository.briefing, notice) { agents, briefing, notice -> HomeUiState(briefing, homeOrder(agents), notice) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.briefing.value, homeOrder(repository.agents.value)))
+        combine(repository.agents, repository.briefing, repository.routines, local) { agents, briefing, routines, mine ->
+            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value))
+
+    /** Opens a page over Home. It stays open while the owner visits a chat from it. */
+    fun open(page: HomePage) = local.update { it.copy(page = page) }
+
+    fun close() = local.update { it.copy(page = null) }
+
+    /** Steps the relay to the handover [key]. */
+    fun show(key: String) = local.update { it.copy(shown = key) }
 
     /** Answers an agent's question right from Home; the agent picks it up from there. */
     fun answer(agentId: String, choice: String) {
-        notice.value = null
+        local.update { it.copy(notice = null) }
         viewModelScope.launch {
             try {
                 repository.answer(agentId, choice)
             } catch (refused: RepositoryException) {
                 // A conflict means the question was already answered, from here or elsewhere: nothing to retry.
-                if (refused.problem != Problem.Conflict) notice.value = refused.wordsOr("That answer did not go through. Try again.")
+                if (refused.problem != Problem.Conflict) local.update { it.copy(notice = refused.wordsOr("That answer did not go through. Try again.")) }
+            }
+        }
+    }
+
+    /** Turns a routine on or off. Each tap is its own change, with its own operation id. */
+    fun switch(routineId: String, on: Boolean) {
+        local.update { it.copy(notice = null, switching = it.switching + (routineId to on)) }
+        viewModelScope.launch {
+            try {
+                repository.setRoutine(routineId, on, UUID.randomUUID().toString())
+            } catch (refused: RepositoryException) {
+                val words =
+                    when (refused.problem) {
+                        Problem.Conflict -> "That routine was changed somewhere else. It shows how it is now."
+                        Problem.NotFound -> "That routine is gone."
+                        else -> refused.wordsOr("That routine could not be changed. Try again.")
+                    }
+                local.update { it.copy(notice = words) }
+            } finally {
+                local.update { it.copy(switching = it.switching - routineId) }
             }
         }
     }
