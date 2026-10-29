@@ -63,6 +63,8 @@ data class HomeUiState(
     /** Renoa has made no agent for the owner yet, so sign-up comes first. */
     val signUp: Boolean = false,
     val link: Link = Link.Connected,
+    /** Whether Renoa has said who is here, or the phone kept what it last said. Until then an empty roster means not known yet, not no one. */
+    val known: Boolean = true,
 ) {
     val people: List<AgentSummary> get() = homeOrder(roster)
 
@@ -99,9 +101,13 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     }
 
     val state: StateFlow<HomeUiState> =
-        combine(repository.agents, repository.briefing, repository.routines, local, repository.link) { agents, briefing, routines, mine, link ->
-            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt, mine.ownerName, mine.signUp, link)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value, link = repository.link.value))
+        combine(repository.agents, repository.briefing, repository.routines, local, repository.link.combine(repository.rosterKnown, ::Pair)) { agents, briefing, routines, mine, (link, known) ->
+            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt, mine.ownerName, mine.signUp, link, known)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value, link = repository.link.value, known = repository.rosterKnown.value),
+        )
 
     init {
         viewModelScope.launch { meetTheOwner() }

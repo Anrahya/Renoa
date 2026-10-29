@@ -82,6 +82,9 @@ class FakeAgentRepository(
 
     override val agents: StateFlow<List<AgentSummary>> = roster.asStateFlow()
 
+    /** The fake's roster is known from the start. */
+    override val rosterKnown: StateFlow<Boolean> = MutableStateFlow(true).asStateFlow()
+
     private val scheduled = routineSeeds.associateBy { it.id }
     private val routineOn = routineSeeds.associate { it.id to it.on }.toMutableMap()
     private val routineList = MutableStateFlow(routinesLocked())

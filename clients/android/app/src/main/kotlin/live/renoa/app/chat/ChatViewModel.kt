@@ -6,8 +6,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -43,7 +45,10 @@ data class ChatUiState(
     val streaming: StreamingReply? = null,
     val draft: String = "",
     val notice: String? = null,
-    /** False until the chat has been read once; a screen opening on it waits for this to tell old messages from new. */
+    /**
+     * False until the chat has been read once, as while Renoa has not been reached; a screen opening
+     * on it waits for this to tell old messages from new.
+     */
     val loaded: Boolean = false,
     /** The colour the agent wears on every screen, and whether it is the owner's main agent. */
     val hue: AgentHue = AgentHue.Ink,
@@ -79,15 +84,18 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
     val state: StateFlow<ChatUiState> =
         combine(repository.agents, conversation(), draft, notice.combine(inFlight, ::Pair), repository.link) { agents, conversation, draft, (notice, inFlight), link ->
             ChatUiState(
-                agents.firstOrNull { it.id == agentId }, conversation.messages, conversation.streaming, draft, notice, loaded = true,
+                agents.firstOrNull { it.id == agentId }, conversation?.messages.orEmpty(), conversation?.streaming, draft, notice, loaded = conversation != null,
                 hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId, link = link, sending = inFlight > 0,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(link = repository.link.value))
 
-    /** An agent that is gone has an empty chat rather than a crash. */
-    private fun conversation(): Flow<Conversation> =
+    /**
+     * The chat, or null until it is read, so the screen shows the agent and the composer at once.
+     * An agent that is gone has an empty chat rather than a crash.
+     */
+    private fun conversation(): Flow<Conversation?> =
         try {
-            repository.conversation(agentId)
+            repository.conversation(agentId).catch<Conversation?> { if (it is RepositoryException) emit(Conversation()) else throw it }.onStart { emit(null) }
         } catch (gone: RepositoryException) {
             flowOf(Conversation())
         }
