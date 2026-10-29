@@ -26,7 +26,7 @@ internal fun mermaidFence(content: String, node: ASTNode): MermaidFence? {
 }
 
 /**
- * A reply's diagrams, each kept by where its fence starts in the reply. A diagram is movable
+ * A reply's diagrams, one for each fence, told apart by where the fence starts. A diagram is movable
  * content, so it keeps its view, already drawn, as the reply around it changes shape: from the
  * part of an arriving reply still being parsed to the settled part, and from the arriving reply to
  * the finished message. Main thread only.

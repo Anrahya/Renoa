@@ -2,13 +2,16 @@ package live.renoa.app.chat
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
 import android.view.View
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -48,7 +51,7 @@ internal const val DRAWING = "Drawing…"
  */
 @Composable
 internal fun Diagram(source: String, fallback: @Composable () -> Unit) {
-    var failed by remember(source) { mutableStateOf(false) }
+    var failed by remember(source) { mutableStateOf(source in undrawable) }
     if (failed) return fallback()
     val context = LocalContext.current
     val colors = Renoa.colors
@@ -73,7 +76,10 @@ internal fun Diagram(source: String, fallback: @Composable () -> Unit) {
                 update = { view ->
                     view.reports { report ->
                         when (report) {
-                            DiagramReport.Failed -> failed = true
+                            DiagramReport.Failed -> {
+                                undrawable[source] = Unit
+                                failed = true
+                            }
                             is DiagramReport.Drawn -> {
                                 height = report.height
                                 heights[source] = report.height
@@ -109,9 +115,18 @@ private val PLACEHOLDER_HEIGHT = 48.dp
  * than growing from the placeholder. A wrong guess, as after a turn of the phone, is corrected as
  * soon as the page measures. Main thread only.
  */
-private val heights =
-    object : LinkedHashMap<String, Int>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>) = size > 64
+private val heights = recent<Int>()
+
+/**
+ * Sources that could not be drawn, so one scrolled back into view is its code at once, with no
+ * web view made for it again. That includes any showing when the renderer went. Main thread only.
+ */
+private val undrawable = recent<Unit>()
+
+/** A map that keeps its 64 most recently used entries. */
+private fun <V> recent(): MutableMap<String, V> =
+    object : LinkedHashMap<String, V>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>) = size > 64
     }
 
 /** What a diagram's page says through its title: drawn at a height in dp, or not drawable. */
@@ -121,12 +136,25 @@ internal sealed interface DiagramReport {
     data object Failed : DiagramReport
 }
 
-/** The report in a page's [title], or null for any other title, such as the one a page has before it says anything. */
+/**
+ * The report in a page's [title], or null for any other title, such as the one a page has before it
+ * says anything. A drawing taller than [MAX_DIAGRAM_HEIGHT] dp counts as one that cannot be drawn.
+ */
 internal fun diagramReport(title: String?): DiagramReport? {
     if (title == "x") return DiagramReport.Failed
     val height = title?.let(HEIGHT::matchEntire)?.groupValues?.get(1)?.toInt() ?: return null
-    return if (height > 0) DiagramReport.Drawn(height) else null
+    return when {
+        height <= 0 -> null
+        height > MAX_DIAGRAM_HEIGHT -> DiagramReport.Failed
+        else -> DiagramReport.Drawn(height)
+    }
 }
+
+/**
+ * The tallest a diagram is drawn, in dp: some ten screens. Compose cannot lay out a box much past
+ * 75,000 dp, and a drawing taller than this reads better as its code anyway.
+ */
+internal const val MAX_DIAGRAM_HEIGHT = 4000
 
 private val HEIGHT = Regex("h:(\\d{1,5})")
 
@@ -139,8 +167,9 @@ internal fun diagramLabel(source: String): String {
 }
 
 /**
- * A web view that runs the diagram's page and nothing else: no network, no files, no bridge to the
- * app, no navigation, nothing to type into or select. Its ground is clear, so the reply shows through.
+ * A web view for the diagram's page: network loads blocked, no files or content, no bridge to the
+ * app, no navigation, nothing to focus, and long presses taken by the view (the page also turns
+ * text selection off). Its ground is clear, so the reply shows through.
  */
 // The page's scripts are Pele and the few lines that mount it, both shipped in the app; the source is data.
 @SuppressLint("SetJavaScriptEnabled")
@@ -163,10 +192,23 @@ private fun diagramView(context: Context): WebView =
         isVerticalScrollBarEnabled = false
         // The box around it names the diagram; the drawing's own text would only repeat it in pieces.
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        // Before Android 13, a phone in dark mode may darken pages by force; the page has its theme's colours already.
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.S_V2) settings.noForceDark()
         webViewClient = Sealed
     }
 
-/** Keeps a diagram's view where it is: nothing it asks for loads, and no link it holds goes anywhere. */
+// The setting is deprecated from Android 13, where it does nothing; it is used only below that.
+@Suppress("DEPRECATION")
+@RequiresApi(Build.VERSION_CODES.Q)
+private fun WebSettings.noForceDark() {
+    forceDark = WebSettings.FORCE_DARK_OFF
+}
+
+/**
+ * Keeps a diagram's view where it is: any request the view asks about, as for an image or a
+ * script, is answered with nothing, and no link it holds goes anywhere. What the page carries in
+ * itself, such as its font, is not a request and loads.
+ */
 private object Sealed : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = true
 

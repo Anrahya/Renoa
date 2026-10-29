@@ -3,6 +3,7 @@ package live.renoa.app.chat
 import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import live.renoa.app.R
 import live.renoa.app.theme.RenoaColors
@@ -40,11 +41,13 @@ internal fun diagramKitIfRead(): DiagramKit? = kit
 
 /**
  * The page that draws [source] in [colors]: Pele, the source as escaped text it reads as data, and
- * the theme as Pele's CSS variables. [nonce] lets the page's own scripts, and only them, run.
+ * the theme as Pele's CSS variables. [nonce] lets the page's own scripts, and only them, run. The
+ * page declares its theme's colour scheme alone, so a browser that darkens pages leaves it be.
  * Each `{{name}}` in the template is filled once, so nothing filled in is read as a placeholder.
  */
 internal fun diagramPage(kit: DiagramKit, source: String, colors: RenoaColors, nonce: String = newNonce()): String {
-    val fills = mapOf("nonce" to nonce, "font" to kit.font, "theme" to peleTheme(colors), "pele" to kit.pele, "source" to escapeHtml(source))
+    val scheme = if (colors.background.luminance() < 0.5f) "only dark" else "only light"
+    val fills = mapOf("nonce" to nonce, "scheme" to scheme, "font" to kit.font, "theme" to peleTheme(colors), "pele" to kit.pele, "source" to escapeHtml(source))
     return PLACEHOLDER.replace(kit.template) { fills[it.groupValues[1]] ?: error("the diagram page has no ${it.value}") }
 }
 

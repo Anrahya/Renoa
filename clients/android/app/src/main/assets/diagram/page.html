@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <!-- Only this page's own two scripts run, and only fonts written into the page load. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-{{nonce}}'; style-src 'unsafe-inline'; font-src data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-{{nonce}}'; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'">
+<!-- The page's own theme alone, so a browser that darkens pages by force leaves it be. -->
+<meta name="color-scheme" content="{{scheme}}">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <style>
 @font-face { font-family: "Instrument Sans"; src: url(data:font/ttf;base64,{{font}}) format("truetype"); font-weight: 400 700; }

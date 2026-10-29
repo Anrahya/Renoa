@@ -56,7 +56,7 @@ class DiagramPageTest {
     fun onlyThePagesOwnScriptsRunAndNothingLoadsBeyondTheFontItCarries() {
         val built = page("flowchart TD\n  A --> B", nonce = "abc123", name = "flowchart")
         val policy = built.substringAfter("Content-Security-Policy\" content=\"").substringBefore('"')
-        assertEquals("default-src 'none'; script-src 'nonce-abc123'; style-src 'unsafe-inline'; font-src data:", policy)
+        assertEquals("default-src 'none'; script-src 'nonce-abc123'; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'", policy)
         assertEquals(2, Regex("<script\\b").findAll(built).count())
         assertEquals(2, Regex("<script nonce=\"abc123\">").findAll(built).count())
         assertTrue(built.contains("<script nonce=\"abc123\">${kit.pele}</script>"), "Pele runs whole, as shipped")
@@ -77,6 +77,9 @@ class DiagramPageTest {
             val built = page("pie title Your week\n  \"Work\" : 40\n  \"Sleep\" : 50\n  \"Cooking\" : 8", theme, name = "pie")
             val variables = Regex("--pele-([\\w-]+): ([^;]+);").findAll(peleTheme(colors)).associate { it.groupValues[1] to it.groupValues[2] }
             assertTrue(built.contains(":root { ${peleTheme(colors)} }"))
+            // The page claims its own theme's scheme alone, so a browser that darkens pages leaves a Paper diagram light.
+            val scheme = built.substringAfter("<meta name=\"color-scheme\" content=\"").substringBefore('"')
+            assertEquals(if (theme.dark) "only dark" else "only light", scheme)
             fun hex(c: androidx.compose.ui.graphics.Color) = "#%06X".format(c.toArgb() and 0xFFFFFF)
             assertEquals(hex(colors.background), variables["bg"])
             assertEquals(hex(colors.foreground), variables["fg"])
@@ -99,6 +102,10 @@ class DiagramPageTest {
     fun thePageSaysItsHeightOrThatItCannotDrawAndNothingElseCounts() {
         assertEquals(DiagramReport.Drawn(240), diagramReport("h:240"))
         assertEquals(DiagramReport.Failed, diagramReport("x"))
+        assertEquals(DiagramReport.Drawn(MAX_DIAGRAM_HEIGHT), diagramReport("h:$MAX_DIAGRAM_HEIGHT"))
+        // Too tall to lay out, or to read as a picture: it shows as its code.
+        assertEquals(DiagramReport.Failed, diagramReport("h:${MAX_DIAGRAM_HEIGHT + 1}"))
+        assertEquals(DiagramReport.Failed, diagramReport("h:55630"))
         for (other in listOf(null, "", "about:blank", "h:", "h:0", "h:-3", "h:12px", "h:999999", "240", "X", "data:text/html,")) assertNull(diagramReport(other), "$other")
     }
 

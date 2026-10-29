@@ -2,6 +2,8 @@ package live.renoa.app.chat
 
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -36,8 +38,11 @@ import live.renoa.app.ui.ScreenTest
 import org.junit.After
 import org.junit.Test
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -52,12 +57,34 @@ class DiagramTest : ScreenTest() {
     fun tearDown() = scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
 
     private var theme by mutableStateOf(ThemeName.Graphite)
+    private var open by mutableStateOf(true)
 
-    /** Optimus's chat as [talk] holds it, in [theme], which a test may change while it shows. */
+    /** Optimus's chat as [talk] holds it, in [theme], which a test may change while it shows, and only while [open]. */
     private fun chat(talk: MutableStateFlow<Conversation>) {
         val repository = object : AgentRepository by FakeAgentRepository(scope) { override fun conversation(agentId: String) = talk }
         val model = ChatViewModel(repository, "optimus")
-        compose.setContent { RenoaTheme(theme, reducedMotion = true, clock = remember { mutableFloatStateOf(0f) }) { ChatScreen(model, onBack = {}, onOpenProfile = {}) } }
+        compose.setContent { RenoaTheme(theme, reducedMotion = true, clock = remember { mutableFloatStateOf(0f) }) { if (open) ChatScreen(model, onBack = {}, onOpenProfile = {}) } }
+    }
+
+    private fun reply(text: String) = MutableStateFlow(Conversation(listOf(ChatMessage("a", Speaker.Agent, text))))
+
+    /** Closes the chat and opens it again, as a reply scrolled away and back is composed afresh. */
+    private fun reopen() {
+        compose.runOnUiThread { open = false }
+        compose.waitForIdle()
+        compose.runOnUiThread { open = true }
+        compose.waitForIdle()
+    }
+
+    /** A diagram that could not be drawn shows [source] as code, with no view, and is still code when shown again. */
+    private fun showsAsCodeFromNowOn(source: String) {
+        compose.waitForIdle()
+        compose.onNodeWithText(source).assertExists()
+        compose.onAllNodes(diagram).assertCountEquals(0)
+        assertEquals(emptyList(), webViews(), "the view is gone with the diagram")
+        reopen()
+        compose.onNodeWithText(source).assertExists()
+        assertEquals(emptyList(), webViews(), "no view is made again for a diagram that could not be drawn")
     }
 
     private fun webViews(): List<WebView> {
@@ -101,9 +128,15 @@ class DiagramTest : ScreenTest() {
             assertFalse(allowFileAccess)
             assertFalse(allowContentAccess)
             assertFalse(javaScriptCanOpenWindowsAutomatically)
+            assertFalse(supportMultipleWindows())
+            assertFalse(supportZoom())
+            assertFalse(builtInZoomControls)
         }
         assertFalse(view.isFocusable || view.isFocusableInTouchMode, "nothing to type into")
         assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(view, request("https://example.com")), "a link in the drawing goes nowhere")
+        val answer = shadow.webViewClient.shouldInterceptRequest(view, request("https://example.com/cat.png"))
+        assertNotNull(answer, "a request the view asks about is answered here, not passed on")
+        assertNull(answer.data, "and answered with nothing")
 
         // Until the page has drawn, the reply holds a placeholder; then the box takes the drawing's height.
         compose.onNodeWithText(DRAWING).assertExists()
@@ -126,12 +159,67 @@ class DiagramTest : ScreenTest() {
 
     @Test
     fun aDiagramPeleCannotDrawShowsItsSourceAsCode() {
-        chat(MutableStateFlow(Conversation(listOf(ChatMessage("a", Speaker.Agent, "Broken:\n\n```mermaid\nflowchart LR\n  A -->\n```\n")))))
+        chat(reply("Broken:\n\n```mermaid\nflowchart LR\n  A -->\n```\n"))
         theWebView().says("x")
+        showsAsCodeFromNowOn("flowchart LR\n  A -->")
+    }
+
+    @Test
+    fun aDiagramTallerThanTenScreensShowsAsCode() {
+        chat(reply("Long:\n\n```mermaid\nsequenceDiagram\n  Alice->>Bob: Hi\n```\n"))
+        theWebView().says("h:55630")
+        showsAsCodeFromNowOn("sequenceDiagram\n  Alice->>Bob: Hi")
+    }
+
+    @Test
+    // The detail's constructor is deprecated for apps, which are only ever handed one; a test has to make it.
+    @Suppress("DEPRECATION")
+    fun aDiagramWhoseRendererWentShowsAsCodeAndTheAppCarriesOn() {
+        chat(reply("Gone:\n\n```mermaid\nflowchart LR\n  Gone --> Code\n```\n"))
+        val view = theWebView()
+        val crashed = object : RenderProcessGoneDetail() {
+            override fun didCrash() = true
+
+            override fun rendererPriorityAtExit() = 0
+        }
+        assertTrue(compose.runOnUiThread { shadowOf(view).webViewClient.onRenderProcessGone(view, crashed) }, "the app is not taken down with it")
+        showsAsCodeFromNowOn("flowchart LR\n  Gone --> Code")
+    }
+
+    @Test
+    fun twoDiagramsInOneReplyKeepTheirOwnViewsAsTheReplyArrives() {
+        val talk = MutableStateFlow(Conversation())
+        chat(talk)
+        val both = "First:\n\n```mermaid\nflowchart LR\n  One --> Two\n```\n\nThen:\n\n```mermaid\nflowchart LR\n  Three --> Four\n```\n"
+        fun arrive(text: String) {
+            compose.runOnUiThread { talk.update { it.copy(streaming = StreamingReply("r", text)) } }
+            compose.waitForIdle()
+        }
+        arrive(both)
+        compose.waitUntil(5_000) { webViews().size == 2 }
+        fun bySource() = webViews().associateBy { view -> listOf("One --&gt; Two", "Three --&gt; Four").single { it in view.page() } }
+        val first = bySource()
+        for (more in listOf("$both\nThat", "$both\nThat is all.")) {
+            arrive(more)
+            val now = bySource()
+            assertEquals(first.keys, now.keys)
+            for (key in first.keys) assertSame(first.getValue(key), now.getValue(key), key)
+        }
+        compose.runOnUiThread { talk.update { it.copy(messages = it.messages + ChatMessage("r", Speaker.Agent, "$both\nThat is all."), streaming = null) } }
         compose.waitForIdle()
-        compose.onNodeWithText("flowchart LR\n  A -->").assertExists()
-        compose.onAllNodes(diagram).assertCountEquals(0)
-        assertEquals(emptyList(), webViews(), "the view is gone with the diagram")
+        val finished = bySource()
+        for (key in first.keys) assertSame(first.getValue(key), finished.getValue(key), "$key, once the reply is whole")
+    }
+
+    @Test
+    @Config(sdk = [31])
+    // Force dark is deprecated from Android 13; this reads it below that, where it still applies.
+    // Robolectric's setting starts at off, not a phone's auto, so this catches a wrong value but not
+    // a missing call; the page's own colour-scheme claim, tested with the page, covers that.
+    @Suppress("DEPRECATION")
+    fun aPhoneInDarkModeBeforeAndroid13DoesNotDarkenADiagram() {
+        chat(reply(DINNER))
+        assertEquals(WebSettings.FORCE_DARK_OFF, theWebView().settings.forceDark)
     }
 
     @Test

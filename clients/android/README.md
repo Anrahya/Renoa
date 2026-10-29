@@ -47,6 +47,8 @@ A fenced code block in the `mermaid` language draws as a diagram. Pele (`assets/
 provenance in `licenses/README.md`) runs in a web view per diagram that blocks network loads,
 reads no files and offers the app no bridge; the page carries Pele, Instrument Sans and the
 diagram's source as escaped text, and takes its colours from the theme. It tells the app its
-height, or that it cannot draw, through its title. A diagram Pele cannot draw shows as its code,
-and one still arriving is a placeholder until its fence closes. `app/build/diagrams` holds the
-pages the tests build, to open in a browser.
+height, or that it cannot draw, through its title. A diagram Pele cannot draw, or one taller than
+4,000 dp, shows as its code; one still arriving is a placeholder until its fence closes.
+Robolectric runs no script, so the tests give the view the page's title themselves; the page's
+own side, that it draws and sets that title, is checked by hand by opening the pages the tests
+write to `app/build/diagrams` in Chrome.
