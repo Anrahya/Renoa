@@ -37,6 +37,9 @@ enum class Problem {
 
     /** Renoa could not be reached, so whether the request took effect is unknown. */
     Unavailable,
+
+    /** Renoa can do this, but not from the app yet. Nothing was changed. */
+    NotYet,
     ;
 
     /** What the owner reads. The refusal's own message is for logs: it may name fields and values. */
@@ -47,6 +50,7 @@ enum class Problem {
                 Conflict -> "This was changed somewhere else. Close it and open it again."
                 Invalid -> "That could not be saved. Check what you entered."
                 Unavailable -> "Could not reach Renoa. Check your connection and try again."
+                NotYet -> "That can't be changed from the app yet."
             }
 }
 

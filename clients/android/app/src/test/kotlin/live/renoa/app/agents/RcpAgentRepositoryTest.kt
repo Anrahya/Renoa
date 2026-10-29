@@ -513,6 +513,20 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun changesTheHostCannotMakeFromTheAppSaySoAndAreNotSent() = runTest {
+        val repo = started()
+        val calls = surface.hostCalls.size
+        for (refused in listOf(
+            assertFailsWith<RepositoryException> { repo.edit(nagisa, EditProfile("Nagisa", "Nagi", "", "")) },
+            assertFailsWith<RepositoryException> { repo.setAbility(nagisa, "calendar", true) },
+        )) {
+            assertEquals(Problem.NotYet, refused.problem)
+        }
+        assertEquals("That can't be changed from the app yet.", Problem.NotYet.ownerWords)
+        assertEquals(calls, surface.hostCalls.size)
+    }
+
+    @Test
     fun theOwnersProfileAndWhetherTheyHaveAnAgentComeFromTheHost() = runTest {
         surface.automations = mutableListOf()
         val repo = started()

@@ -356,7 +356,7 @@ class RcpAgentRepository(
 
     override suspend fun setAbility(agentId: String, abilityId: String, lit: Boolean): AbilitySwitch = notYet()
 
-    private fun notYet(): Nothing = throw RepositoryException(Problem.Unavailable, "the Host cannot change this from the app yet")
+    private fun notYet(): Nothing = throw RepositoryException(Problem.NotYet, "the Host cannot change this from the app yet")
 
     /**
      * Whether the coordinator answered this request with a refusal that a retry cannot change. An

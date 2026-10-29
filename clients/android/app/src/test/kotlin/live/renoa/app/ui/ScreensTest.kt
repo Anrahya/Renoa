@@ -29,6 +29,14 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import live.renoa.app.agents.AgentRepository
+import live.renoa.app.agents.AgentProfile
+import live.renoa.app.agents.EditProfile
+import live.renoa.app.agents.Problem
+import live.renoa.app.agents.RepositoryException
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performTextReplacement
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.badge.AgentHue
@@ -324,6 +332,24 @@ class ScreensTest : ScreenTest() {
         compose.onNode(hasContentDescription("Name")).assertExists()
         compose.onNodeWithText("Tifa found and added Health itself").assertIsDisplayed()
         snapshot("edit-tifa")
+    }
+
+    @Test
+    fun whereRenoaCannotChangeAnAgentFromTheAppTheEditorSaysSoAndShowsNoEmptySwitches() {
+        val notYet =
+            object : AgentRepository by repository {
+                override suspend fun profile(agentId: String): AgentProfile = repository.profile(agentId).copy(abilities = emptyList())
+
+                override suspend fun edit(agentId: String, edit: EditProfile): AgentProfile = throw RepositoryException(Problem.NotYet, "not on the Host yet")
+            }
+        val model = AgentEditorViewModel(notYet, EditorMode.Editing("tifa"))
+        show { AgentEditorScreen(model, onClose = {}, onFinished = {}) }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("What Tifa can do").assertCountEquals(0)
+        compose.onNodeWithContentDescription("Name").performTextReplacement("Tifa Lockhart")
+        compose.onNodeWithText("Done").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("That can't be changed from the app yet.").assertIsDisplayed()
     }
 
     @Test
