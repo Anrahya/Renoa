@@ -1,6 +1,7 @@
 package live.renoa.app
 
 import android.provider.Settings
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -120,6 +121,16 @@ class RenoaAppTest : ScreenTest() {
         compose.onNode(hasContentDescription("your main agent", substring = true)).assertIsDisplayed()
         compose.onNode(hasText(", Yash.", substring = true)).assertIsDisplayed()
         assertEquals(1, ViewModelProvider(compose.activity)[EntryStores::class.java].held, "only Home is on the stack, so back leaves the app, not sign-up")
+
+        // Her chat is empty, so it offers a start; a starter fills the composer and does not send.
+        compose.onNode(hasClickLabel("Talk to Renoa")).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Say hello to Renoa").assertIsDisplayed()
+        snapshot("chat-start")
+        compose.onNodeWithText("Plan my meals for this week").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Message Renoa").assert(hasText("Plan my meals for this week"))
+        compose.onNodeWithText("Say hello to Renoa").assertIsDisplayed()
     }
 
     private fun back() {
