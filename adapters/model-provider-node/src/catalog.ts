@@ -5,11 +5,10 @@ import opencodeGoCatalog from "./upstream/catalogs/opencode-go.json" with { type
 import type { CatalogModel, ProviderId, ReasoningLevel } from "./contract.js";
 import {
   OPENCODE_GO_BASE_URL,
-  OPENCODE_GO_CATALOG_ADDITIONS,
   opencodeGoTransport,
   type OpenCodeTransport,
 } from "./providers/opencode-go.js";
-import { XAI_BASE_URL, XAI_CATALOG_ADDITIONS } from "./providers/xai.js";
+import { XAI_BASE_URL } from "./providers/xai.js";
 import { getSupportedThinkingLevels } from "./upstream/thinking.js";
 import type { Api, Model } from "./upstream/types.js";
 
@@ -20,18 +19,17 @@ export interface CatalogEntry {
   readonly model: Model<Api>;
 }
 
+/**
+ * Catalog metadata that classifies or annotates a Pi entry but that no retained
+ * transport consumes. It is removed before an entry becomes a model binding.
+ */
+const UNCONSUMED_CATALOG_FIELDS = ["type", "inputLimits"] as const;
+
 export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[] {
   const raw = provider === "xai" ? xaiCatalog : opencodeGoCatalog;
-  const pinned = flattenCatalog(raw);
-  const pinnedIds = new Set(pinned.map((entry) => entry.id));
-  const source =
-    provider === "opencode-go"
-      ? [
-          ...pinned,
-          ...OPENCODE_GO_CATALOG_ADDITIONS.filter((entry) => !pinnedIds.has(entry.id)),
-        ]
-      : [...pinned, ...XAI_CATALOG_ADDITIONS];
-  const discovered = source
+  const discovered = flattenCatalog(raw)
+    .filter((entry) => isAdvertisableCatalogEntry(provider, entry))
+    .map(withoutUnconsumedFields)
     .map((entry) => (provider === "opencode-go" ? applyOpenCodeOfficialTransport(entry) : entry))
     .filter((entry): entry is Record<string, unknown> => entry !== undefined)
     .map((entry) => validateModelSpec(entry, provider, String(entry.id)));
@@ -43,6 +41,26 @@ export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[]
       reasoning_levels: getSupportedThinkingLevels(model),
       model,
     }));
+}
+
+/**
+ * Pi catalogs (data schema 6) also list image and classifier models and models
+ * on APIs this adapter does not carry, such as Google Generative AI. Only chat
+ * models on a retained API are advertised; an entry without `type` is chat.
+ */
+export function isAdvertisableCatalogEntry(
+  provider: ProviderId,
+  entry: Record<string, unknown>,
+): boolean {
+  return (entry.type === undefined || entry.type === "chat") && supportsApi(provider, entry.api);
+}
+
+function withoutUnconsumedFields(entry: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...entry };
+  for (const field of UNCONSUMED_CATALOG_FIELDS) {
+    delete next[field];
+  }
+  return next;
 }
 
 export function toWireCatalog(entries: readonly CatalogEntry[]): readonly CatalogModel[] {
@@ -163,7 +181,7 @@ function flattenCatalog(value: unknown): Record<string, unknown>[] {
 
 function supportsApi(provider: ProviderId, api: unknown): api is Api {
   return provider === "xai"
-    ? api === "openai-completions" || api === "openai-responses"
+    ? api === "openai-responses"
     : api === "anthropic-messages" || api === "openai-completions" || api === "openai-responses";
 }
 

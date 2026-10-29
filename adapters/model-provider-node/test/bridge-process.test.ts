@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { createStore, loopbackModel, oauthCredential, responsesSse, startFakeServer, successfulChat, tempDir, userRequest } from "./helpers.js";
+import { createStore, loopbackModel, oauthCredential, responsesSse, startFakeServer, tempDir, userRequest } from "./helpers.js";
 
 const bridge = fileURLToPath(new URL("../src/main.js", import.meta.url));
 
@@ -13,7 +13,7 @@ test("restarted OpenCode bridge keeps session cache routing outside prompt conte
   const directory = tempDir();
   const store = createStore(directory.path, { type: "api_key", key: "fixture-key" }, "opencode-go");
   store.close();
-  const model = loopbackModel("opencode-go", "grok-4.5", server.baseUrl);
+  const model = loopbackModel("opencode-go", "grok-4.7", server.baseUrl);
   const first = "11111111-1111-4111-8111-111111111111";
   const second = "22222222-2222-4222-8222-222222222222";
   try {
@@ -53,7 +53,7 @@ test("OpenCode Go refuses missing conversation identity before dispatch", async 
   const directory = tempDir();
   const store = createStore(directory.path, { type: "api_key", key: "fixture-key" }, "opencode-go");
   store.close();
-  const model = loopbackModel("opencode-go", "grok-4.5", server.baseUrl);
+  const model = loopbackModel("opencode-go", "grok-4.7", server.baseUrl);
   try {
     const result = await runBridge({
       RENOA_MODEL_ACTION: "stream", RENOA_MODEL_PROVIDER: "opencode-go",
@@ -75,7 +75,7 @@ test("OpenCode Go refuses missing conversation identity before dispatch", async 
 
 test("compiled bridge catalog, describe, and stream over the process boundary", async () => {
   const server = await startFakeServer();
-  server.enqueue({ sse: successfulChat("from-process") });
+  server.enqueue({ sse: responsesSse("from-process") });
   const directory = tempDir();
   const authStore = join(directory.path, "credentials.sqlite");
   const store = createStore(directory.path, oauthCredential());

@@ -3,7 +3,6 @@ import { test } from "node:test";
 
 import {
   anthropicSse,
-  oauthCredential,
   reasoningChat,
   responsesSse,
   startFakeServer,
@@ -18,16 +17,17 @@ import {
   withOpenCode,
 } from "./stream-support.js";
 
-test("xAI streams text, reasoning, tools, usage, and completion", async () => {
+test("Chat Completions streams text, reasoning, tools, usage, and completion", async () => {
   const server = await startFakeServer();
   server.enqueue({ sse: reasoningChat() });
   const directory = tempDir();
   try {
     const records = await runStream({
       directory: directory.path,
-      modelId: "grok-4.6",
+      provider: "opencode-go",
+      modelId: "glm-5.3",
       baseUrl: server.baseUrl,
-      credential: oauthCredential(),
+      credential: { type: "api_key", key: "opencode-test-key" },
     });
     const text = deltas(records, "text").join("");
     const reasoning = deltas(records, "reasoning").join("");
@@ -36,7 +36,7 @@ test("xAI streams text, reasoning, tools, usage, and completion", async () => {
     const completed = completedRecord(records);
     assert.equal(completed.response.stop_reason, "stop");
     assert.equal(completed.response.usage.cache_read, 0);
-    assert.equal(completed.response.metadata.provider, "xai");
+    assert.equal(completed.response.metadata.provider, "opencode-go");
   } finally {
     await server.close();
     directory.close();
@@ -48,9 +48,10 @@ test("xAI streams text, reasoning, tools, usage, and completion", async () => {
   try {
     const records = await runStream({
       directory: toolsDir.path,
-      modelId: "grok-4.6",
+      provider: "opencode-go",
+      modelId: "glm-5.3",
       baseUrl: toolsServer.baseUrl,
-      credential: oauthCredential(),
+      credential: { type: "api_key", key: "opencode-test-key" },
     });
     const start = records.find(
       (record) => record.event === "content_delta" && record.delta.type === "tool_call_start",
@@ -75,7 +76,7 @@ test("xAI streams text, reasoning, tools, usage, and completion", async () => {
 });
 
 test("OpenCode Go streams one model for each supported wire API", async () => {
-  await withOpenCode("glm-5.1", (server) => {
+  await withOpenCode("glm-5.3", (server) => {
     server.enqueue({ sse: successfulChat("chat") });
     return server.baseUrl;
   }, (records) => {
@@ -83,7 +84,7 @@ test("OpenCode Go streams one model for each supported wire API", async () => {
     assert.equal(completedRecord(records).response.metadata.api, "openai-completions");
   });
 
-  await withOpenCode("grok-4.5", (server) => {
+  await withOpenCode("grok-4.7", (server) => {
     server.enqueue({ sse: responsesSse("responses") });
     return server.baseUrl;
   }, (records) => {

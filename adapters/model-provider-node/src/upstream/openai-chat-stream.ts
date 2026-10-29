@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -263,21 +263,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 
 				if (choice.delta) {
-					if (
-						choice.delta.content !== null &&
-						choice.delta.content !== undefined &&
-						choice.delta.content.length > 0
-					) {
-						const block = ensureTextBlock();
-						block.text += choice.delta.content;
-						stream.push({
-							type: "text_delta",
-							contentIndex: getContentIndex(block),
-							delta: choice.delta.content,
-							partial: output,
-						});
-					}
-
+					// Handle reasoning before content: some proxies (e.g. LiteLLM) aggregate reasoning and
+					// answer into one delta, and the thinking block must precede the text block.
 					// Some endpoints return reasoning in reasoning_content (llama.cpp),
 					// or reasoning (other openai compatible endpoints)
 					// Use the first non-empty reasoning field to avoid duplication
@@ -309,6 +296,21 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 								partial: output,
 							});
 						}
+					}
+
+					if (
+						choice.delta.content !== null &&
+						choice.delta.content !== undefined &&
+						choice.delta.content.length > 0
+					) {
+						const block = ensureTextBlock();
+						block.text += choice.delta.content;
+						stream.push({
+							type: "text_delta",
+							contentIndex: getContentIndex(block),
+							delta: choice.delta.content,
+							partial: output,
+						});
 					}
 
 					if (choice?.delta?.tool_calls) {

@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -322,6 +322,8 @@ export interface OpenAIResponsesCompat {
 }
 
 export interface AnthropicMessagesCompat {
+	/** Use adaptive thinking with `output_config.effort` instead of a token budget. Default: false. */
+	forceAdaptiveThinking?: boolean;
 	supportsEagerToolInputStreaming?: boolean;
 	supportsLongCacheRetention?: boolean;
 	sendSessionAffinityHeaders?: boolean;

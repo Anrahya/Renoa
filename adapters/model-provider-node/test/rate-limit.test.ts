@@ -23,7 +23,7 @@ test("OpenCode rate limits recover after longer waits within the same model invo
     const records = await runStream({
       directory: directory.path,
       provider: "opencode-go",
-      modelId: "grok-4.5",
+      modelId: "grok-4.7",
       baseUrl: server.baseUrl,
       credential: { type: "api_key", key: "fixture-opencode-key" },
       clock,
@@ -63,7 +63,7 @@ test("Retry-After is never shortened and cumulative waits remain bounded", async
       const error = await streamFailure({
         directory: directory.path,
         provider: "opencode-go",
-        modelId: "grok-4.5",
+        modelId: "grok-4.7",
         baseUrl: server.baseUrl,
         credential: { type: "api_key", key: "fixture-opencode-key" },
         clock,

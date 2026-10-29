@@ -36,7 +36,7 @@ test("inbound assistant reasoning defaults an omitted redacted flag to false", (
         metadata: {
           api: "openai-completions",
           provider: "opencode-go",
-          model: "ox-alpha-free",
+          model: "glm-5.3",
         },
       },
     ],

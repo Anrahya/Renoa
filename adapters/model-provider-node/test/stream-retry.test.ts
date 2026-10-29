@@ -7,7 +7,7 @@ import {
   jsonError,
   oauthCredential,
   startFakeServer,
-  successfulChat,
+  responsesSse,
   tempDir,
 } from "./helpers.js";
 import {
@@ -22,7 +22,7 @@ test("400 with a provider error body is not retried", async () => {
   server.enqueue(
     jsonError(400, { error: { message: "bad request", type: "invalid_request_error" } }),
   );
-  server.enqueue({ sse: successfulChat() });
+  server.enqueue({ sse: responsesSse() });
   const directory = tempDir();
   try {
     const error = await streamFailure({
@@ -47,7 +47,7 @@ test("429 with Retry-After retries and then succeeds without sleeping", async ()
     headers: { "retry-after": "2", "x-request-id": "req_wait" },
     body: JSON.stringify({ error: { message: "rate limited" } }),
   });
-  server.enqueue({ sse: successfulChat("after wait") });
+  server.enqueue({ sse: responsesSse("after wait") });
   const directory = tempDir();
   const clock = new ManualClock();
   try {
@@ -111,7 +111,7 @@ test("500 and 503 responses are retried", async () => {
     headers: { "retry-after": "1" },
     body: JSON.stringify({ error: { message: "unavailable" } }),
   });
-  server.enqueue({ sse: successfulChat("recovered") });
+  server.enqueue({ sse: responsesSse("recovered") });
   const directory = tempDir();
   const clock = new ManualClock();
   try {
@@ -201,9 +201,8 @@ test("malformed SSE is a protocol failure", async () => {
 test("stream interruption after output is not retried and outcome is unknown", async () => {
   const server = await startFakeServer();
   server.enqueue({
-    partialSse: [
-      'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}',
-    ],
+    // response.created, output_item.added, and one text delta; no terminal event.
+    partialSse: responsesSse("partial").slice(0, 3),
   });
   const directory = tempDir();
   try {

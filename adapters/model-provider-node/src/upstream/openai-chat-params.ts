@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -111,7 +111,7 @@ export function buildParams(
 	}
 
 	if (compat.thinkingFormat === "deepseek" && model.reasoning) {
-		// OpenCode Go deepseek-v4-* and kimi-k2.6 advertise this format.
+		// OpenCode Go deepseek-v4-pro and deepseek-v4.1-flash advertise this format.
 		if (options?.reasoningEffort) {
 			(params as any).thinking = { type: "enabled" };
 		} else if (model.thinkingLevelMap?.off !== null) {
@@ -261,6 +261,7 @@ export function parseChunkUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
+		cached_tokens?: number;
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
@@ -268,11 +269,15 @@ export function parseChunkUsage(
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const cacheReadTokens = rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0;
+	const cacheReadTokens =
+		rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? rawUsage.cached_tokens ?? 0;
 	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
-	// tokens (hits). OpenAI does not document or emit cache_write_tokens, but
+	// tokens (hits). Providers disagree on placement: OpenAI/OpenRouter use
+	// prompt_tokens_details.cached_tokens, DeepSeek uses prompt_cache_hit_tokens,
+	// and Kimi documents top-level usage.cached_tokens on the final usage chunk.
+	// OpenAI does not document or emit cache_write_tokens, but
 	// OpenRouter-compatible providers can include it as a separate write count.
 	// OpenRouter's own provider/tests affirm the separate mapping:
 	// https://github.com/OpenRouterTeam/ai-sdk-provider/pull/409

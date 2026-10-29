@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import {
   findCatalogModel,
+  isAdvertisableCatalogEntry,
   loadPinnedCatalog,
   modelBindingId,
   toWireCatalog,
@@ -30,22 +32,24 @@ test("xAI catalog binding ids match SHA-256 of the advertised model spec JSON", 
 
 test("OpenCode catalog uses official transports and does not guess from the model name", () => {
   const advertised = new Map(loadPinnedCatalog("opencode-go").map((entry) => [entry.id, entry]));
-  assert.equal(advertised.has("muse-spark-1.2-contributor"), false);
-  assert.equal(advertised.has("minimax-m2.5"), false);
+  // Bundled Pi entries absent from OpenCode's documented model table are not advertised.
+  assert.equal(advertised.has("longcat-2.5-preview-free"), false);
+  assert.equal(advertised.has("minimax-m3.1-flash-free"), false);
 
-  const minimax = advertised.get("minimax-m2.7");
-  const qwen = advertised.get("qwen3.6-plus");
+  const minimax = advertised.get("minimax-m3");
+  const haiku = advertised.get("claude-haiku-5-5");
   assert.equal(minimax?.model.api, "anthropic-messages");
-  assert.equal(minimax?.model.baseUrl, "https://opencode.ai/zen/go");
-  assert.equal(qwen?.model.api, "anthropic-messages");
-  assert.equal(qwen?.model.baseUrl, "https://opencode.ai/zen/go");
+  assert.equal(minimax?.model.baseUrl, "https://opencode.ai/inference/go");
+  assert.equal(haiku?.model.api, "anthropic-messages");
+  assert.equal(haiku?.model.baseUrl, "https://opencode.ai/inference/go");
 
   for (const [id, entry] of advertised) {
     assert.equal(entry.model.api, OPENCODE_GO_TRANSPORTS[id]);
   }
 
-  const glm = advertised.get("glm-5.1");
+  const glm = advertised.get("glm-5.3");
   assert.equal(glm?.model.api, "openai-completions");
+  assert.equal(glm?.model.baseUrl, "https://opencode.ai/inference/go/v1");
   assert.equal(modelBindingId(glm!.model), sha256(JSON.stringify(glm!.model)));
 });
 
@@ -56,17 +60,42 @@ test("Muse Spark 1.3 uses the documented Responses transport", () => {
   );
 });
 
-test("Ox Alpha projects the current models.dev contract onto Renoa's supported modalities", () => {
-  const ox = findCatalogModel("opencode-go", "ox-alpha-free");
-  assert.ok(ox);
-  assert.equal(ox.name, "Ox Alpha Free (Unlimited)");
-  assert.equal(ox.model.api, "openai-completions");
-  assert.equal(ox.model.baseUrl, "https://opencode.ai/zen/go/v1");
-  assert.equal(ox.model.contextWindow, 1_000_000);
-  assert.equal(ox.model.maxTokens, 131_072);
-  assert.deepEqual(ox.model.input, ["text", "image"]);
-  assert.deepEqual([...ox.reasoning_levels], ["low", "high", "max"]);
-  assert.deepEqual(ox.model.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+test("only chat models on a retained API are advertised", () => {
+  const chat = { id: "chat-model", api: "openai-completions", type: "chat" };
+  assert.equal(isAdvertisableCatalogEntry("opencode-go", chat), true);
+  assert.equal(isAdvertisableCatalogEntry("opencode-go", { ...chat, type: undefined }), true);
+  assert.equal(isAdvertisableCatalogEntry("opencode-go", { ...chat, type: "image" }), false);
+  assert.equal(isAdvertisableCatalogEntry("opencode-go", { ...chat, type: "classifier" }), false);
+  assert.equal(
+    isAdvertisableCatalogEntry("opencode-go", { ...chat, api: "google-generative-ai" }),
+    false,
+  );
+  assert.equal(isAdvertisableCatalogEntry("xai", { ...chat, api: "anthropic-messages" }), false);
+  // xAI is served through the Responses API only.
+  assert.equal(isAdvertisableCatalogEntry("xai", { ...chat, api: "openai-completions" }), false);
+  assert.equal(isAdvertisableCatalogEntry("xai", { ...chat, api: "openai-responses" }), true);
+
+  for (const provider of ["xai", "opencode-go"] as const) {
+    for (const entry of loadPinnedCatalog(provider)) {
+      assert.notEqual(entry.model.api, "google-generative-ai");
+      assert.equal("type" in entry.model, false, `${entry.id} must not carry catalog type`);
+      assert.equal("inputLimits" in entry.model, false, `${entry.id} must not carry input limits`);
+    }
+  }
+});
+
+test("OpenCode Go bindings use the inference endpoints and refuse the retired zen route", () => {
+  const glm = findCatalogModel("opencode-go", "glm-5.3");
+  assert.ok(glm);
+  assert.throws(
+    () =>
+      validateModelSpec(
+        { ...glm.model, baseUrl: "https://opencode.ai/zen/go/v1" },
+        "opencode-go",
+        "glm-5.3",
+      ),
+    /invalid/,
+  );
 });
 
 test("wire catalog exposes each validated model context window", () => {
@@ -76,29 +105,6 @@ test("wire catalog exposes each validated model context window", () => {
   for (const [index, entry] of entries.entries()) {
     assert.equal(wire[index]?.context_window_tokens, entry.model.contextWindow);
   }
-});
-
-test("migrated OpenCode models do not keep the previous Pi completions binding id", () => {
-  const previousMinimax = {
-    id: "minimax-m2.7",
-    name: "MiniMax-M2.7",
-    api: "openai-completions",
-    provider: "opencode-go",
-    baseUrl: "https://opencode.ai/zen/go/v1",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
-    compat: {
-      supportsStore: false,
-      supportsDeveloperRole: false,
-      maxTokensField: "max_tokens",
-    },
-    contextWindow: 204800,
-    maxTokens: 131072,
-  };
-  const current = findCatalogModel("opencode-go", "minimax-m2.7");
-  assert.ok(current);
-  assert.notEqual(modelBindingId(current.model), sha256(JSON.stringify(previousMinimax)));
 });
 
 test("catalog probing is read-only and does not rewrite stored credentials", async () => {
@@ -161,7 +167,7 @@ test("OpenCode Go discovers a new official model and reuses cached metadata on 3
       const etag = new Headers(init?.headers).get("if-none-match");
       requests.push({ url, etag });
       if (url.endsWith("/models")) {
-        const ids = generation === 0 ? ["glm-5.3"] : ["glm-5.3", "glm-5.3-flash"];
+        const ids = generation === 0 ? ["glm-5.3"] : ["glm-5.3", LIVE_MODEL];
         return jsonResponse({ data: ids.map((id) => ({ id })) });
       }
       if (etag === '"catalog-1"') {
@@ -173,26 +179,26 @@ test("OpenCode Go discovers a new official model and reuses cached metadata on 3
     const first = await loadCatalog("opencode-go", path, {
       openCode: { cachePath, fetch: fetcher, warn: () => undefined },
     });
-    assert.equal(first.some((model) => model.id === "glm-5.3-flash"), false);
+    assert.equal(first.some((model) => model.id === LIVE_MODEL), false);
     assert.equal(
-      first.some((model) => model.id === "ox-alpha-free"),
+      first.some((model) => model.id === "mimo-v2.5"),
       true,
-      "the public inventory must not remove Renoa's explicit compatibility entries",
+      "the public inventory must not remove bundled catalog entries",
     );
 
     generation = 1;
     const second = await loadCatalog("opencode-go", path, {
       openCode: { cachePath, fetch: fetcher, warn: () => undefined },
     });
-    const flash = second.find((model) => model.id === "glm-5.3-flash");
-    assert.ok(flash);
-    const modelSpec = flash.model_spec as Record<string, unknown>;
-    assert.equal(flash.name, "GLM-5.3-Flash (2x usage)");
-    assert.equal(flash.context_window_tokens, 1_000_000);
+    const live = second.find((model) => model.id === LIVE_MODEL);
+    assert.ok(live);
+    const modelSpec = live.model_spec as Record<string, unknown>;
+    assert.equal(live.name, "Kimi K3.1 Pro");
+    assert.equal(live.context_window_tokens, 1_000_000);
     assert.equal(modelSpec.api, "openai-completions");
-    assert.equal(modelSpec.baseUrl, "https://opencode.ai/zen/go/v1");
+    assert.equal(modelSpec.baseUrl, "https://opencode.ai/inference/go/v1");
     assert.deepEqual(modelSpec.input, ["text", "image"]);
-    assert.deepEqual(flash.reasoning_levels, ["low", "high", "max"]);
+    assert.deepEqual(live.reasoning_levels, ["low", "high", "max"]);
     assert.equal(
       requests.some((request) => request.url === "https://models.dev/api.json" && request.etag === '"catalog-1"'),
       true,
@@ -212,13 +218,13 @@ test("OpenCode Go keeps a learned binding stable and falls back to it offline", 
     const liveFetch: typeof globalThis.fetch = async (input) => {
       const url = requestUrl(input);
       return url.endsWith("/models")
-        ? jsonResponse({ data: [{ id: "glm-5.3-flash" }] })
+        ? jsonResponse({ data: [{ id: LIVE_MODEL }] })
         : jsonResponse(modelsDevCatalog(flashMetadata(contextWindow)));
     };
     const first = await loadCatalog("opencode-go", path, {
       openCode: { cachePath, fetch: liveFetch, warn: () => undefined },
     });
-    const firstBinding = first.find((model) => model.id === "glm-5.3-flash")?.model_spec;
+    const firstBinding = first.find((model) => model.id === LIVE_MODEL)?.model_spec;
     assert.ok(firstBinding);
 
     contextWindow = 123_456;
@@ -226,7 +232,7 @@ test("OpenCode Go keeps a learned binding stable and falls back to it offline", 
       openCode: { cachePath, fetch: liveFetch, warn: () => undefined },
     });
     assert.deepEqual(
-      refreshed.find((model) => model.id === "glm-5.3-flash")?.model_spec,
+      refreshed.find((model) => model.id === LIVE_MODEL)?.model_spec,
       firstBinding,
       "an automatic metadata refresh must not mutate a learned runtime binding",
     );
@@ -242,10 +248,54 @@ test("OpenCode Go keeps a learned binding stable and falls back to it offline", 
       },
     });
     assert.deepEqual(
-      offline.find((model) => model.id === "glm-5.3-flash")?.model_spec,
+      offline.find((model) => model.id === LIVE_MODEL)?.model_spec,
       firstBinding,
     );
     assert.equal(warnings.some((warning) => warning.includes("availability refresh failed")), true);
+  } finally {
+    directory.close();
+  }
+});
+
+test("OpenCode Go replaces a cached binding learned on the retired zen route", async () => {
+  const directory = tempDir();
+  const path = join(directory.path, "credentials.sqlite");
+  const cachePath = join(directory.path, "catalog.json");
+  try {
+    writeOpenCodeCredential(path);
+    const retired = {
+      id: LIVE_MODEL,
+      name: "Kimi K3.1 Pro",
+      api: "openai-completions",
+      provider: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_000_000,
+      maxTokens: 131_072,
+    };
+    writeFileSync(
+      cachePath,
+      JSON.stringify({ version: 1, available_model_ids: [LIVE_MODEL], dynamic_models: [retired] }),
+    );
+    const models = await loadCatalog("opencode-go", path, {
+      openCode: {
+        cachePath,
+        fetch: async (input) =>
+          requestUrl(input).endsWith("/models")
+            ? jsonResponse({ data: [{ id: LIVE_MODEL }] })
+            : jsonResponse(modelsDevCatalog(flashMetadata())),
+        warn: () => undefined,
+      },
+    });
+    const live = models.find((model) => model.id === LIVE_MODEL);
+    assert.equal((live?.model_spec as Record<string, unknown>).baseUrl, "https://opencode.ai/inference/go/v1");
+    const cached = JSON.parse(readFileSync(cachePath, "utf8")) as { dynamic_models: { baseUrl: string }[] };
+    assert.deepEqual(
+      cached.dynamic_models.map((model) => model.baseUrl),
+      ["https://opencode.ai/inference/go/v1"],
+    );
   } finally {
     directory.close();
   }
@@ -263,7 +313,7 @@ test("OpenCode Go rejects an oversized metadata response", async () => {
         cachePath,
         fetch: async (input) =>
           requestUrl(input).endsWith("/models")
-            ? jsonResponse({ data: [{ id: "glm-5.3-flash" }] })
+            ? jsonResponse({ data: [{ id: LIVE_MODEL }] })
             : new Response("{}", {
                 status: 200,
                 headers: { "content-length": String(8 * 1024 * 1024 + 1) },
@@ -272,7 +322,7 @@ test("OpenCode Go rejects an oversized metadata response", async () => {
       },
     });
 
-    assert.equal(models.some((model) => model.id === "glm-5.3-flash"), false);
+    assert.equal(models.some((model) => model.id === LIVE_MODEL), false);
     assert.equal(warnings.some((warning) => warning.includes("byte limit")), true);
   } finally {
     directory.close();
@@ -283,6 +333,15 @@ test("Grok 4.6 advertises verified reasoning levels and no off or minimal", () =
   const grok = findCatalogModel("xai", "grok-4.6");
   assert.ok(grok);
   assert.deepEqual([...grok.reasoning_levels], ["low", "medium", "high", "xhigh"]);
+});
+
+test("xAI models use the Responses API and Grok 4.3 offers off through xhigh", () => {
+  for (const entry of loadPinnedCatalog("xai")) {
+    assert.equal(entry.model.api, "openai-responses", entry.id);
+  }
+  const grok = findCatalogModel("xai", "grok-4.3");
+  assert.ok(grok);
+  assert.deepEqual([...grok.reasoning_levels], ["off", "low", "medium", "high", "xhigh"]);
 });
 
 test("model specs reject untrusted base URLs unless loopback tests are enabled", () => {
@@ -305,6 +364,9 @@ test("model specs reject untrusted base URLs unless loopback tests are enabled",
   );
   assert.equal(loopback.baseUrl, "http://127.0.0.1:9/v1");
 });
+
+/** A documented OpenCode Go model that only live discovery supplies. */
+const LIVE_MODEL = "kimi-k3.1-pro";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -335,15 +397,15 @@ function modelsDevCatalog(model: Record<string, unknown>): Record<string, unknow
     "opencode-go": {
       id: "opencode-go",
       npm: "@ai-sdk/openai-compatible",
-      models: { "glm-5.3-flash": model },
+      models: { [LIVE_MODEL]: model },
     },
   };
 }
 
 function flashMetadata(context = 1_000_000): Record<string, unknown> {
   return {
-    id: "glm-5.3-flash",
-    name: "GLM-5.3-Flash (2x usage)",
+    id: LIVE_MODEL,
+    name: "Kimi K3.1 Pro",
     attachment: true,
     reasoning: true,
     reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }],

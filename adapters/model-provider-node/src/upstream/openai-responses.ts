@@ -1,7 +1,7 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
@@ -95,8 +95,11 @@ function getPromptCacheRetention(
 	return cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined;
 }
 
-function formatOpenAIResponsesError(error: unknown): string {
-	return formatProviderError(normalizeProviderError(error), "OpenAI API error");
+function formatOpenAIResponsesError(model: Model<"openai-responses">, error: unknown): string {
+	return formatProviderError(
+		normalizeProviderError(error),
+		`${model.provider === "openai" ? "OpenAI" : model.provider} API error`,
+	);
 }
 
 // OpenAI Responses-specific options
@@ -188,7 +191,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				delete (block as { partialJson?: string }).partialJson;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatOpenAIResponsesError(error);
+			output.errorMessage = formatOpenAIResponsesError(model, error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

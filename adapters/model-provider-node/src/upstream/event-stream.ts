@@ -1,18 +1,40 @@
 /**
  * Adapted from Pi packages/ai
  * https://github.com/earendil-works/pi
- * Source revision: 914cf1472e715297caa30db4b9535d534a9eb718 (v0.84.2)
+ * Source revision: 4a080252f06caf63a525d7873c5d94d3c23887e0 (v1.4.0)
  * License: MIT
  * Copyright (c) 2025 Mario Zechner
  */
 
 import type { AssistantMessage, AssistantMessageEvent } from "./types.js";
 
+class FifoQueue<T> {
+	private incoming: T[] = [];
+	private outgoing: T[] = [];
+
+	get length(): number {
+		return this.incoming.length + this.outgoing.length;
+	}
+
+	enqueue(value: T): void {
+		this.incoming.push(value);
+	}
+
+	dequeue(): T | undefined {
+		if (this.outgoing.length === 0) {
+			while (this.incoming.length > 0) {
+				this.outgoing.push(this.incoming.pop()!);
+			}
+		}
+		return this.outgoing.pop();
+	}
+}
+
 // Generic event stream class for async iteration
 export class EventStream<T, R = T> implements AsyncIterable<T> {
-	private queue: T[] = [];
-	private waiting: ((value: IteratorResult<T>) => void)[] = [];
-	private done = false;
+	private queue = new FifoQueue<T>();
+	private waiting = new FifoQueue<(value: IteratorResult<T>) => void>();
+	protected done = false;
 	private finalResultPromise: Promise<R>;
 	private resolveFinalResult!: (result: R) => void;
 	private isComplete: (event: T) => boolean;
@@ -35,11 +57,11 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		}
 
 		// Deliver to waiting consumer or queue it
-		const waiter = this.waiting.shift();
+		const waiter = this.waiting.dequeue();
 		if (waiter) {
 			waiter({ value: event, done: false });
 		} else {
-			this.queue.push(event);
+			this.queue.enqueue(event);
 		}
 	}
 
@@ -50,7 +72,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		}
 		// Notify all waiting consumers that we're done
 		while (this.waiting.length > 0) {
-			const waiter = this.waiting.shift()!;
+			const waiter = this.waiting.dequeue()!;
 			waiter({ value: undefined as any, done: true });
 		}
 	}
@@ -58,11 +80,11 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	async *[Symbol.asyncIterator](): AsyncIterator<T> {
 		while (true) {
 			if (this.queue.length > 0) {
-				yield this.queue.shift()!;
+				yield this.queue.dequeue()!;
 			} else if (this.done) {
 				return;
 			} else {
-				const result = await new Promise<IteratorResult<T>>((resolve) => this.waiting.push(resolve));
+				const result = await new Promise<IteratorResult<T>>((resolve) => this.waiting.enqueue(resolve));
 				if (result.done) return;
 				yield result.value;
 			}
