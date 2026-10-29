@@ -83,6 +83,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     // Messages already here when the chat first loads show whole; only later ones rise, and only once.
     val old = remember(state.loaded) { if (state.loaded) (state.messages.map { it.id } + listOfNotNull(state.streaming?.id)).toHashSet() else emptySet() }
     val risen = remember { mutableSetOf<String>() }
+    val parses = remember { ParsedReplies() }
     // Whatever arrives while the chat is open has been read.
     LaunchedEffect(state.messages.size) { viewModel.seen() }
 
@@ -110,7 +111,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
                 }
             } else {
-                Messages(state, list, old, risen, onRetry = viewModel::retry, onDiscard = viewModel::discard, Modifier.weight(1f))
+                Messages(state, list, old, risen, parses, onRetry = viewModel::retry, onDiscard = viewModel::discard, Modifier.weight(1f))
             }
             state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
             Composer(state, agent?.name.orEmpty(), viewModel, send)
@@ -134,6 +135,7 @@ private fun Messages(
     list: LazyListState,
     old: Set<String>,
     risen: MutableSet<String>,
+    parses: ParsedReplies,
     onRetry: (String) -> Unit,
     onDiscard: (String) -> Unit,
     modifier: Modifier,
@@ -143,8 +145,9 @@ private fun Messages(
     val reduced = LocalReducedMotion.current
     val showsWorking = agent != null && state.working && state.streaming == null
     // A reply still arriving is the same item as the message it becomes, so nothing jumps when it is whole.
-    val streaming = state.streaming?.let { ChatMessage(it.id, Speaker.Agent, it.text) }
-    val shown = if (streaming != null) state.messages + streaming else state.messages
+    // Once that message is here, it alone shows, even before the reply in progress is cleared.
+    val arriving = state.streaming?.takeIf { reply -> state.messages.none { it.id == reply.id } }?.let { ChatMessage(it.id, Speaker.Agent, it.text) }
+    val shown = if (arriving != null) state.messages + arriving else state.messages
     val newest = if (showsWorking) WORKING else shown.lastOrNull()?.id
     val atBottom by remember { derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0 } }
     // Read as this item arrives, before the list lays it out: whether the owner was at the bottom until now, or just spoke.
@@ -171,7 +174,7 @@ private fun Messages(
         items(shown.asReversed(), key = { it.id }) { message ->
             val fresh = message.id !in old && message.id !in risen
             SideEffect { risen += message.id }
-            Rise(fresh) { MessageRow(message, onRetry, onDiscard) }
+            Rise(fresh) { MessageRow(message, streaming = message.id == arriving?.id, parses, onRetry, onDiscard) }
         }
     }
 }
@@ -188,7 +191,7 @@ private fun Rise(animate: Boolean, content: @Composable () -> Unit) {
 private const val WORKING = "working"
 
 @Composable
-private fun MessageRow(message: ChatMessage, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
+private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedReplies, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
     val colors = Renoa.colors
     when (message.speaker) {
         Speaker.Owner ->
@@ -220,7 +223,10 @@ private fun MessageRow(message: ChatMessage, onRetry: (String) -> Unit, onDiscar
                 }
             }
         // The owner's own words stay plain; an agent's reply is markdown.
-        Speaker.Agent -> Reply(message.text, Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f))
+        Speaker.Agent -> {
+            val modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f)
+            if (streaming) ArrivingReply(message.text, modifier) else Reply(parses.of(message.id, message.text), modifier)
+        }
     }
 }
 

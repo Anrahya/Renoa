@@ -95,7 +95,10 @@ import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import live.renoa.app.chat.Reply
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
+import live.renoa.app.agents.StreamingReply
+import live.renoa.app.chat.ArrivingReply
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
@@ -355,7 +358,7 @@ class ScreensTest : ScreenTest() {
         compose.runOnUiThread { talk.update { it.copy(messages = it.messages + ChatMessage(id, Speaker.Agent, text)) } }
 
     @Test
-    fun anAgentsReplyShowsItsMarkdownAndOnlyItsWebLinksOpenInTheBrowser() {
+    fun anAgentsReplyShowsItsMarkdownAndOnlyItsWebLinksAreLinks() {
         val opened = mutableListOf<String>()
         val browser = object : UriHandler { override fun openUri(uri: String) { opened += uri } }
         val owner = "What's for dinner? **Something** quick."
@@ -366,7 +369,7 @@ class ScreensTest : ScreenTest() {
 
         // The owner's words stay as typed; the reply shows none of its markdown syntax.
         compose.onNodeWithText(owner).assertIsDisplayed()
-        for (syntax in listOf("**", "##", "```", "](")) compose.onAllNodes(hasText(syntax, substring = true)).filter(!hasText(owner)).assertCountEquals(0)
+        for (syntax in listOf("**", "##", "```", "](", "![")) compose.onAllNodes(hasText(syntax, substring = true)).filter(!hasText(owner)).assertCountEquals(0)
         compose.onNode(hasText("Dinner plan") and isHeading()).assertIsDisplayed()
         val intro = textOf("Here is what I found for tonight:")
         assertTrue(intro.spanStyles.any { it.item.fontWeight == FontWeight.Bold && intro.text.substring(it.start, it.end) == "what I found" }, "bold")
@@ -374,38 +377,115 @@ class ScreensTest : ScreenTest() {
         val dal = textOf(compose.onNode(hasText("brown rice", substring = true)))
         val muted = ThemeName.Graphite.colors.muted
         assertTrue(dal.spanStyles.any { it.item.background == muted && it.item.fontFamily == RenoaType.Code.fontFamily && dal.text.substring(it.start, it.end).trim() == "brown rice" }, "inline code")
-        compose.onNodeWithText("rice: 1 cup\ndal: 2 cups").assertIsDisplayed()
 
-        val links = compose.onNode(hasText("Recipe at", substring = true))
-        val styles = textOf(links).getLinkAnnotations(0, textOf(links).length).map { it.item.styles?.style?.textDecoration }
-        assertEquals(listOf(TextDecoration.Underline, TextDecoration.Underline), styles, "links look like links")
-        links.performFirstLinkClick { (it.item as LinkAnnotation.Url).url.startsWith("tel:") }
+        // A code block scrolls sideways rather than wrapping, and its language puts no bar over it.
+        val code = "val cups = mapOf(\"rice\" to 1, \"dal\" to 2, \"salt\" to 0, \"water\" to 4, \"ghee\" to 1)"
+        val scrolls = SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange)
+        compose.onNode(hasText(code) and (scrolls or hasAnyAncestor(scrolls))).assertIsDisplayed()
+        for (bar in listOf("kotlin", "KOTLIN", "CODE", "Copy code")) {
+            compose.onAllNodes(hasText(bar) or hasContentDescription(bar)).assertCountEquals(0)
+        }
+        compose.onAllNodes(hasText("Language", substring = true)).assertCountEquals(0)
+        // An image is its description: a reply loads nothing.
+        compose.onNodeWithText("A bowl of dal").assertIsDisplayed()
+
+        val web = compose.onNode(hasText("Recipe at", substring = true))
+        val links = textOf(web).getLinkAnnotations(0, textOf(web).length)
+        assertEquals(listOf("https://example.com/dal", "HTTP://example.com/up", "www.example.com"), links.map { (it.item as LinkAnnotation.Url).url })
+        assertTrue(links.all { it.item.styles?.style?.textDecoration == TextDecoration.Underline }, "links look like links")
+        for (link in links) web.performFirstLinkClick { it == link }
         compose.waitForIdle()
-        assertEquals(emptyList(), opened, "a phone link does not leave the app")
-        links.performFirstLinkClick()
-        compose.waitForIdle()
-        assertEquals(listOf("https://example.com/dal"), opened)
+        assertEquals(listOf("https://example.com/dal", "http://example.com/up", "https://www.example.com"), opened)
+
+        // Anything else is its words alone: nothing that looks tappable, nothing that is.
+        val other = textOf(compose.onNode(hasText("Not for here:", substring = true)))
+        assertEquals("Not for here: call them, run, a file, an app or me@example.com.", other.text)
+        assertEquals(emptyList(), other.getLinkAnnotations(0, other.length))
+        assertTrue(other.spanStyles.none { it.item.textDecoration == TextDecoration.Underline }, "no link styling")
         snapshot("chat-markdown")
     }
 
     @Test
-    fun aReplyStillArrivingDrawsEveryUnfinishedStepOfItsMarkdownWithoutBlankingAndKeepsUp() {
+    fun aReplyStillArrivingDrawsEachKindOfBlockAsItArrivesAndNeverBlanks() {
         var text by mutableStateOf(UNFINISHED_REPLY.take(1))
         compose.mainClock.autoAdvance = false
-        show { Reply(text, Modifier.testTag("reply")) }
-        // The window's first frame, after which every frame is the test's.
+        show { ArrivingReply(text, Modifier.testTag("reply")) }
         compose.mainClock.advanceTimeByFrame()
         val inReply = hasAnyAncestor(hasTestTag("reply"))
+        // Its first frame already shows what has arrived, before the stream has parsed any of it.
         compose.onNode(hasText("H") and inReply, useUnmergedTree = true).assertExists()
-        // Every prefix, so each unclosed bold, code span, link, list, table and fence is drawn on its way.
-        for (end in 2..UNFINISHED_REPLY.length) {
-            compose.runOnUiThread { text = UNFINISHED_REPLY.take(end) }
+        // Each block, by the source that completes it and the text it then shows.
+        val blocks =
+            listOf(
+                "**Dal**" to hasText("Here is the plan. Dal", substring = true),
+                "## Shopping\n" to (hasText("Shopping") and isHeading()),
+                "1. Lentils\n" to hasText("Lentils"),
+                "- Basmati\n" to hasText("Basmati"),
+                "  - Jasmine\n" to hasText("Jasmine"),
+                "| Quinoa | 1 |\n" to hasText("Quinoa", substring = true),
+                "> Soak overnight.\n" to hasText("Soak overnight."),
+                "listOf(\"dal\"" to hasText("val shopping = listOf(\"dal\"", substring = true),
+            )
+        for (end in 2..UNFINISHED_REPLY.length + 1) {
+            if (end <= UNFINISHED_REPLY.length) compose.runOnUiThread { text = UNFINISHED_REPLY.take(end) }
             compose.mainClock.advanceTimeByFrame()
-            // What showed first stays on screen in every frame: nothing blanks while the reply is parsed.
+            // A piece shows by the frame after it arrives, and stays: nothing blanks while the rest is parsed.
+            val shown = UNFINISHED_REPLY.take(end - 1)
+            for ((source, block) in blocks) {
+                if (source in shown) compose.onNode(block and inReply, useUnmergedTree = true).assertExists("$source, with ${shown.length} characters in")
+            }
             compose.onNode(hasText("H", substring = true) and inReply, useUnmergedTree = true).assertExists()
         }
-        // The last words are on screen the frame they arrive, though their fence is still open: the parse does not lag behind the stream.
-        compose.onNode(hasText("val shopping = listOf(\"dal\", \"rice\"", substring = true) and inReply, useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun aReplyArrivingBecomesItsMessageWithNoBlankFrameAndNoSecondCopy() {
+        val talk = MutableStateFlow(Conversation(listOf(ChatMessage("q", Speaker.Owner, "Plan dinner?"))))
+        val model = ChatViewModel(chatWith(talk), "optimus")
+        compose.mainClock.autoAdvance = false
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        repeat(3) {
+            compose.waitForIdle()
+            compose.mainClock.advanceTimeByFrame()
+        }
+        val whole = "Here is the plan: **dal** with rice, and a salad on the side."
+        val words = whole.split(" ")
+        val start = hasText("Here is", substring = true)
+        fun frame(change: (Conversation) -> Conversation) {
+            compose.runOnUiThread { talk.update(change) }
+            compose.waitForIdle()
+            compose.mainClock.advanceTimeByFrame()
+        }
+        for (n in 1..words.size) {
+            frame { it.copy(streaming = StreamingReply("r1", words.take(n).joinToString(" "))) }
+            if (n > 2) compose.onAllNodes(start, useUnmergedTree = true).assertCountEquals(1)
+        }
+        // The message arrives before the reply in progress is cleared, then the reply is cleared.
+        frame { it.copy(messages = it.messages + ChatMessage("r1", Speaker.Agent, whole)) }
+        compose.onAllNodes(start, useUnmergedTree = true).assertCountEquals(1)
+        frame { it.copy(streaming = null) }
+        repeat(3) {
+            compose.onAllNodes(start, useUnmergedTree = true).assertCountEquals(1)
+            compose.mainClock.advanceTimeByFrame()
+        }
+        compose.onNodeWithText("Here is the plan: dal with rice, and a salad on the side.").assertIsDisplayed()
+    }
+
+    /** Selectable replies would catch these drags: a SelectionContainer around a reply fails this test. */
+    @Test
+    fun aDragThatStartsOnAReplyScrollsTheChat() {
+        val talk = MutableStateFlow(Conversation(longChat()))
+        val model = ChatViewModel(chatWith(talk), "optimus")
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithText("Question 0 about the week ahead?").assertDoesNotExist()
+        // Each drag starts on an agent's reply, the text a long press would select.
+        repeat(8) {
+            compose.onAllNodes(hasText("Here is what I found for you", substring = true)).onFirst().performTouchInput { swipe(center, center + Offset(0f, 1200f)) }
+            compose.waitForIdle()
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("Question 0 about the week ahead?").assertIsDisplayed()
     }
 
     private fun textOf(text: String) = textOf(compose.onNodeWithText(text))
@@ -609,12 +689,15 @@ private val MARKDOWN_REPLY =
     - Dal with `brown rice`
     - A side of salad
 
-    ```
-    rice: 1 cup
-    dal: 2 cups
+    ```kotlin
+    val cups = mapOf("rice" to 1, "dal" to 2, "salt" to 0, "water" to 4, "ghee" to 1)
     ```
 
-    Recipe at [the blog](https://example.com/dal), or [call them](tel:5551234).
+    ![A bowl of dal](https://example.com/dal.png)
+
+    Recipe at [the blog](https://example.com/dal), [the shout](HTTP://example.com/up) or www.example.com.
+
+    Not for here: [call them](tel:5551234), [run](javascript:alert(1)), [a file](content://media/1), [an app](intent://scan#Intent;end) or <me@example.com>.
     """.trimIndent()
 
 /** A reply cut off mid-fence, so that streamed in it passes through every kind of unfinished markdown. */
@@ -624,15 +707,15 @@ private val UNFINISHED_REPLY =
 
     ## Shopping
 
-    1. Dal
-    - Rice
-      - Basmati
+    1. Lentils
+    - Basmati
+      - Jasmine
 
     | Item | Cups |
     | --- | --- |
-    | Rice | 1 |
+    | Quinoa | 1 |
 
-    > Soak the dal first.
+    > Soak overnight.
 
     ```kotlin
     val shopping = listOf("dal", "rice"

@@ -38,5 +38,6 @@ targets 36, and some pinned AndroidX and OkHttp versions trail the newest releas
 has the three "newer version available" checks switched off in `app/build.gradle.kts`.
 
 Agent replies render as markdown through `multiplatform-markdown-renderer` (core and Material 3
-modules only, so no remote images load). The Compose BOM is kept on the Compose release that
-library is built against, so the app carries one Compose version.
+modules only). An image shows as its description, and only web links are links; they open in the
+phone's browser. The Compose BOM is kept on the Compose release that library is built against, so
+the app carries one Compose version.

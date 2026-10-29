@@ -17,6 +17,12 @@ class VocabularyTest {
         )
     private val literal = Regex("\"((?:[^\"\\\\\\n]|\\\\.)*)\"")
 
+    /** Literals the app uses but never shows, each with where it lives. */
+    private val unshown = setOf(
+        // The address a bare www. link in a reply opens.
+        "ReplyLinks.kt" to "https://\$uri",
+    )
+
     private fun sources(): List<File> =
         File("src/main/kotlin").walkTopDown().filter { it.extension == "kt" }.toList()
 
@@ -30,13 +36,15 @@ class VocabularyTest {
     @Test
     fun noStringTheAppCanShowUsesPlumbingVocabulary() {
         val offences = mutableListOf<String>()
+        val found = mutableSetOf<Pair<String, String>>()
         for (file in sources()) {
             for (match in literal.findAll(file.readText())) {
                 val text = match.groupValues[1]
-                if (banned.containsMatchIn(text)) offences += "${file.name}: \"$text\""
+                if (file.name to text in unshown) found += file.name to text else if (banned.containsMatchIn(text)) offences += "${file.name}: \"$text\""
             }
         }
         assertEquals(emptyList(), offences)
+        assertEquals(unshown, found, "an exemption that matches nothing should go")
     }
 
     @Test
