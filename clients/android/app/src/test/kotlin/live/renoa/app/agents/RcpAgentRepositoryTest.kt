@@ -685,8 +685,43 @@ class RcpAgentRepositoryTest {
         advanceTimeBy(1.seconds)
         runCurrent()
         assertEquals(AgentProfile(kcalId, "Kcal", "Count my calories.", emptyList()), made.await())
-        assertEquals(listOf("Nagisa", "Kcal"), repo.agents.value.map { it.name })
+        assertEquals(listOf("Nagisa" to "", "Kcal" to "Count my calories."), repo.agents.value.map { it.name to it.purpose }, "with its purpose at once")
         assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$agent") })
+    }
+
+    @Test
+    fun eachHostAgentCarriesItsPurposeReadOnceAndAgainWhenTheHostCouldNotAnswer() = runTest {
+        val id = Uuid.random().toString()
+        surface.hostAgents[id] =
+            buildJsonObject {
+                put("id", id)
+                put("name", "Kcal")
+                put("operational", buildJsonObject { put("purpose", "Count my calories.") })
+            }
+        surface.targets += TargetSummary(surface.node, "agent:$id", "Kcal")
+        surface.hostFailure = IllegalStateException("dropped")
+        val repo = started()
+        assertEquals(listOf("Nagisa" to "", "Kcal" to ""), repo.agents.value.map { it.name to it.purpose }, "not read yet")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("Nagisa" to "", "Kcal" to "Count my calories."), repo.agents.value.map { it.name to it.purpose })
+        assertEquals(listOf("/v1/host/agents/$id", "/v1/host/agents/$id"), surface.hostCalls.map { it.second }, "only Host agents are asked about")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(2, surface.hostCalls.size, "read once")
+    }
+
+    @Test
+    fun anAgentTheHostNoLongerHasIsAskedAboutOnce() = runTest {
+        val gone = Uuid.random()
+        surface.targets += TargetSummary(surface.node, "agent:$gone", "Kcal")
+        val repo = started()
+        assertEquals(listOf("Nagisa" to "", "Kcal" to ""), repo.agents.value.map { it.name to it.purpose })
+        advanceTimeBy(2.minutes)
+        runCurrent()
+        assertEquals(listOf("/v1/host/agents/$gone"), surface.hostCalls.map { it.second })
     }
 
     @Test
