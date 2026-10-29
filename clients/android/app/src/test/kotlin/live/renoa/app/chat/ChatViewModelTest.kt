@@ -1,5 +1,6 @@
 package live.renoa.app.chat
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -10,6 +11,7 @@ import live.renoa.app.MainDispatcherRule
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
+import live.renoa.app.agents.CreateAgent
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.agents.FakeWorld
 import live.renoa.app.badge.AgentHue
@@ -21,6 +23,7 @@ import live.renoa.app.agents.Speaker
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -98,6 +101,34 @@ class ChatViewModelTest {
         assertEquals("", vm.state.value.draft, "the composer empties at once")
         runCurrent()
         assertEquals(listOf(Speaker.Owner to "hello there"), vm.state.value.messages.map { it.speaker to it.text })
+    }
+
+    @Test
+    fun aNewChatOpensOnItsStartAndLeavesItTheMomentTheFirstMessageIsSent() = runTest {
+        val held = CompletableDeferred<Unit>()
+        val inner = FakeAgentRepository(backgroundScope, seeds = emptyList())
+        val repo =
+            object : AgentRepository by inner {
+                override suspend fun send(agentId: String, text: String) {
+                    held.await()
+                    inner.send(agentId, text)
+                }
+            }
+        val tifa = inner.create(CreateAgent("op", "Tifa", "Food", emptySet())).id
+        val vm = ChatViewModel(repo, tifa).also { vm -> backgroundScope.launch { vm.state.collect {} } }
+        runCurrent()
+        assertTrue(vm.state.value.empty)
+
+        vm.onDraft("hello")
+        vm.send()
+        runCurrent()
+        assertEquals(emptyList(), vm.state.value.messages, "not in the chat yet")
+        assertFalse(vm.state.value.empty, "but the start does not come back meanwhile")
+
+        held.complete(Unit)
+        runCurrent()
+        assertFalse(vm.state.value.sending)
+        assertEquals(listOf("hello"), vm.state.value.messages.map { it.text })
     }
 
     @Test

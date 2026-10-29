@@ -82,7 +82,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     Text(agent?.name.orEmpty(), style = RenoaType.Heading, color = colors.foreground)
                 }
             }
-            if (state.loaded && state.messages.isEmpty() && state.streaming == null && !state.working) {
+            if (state.empty) {
                 Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
                     ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
                 }
