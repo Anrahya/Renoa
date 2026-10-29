@@ -244,7 +244,7 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "4493f36d0aa84775a12ad52dd86d765903485f816dccdb16f0a64c5babd63e80",
+            "ebf93c935ba357aff3626ce2078e83601b3e97f96bbd94153d6c8dcc6039c554",
             Some("7b14e1d869cdf3578de62d0a5f8eddc1da71571878b88d58fc85600ae286ad9f"),
         ),
         (
