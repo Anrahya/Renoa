@@ -20,6 +20,7 @@ import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
 import live.renoa.rcp.RcpSurface
 import live.renoa.rcp.TargetSummary
+import java.time.ZoneId
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -33,9 +34,10 @@ import kotlin.uuid.Uuid
  * failure leaves it there, and it is sent again with the same identity after the next connect and
  * on every roster check.
  *
- * Making an agent and reading its profile are Host control, carried by the same connection
- * ([HostAgents]). A new agent is an `agent:<id>` target once its node next advertises; [create]
- * waits for that and follows its chat. Abilities and edits are not on the Host's agent API yet,
+ * Making an agent, reading its profile and the routines are Host control, carried by the same
+ * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check.
+ * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
+ * follows its chat. Abilities and edits are not on the Host's agent API yet,
  * so those calls are refused as unavailable.
  */
 class RcpAgentRepository(
@@ -44,6 +46,7 @@ class RcpAgentRepository(
     private val scope: CoroutineScope,
     private val retryAfter: (attempt: Int) -> Duration = { attempt -> (1L shl minOf(attempt, 5)).seconds },
     private val rosterEvery: Duration = 1.minutes,
+    private val here: () -> ZoneId = { ZoneId.systemDefault() },
 ) : AgentRepository {
     private class Room(val target: TargetSummary, val taskId: Uuid) {
         val journal = ChatJournal()
@@ -56,7 +59,13 @@ class RcpAgentRepository(
     private val lock = Any()
     private val rooms = LinkedHashMap<String, Room>()
     private val roster = MutableStateFlow<List<AgentSummary>>(emptyList())
-    private val host = HostAgents(surface)
+    private val hostClient = HostClient(surface)
+    private val host = HostAgents(hostClient)
+    private val hostRoutines = HostRoutines(hostClient)
+
+    /** The automations as the Host last listed them, by id, with the revision a change starts from. */
+    private val automations = LinkedHashMap<String, ObservedAutomation>()
+    private val routineList = MutableStateFlow<List<Routine>>(emptyList())
 
     /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
     private val following = Mutex()
@@ -64,6 +73,8 @@ class RcpAgentRepository(
     override val agents: StateFlow<List<AgentSummary>> = roster.asStateFlow()
 
     override val briefing: StateFlow<Briefing?> = MutableStateFlow<Briefing?>(null).asStateFlow()
+
+    override val routines: StateFlow<List<Routine>> = routineList.asStateFlow()
 
     /** Connects, follows every agent's chat, and reconnects after a drop, until [scope] is cancelled. */
     fun start() {
@@ -74,6 +85,7 @@ class RcpAgentRepository(
                     surface.connect()
                     sendUnsent()
                     follow(surface.listTargets())
+                    readRoutines()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
                     coroutineScope {
@@ -84,6 +96,7 @@ class RcpAgentRepository(
                                     delay(rosterEvery)
                                     sendUnsent()
                                     follow(surface.listTargets())
+                                    readRoutines()
                                 }
                             }
                         surface.awaitDisconnect()
@@ -151,14 +164,61 @@ class RcpAgentRepository(
         publish()
     }
 
-    /** Lists the attached agents. It writes under the lock, so an older roster never overwrites a newer one. */
+    /**
+     * Lists the attached agents, and names each routine's agent from them. It writes under the lock,
+     * so an older roster never overwrites a newer one.
+     */
     private fun publish() {
         synchronized(lock) {
             roster.value =
                 rooms.filterValues { it.attached }.map { (id, room) ->
                     AgentSummary(id, room.target.name, purpose = "", state = room.journal.state, glance = room.journal.glance)
                 }
+            val zone = here()
+            routineList.value =
+                automations.values.map { automation ->
+                    val agent = rooms.entries.firstOrNull { (_, room) -> room.attached && room.target.target == "$AGENT_TARGET${automation.agentId}" }
+                    automation.routine(agent?.key, zone)
+                }
         }
+    }
+
+    /**
+     * Reads the routines again. While the Host cannot be read, the last ones stay. The Host answers
+     * calls in any order, so a routine the app already holds at a newer revision keeps it.
+     */
+    private suspend fun readRoutines() {
+        val listed =
+            try {
+                hostRoutines.observe()
+            } catch (unread: RepositoryException) {
+                return
+            }
+        synchronized(lock) {
+            val held = automations.toMap()
+            automations.clear()
+            listed.forEach { read -> automations[read.id] = held[read.id]?.takeIf { it.revision > read.revision } ?: read }
+        }
+        publish()
+    }
+
+    override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) {
+        val automation = synchronized(lock) { automations[routineId] } ?: throw RepositoryException(Problem.NotFound, "no routine $routineId")
+        if (automation.enabled == on) return
+        val changed =
+            try {
+                hostRoutines.setEnabled(automation, on, operationId)
+            } catch (refused: RepositoryException) {
+                // A conflict means the routine changed elsewhere; read it again so the next change starts from there.
+                if (refused.problem == Problem.Conflict || refused.problem == Problem.NotFound) readRoutines()
+                throw refused
+            }
+        synchronized(lock) {
+            // A read that answered meanwhile may have dropped the routine or seen a newer revision; either stands.
+            val held = automations[routineId]
+            if (held != null && held.revision < changed.revision) automations[routineId] = changed
+        }
+        publish()
     }
 
     private fun room(agentId: String): Room =
