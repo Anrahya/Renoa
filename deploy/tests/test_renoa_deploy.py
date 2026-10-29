@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "renoa-deploy"
 _loader = importlib.machinery.SourceFileLoader("renoa_deploy", str(SCRIPT))
@@ -28,9 +29,12 @@ class FakeHost(deploy.Host):
         super().__init__(root)
         self.commands: list[tuple[str, ...]] = []
         self.turns = 0
-        # A turn that raced in before the stop and was cut short by it, as the
+        # A turn left unfinished on a node that is not running, as the
         # session's running operation or one queued behind it.
         self.unfinished_after_stop: str | None = None
+        self.unreadable = False
+        # "stop-refused", "stop-interrupted" or "inspect-after-stop".
+        self.fault: str | None = None
         self.inactive: set[str] = set()
         self.stopped: set[str] = set()
         # The release `current` pointed at when each unit stopped.
@@ -43,8 +47,12 @@ class FakeHost(deploy.Host):
         self.commands.append(args)
         stdout = ""
         if args[:2] == ("systemctl", "is-active"):
-            stdout = "inactive\n" if args[2] in self.inactive else "active\n"
+            stdout = "inactive\n" if args[2] in self.inactive | self.stopped else "active\n"
         elif args[:2] == ("systemctl", "stop"):
+            if self.fault == "stop-interrupted":
+                raise KeyboardInterrupt
+            if self.fault == "stop-refused":
+                return deploy.subprocess.CompletedProcess(args, 1, "", "Job for the unit canceled.")
             self.stopped.add(args[2])
             self.current_at_stop[args[2]] = deploy.Layout(self).current.resolve().name
         elif args[:2] == ("systemctl", "start"):
@@ -54,10 +62,16 @@ class FakeHost(deploy.Host):
             moved = self._settled and unit in self.restart_during_settle
             stdout = f"ActiveEnterTimestampMonotonic={'2' if moved else '1'}\nActiveState=active\n"
         elif args[0] == "runuser":
-            cut_short = self.unfinished_after_stop if self.stopped else None
+            if self.fault == "inspect-after-stop" and self.stopped:
+                return deploy.subprocess.CompletedProcess(args, 1, "", "database is locked")
+            node_down = self.stopped or "renoa-node.service" in self.inactive
+            cut_short = self.unfinished_after_stop if node_down else None
             active = {"id": "op"} if self.turns or cut_short == "running" else None
             queued = 1 if cut_short == "queued" else 0
-            stdout = json.dumps({"sessions": [{"id": "session-1", "queued_operations": queued, "active_operation": active}]})
+            sessions = [{"id": "session-1", "observation": "available", "queued_operations": queued, "active_operation": active}]
+            if self.unreadable:
+                sessions.append({"id": "session-2", "observation": "unavailable", "reason": "manifest unreadable"})
+            stdout = json.dumps({"sessions": sessions})
         return deploy.subprocess.CompletedProcess(args, 0, stdout, "")
 
     def http_status(self, url, method="GET", headers=None):
@@ -146,8 +160,12 @@ class DeployTest(unittest.TestCase):
             database.commit()
 
     def install(self, archive: Path, **options) -> int:
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            return deploy.install(self.host, archive, **options)
+        errors = io.StringIO()
+        try:
+            with redirect_stdout(io.StringIO()), redirect_stderr(errors):
+                return deploy.install(self.host, archive, **options)
+        finally:
+            self.stderr = errors.getvalue()
 
     def releases(self) -> set[str]:
         return {path.name for path in self.layout.releases.iterdir()}
@@ -240,16 +258,76 @@ class DeployTest(unittest.TestCase):
 
     def test_a_failure_after_the_stop_starts_the_node_again_on_the_running_release(self):
         self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
-        self.host.commands.clear()
-        (self.layout.home / "state/coordinator.sqlite3").mkdir()
+        unreadable_database = self.layout.home / "state/coordinator.sqlite3"
+        for failure in ("snapshot", "inspect-after-stop", "stop-interrupted"):
+            with self.subTest(failure):
+                self.host.commands.clear()
+                self.host.stopped.clear()
+                self.host.fault = failure if failure != "snapshot" else None
+                if failure == "snapshot":
+                    unreadable_database.mkdir()
 
-        with self.assertRaises(Exception):
+                with self.assertRaises(BaseException):
+                    self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}))
+
+                if failure == "snapshot":
+                    unreadable_database.rmdir()
+                self.assertEqual(self.host.systemctl("start"), ["renoa-node.service"])
+                self.assertIn("renoa-node.service was started again", self.stderr)
+                self.assertEqual(self.layout.current.resolve().name, "v1")
+                self.assertEqual(self.releases(), {"v1", "legacy"})
+
+    def test_a_failure_after_the_switch_starts_the_node_again(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.commands.clear()
+
+        with (
+            mock.patch.object(deploy, "point_install_paths", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
             self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}))
 
-        self.assertEqual(self.host.systemctl("stop"), ["renoa-node.service"])
         self.assertEqual(self.host.systemctl("start"), ["renoa-node.service"])
+        self.assertEqual(self.host.stopped, set())
+
+    def test_a_node_that_does_not_stop_stops_the_deploy(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.commands.clear()
+        self.host.fault = "stop-refused"
+
+        with self.assertRaisesRegex(deploy.DeployError, "systemctl stop renoa-node.service left it active"):
+            self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}))
+
         self.assertEqual(self.layout.current.resolve().name, "v1")
         self.assertEqual(self.releases(), {"v1", "legacy"})
+
+    def test_the_shipped_node_unit_signals_only_the_node_when_it_stops(self):
+        # The default kills the turns' own processes with the node, so the
+        # drain could not let a running turn finish.
+        unit = (SCRIPT.parent / "renoa-node.service").read_text().splitlines()
+
+        self.assertIn("KillMode=mixed", unit)
+
+    def test_a_stopped_node_holding_an_unfinished_turn_stops_the_deploy(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.commands.clear()
+        self.host.inactive = {"renoa-node.service"}
+        self.host.unfinished_after_stop = "running"
+
+        with self.assertRaisesRegex(deploy.DeployError, "session-1.*start the node so it finishes"):
+            self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}))
+
+        self.assertEqual(self.host.systemctl("start"), [], "the owner's stopped node stays stopped")
+        self.assertEqual(self.layout.current.resolve().name, "v1")
+        self.assertEqual(self.releases(), {"v1", "legacy"})
+
+    def test_a_session_the_host_cannot_read_is_named_as_unchecked(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.unreadable = True
+
+        self.assertEqual(self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"})), 0)
+
+        self.assertIn("cannot read session(s) session-2", self.stderr)
 
     def test_a_node_the_owner_stopped_stays_stopped(self):
         self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))

@@ -6,7 +6,7 @@ mod support;
 
 use std::time::Duration;
 
-use renoa_control::{TaskEvent, TaskEventKind};
+use renoa_control::{StopOutcome, TaskEvent, TaskEventKind};
 use renoa_kernel::OperationStatus;
 use renoa_node::RenoaNode;
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal};
@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use support::{
     CuttableProxy, HostFixture, TestSystem, attach, collect_through_terminal,
-    collect_through_turn_started, submit_when_node_is_online, wait_for_path,
+    collect_through_turn_started, stop_on, submit_when_node_is_online, wait_for_path,
 };
 
 /// How the command ended, once its terminal record has arrived.
@@ -32,11 +32,58 @@ fn terminal(events: &[TaskEvent], command_id: CommandId) -> Option<ExecutionTerm
     })
 }
 
-/// The deploy's drain: a command that arrives while the node drains waits at
-/// the coordinator and runs on the node that replaces it, so no turn is left
-/// unfinished under the runtime being replaced.
+/// The deploy's drain: the turn the node took finishes under the runtime it
+/// was admitted with, then the node stops by itself.
 #[tokio::test]
-async fn a_draining_node_finishes_what_it_took_leaves_new_commands_queued_and_stops() {
+async fn a_draining_node_finishes_the_turn_it_took_and_stops() {
+    Box::pin(timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let drain = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node")
+        .with_drain(drain.clone());
+        let node_task = tokio::spawn(node.run(CancellationToken::new()));
+
+        let mut surface = system.connect_surface().await;
+        attach(&mut surface, system.task_id).await;
+        let mut sender = system.connect_surface().await;
+        let running = CommandId::new();
+        submit_when_node_is_online(
+            &mut sender,
+            system.task_id,
+            running,
+            "Hold through reconnect.",
+        )
+        .await;
+        wait_for_path(&fixture.started()).await;
+        collect_through_turn_started(&mut surface).await;
+
+        drain.cancel();
+        fixture.release();
+        node_task
+            .await
+            .expect("draining node task")
+            .expect("the drained node stops by itself, with no shutdown");
+        assert_eq!(
+            fixture.operation_statuses_for(system.task_id),
+            [OperationStatus::Completed],
+            "the running turn finished"
+        );
+        system.stop().await;
+    }))
+    .await
+    .expect("drain test timed out");
+}
+
+/// A command that reaches a draining node is not admitted, so the
+/// coordinator keeps it and the node that replaces this one runs it.
+#[tokio::test]
+async fn a_command_sent_to_a_draining_node_runs_on_the_next_node() {
     Box::pin(timeout(Duration::from_secs(20), async {
         let mut system = TestSystem::start().await;
         let fixture = HostFixture::install(&mut system).await;
@@ -64,15 +111,20 @@ async fn a_draining_node_finishes_what_it_took_leaves_new_commands_queued_and_st
         drain.cancel();
         let queued = CommandId::new();
         submit_when_node_is_online(&mut sender, system.task_id, queued, "Second.").await;
-        fixture.release();
+        // Asked on the same connection, so the node reads the queued command
+        // before this stop, which ends the turn it holds open.
+        assert_eq!(
+            stop_on(&mut sender, system.task_id, running).await,
+            StopOutcome::Requested
+        );
         draining_task
             .await
             .expect("draining node task")
             .expect("the drained node stops by itself, with no shutdown");
         assert_eq!(
             fixture.operation_statuses_for(system.task_id),
-            [OperationStatus::Completed],
-            "the running turn finished and the queued command was not taken"
+            [OperationStatus::Cancelled],
+            "the draining node did not take the queued command"
         );
 
         let shutdown = CancellationToken::new();
@@ -89,7 +141,7 @@ async fn a_draining_node_finishes_what_it_took_leaves_new_commands_queued_and_st
         );
         assert_eq!(
             fixture.operation_statuses_for(system.task_id),
-            [OperationStatus::Completed, OperationStatus::Completed],
+            [OperationStatus::Cancelled, OperationStatus::Completed],
             "the queued command ran on the replacement"
         );
 
@@ -101,7 +153,7 @@ async fn a_draining_node_finishes_what_it_took_leaves_new_commands_queued_and_st
         system.stop().await;
     }))
     .await
-    .expect("drain test timed out");
+    .expect("deferral test timed out");
 }
 
 #[tokio::test]

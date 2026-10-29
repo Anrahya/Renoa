@@ -13,9 +13,9 @@ are symlinks through current, so switching releases is one rename. The first
 install adopts a hand-installed layout as releases/legacy.
 
 Only services installed on this host are updated, and only those whose
-binaries, unit files, adapters or Control Room changed are restarted. The node
-is stopped before the switch, which drains it, and started after; a turn still
-unfinished then stops the deploy. There is no automatic rollback: a failed
+binaries, unit files, adapters or Control Room changed are restarted. A running
+node is stopped before the switch, which drains it, and started after; a turn
+still unfinished then stops the deploy. There is no automatic rollback: a failed
 health check leaves the new release running, keeps the backup, and says so.
 """
 
@@ -239,13 +239,16 @@ def unit_differs(layout: Layout, release: Path, unit: str) -> bool:
     return shipped.is_file() and (not installed.is_file() or shipped.read_bytes() != installed.read_bytes())
 
 
-def unfinished_sessions(host: Host) -> list[str]:
-    """The Host sessions holding an operation that has not finished: one
-    running, or one queued behind it."""
+def host_sessions(host: Host) -> list[dict]:
     inspected = host.run("runuser", "-u", SERVICE_USER, "--", "/usr/local/bin/renoa-host", "inspect", HOME)
     if inspected.returncode != 0:
         raise DeployError(f"renoa-host inspect failed: {inspected.stderr.strip()}")
-    sessions = json.loads(inspected.stdout).get("sessions", [])
+    return json.loads(inspected.stdout).get("sessions", [])
+
+
+def unfinished_sessions(sessions: list[dict]) -> list[str]:
+    """The sessions holding an operation that has not finished: one running,
+    or one queued behind it. A session the Host cannot read is not counted."""
     return [
         str(session.get("id"))
         for session in sessions
@@ -255,7 +258,7 @@ def unfinished_sessions(host: Host) -> list[str]:
 
 def drain(host: Host, timeout: float) -> None:
     waited = 0.0
-    while turns := len(unfinished_sessions(host)):
+    while turns := len(unfinished_sessions(host_sessions(host))):
         if waited >= timeout:
             raise DeployError(f"{turns} agent turn(s) still running after {int(timeout)}s; nothing was changed, retry later")
         print(f"waiting for {turns} running agent turn(s) to finish")
@@ -263,21 +266,37 @@ def drain(host: Host, timeout: float) -> None:
         waited += 10
 
 
-def stop_for_switch(host: Host, units: list[str]) -> None:
-    """Stops each turn service. The node drains as it stops: it finishes the
-    turns it took, and a command that arrives meanwhile waits at the
-    coordinator for the new release. A turn left unfinished would be refused
-    by a new runtime, so then the services start again on the running release
-    and the deploy stops."""
+def stop_turn_services(host: Host, units: list[str]) -> None:
+    """Stops each turn service, which drains it: the node finishes the turns
+    it took, and a command that arrives meanwhile waits at the coordinator for
+    the new release."""
     for unit in units:
-        host.run("systemctl", "stop", unit)
-    if sessions := unfinished_sessions(host):
-        for unit in units:
-            host.run("systemctl", "start", unit)
+        stopped = host.run("systemctl", "stop", unit)
+        state = host.run("systemctl", "is-active", unit).stdout.strip()
+        if stopped.returncode != 0 or state not in ("inactive", "failed"):
+            raise DeployError(f"systemctl stop {unit} left it {state or 'unknown'}: {stopped.stderr.strip()}")
+
+
+def refuse_unfinished_turns(host: Host, node_running: bool) -> None:
+    """A new runtime refuses a turn admitted under the running one, so the
+    switch waits until none is unfinished."""
+    sessions = host_sessions(host)
+    if unreadable := [str(session.get("id")) for session in sessions if session.get("observation") != "available"]:
+        print(f"warning: the Host cannot read session(s) {', '.join(unreadable)}, so their turns are not checked", file=sys.stderr)
+    if unfinished := unfinished_sessions(sessions):
         raise DeployError(
-            f"session(s) {', '.join(sessions)} still hold an unfinished turn after the node stopped; "
-            "it was started again on the running release and nothing was changed, retry later"
+            f"session(s) {', '.join(unfinished)} hold an unfinished turn; nothing was switched, "
+            + ("retry once it finishes" if node_running else "start the node so it finishes, then retry")
         )
+
+
+def start_again(host: Host, units: list[str]) -> None:
+    for unit in units:
+        started = host.run("systemctl", "start", unit)
+        if started.returncode == 0:
+            print(f"{unit} was started again", file=sys.stderr)
+        else:
+            print(f"{unit} did not start again; start it by hand: {started.stderr.strip()}", file=sys.stderr)
 
 
 def snapshot(layout: Layout, old: Path) -> None:
@@ -365,7 +384,7 @@ def health(host: Host, layout: Layout, active: list[str]) -> list[str]:
             failures.append(f"the coordinator answered {forged} to a foreign origin, not 403")
     if "renoa-node.service" in active:
         try:
-            unfinished_sessions(host)
+            host_sessions(host)
         except (DeployError, json.JSONDecodeError) as error:
             failures.append(f"Host inspection failed: {error}")
     return failures
@@ -393,36 +412,43 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> 
     old = layout.current.resolve()
     stopped: list[str] = []
     try:
-        for service in installed_services(layout, services):
-            missing = [name for name in service["binaries"] if name not in manifest["binaries"]]
-            if missing:
-                raise DeployError(f"{service['unit']} is installed but the release has no {', '.join(missing)}")
-        restart = changed_services(layout, services, old, release)
-        active = [
-            service["unit"]
-            for service in installed_services(layout, services)
-            if host.run("systemctl", "is-active", service["unit"]).stdout.strip() == "active"
-        ]
-        # Only a running service is stopped, so one the owner stopped stays stopped.
-        if turns := [unit for unit in restart if unit in TURN_SERVICES and unit in active]:
-            drain(host, drain_timeout)
-            stop_for_switch(host, turns)
-            stopped = turns
-        snapshot(layout, old)
-        carry_assets(old, release)
+        try:
+            for service in installed_services(layout, services):
+                missing = [name for name in service["binaries"] if name not in manifest["binaries"]]
+                if missing:
+                    raise DeployError(f"{service['unit']} is installed but the release has no {', '.join(missing)}")
+            restart = changed_services(layout, services, old, release)
+            active = [
+                service["unit"]
+                for service in installed_services(layout, services)
+                if host.run("systemctl", "is-active", service["unit"]).stdout.strip() == "active"
+            ]
+            if turns := [unit for unit in restart if unit in TURN_SERVICES]:
+                # Only a running service is stopped, so one the owner stopped stays stopped.
+                if running := [unit for unit in turns if unit in active]:
+                    drain(host, drain_timeout)
+                    stopped = running
+                    stop_turn_services(host, running)
+                refuse_unfinished_turns(host, bool(running))
+            snapshot(layout, old)
+            carry_assets(old, release)
+        except BaseException:
+            # Nothing has switched yet: the running release stays as it was.
+            shutil.rmtree(release)
+            raise
+        install_units(host, layout, services, release)
+        link(release, layout.current)
+        link(old, layout.previous)
+        point_install_paths(layout, release)
+        for unit in restart:
+            print(f"restarting {unit}")
+            host.run("systemctl", "start" if unit in stopped else "try-restart", unit)
     except BaseException:
-        # Nothing has switched yet: the running release stays as it was.
-        shutil.rmtree(release)
-        for unit in stopped:
-            host.run("systemctl", "start", unit)
+        # A node stopped for the switch does not stay stopped. Before the
+        # switch it starts on the running release; after it, no turn is left
+        # for the new release to refuse.
+        start_again(host, stopped)
         raise
-    install_units(host, layout, services, release)
-    link(release, layout.current)
-    link(old, layout.previous)
-    point_install_paths(layout, release)
-    for unit in restart:
-        print(f"restarting {unit}")
-        host.run("systemctl", "start" if unit in stopped else "try-restart", unit)
     failures = health(host, layout, active)
     record = {
         "tag": manifest["tag"],

@@ -642,9 +642,19 @@ pub(crate) async fn stop_command(
     task_id: TaskId,
     command_id: CommandId,
 ) -> StopOutcome {
-    let mut socket = system.connect_surface().await;
+    stop_on(&mut system.connect_surface().await, task_id, command_id).await
+}
+
+/// Asks to stop `command_id` on `socket`, which must not be attached. The
+/// coordinator handles one connection's requests in order, so whatever an
+/// earlier request on `socket` sent the node reaches it before this stop.
+pub(crate) async fn stop_on(
+    socket: &mut Socket,
+    task_id: TaskId,
+    command_id: CommandId,
+) -> StopOutcome {
     send(
-        &mut socket,
+        socket,
         &ClientMessage::StopCommand {
             request_id: 3,
             task_id,
@@ -656,7 +666,7 @@ pub(crate) async fn stop_command(
         request_id: 3,
         command_id: stopped,
         outcome,
-    } = receive(&mut socket).await
+    } = receive(socket).await
     else {
         panic!("the stop should be accepted");
     };
