@@ -1,0 +1,945 @@
+<title>Renoa Home</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the app's Home at true phone size, with a short reading column beside it; on a phone the screen comes first. */
+:root {
+  color-scheme: light;
+  --background: #F5F6F3; --foreground: #14161A; --foreground-soft: #464B51; --card: #FFFFFF;
+  --primary: #14161A; --primary-foreground: #F5F6F3; --muted: #ECEDE8; --muted-foreground: #5B5F66;
+  --accent: #ECEDE8; --border: #D6D8D2; --input: #878B85; --ring: #14161A; --board-line: #DDDFD9;
+  --state-running: #1E7A57; --state-failed: #B3321E;
+  --tile-body: #000000; --tile-shadow: rgba(20,22,26,0.28);
+  /* Each agent's own colour, from the design system's pigments, never green or purple. Renoa, the main agent, stays ink. */
+  --agent-t: #C4553F; --agent-t-body: #7E3528; --agent-t-tint: #F7E9E6;
+  --agent-o: #3B61AC; --agent-o-body: #26407A; --agent-o-tint: #E6EAF4;
+  --agent-n: #B37B22; --agent-n-body: #7A5214; --agent-n-tint: #F5EEE2;
+  --on-agent: #FFFFFF;
+  --shadow-pop: 0 1px 2px rgba(20,22,26,0.06), 0 8px 24px rgba(20,22,26,0.10);
+  --font-sans: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(.2,.8,.2,1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #111312; --foreground: #ECEEE9; --foreground-soft: #C9CCC6; --card: #191C1A;
+    --primary: #ECEEE9; --primary-foreground: #111312; --muted: #202321; --muted-foreground: #9DA29B;
+    --accent: #232724; --border: #2B2F2C; --input: #646964; --ring: #ECEEE9; --board-line: #2B2F2C;
+    --state-running: #5EC29A; --state-failed: #F08770;
+    --tile-body: #000000; --tile-shadow: rgba(0,0,0,0.55);
+    --agent-t: #E27B63; --agent-t-body: #8F4636; --agent-t-tint: #3A2A25;
+    --agent-o: #7298DE; --agent-o-body: #3F5F9E; --agent-o-tint: #262F3B;
+    --agent-n: #D9A24B; --agent-n-body: #8A6629; --agent-n-tint: #373021;
+    --on-agent: #111312;
+    --shadow-pop: 0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.50);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #111312; --foreground: #ECEEE9; --foreground-soft: #C9CCC6; --card: #191C1A;
+  --primary: #ECEEE9; --primary-foreground: #111312; --muted: #202321; --muted-foreground: #9DA29B;
+  --accent: #232724; --border: #2B2F2C; --input: #646964; --ring: #ECEEE9; --board-line: #2B2F2C;
+  --state-running: #5EC29A; --state-failed: #F08770;
+  --tile-body: #000000; --tile-shadow: rgba(0,0,0,0.55);
+  --agent-t: #E27B63; --agent-t-body: #8F4636; --agent-t-tint: #3A2A25;
+  --agent-o: #7298DE; --agent-o-body: #3F5F9E; --agent-o-tint: #262F3B;
+  --agent-n: #D9A24B; --agent-n-body: #8A6629; --agent-n-tint: #373021;
+  --on-agent: #111312;
+  --shadow-pop: 0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.50);
+}
+.ag-R { --pig: var(--foreground); --pig-body: var(--tile-body); --pig-tint: var(--muted); --pig-on: var(--primary-foreground); }
+.ag-T { --pig: var(--agent-t); --pig-body: var(--agent-t-body); --pig-tint: var(--agent-t-tint); --pig-on: var(--on-agent); }
+.ag-O { --pig: var(--agent-o); --pig-body: var(--agent-o-body); --pig-tint: var(--agent-o-tint); --pig-on: var(--on-agent); }
+.ag-N { --pig: var(--agent-n); --pig-body: var(--agent-n-body); --pig-tint: var(--agent-n-tint); --pig-on: var(--on-agent); }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 56px; -webkit-font-smoothing: antialiased;
+}
+button, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+.stage {
+  display: grid; grid-template-columns: 390px minmax(0, 400px); grid-template-areas: "phone head" "phone notes";
+  column-gap: 56px; row-gap: 28px; justify-content: center; align-items: start; max-width: 1000px; margin: 0 auto;
+}
+.head { grid-area: head; padding-top: 36px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.notes { grid-area: notes; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.phone-wrap { grid-area: phone; }
+@media (max-width: 880px) {
+  .stage { grid-template-columns: minmax(0, 430px); grid-template-areas: "head" "phone" "notes"; }
+  .head { padding-top: 0; }
+}
+.eyebrow { margin: 0; font: 500 11.5px/12px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); }
+h1 { margin: 0; font-size: 28px; line-height: 32px; font-weight: 600; letter-spacing: -.02em; }
+.lede { margin: 0; font-size: 15px; line-height: 23px; color: var(--foreground-soft); max-width: 46ch; text-wrap: pretty; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-top: 8px; overflow-x: auto; }
+.tabs button {
+  border: 0; background: none; padding: 10px 9px 9px; font-size: 14px; font-weight: 500; color: var(--muted-foreground);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; transition: color .18s;
+}
+.tabs button[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--foreground); }
+.tabs button:hover { color: var(--foreground); }
+.note h2 { margin: 0 0 4px; font-size: 14px; line-height: 20px; font-weight: 600; }
+.note p { margin: 0; font-size: 14px; line-height: 21px; color: var(--foreground-soft); max-width: 60ch; }
+
+/* The phone */
+.phone {
+  width: 390px; max-width: 100%; height: 844px; border: 1px solid var(--border); border-radius: 48px; overflow: hidden;
+  background: var(--background); box-shadow: var(--shadow-pop); position: relative; display: flex; flex-direction: column;
+}
+@media (max-width: 880px) { .phone { width: 100%; height: 820px; border-radius: 32px; } }
+.screen { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 28px 18px 16px; }
+.top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.hello { margin: 0; font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -.015em; }
+.clock { font: 500 11.5px/16px var(--font-mono); color: var(--muted-foreground); font-variant-numeric: tabular-nums; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+
+/* The day strip */
+.strip { position: relative; height: 60px; touch-action: none; cursor: ew-resize; flex: none; }
+.strip .bar, .strip .past { position: absolute; left: 0; top: 24px; height: 4px; border-radius: 2px; }
+.strip .bar { right: 0; background: var(--muted); }
+.strip .past { background: var(--border); }
+.runs { position: absolute; left: 0; right: 0; top: 34px; height: 3px; pointer-events: none; }
+.run { position: absolute; top: 0; height: 3px; border-radius: 2px; background: var(--pig); opacity: .55; }
+.run.fut { background: none; height: 0; border-top: 2px dotted var(--pig); top: 1px; opacity: .8; }
+.run.live { opacity: 1; animation: glow 1.6s ease-in-out infinite; }
+.playhead { position: absolute; top: 12px; width: 2px; height: 30px; margin-left: -1px; background: var(--foreground); border-radius: 1px; transition: left .35s var(--ease); pointer-events: none; }
+.playhead.scrub { transition: none; }
+.mk { position: absolute; top: 21px; width: 10px; height: 10px; margin-left: -5px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; transition: transform .2s var(--ease); }
+.mk::after { content: ""; position: absolute; inset: -10px -6px; }
+.mk.done { background: var(--pig); opacity: .45; }
+.mk.for { background: var(--pig); }
+.mk.coming { background: var(--background); border: 1.5px solid var(--pig); }
+.mk.needs { top: 4px; background: var(--pig); box-shadow: 0 0 0 2px var(--background), 0 0 0 3.5px var(--pig); animation: bob 2.4s ease-in-out infinite; }
+.mk.on { transform: scale(1.45); opacity: 1; }
+.mk.needs.on { transform: scale(1.2); animation: none; }
+.hours { position: absolute; left: 0; right: 0; top: 46px; display: flex; justify-content: space-between; font: 500 10px/12px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); pointer-events: none; }
+@keyframes glow { 50% { opacity: .35; } }
+@keyframes bob { 50% { transform: translateY(-2px); } }
+
+/* Renoa and the others */
+.presence { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
+.team { width: 300px; max-width: 100%; height: 222px; display: block; overflow: visible; }
+.team .agent, .team .add { cursor: pointer; outline: none; }
+.team .agent:focus-visible .t-edge, .team .add:focus-visible .socket { stroke: var(--ring); stroke-width: 4; }
+.talkline { border: 0; background: none; padding: 6px 10px; border-radius: 6px; min-height: 32px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; line-height: 19px; color: var(--muted-foreground); cursor: pointer; max-width: 100%; }
+.talkline:hover { background: var(--accent); color: var(--foreground); }
+.talkline .pk { width: 7px; height: 7px; border-radius: 50%; background: var(--pig); flex: none; animation: glow 1.4s ease-in-out infinite; }
+.talkline b { font-weight: 500; color: var(--foreground); }
+.seam { stroke: var(--board-line); stroke-width: 1.25; }
+.seam.live { stroke: color-mix(in srgb, var(--pig) 55%, var(--board-line)); stroke-width: 1.6; }
+.packet { fill: var(--pig); }
+.trail { stroke: var(--pig); stroke-opacity: .5; stroke-width: 1.6; stroke-linecap: round; }
+.socket { fill: none; stroke: var(--board-line); stroke-width: 2.6; }
+.socket.dashed { stroke: var(--input); stroke-dasharray: 7 6; }
+.plus { stroke: var(--muted-foreground); stroke-width: 3.6; stroke-linecap: round; }
+
+/* A tile, drawn as the app's Badge draws it: tile units, face radius 36 */
+.t-shadow { fill: var(--tile-shadow); }
+.t-body { fill: var(--pig-body); }
+.t-face { fill: var(--pig); stroke: var(--pig); stroke-width: 1.25; }
+.t-face.failed { stroke: var(--state-failed); stroke-width: 3.5; }
+.t-letter { fill: var(--pig-on); font: 600 30px/1 var(--font-sans); letter-spacing: -.02em; text-anchor: middle; dominant-baseline: central; }
+.t-halo { fill: none; stroke: var(--foreground); stroke-opacity: .18; stroke-width: 1.2; }
+.t-sweep { fill: none; stroke: var(--foreground); stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 16 84; animation: sweep 4s linear infinite; }
+.t-star-edge { fill: none; stroke: var(--background); stroke-width: 48; stroke-linejoin: round; }
+.t-star { fill: var(--foreground); }
+.t-dot-edge { fill: var(--background); }
+.t-dot.calling { fill: var(--foreground); transform-box: fill-box; transform-origin: center; animation: dot 1.4s ease-in-out infinite; }
+.t-dot.running { fill: var(--state-running); }
+.t-dot.failed { fill: var(--state-failed); }
+.t-ring { fill: none; stroke: var(--pig); stroke-width: 1.8; transform-box: fill-box; transform-origin: center; animation: ring 1.6s linear infinite; }
+.t-lift.hover { animation: hover 3.2s ease-in-out infinite; }
+.still * { animation: none !important; }
+@keyframes sweep { to { stroke-dashoffset: -100; } }
+@keyframes ring { from { transform: scale(1); stroke-opacity: .6; } to { transform: scale(1.38); stroke-opacity: 0; } }
+@keyframes hover { 0%, 100% { transform: translateY(-7px); } 50% { transform: translateY(-10.3px); } }
+@keyframes dot { 50% { transform: scale(1.3); } }
+.mini { width: 24px; height: 26px; flex: none; }
+.t-edge { fill: none; stroke: var(--pig); stroke-width: 1.5; }
+.t-edge.failed { stroke: var(--state-failed); stroke-width: 3.5; }
+
+/* Portraits: a small drawn character on each tile, in the agent's colour. Renoa is the mascot and wears the star. */
+.ag-R { --face-bg: #E9EAE5; --hair: #17191D; --clothes: #17191D; }
+.ag-T, .ag-O, .ag-N { --face-bg: var(--pig-tint); --hair: var(--pig); --clothes: var(--pig-body); }
+.p-bg { fill: var(--face-bg); }
+.p-hair { fill: var(--hair); }
+.p-clothes { fill: var(--clothes); }
+.p-eyes ellipse { fill: #1E1A1A; }
+.p-eyes { transform-box: fill-box; transform-origin: center; animation: blink 5.2s infinite; }
+.st-working .p-eyes { animation: look 2.6s ease-in-out infinite; }
+.p-hl, .p-white { fill: #FFFFFF; }
+.p-blush { fill: #EE8E7E; opacity: .5; }
+.p-line { fill: none; stroke: #6E3730; stroke-width: 1.3; stroke-linecap: round; }
+.p-open { fill: #8A3F36; }
+.p-glasses { fill: none; stroke: #1E1A1A; stroke-width: 1.2; }
+.p-star { fill: #FFFFFF; stroke: #17191D; stroke-width: 22; stroke-linejoin: round; }
+@keyframes blink { 0%, 95%, 100% { transform: scaleY(1); } 97.5% { transform: scaleY(.12); } }
+@keyframes look { 0%, 100% { transform: translate(-1.8px, 0); } 45%, 55% { transform: translate(1.8px, -.8px); } }
+
+/* What Renoa hands you: one thing at a time */
+.relay {
+  position: relative; border-radius: 10px; background: var(--pig-tint); border: 1px solid color-mix(in srgb, var(--pig) 28%, var(--border));
+  padding: 12px 16px 14px; min-height: 206px; display: flex; flex-direction: column; touch-action: pan-y; cursor: pointer;
+  transition: background-color .35s, border-color .35s; overflow: hidden;
+}
+.relay.peeking { border-style: dashed; }
+.relay .content { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.relay .content.in-r { animation: in-r .38s var(--ease); }
+.relay .content.in-l { animation: in-l .38s var(--ease); }
+@keyframes in-r { from { transform: translateX(28px); opacity: 0; } }
+@keyframes in-l { from { transform: translateX(-28px); opacity: 0; } }
+.rhead { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.who { font-size: 14px; line-height: 20px; font-weight: 600; }
+.verb { font-size: 14px; line-height: 20px; color: var(--muted-foreground); }
+.when { font: 500 11px/16px var(--font-mono); letter-spacing: .04em; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.step { margin-left: auto; display: flex; align-items: center; gap: 2px; font: 500 11px/16px var(--font-mono); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.step button { width: 30px; height: 30px; border: 0; border-radius: 6px; background: none; display: grid; place-items: center; cursor: pointer; color: var(--foreground); }
+.step button:hover { background: color-mix(in srgb, var(--pig) 12%, transparent); }
+.step button:disabled { opacity: .3; cursor: default; background: none; }
+.step svg { width: 16px; height: 16px; }
+.linkbtn { margin-left: auto; border: 0; background: none; padding: 4px 6px; font-size: 13px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.rtitle { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -.01em; text-wrap: balance; }
+.rbody { display: flex; gap: 12px; align-items: flex-start; }
+.rline { margin: 0; font-size: 15px; line-height: 23px; color: var(--foreground-soft); }
+.photo { width: 56px; height: 56px; flex: none; border-radius: 6px; background: color-mix(in srgb, var(--pig) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--pig) 25%, var(--border)); display: grid; place-items: center; color: var(--pig); }
+.photo svg { width: 22px; height: 22px; }
+.prog { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--pig) 18%, transparent); overflow: hidden; }
+.prog span { display: block; height: 100%; background: var(--pig); border-radius: 2px; }
+.left { margin: -2px 0 0; font-size: 13px; line-height: 19px; color: var(--muted-foreground); }
+.acts { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; flex-wrap: wrap; }
+.btn { min-height: 38px; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--input); background: var(--card); font-size: 14px; line-height: 20px; font-weight: 500; cursor: pointer; transition: background .18s, opacity .18s; }
+.btn:hover { background: var(--accent); }
+.btn.pri { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.btn.pri:hover { opacity: .9; background: var(--primary); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* The bar at the bottom, and the screen it opens */
+.dock {
+  margin-top: auto; flex: none; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 58px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--card); cursor: pointer; text-align: left;
+}
+.dock:hover { background: var(--accent); }
+.dock-minis { display: flex; padding-right: 6px; }
+.dock-minis:empty { display: none; }
+.dock-minis .mini { width: 26px; height: 28px; margin-right: -7px; }
+.dock-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dock-text b { font-size: 14px; line-height: 20px; font-weight: 600; }
+.dock-text span { font-size: 13px; line-height: 18px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock .chev { width: 18px; height: 18px; color: var(--muted-foreground); flex: none; }
+.drawer { position: absolute; inset: 0; z-index: 55; background: var(--background); display: flex; flex-direction: column; transform: translateY(100%); visibility: hidden; transition: transform .45s var(--ease), visibility 0s .45s; }
+.drawer.open { transform: none; visibility: visible; transition: transform .45s var(--ease); }
+.dhead { display: flex; align-items: flex-end; gap: 6px; padding: 24px 8px 0 10px; border-bottom: 1px solid var(--border); }
+.dtabs { flex: 1; display: flex; gap: 2px; min-width: 0; }
+.dtabs button { border: 0; background: none; padding: 12px 9px 11px; font-size: 15px; font-weight: 600; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.dtabs button[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--foreground); }
+.dhead .icon-btn { margin-bottom: 4px; }
+.pages { flex: 1; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.pages::-webkit-scrollbar { display: none; }
+.page { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; overflow-y: auto; }
+.page .list { overflow: visible; }
+.dots { display: flex; justify-content: center; gap: 6px; padding: 10px 0 16px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--border); transition: background .2s; }
+.dots i.on { background: var(--foreground); }
+.crow { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 4px; border: 0; border-bottom: 1px solid var(--border); background: none; text-align: left; cursor: pointer; }
+button.crow:hover { background: var(--accent); }
+div.crow { cursor: default; }
+.big { width: 46px; height: 50px; flex: none; }
+.cmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cname { font-size: 15px; line-height: 21px; font-weight: 600; display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.cname small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cline { font-size: 14px; line-height: 20px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cline.new { color: var(--foreground); }
+.csub { font-size: 12px; line-height: 18px; color: var(--muted-foreground); }
+.cside { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+.unread { width: 8px; height: 8px; border-radius: 50%; background: var(--foreground); }
+.stack { display: flex; width: 46px; flex: none; justify-content: center; }
+.stack .mini { width: 22px; height: 24px; margin-right: -6px; }
+.cal { width: 46px; height: 46px; flex: none; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; color: var(--muted-foreground); }
+.cal svg { width: 20px; height: 20px; }
+.switch { width: 40px; height: 24px; flex: none; border-radius: 12px; border: 1px solid var(--input); background: var(--muted); position: relative; cursor: pointer; padding: 0; transition: background .18s; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 2px; background: var(--foreground-soft); transition: transform .18s var(--ease), background .18s; }
+.switch[aria-checked="true"] { background: var(--primary); border-color: var(--primary); }
+.switch[aria-checked="true"] i { transform: translateX(16px); background: var(--primary-foreground); }
+
+/* Sheets: a chat, Today, and what the agents say to each other */
+.sheet { position: absolute; inset: 0; z-index: 60; background: var(--background); display: flex; flex-direction: column; transform: translateY(100%); transition: transform .45s var(--ease), visibility 0s .45s; visibility: hidden; }
+.sheet.open { transform: none; visibility: visible; transition: transform .45s var(--ease); }
+.sheet header { display: flex; align-items: center; gap: 10px; padding: 28px 12px 12px 18px; border-bottom: 1px solid var(--border); }
+.sheet header .mini { width: 32px; height: 34px; }
+.sheet header h2 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -.01em; }
+.sheet header p { margin: 0; font-size: 13px; line-height: 19px; color: var(--muted-foreground); }
+.icon-btn { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 0; display: grid; place-items: center; background: none; color: var(--foreground-soft); cursor: pointer; }
+.icon-btn:hover { background: var(--accent); }
+.icon-btn svg { width: 20px; height: 20px; }
+.icon-btn.send { width: 36px; height: 36px; background: var(--primary); color: var(--primary-foreground); }
+.sheet header .close { margin-left: auto; }
+.msgs { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 84%; padding: 9px 13px; border-radius: 10px; font-size: 15px; line-height: 22px; }
+.msg.agent { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
+.msg.owner { align-self: flex-end; background: var(--primary); color: var(--primary-foreground); }
+.moment { align-self: stretch; background: var(--pig-tint); border-radius: 10px; padding: 10px 13px; }
+.moment .cap { margin: 0 0 2px; font: 500 11px/16px var(--font-mono); letter-spacing: .04em; color: var(--muted-foreground); text-transform: uppercase; }
+.moment p:last-child { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; }
+.list { list-style: none; margin: 0; padding: 0 18px 18px; overflow-y: auto; flex: 1; }
+.list .sec { padding: 18px 0 6px; font: 500 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); border-bottom: 1px solid var(--border); }
+.list .row { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.list .row .mini { width: 26px; height: 28px; grid-row: span 2; }
+.list .from { font-size: 14px; line-height: 20px; font-weight: 500; display: flex; gap: 8px; }
+.list .from span { margin-left: auto; font: 500 11px/20px var(--font-mono); color: var(--muted-foreground); }
+.list .text { margin: 0; font-size: 15px; line-height: 22px; color: var(--foreground-soft); }
+.list button.row { width: 100%; border: 0; border-bottom: 1px solid var(--border); background: none; text-align: left; cursor: pointer; }
+.list button.row:hover { background: var(--accent); }
+.list-empty { padding: 32px 0; color: var(--muted-foreground); font-size: 15px; line-height: 23px; text-align: center; }
+.composer { display: flex; align-items: center; gap: 8px; border: 1px solid var(--input); border-radius: 18px; padding: 4px 4px 4px 14px; background: var(--card); margin: 0 14px 16px; }
+.composer input { flex: 1; min-width: 0; border: 0; background: none; outline: none; font-size: 15px; line-height: 22px; padding: 8px 0; }
+.composer input::placeholder { color: var(--muted-foreground); }
+
+/* Onboarding */
+.onboard { position: absolute; inset: 0; z-index: 70; background: var(--background); display: flex; flex-direction: column; padding: 40px 22px 22px; }
+.ob-step { flex: 1; display: flex; flex-direction: column; gap: 14px; }
+.ob-step .eyebrow { margin-top: 6px; }
+.ob-tile { width: 56px; height: 60px; }
+.ob-big { width: 132px; height: 142px; align-self: center; margin: 40px 0 8px; }
+.ob-big .drop { animation: drop .8s var(--ease) both; }
+@keyframes drop { from { transform: translateY(-34px); opacity: 0; } }
+.ob-h { margin: 0; font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -.02em; text-wrap: balance; }
+.ob-p { margin: 0; font-size: 15px; line-height: 23px; color: var(--foreground-soft); }
+.field { width: 100%; border: 1px solid var(--input); border-radius: 6px; background: var(--card); padding: 12px 14px; font-size: 16px; line-height: 24px; outline: none; resize: none; }
+.field:focus { border-color: var(--ring); box-shadow: 0 0 0 1px var(--ring); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1px solid var(--input); background: none; border-radius: 6px; padding: 6px 11px; font-size: 14px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.ob-foot { margin-top: auto; display: flex; gap: 10px; }
+.ob-foot .btn { flex: 1; min-height: 48px; font-size: 15px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+
+<main class="stage">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><clipPath id="hexclip"><path id="hexclip-path"/></clipPath></defs></svg>
+  <header class="head">
+    <p class="eyebrow">Android app · Home</p>
+    <h1>Home</h1>
+    <p class="lede">Renoa sits in the middle with your other agents around her, the day runs along the top, and Renoa hands you one thing at a time.</p>
+    <div class="tabs" role="tablist" aria-label="What to show">
+      <button role="tab" data-scene="onboarding" aria-selected="false">Sign-up</button>
+      <button role="tab" data-scene="first" aria-selected="false">First day</button>
+      <button role="tab" data-scene="morning" aria-selected="false">Morning</button>
+      <button role="tab" data-scene="evening" aria-selected="true">Evening</button>
+      <button role="tab" data-scene="night" aria-selected="false">Night</button>
+    </div>
+  </header>
+
+  <div class="phone-wrap">
+    <div class="phone" id="phone">
+      <div class="screen">
+        <div class="top"><p class="hello" id="hello"></p><span class="clock" id="clock"></span></div>
+        <div class="strip" id="strip" aria-label="Today. Drag to look back or ahead.">
+          <div class="bar"></div><div class="past" id="past"></div>
+          <div class="runs" id="runs"></div>
+          <div class="playhead" id="playhead"></div>
+          <div class="hours"><span>6 am</span><span>Noon</span><span>6 pm</span><span>12 am</span></div>
+        </div>
+        <div class="presence">
+          <svg class="team" id="team" viewBox="-150 -111 300 222" aria-label="Renoa and your agents"></svg>
+          <button type="button" class="talkline" id="talkline"></button>
+        </div>
+        <div class="relay" id="relay" aria-live="polite"></div>
+        <button type="button" class="dock" id="dock" aria-label="Open chats, routines and what's coming up">
+          <span class="dock-minis" id="dock-minis"></span>
+          <span class="dock-text"><b id="dock-1"></b><span id="dock-2"></span></span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+      </div>
+
+      <section class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Chats, routines and upcoming">
+        <header class="dhead">
+          <div class="dtabs" role="tablist">
+            <button type="button" role="tab" data-page="0" aria-selected="true">Chats</button>
+            <button type="button" role="tab" data-page="1" aria-selected="false">Routines</button>
+            <button type="button" role="tab" data-page="2" aria-selected="false">Upcoming</button>
+          </div>
+          <button type="button" class="icon-btn" id="drawer-close" aria-label="Back to Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+        </header>
+        <div class="pages" id="pages">
+          <div class="page"><ul class="list" id="chats"></ul></div>
+          <div class="page"><ul class="list" id="routines"></ul></div>
+          <div class="page"><ul class="list" id="upcoming"></ul></div>
+        </div>
+        <div class="dots" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
+      </section>
+
+      <section class="sheet" id="sheet" aria-modal="true" role="dialog" aria-labelledby="sheet-title">
+        <header>
+          <svg class="mini" id="sheet-tile" viewBox="-52 -56 104 112" aria-hidden="true"></svg>
+          <div><h2 id="sheet-title"></h2><p id="sheet-sub"></p></div>
+          <button type="button" class="icon-btn close" id="sheet-close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </header>
+        <div class="msgs" id="sheet-msgs"></div>
+        <ul class="list" id="sheet-list"></ul>
+        <form class="composer" id="sheet-composer">
+          <input id="sheet-text" autocomplete="off" aria-label="Message">
+          <button type="button" class="icon-btn" aria-label="Send a photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 8.5h3l1.6-2.5h5.8l1.6 2.5h3v10h-15z"/><circle cx="12" cy="13" r="3.4"/></svg></button>
+          <button type="submit" class="icon-btn send" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+        </form>
+      </section>
+
+      <section class="onboard" id="onboard" hidden aria-label="Sign-up">
+        <div class="ob-step" data-ob="1">
+          <svg class="ob-tile" id="ob-tile-1" viewBox="-52 -56 104 112" aria-hidden="true"></svg>
+          <p class="eyebrow">1 of 3</p>
+          <h2 class="ob-h">Hi. What should I call you?</h2>
+          <input class="field" id="ob-name" autocomplete="given-name" placeholder="Your name" aria-label="Your name">
+          <div class="ob-foot"><button type="button" class="btn pri" id="ob-next-1" disabled>Next</button></div>
+        </div>
+        <div class="ob-step" data-ob="2" hidden>
+          <svg class="ob-tile" id="ob-tile-2" viewBox="-52 -56 104 112" aria-hidden="true"></svg>
+          <p class="eyebrow">2 of 3</p>
+          <h2 class="ob-h">How does a usual day go for you, <span id="ob-who"></span>?</h2>
+          <p class="ob-p">A sentence or two is plenty. I'll learn the rest as we talk.</p>
+          <textarea class="field" id="ob-day" rows="4" aria-label="Your usual day" placeholder="Up around 7, out till 6. I cook most nights and I'm trying to eat more protein."></textarea>
+          <div class="chips" id="ob-chips">
+            <button type="button" class="chip" aria-pressed="false">I cook at home</button>
+            <button type="button" class="chip" aria-pressed="false">I work from home</button>
+            <button type="button" class="chip" aria-pressed="false">I'm a student</button>
+            <button type="button" class="chip" aria-pressed="false">I have kids</button>
+            <button type="button" class="chip" aria-pressed="false">I work out</button>
+          </div>
+          <div class="ob-foot"><button type="button" class="btn" id="ob-skip">Skip</button><button type="button" class="btn pri" id="ob-next-2">Next</button></div>
+        </div>
+        <div class="ob-step" data-ob="3" hidden>
+          <svg class="ob-big" id="ob-tile-3" viewBox="-52 -56 104 112" aria-hidden="true"></svg>
+          <p class="eyebrow">3 of 3</p>
+          <h2 class="ob-h">I'm Renoa.</h2>
+          <p class="ob-p">I keep track of things, remind you and find things out. Whenever you want to talk, tap me on Home.</p>
+          <div class="ob-foot"><button type="button" class="btn pri" id="ob-done">Go to Home</button></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="notes" aria-label="How Home works">
+    <div class="note"><h2>The day strip</h2><p>The upright line is now. Each dot takes the colour of the agent it belongs to: a raised dot needs you, a solid dot is something for you, and a ring is coming up. Drag along the strip and Renoa shows you what happened or what's coming at that time.</p></div>
+    <div class="note"><h2>Renoa and your agents</h2><p>Tap Renoa to talk to her, or tap another agent to open its chat. While two agents talk, a packet runs the line between them in the asking agent's colour, and a line underneath says what they're talking about. Tap that line to read along.</p></div>
+    <div class="note"><h2>One thing at a time</h2><p>Renoa hands you one thing at a time from whoever needs you. Step through with the arrows or a swipe, and tap it to open that agent's chat. Agents fold several updates into one, so ten updates are never ten things to read.</p></div>
+    <div class="note"><h2>The bar at the bottom</h2><p>It takes the place of a tab bar. It shows who has written and what's next. Tap it and you land on your chats; swipe for routines, then for what's coming up this week. More pages can join later.</p></div>
+    <div class="note"><h2>Portraits</h2><p>Every agent gets a small drawn character the moment it's made, built from its name and what it does, in its own colour. Its eyes show how it's doing: they blink while it rests, look around while it works, and look up at you when it needs you. You can swap in your own picture or have one drawn. Renoa is the mascot, drawn once by us, and she wears the star. These faces are a sketch of the idea, not final art.</p></div>
+    <div class="note"><h2>Sign-up</h2><p>Three screens: your name, how a usual day goes, and meeting Renoa. Your answers start Renoa's picture of you; everything else it learns as you talk.</p></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const START = 6, END = 24, R = 36, DEPTH = 3.2;
+  const pct = t => ((t - START) / (END - START)) * 100;
+  const fmt = t => { let h = Math.floor(t), m = Math.round((t - h) * 60); if (m === 60) { h++; m = 0; } return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h >= 12 && h < 24 ? ' PM' : ' AM'); };
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  const sentence = s => /[.?!]$/.test(s) ? s : s + '.';
+
+  // Flat-top hexagon with rounded corners, centred on 0, as the app's hexPath draws it.
+  function hexD(r, c) {
+    const v = [0, 1, 2, 3, 4, 5].map(i => [r * Math.cos(Math.PI / 3 * i), r * Math.sin(Math.PI / 3 * i)]);
+    const f = c / r, n = x => x.toFixed(2);
+    let d = '';
+    for (let i = 0; i < 6; i++) {
+      const p = v[i], a = v[(i + 5) % 6], b = v[(i + 1) % 6];
+      d += (i ? 'L' : 'M') + n(p[0] + (a[0] - p[0]) * f) + ' ' + n(p[1] + (a[1] - p[1]) * f) + 'Q' + n(p[0]) + ' ' + n(p[1]) + ' ' + n(p[0] + (b[0] - p[0]) * f) + ' ' + n(p[1] + (b[1] - p[1]) * f);
+    }
+    return d + 'Z';
+  }
+  const FACE = hexD(R, 3), HALO = hexD(R + 6, 4);
+  $('hexclip-path').setAttribute('d', FACE);
+  const STAR = 'M234.29,114.85l-45,38.83L203,211.75a16.4,16.4,0,0,1-24.5,17.82L128,198.49,77.47,229.57A16.4,16.4,0,0,1,53,211.75l13.76-58.07-45-38.83A16.46,16.46,0,0,1,31.08,86l59-4.76,22.76-55.08a16.36,16.36,0,0,1,30.27,0l22.75,55.08,59,4.76a16.46,16.46,0,0,1,9.37,28.86Z';
+
+  const AG = {
+    R: { name: 'Renoa', primary: true, does: 'Your main agent' },
+    T: { name: 'Tifa', does: 'Food and health' },
+    O: { name: 'Optimus', does: 'Tech news' },
+    N: { name: 'Nagisa', does: 'Deals and groceries' },
+  };
+
+  // One agent tile in tile units. State is motion and one round dot, as BadgeMotion has it.
+  function tile(key, state, still) {
+    const primary = AG[key].primary;
+    let s = `<g class="ag-${key} st-${state}${still ? ' still' : ''}">`;
+    s += `<path d="${FACE}" class="t-shadow" transform="translate(0 ${DEPTH + 3})"/>`;
+    if (state === 'working') s += `<path d="${FACE}" class="t-ring"/>`;
+    s += `<g class="t-lift${state === 'wants' ? ' hover' : ''}">`;
+    if (primary && !still) s += `<path d="${HALO}" class="t-halo"/><path d="${HALO}" class="t-sweep" pathLength="100"/>`;
+    s += `<path d="${FACE}" class="t-body" transform="translate(0 ${DEPTH})"/>${portrait(key, state)}<path d="${FACE}" class="t-edge${state === 'stuck' ? ' failed' : ''}"/>`;
+    const dot = { wants: 'calling', working: 'running', stuck: 'failed' }[state];
+    if (dot) s += `<g transform="translate(${R * .7} ${-R * .74})"><circle r="7.7" class="t-dot-edge"/><circle r="5.5" class="t-dot ${dot}"/></g>`;
+    return s + '</g></g>';
+  }
+  // A portrait in tile units: hair, face and one thing each agent wears, clipped to the hexagon.
+  const LOOK = {
+    R: { skin: '#F7DCCB', back: 'long', bangs: 'soft', acc: 'star' },
+    T: { skin: '#F3D2BC', back: 'pony', bangs: 'soft', acc: 'bow' },
+    O: { skin: '#D6A47E', back: 'short', bangs: 'spiky', acc: 'glasses' },
+    N: { skin: '#EBC4A6', back: 'bob', bangs: 'soft', acc: 'clip' },
+  };
+  const BACK = {
+    long: 'M-19 3Q-21-18 0-19Q21-18 19 3L22 32L-22 32Z',
+    bob: 'M-20 4Q-21-18 0-19Q21-18 20 4L20 15Q14 17 12 10L-12 10Q-14 17-20 15Z',
+    pony: 'M-18 2Q-19-17 0-18Q19-17 18 2ZM13-13Q28-14 25 5Q23 13 18 15Q22 4 15-6Z',
+    short: 'M-18 0Q-18-18 0-18Q18-18 18 0Z',
+  };
+  const BANGS = {
+    soft: 'M-17.6 1Q-17-16.5 0-16.8Q17-16.5 17.6 1Q13-3.5 9-5.5Q5-1.5 1-5.5Q-4-1.5-8-5.5Q-12-2.5-17.6 1Z',
+    spiky: 'M-18 0Q-17-17.5 0-18Q17-17.5 18 0L13.5-6L10-1L6.5-7.5L2.5-1.5L-1.5-7.5L-5.5-1.5L-9.5-7L-13-1Z',
+  };
+  const ACC = {
+    star: `<g transform="translate(6.5 -17) scale(.042)"><path d="${STAR}" class="p-star"/></g>`,
+    bow: '<path d="M14-13l-4.5-3.2v6.4zM14-13l4.5-3.2v6.4z" class="p-white"/><circle cx="14" cy="-13" r="1.4" class="p-white"/>',
+    glasses: '<g class="p-glasses"><circle cx="-6" cy="5" r="4.6"/><circle cx="6" cy="5" r="4.6"/><path d="M-1.4 4.6h2.8"/></g>',
+    clip: '<rect x="-15" y="-9.5" width="7.5" height="2.6" rx="1.3" transform="rotate(-28 -11.2 -8.2)" class="p-white"/>',
+  };
+  function portrait(key, state) {
+    const L = LOOK[key];
+    const eyes = `<g class="p-eyes" style="animation-delay:${'RTON'.indexOf(key) * 1.3}s"><ellipse cx="-6" cy="5" rx="2.6" ry="3.4"/><ellipse cx="6" cy="5" rx="2.6" ry="3.4"/><circle cx="-5.1" cy="3.7" r="1" class="p-hl"/><circle cx="6.9" cy="3.7" r="1" class="p-hl"/></g>`;
+    const brows = state === 'stuck' ? '<path d="M-9.5-1.2L-3.6 0.6M9.5-1.2L3.6 0.6" class="p-line"/>' : '';
+    const mouth = state === 'wants' ? '<ellipse cx="0" cy="12" rx="1.9" ry="1.6" class="p-open"/>'
+      : state === 'stuck' ? '<path d="M-2.4 12.6Q0 11 2.4 12.6" class="p-line"/>'
+      : '<path d="M-2.3 11.2Q0 13.3 2.3 11.2" class="p-line"/>';
+    return `<g clip-path="url(#hexclip)"><path d="${FACE}" class="p-bg"/><path d="${BACK[L.back]}" class="p-hair"/>`
+      + `<ellipse cx="0" cy="37" rx="21" ry="13" class="p-clothes"/><rect x="-3.5" y="14" width="7" height="10" rx="2" fill="${L.skin}"/>`
+      + `<circle cx="0" cy="2" r="17" fill="${L.skin}"/><path d="${BANGS[L.bangs]}" class="p-hair"/>${brows}${eyes}`
+      + `<ellipse cx="-10.5" cy="10" rx="3" ry="1.8" class="p-blush"/><ellipse cx="10.5" cy="10" rx="3" ry="1.8" class="p-blush"/>${mouth}${ACC[L.acc]}</g>`;
+  }
+  const big = key => `<svg class="big" viewBox="-52 -56 104 112" aria-hidden="true">${tile(key, agentState(key))}</svg>`;
+  const short = t => t.replace(/ at \d.*$/, '').toLowerCase();
+  const mini = key => `<svg class="mini" viewBox="-52 -56 104 112" aria-hidden="true">${tile(key, 'resting', true)}</svg>`;
+  const IMG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="1.5"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 16l-5-5-8.5 8"/></svg>';
+  const ARROW = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${d < 0 ? 'M15 6l-6 6 6 6' : 'M9 6l6 6-6 6'}"/></svg>`;
+
+  const KIND = { needs: 'needs you', for: 'for you', working: 'working', coming: 'coming up', done: 'done' };
+  const VERB = { needs: 'asks', for: 'says', working: 'is on it', coming: 'later today', done: 'earlier' };
+  const RANK = { needs: 0, for: 1, working: 2 };
+  const coming = (id, agent, t, title, line) => ({ id, kind: 'coming', agent, t, end: t + 0.12, run: true, title, line });
+
+  let userName = 'Yash';
+  const SCENES = {
+    morning: {
+      now: 8 + 10 / 60, hello: n => `Morning, ${n}.`, agents: ['T', 'O', 'N'],
+      items: () => [
+        { id: 'brief', kind: 'for', agent: 'R', t: 7.5, end: 7.62, run: true, title: 'Your morning brief', line: 'Two meetings, rain after 4 pm, and the electricity bill is due Saturday.', choices: ['Remind me Friday', 'Got it'] },
+        { id: 'plan', kind: 'needs', agent: 'T', t: 7 + 50 / 60, title: 'Shall I plan this week’s dinners?', line: 'Four chicken-and-greens dinners, 30 minutes or less, with your 100 g of protein on those days. I’ll check your fridge first.', choices: ['Plan them', 'Not this week'] },
+        { id: 'gh', kind: 'needs', stuck: true, agent: 'O', t: 6.5, end: 6.55, run: true, title: 'GitHub signed me out', line: 'Sign in again and I’ll catch up on what’s trending.', choices: ['Sign in again', 'Skip today'] },
+        coming('fridge', 'T', 18, 'Fridge photo at 6 PM', 'Send me a photo of your fridge and I’ll plan dinner around it.'),
+        coming('trend', 'O', 18.5, 'GitHub check at 6:30 PM', 'What’s trending in the projects you follow.'),
+        coming('deals', 'N', 20, 'Price check at 8 PM', 'The whey you saved, and this week’s atta and dal.'),
+        coming('tw', 'R', 21, 'Evening check-in at 9 PM', 'If you’ve been on Twitter for more than half an hour, I’ll nudge you.'),
+      ],
+      room: [['O', 'R', 'GitHub signed me out. I’ve asked {n} to sign in again.', 6.52], ['T', 'R', 'Is {n} home tonight? I want to plan dinner.', 7.85], ['R', 'T', 'Free after 6, and rain after 4 means eating in.', 7.86]],
+    },
+    evening: {
+      now: 19 + 40 / 60, hello: n => `Evening, ${n}.`, agents: ['T', 'O', 'N'],
+      items: () => [
+        { id: 'brief', kind: 'done', agent: 'R', t: 7.5, end: 7.62, run: true, title: 'Your morning brief', line: 'Two meetings, rain after 4 pm, and the electricity bill is due Saturday.' },
+        { id: 'fridge', kind: 'done', agent: 'T', t: 18.1, end: 18.2, run: true, photo: true, say: 'looked at your fridge', title: 'Fourteen things in your fridge', line: 'Chicken (about 500 g), spinach, eggs, curd, tomatoes, onions and garlic. I’ll plan around these.' },
+        { id: 'trend', kind: 'for', agent: 'O', t: 18.5, end: 18.62, run: true, say: 'found', title: 'Three projects are trending on GitHub', line: 'One runs a whole assistant inside a browser tab. Want the short version?', choices: ['Show me', 'Later'] },
+        { id: 'whey', kind: 'working', agent: 'N', t: 19.25, run: true, talksWith: 'R', talk: 'asking Renoa to check an Amazon price', title: 'Checking the whey you saved', line: 'Renoa has your Amazon, so I asked it for today’s price.', progress: .5, left: 'A few minutes left' },
+        { id: 'dinner', kind: 'needs', agent: 'T', t: 19.5, title: 'Lemon-pepper chicken with garlic spinach?', line: '30 minutes, about 38 g of protein. You have everything but lemons, and Renoa says the shop on your street has them.', choices: ['Cook this', 'Something else'] },
+        coming('tw', 'R', 21, 'Evening check-in at 9 PM', 'If you’ve been on Twitter for more than half an hour, I’ll nudge you.'),
+        coming('wrap', 'R', 22.5, 'Your day, wrapped up at 10:30 PM', 'What got done today and what’s set for tomorrow.'),
+      ],
+      room: [['N', 'R', 'Can you check today’s Amazon price on the whey {n} saved?', 19.26], ['T', 'R', '{n} wants chicken and greens tonight. Are lemons and spinach easy to get nearby?', 19.45], ['R', 'T', 'Spinach is in the fridge photo. The shop on their street has lemons.', 19.46], ['R', 'N', 'Checking now. I won’t buy anything without asking {n}.', 19.6]],
+    },
+    night: {
+      now: 22 + 40 / 60, hello: n => `Good night, ${n}.`, agents: ['T', 'O', 'N'],
+      items: () => [
+        { id: 'brief', kind: 'done', agent: 'R', t: 7.5, end: 7.62, run: true, title: 'Your morning brief', line: 'Two meetings, rain after 4 pm, and the electricity bill is due Saturday.' },
+        { id: 'fridge', kind: 'done', agent: 'T', t: 18.1, end: 18.2, run: true, photo: true, title: 'Fourteen things in your fridge', line: 'Chicken, spinach, eggs, curd, tomatoes, onions and garlic.' },
+        { id: 'trend', kind: 'done', agent: 'O', t: 18.5, end: 18.62, run: true, title: 'Three projects are trending on GitHub', line: 'You read the short version at 7:45 PM.' },
+        { id: 'whey', kind: 'done', agent: 'N', t: 19.25, end: 19.75, run: true, title: 'The whey is ₹2,150 today', line: 'Down from ₹2,600. I’ll tell you if it drops below ₹2,000.' },
+        { id: 'dinner', kind: 'done', agent: 'T', t: 19.5, title: 'Lemon-pepper chicken with garlic spinach', line: 'You cooked it at 8:15 PM. About 38 g of protein.' },
+        { id: 'tw', kind: 'done', agent: 'R', t: 21, end: 21.1, run: true, title: 'Evening check-in', line: 'Twelve minutes on Twitter today. No nudge needed.' },
+        { id: 'wrap', kind: 'for', agent: 'R', t: 22.5, end: 22.62, run: true, title: 'Your day, wrapped up', line: 'That’s 3 of your 4 high-protein days this week. Tomorrow Tifa plans a quick lunch and Optimus checks GitHub at 6:30.', choices: ['See tomorrow', 'Good night'] },
+      ],
+      room: [['R', 'T', '{n} cooked the lemon-pepper chicken.', 20.3], ['T', 'R', 'Logged. Three of four protein days done this week.', 20.32], ['N', 'R', 'Price alert set on the whey at ₹2,000.', 20.5]],
+    },
+    first: {
+      now: 10 + 5 / 60, hello: n => `Hello, ${n}.`, agents: [],
+      items: () => [
+        { id: 'hi', kind: 'needs', agent: 'R', t: 10, title: 'What should I help with first?', line: 'I can keep track of things, remind you and find things out. Pick one, or tap me and say it in your own words.', choices: ['Plan my meals', 'Watch prices'] },
+        coming('tw', 'R', 21, 'First check-in at 9 PM', 'A short look at how the first day went.'),
+      ],
+      room: [],
+      routines: [{ agent: 'R', name: 'First check-in', when: 'Tonight at 9 PM', t: 21, on: true }],
+      upcoming: [['Tomorrow', [['R', 7.5, 'A morning brief, if you want one']]]],
+    },
+  };
+
+  // --- State
+  let scene, items, byId, qi = 0, peek = null;
+  const strip = $('strip'), runsEl = $('runs'), playhead = $('playhead'), clock = $('clock'), team = $('team'), relay = $('relay');
+
+  function agentState(key) {
+    const mine = items.filter(i => i.agent === key);
+    if (mine.some(i => i.kind === 'needs' && i.stuck)) return 'stuck';
+    if (mine.some(i => i.kind === 'needs')) return 'wants';
+    if (mine.some(i => i.kind === 'working')) return 'working';
+    return 'resting';
+  }
+  const WORDS = { resting: 'resting', working: 'working', wants: 'wants you', stuck: 'stuck' };
+  const queue = () => items.filter(i => i.kind in RANK).sort((a, b) => RANK[a.kind] - RANK[b.kind] || b.t - a.t);
+  const shown = () => peek || queue()[Math.min(qi, queue().length - 1)] || null;
+
+  // --- The day strip
+  function renderStrip() {
+    strip.querySelectorAll('.mk').forEach(e => e.remove());
+    runsEl.innerHTML = '';
+    $('past').style.width = pct(scene.now) + '%';
+    const cur = shown();
+    items.forEach(i => {
+      if (i.run) {
+        const r = document.createElement('div');
+        r.className = `run ag-${i.agent}` + (i.kind === 'working' ? ' live' : i.t > scene.now ? ' fut' : '');
+        r.style.left = pct(i.t) + '%';
+        r.style.width = Math.max(1.6, pct(i.kind === 'working' ? scene.now : i.end) - pct(i.t)) + '%';
+        runsEl.appendChild(r);
+      }
+      if (i.kind === 'working') return;
+      const m = document.createElement('button');
+      m.type = 'button';
+      m.className = `mk ag-${i.agent} ${i.kind}` + (cur && cur.id === i.id ? ' on' : '');
+      m.style.left = pct(i.t) + '%';
+      m.setAttribute('aria-label', `${AG[i.agent].name}, ${KIND[i.kind]}, ${fmt(i.t)}: ${i.title}`);
+      m.addEventListener('pointerdown', e => e.stopPropagation());
+      m.addEventListener('click', () => show(i.id));
+      strip.appendChild(m);
+    });
+  }
+  const setNow = t => { playhead.style.left = pct(t) + '%'; clock.textContent = 'Thu ' + fmt(t); };
+
+  let scrubbing = false;
+  const tAt = x => { const r = strip.getBoundingClientRect(); return START + Math.min(1, Math.max(0, (x - r.left) / r.width)) * (END - START); };
+  function scrubTo(e) {
+    const t = tAt(e.clientX);
+    setNow(t);
+    let best = null, bd = Infinity;
+    items.forEach(i => { const d = Math.abs(i.t - t); if (d < bd) { bd = d; best = i; } });
+    const cur = shown();
+    if (best && bd < 1.25 && (!cur || cur.id !== best.id)) show(best.id);
+  }
+  strip.addEventListener('pointerdown', e => { scrubbing = true; strip.setPointerCapture(e.pointerId); playhead.classList.add('scrub'); scrubTo(e); });
+  strip.addEventListener('pointermove', e => { if (scrubbing) scrubTo(e); });
+  const endScrub = () => { if (!scrubbing) return; scrubbing = false; playhead.classList.remove('scrub'); setNow(scene.now); };
+  strip.addEventListener('pointerup', endScrub);
+  strip.addEventListener('pointercancel', endScrub);
+
+  // --- Renoa and the others. Seats fill the sides first, so the space under Renoa stays open.
+  const SEATS = [-30, 210, 30, 150, -90, 90].map(a => [84 * Math.cos(a * Math.PI / 180), 84 * Math.sin(a * Math.PI / 180)]);
+  const seatOf = key => SEATS[scene.agents.indexOf(key)];
+  let talkers = [], pulse = null;
+  function renderTeam() {
+    let lines = '', sockets = '', tiles = '';
+    talkers = [];
+    SEATS.forEach(([x, y], i) => {
+      const key = scene.agents[i];
+      const at = `translate(${x.toFixed(1)} ${y.toFixed(1)}) scale(${23 / 36})`;
+      if (key) {
+        const st = agentState(key), talk = items.find(it => it.agent === key && it.kind === 'working' && it.talksWith);
+        lines += `<line x1="0" y1="0" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" class="seam${talk ? ' live' : ''} ag-${key}"/>`;
+        if (talk) talkers.push({ key, x, y, item: talk });
+        tiles += `<g class="agent" data-agent="${key}" transform="${at}" role="button" tabindex="0" aria-label="${AG[key].name}, ${AG[key].does.toLowerCase()}, ${WORDS[st]}. Open the chat.">${tile(key, st)}</g>`;
+      } else if (i === scene.agents.length) {
+        sockets += `<g class="add" transform="${at}" role="button" tabindex="0" aria-label="Make a new agent"><path d="${FACE}" class="socket dashed"/><path d="M-10 0H10M0 -10V10" class="plus"/></g>`;
+      } else {
+        sockets += `<g transform="${at}"><path d="${FACE}" class="socket"/></g>`;
+      }
+    });
+    const pk = talkers.map((t, i) => `<g class="ag-${t.key}"><line class="trail" id="trail${i}"/><circle r="3.2" class="packet" id="packet${i}"/></g>`).join('');
+    const relayPk = `<g id="relaypk" visibility="hidden"><line class="trail" id="rtrail"/><circle r="3.6" class="packet" id="rpacket"/></g>`;
+    const hub = `<g class="agent" data-agent="R" transform="scale(${38 / 36})" role="button" tabindex="0" aria-label="Renoa, your main agent, ${WORDS[agentState('R')]}. Tap to talk.">${tile('R', agentState('R'))}</g>`;
+    team.innerHTML = lines + sockets + pk + relayPk + tiles + hub;
+    moveTalkers(reduced.matches ? 0.5 : null);
+
+    const tl = $('talkline');
+    if (talkers.length) {
+      const t = talkers[0];
+      tl.className = 'talkline ag-' + t.key;
+      tl.innerHTML = `<span class="pk"></span><span><b>${AG[t.key].name}</b> is ${t.item.talk}</span>`;
+      tl.dataset.go = 'room';
+    } else {
+      tl.className = 'talkline';
+      tl.innerHTML = scene.agents.length ? 'Tap Renoa to talk, or anyone else for their chat' : 'Tap Renoa to talk';
+      tl.dataset.go = 'R';
+    }
+  }
+  const ease = u => u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+  function placePacket(c, tr, x, y, e) {
+    const px = x * (1 - e), py = y * (1 - e), len = Math.hypot(x, y) || 1;
+    c.setAttribute('cx', px.toFixed(1)); c.setAttribute('cy', py.toFixed(1));
+    tr.setAttribute('x1', px.toFixed(1)); tr.setAttribute('y1', py.toFixed(1));
+    tr.setAttribute('x2', (px + x / len * 13).toFixed(1)); tr.setAttribute('y2', (py + y / len * 13).toFixed(1));
+  }
+  function moveTalkers(fixed) {
+    const u = fixed ?? ((performance.now() / 1500) % 1);
+    talkers.forEach((t, i) => { const c = $('packet' + i); if (c) placePacket(c, $('trail' + i), t.x, t.y, ease(u)); });
+  }
+  // When Renoa hands you something from another agent, a packet runs once from that agent to Renoa.
+  function relayFrom(key) {
+    if (key === 'R' || reduced.matches || !seatOf(key)) return;
+    const [x, y] = seatOf(key);
+    pulse = { key, x, y, start: performance.now() };
+  }
+  function movePulse(now) {
+    const g = $('relaypk');
+    if (!g) return;
+    if (!pulse) { g.setAttribute('visibility', 'hidden'); return; }
+    const u = (now - pulse.start) / 650;
+    if (u >= 1) { pulse = null; g.setAttribute('visibility', 'hidden'); return; }
+    g.setAttribute('class', 'ag-' + pulse.key);
+    g.setAttribute('visibility', 'visible');
+    placePacket($('rpacket'), $('rtrail'), pulse.x, pulse.y, ease(Math.max(0, u)));
+  }
+  (function frame(now) { if (!reduced.matches) { moveTalkers(); movePulse(now); } requestAnimationFrame(frame); })(performance.now());
+
+  function activateTeam(target) {
+    if (target.closest('.add')) { openSheet({ title: 'Make an agent', sub: 'A name and something to help with', list: '<li class="list-empty">This opens the create screen the app already has.</li>' }); return; }
+    const g = target.closest('.agent');
+    if (g) openThread(g.dataset.agent);
+  }
+  team.addEventListener('click', e => activateTeam(e.target));
+  team.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTeam(e.target); } });
+  $('talkline').addEventListener('click', () => { if ($('talkline').dataset.go === 'room') openRoom(); else openThread('R'); });
+
+  // --- What Renoa hands you
+  function renderRelay(dir) {
+    const q = queue();
+    qi = Math.max(0, Math.min(qi, q.length - 1));
+    const i = shown();
+    const anim = dir > 0 ? ' in-r' : dir < 0 ? ' in-l' : '';
+    if (!i) {
+      const next = items.filter(x => x.kind === 'coming').sort((a, b) => a.t - b.t)[0];
+      relay.className = 'relay ag-R';
+      relay.dataset.id = '';
+      relay.innerHTML = `<div class="content${anim}"><div class="rhead">${mini('R')}<span class="who">Renoa</span></div><p class="rtitle">Nothing needs you right now.</p><p class="rline">${next ? `Next: ${esc(short(next.title))} at ${fmt(next.t)}.` : 'Nothing else is set for today.'}</p><div class="acts"><button type="button" class="btn pri" data-talk="R">Talk to Renoa</button></div></div>`;
+      return;
+    }
+    relay.className = `relay ag-${i.agent}` + (peek ? ' peeking' : '');
+    relay.dataset.id = i.id;
+    const verb = peek ? VERB[i.kind] : (i.say || VERB[i.kind]);
+    const nav = peek
+      ? `<button type="button" class="linkbtn" data-now>Back to now</button>`
+      : q.length > 1 ? `<div class="step"><button type="button" data-step="-1" aria-label="Previous" ${qi === 0 ? 'disabled' : ''}>${ARROW(-1)}</button><span>${qi + 1} of ${q.length}</span><button type="button" data-step="1" aria-label="Next" ${qi === q.length - 1 ? 'disabled' : ''}>${ARROW(1)}</button></div>` : '';
+    relay.innerHTML = `<div class="content${anim}">
+      <div class="rhead">${mini(i.agent)}<span class="who">${AG[i.agent].name}</span><span class="verb">${verb}</span><span class="when">${i.kind === 'working' ? 'NOW' : fmt(i.t)}</span>${nav}</div>
+      <p class="rtitle">${i.title}</p>
+      <div class="rbody">${i.photo ? `<div class="photo" role="img" aria-label="Your fridge photo">${IMG}</div>` : ''}<p class="rline">${i.line}</p></div>
+      ${i.progress != null ? `<div class="prog" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(i.progress * 100)}"><span style="width:${i.progress * 100}%"></span></div><p class="left">${i.left}</p>` : ''}
+      ${i.choices && !peek ? `<div class="acts">${i.choices.map((c, k) => `<button type="button" class="btn${k ? '' : ' pri'}" data-answer="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}
+    </div>`;
+  }
+  function show(id) {
+    const q = queue(), at = q.findIndex(i => i.id === id), before = shown();
+    if (at >= 0) { peek = null; qi = at; } else peek = byId[id];
+    const now = shown();
+    if (!before || before.id !== now.id) { renderRelay(now.t >= (before ? before.t : 0) ? 1 : -1); relayFrom(now.agent); }
+    renderStrip();
+  }
+  function step(d) {
+    const q = queue(), n = qi + d;
+    if (peek || n < 0 || n >= q.length) return;
+    qi = n; renderRelay(d); relayFrom(q[qi].agent); renderStrip();
+  }
+  function answer(id, choice) {
+    const i = byId[id];
+    i.kind = 'done'; i.stuck = false; i.answer = choice; i.choices = null; i.line = `You said: ${choice}.`;
+    peek = null;
+    renderTeam(); renderRelay(1); renderStrip(); renderDock();
+    const now = shown(); if (now) relayFrom(now.agent);
+  }
+  let swipe = null, justSwiped = false;
+  relay.addEventListener('click', e => {
+    if (justSwiped) return;
+    const s = e.target.closest('[data-step]'); if (s) { step(Number(s.dataset.step)); return; }
+    if (e.target.closest('[data-now]')) { peek = null; renderRelay(-1); renderStrip(); return; }
+    const a = e.target.closest('[data-answer]'); if (a) { answer(relay.dataset.id, a.dataset.answer); return; }
+    const t = e.target.closest('[data-talk]'); if (t) { openThread(t.dataset.talk); return; }
+    const i = byId[relay.dataset.id];
+    if (i) openThread(i.agent, i);
+  });
+  relay.addEventListener('pointerdown', e => { if (!e.target.closest('button')) swipe = { x: e.clientX, y: e.clientY, pid: e.pointerId }; });
+  relay.addEventListener('pointerup', e => {
+    if (!swipe || e.pointerId !== swipe.pid) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y; swipe = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) { justSwiped = true; setTimeout(() => { justSwiped = false; }, 60); step(dx < 0 ? 1 : -1); }
+  });
+
+  // --- The bar at the bottom, and the screen it opens: chats, routines, upcoming
+  const ROUTINES = [
+    { agent: 'R', name: 'Morning brief', when: 'Every weekday at 7:30 AM', t: 7.5, on: true },
+    { agent: 'T', name: 'Lunch photo', when: 'Every day at 1 PM', t: 13, on: false },
+    { agent: 'T', name: 'Fridge check', when: 'Every day at 6 PM', t: 18, on: true },
+    { agent: 'O', name: 'GitHub check', when: 'Every day at 6:30 PM', t: 18.5, on: true },
+    { agent: 'N', name: 'Prices and groceries', when: 'Every Thursday at 7:15 PM', t: 19.25, on: true },
+    { agent: 'R', name: 'Evening check-in', when: 'Every evening at 9 PM', t: 21, on: true },
+    { agent: 'R', name: 'Day wrap-up', when: 'Every night at 10:30 PM', t: 22.5, on: true },
+  ];
+  const UPCOMING = [
+    ['Tomorrow', [['R', 7.5, 'Morning brief'], ['T', 12.5, 'A quick high-protein lunch plan'], ['O', 18.5, 'GitHub check']]],
+    ['This week', [['R', 'Sat', 'The electricity bill is due'], ['N', 'Sun', 'Your weekly grocery list'], ['cal', 'Mon, 5 PM', 'Dentist']]],
+  ];
+  const CAL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5.5" width="16" height="14" rx="1.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></svg>';
+  let routines = [];
+  function chatRows() {
+    return ['R', ...scene.agents].map(k => {
+      const said = items.filter(i => i.agent === k && i.kind !== 'coming' && i.kind !== 'working' && i.t <= scene.now).sort((a, b) => b.t - a.t);
+      const work = items.find(i => i.agent === k && i.kind === 'working');
+      const last = work || said[0];
+      return { k, last, unread: said.some(i => i.kind === 'needs' || i.kind === 'for'), t: last ? last.t : 0 };
+    }).sort((a, b) => (b.k === 'R') - (a.k === 'R') || b.t - a.t);
+  }
+  const names = list => list.length < 3 ? list.join(' and ') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+  function renderDock() {
+    const fresh = chatRows().filter(r => r.unread);
+    const next = items.filter(i => i.kind === 'coming').sort((a, b) => a.t - b.t)[0];
+    $('dock-minis').innerHTML = fresh.slice(0, 3).map(r => mini(r.k)).join('');
+    $('dock-1').textContent = fresh.length ? `New from ${names(fresh.map(r => AG[r.k].name))}` : 'Chats';
+    $('dock-2').textContent = next ? `Next: ${short(next.title)} at ${fmt(next.t)}` : 'Nothing else is set for today';
+  }
+  function renderDrawer() {
+    const chats = chatRows().map(({ k, last, unread }) => `<li><button type="button" class="crow" data-agent="${k}">${big(k)}<span class="cmain"><span class="cname">${AG[k].name}<small>${AG[k].does}</small></span><span class="cline${unread ? ' new' : ''}">${last ? last.title + (last.kind === 'working' ? '\u2026' : '') : 'Say hello'}</span></span><span class="cside"><span class="when">${last ? (last.kind === 'working' ? 'NOW' : fmt(last.t)) : ''}</span>${unread ? '<i class="unread" aria-label="New"></i>' : ''}</span></button></li>`).join('');
+    const talk = scene.room.slice().sort((a, b) => b[3] - a[3])[0];
+    const room = talk ? `<li><button type="button" class="crow" data-room="1"><span class="stack">${[...new Set(scene.room.map(r => r[0]))].slice(0, 3).map(mini).join('')}</span><span class="cmain"><span class="cname">Between your agents</span><span class="cline">${AG[talk[0]].name}: ${esc(talk[2].replaceAll('{n}', userName))}</span></span><span class="cside"><span class="when">${fmt(talk[3])}</span></span></button></li>` : '';
+    const add = `<li><button type="button" class="crow" data-add="1"><svg class="big" viewBox="-52 -56 104 112" aria-hidden="true"><path d="${FACE}" class="socket dashed"/><path d="M-10 0H10M0 -10V10" class="plus"/></svg><span class="cmain"><span class="cname">Make an agent</span><span class="cline">A name and something to help with</span></span></button></li>`;
+    $('chats').innerHTML = chats + room + add;
+    $('routines').innerHTML = routines.map((r, k) => `<li><div class="crow">${big(r.agent)}<span class="cmain"><span class="cname">${r.name}</span><span class="cline">${AG[r.agent].name} \u00b7 ${r.when}</span><span class="csub">${!r.on ? 'Paused' : r.t > scene.now ? `Next: today at ${fmt(r.t)}` : `Ran today at ${fmt(r.t)}`}</span></span><button type="button" class="switch" role="switch" aria-checked="${r.on}" aria-label="${r.name}" data-routine="${k}"><i></i></button></div></li>`).join('');
+    const later = items.filter(i => i.kind === 'coming').sort((a, b) => a.t - b.t).map(i => [i.agent, i.t, i.title.replace(/ at \d.*$/, '')]);
+    const groups = (later.length ? [['Later today', later]] : []).concat(scene.upcoming || UPCOMING);
+    $('upcoming').innerHTML = groups.map(([label, rows]) => `<li class="sec">${label}</li>` + rows.map(([k, t, title]) => `<li><div class="crow">${k === 'cal' ? `<span class="cal">${CAL}</span>` : big(k)}<span class="cmain"><span class="cname">${title}</span><span class="cline">${k === 'cal' ? 'From your calendar' : AG[k].name}</span></span><span class="cside"><span class="when">${typeof t === 'number' ? fmt(t) : t}</span></span></div></li>`).join('')).join('');
+  }
+  const drawer = $('drawer'), pages = $('pages');
+  function syncTabs() {
+    const at = Math.round(pages.scrollLeft / Math.max(1, pages.clientWidth));
+    drawer.querySelectorAll('.dtabs button').forEach((b, k) => b.setAttribute('aria-selected', String(k === at)));
+    drawer.querySelectorAll('.dots i').forEach((d, k) => d.classList.toggle('on', k === at));
+  }
+  function openDrawer() { renderDrawer(); drawer.classList.add('open'); pages.scrollLeft = 0; syncTabs(); setTimeout(() => $('drawer-close').focus({ preventScroll: true }), 50); }
+  const closeDrawer = () => drawer.classList.remove('open');
+  pages.addEventListener('scroll', syncTabs, { passive: true });
+  drawer.querySelector('.dtabs').addEventListener('click', e => { const b = e.target.closest('[data-page]'); if (b) pages.scrollTo({ left: Number(b.dataset.page) * pages.clientWidth, behavior: reduced.matches ? 'auto' : 'smooth' }); });
+  $('drawer-close').addEventListener('click', closeDrawer);
+  $('dock').addEventListener('click', openDrawer);
+  pages.addEventListener('click', e => {
+    const sw = e.target.closest('[data-routine]');
+    if (sw) { const r = routines[Number(sw.dataset.routine)]; r.on = !r.on; renderDrawer(); return; }
+    const c = e.target.closest('button.crow');
+    if (!c) return;
+    if (c.dataset.agent) openThread(c.dataset.agent);
+    else if (c.dataset.room) openRoom();
+    else if (c.dataset.add) openSheet({ title: 'Make an agent', sub: 'A name and something to help with', list: '<li class="list-empty">This opens the create screen the app already has.</li>' });
+  });
+
+  // --- Sheets
+  const sheet = $('sheet');
+  function openSheet({ agent, title, sub, msgs, list, placeholder }) {
+    $('sheet-tile').innerHTML = agent ? tile(agent, agentState(agent)) : '';
+    $('sheet-tile').style.display = agent ? '' : 'none';
+    $('sheet-title').textContent = title;
+    $('sheet-sub').textContent = sub || '';
+    $('sheet-msgs').innerHTML = msgs || '';
+    $('sheet-msgs').hidden = list != null;
+    $('sheet-list').innerHTML = list || '';
+    $('sheet-list').hidden = list == null;
+    $('sheet-composer').hidden = !placeholder;
+    $('sheet-text').placeholder = placeholder || '';
+    sheet.dataset.agent = agent || '';
+    sheet.className = 'sheet open' + (agent ? ' ag-' + agent : '');
+    setTimeout(() => $('sheet-close').focus({ preventScroll: true }), 50);
+  }
+  const closeSheet = () => { sheet.classList.remove('open'); };
+  $('sheet-close').addEventListener('click', closeSheet);
+  addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (sheet.classList.contains('open')) closeSheet(); else closeDrawer(); });
+  $('sheet-list').addEventListener('click', e => { const r = e.target.closest('[data-id]'); if (r) { const i = byId[r.dataset.id]; openThread(i.agent, i); } });
+
+  function openThread(agent, moment) {
+    const said = items.filter(i => i.agent === agent && i.kind !== 'coming' && i.t <= scene.now).sort((a, b) => a.t - b.t);
+    let msgs = said.map(i => `<div class="msg agent">${sentence(i.title)} ${i.answer ? '' : i.line}</div>${i.answer ? `<div class="msg owner">${esc(i.answer)}</div>` : ''}`).join('');
+    if (moment) msgs = `<div class="moment ag-${agent}"><p class="cap">From Home · ${fmt(moment.t)}</p><p>${moment.title}</p></div>` + msgs;
+    if (!msgs) msgs = `<div class="msg agent">Hi ${esc(userName)}. What can I help with?</div>`;
+    openSheet({ agent, title: AG[agent].name, sub: AG[agent].primary ? 'Your main agent' : `${AG[agent].does} · ${WORDS[agentState(agent)]}`, msgs, placeholder: `Message ${AG[agent].name}` });
+    const box = $('sheet-msgs'); box.scrollTop = box.scrollHeight;
+  }
+  function openRoom() {
+    const rows = scene.room.slice().sort((a, b) => a[3] - b[3]).map(([from, to, text, t]) =>
+      `<li class="row">${mini(from)}<span class="from">${AG[from].name} to ${AG[to].name}<span>${fmt(t)}</span></span><p class="text">${esc(text.replaceAll('{n}', userName))}</p></li>`).join('');
+    openSheet({ agent: 'R', title: 'Between your agents', sub: 'What they ask each other while they work', list: rows || '<li class="list-empty">When you have more than one agent, what they ask each other shows up here.</li>' });
+  }
+  $('sheet-composer').addEventListener('submit', e => {
+    e.preventDefault();
+    const text = $('sheet-text').value.trim(), box = $('sheet-msgs');
+    if (!text || !sheet.dataset.agent) return;
+    box.insertAdjacentHTML('beforeend', `<div class="msg owner">${esc(text)}</div>`);
+    $('sheet-text').value = '';
+    box.scrollTop = box.scrollHeight;
+    setTimeout(() => { box.insertAdjacentHTML('beforeend', `<div class="msg agent">On it. I’ll bring it to Home when I have something.</div>`); box.scrollTop = box.scrollHeight; }, 900);
+  });
+
+  // --- Sign-up
+  const ob = $('onboard');
+  function obStep(n) {
+    ob.querySelectorAll('.ob-step').forEach(s => { s.hidden = s.dataset.ob !== String(n); });
+    if (n === 3) $('ob-tile-3').innerHTML = `<g class="drop">${tile('R', 'resting')}</g>`;
+    const f = n === 1 ? $('ob-name') : n === 2 ? $('ob-day') : $('ob-done');
+    setTimeout(() => f.focus({ preventScroll: true }), 60);
+  }
+  $('ob-tile-1').innerHTML = tile('R', 'resting');
+  $('ob-tile-2').innerHTML = tile('R', 'resting');
+  $('ob-name').addEventListener('input', () => { $('ob-next-1').disabled = !$('ob-name').value.trim(); });
+  $('ob-name').addEventListener('keydown', e => { if (e.key === 'Enter' && $('ob-name').value.trim()) $('ob-next-1').click(); });
+  $('ob-next-1').addEventListener('click', () => { userName = $('ob-name').value.trim(); $('ob-who').textContent = userName; obStep(2); });
+  $('ob-chips').addEventListener('click', e => {
+    const c = e.target.closest('.chip'); if (!c) return;
+    const on = c.getAttribute('aria-pressed') !== 'true';
+    c.setAttribute('aria-pressed', String(on));
+    const t = $('ob-day');
+    if (on && !t.value.includes(c.textContent)) t.value = (t.value.trim() ? t.value.trim().replace(/\.?$/, '. ') : '') + c.textContent + '.';
+  });
+  $('ob-skip').addEventListener('click', () => obStep(3));
+  $('ob-next-2').addEventListener('click', () => obStep(3));
+  $('ob-done').addEventListener('click', () => { ob.hidden = true; select('first'); });
+
+  // --- Scenes
+  function load(name) {
+    scene = SCENES[name];
+    items = scene.items();
+    byId = Object.fromEntries(items.map(i => [i.id, i]));
+    qi = 0; peek = null; pulse = null;
+    routines = (scene.routines || ROUTINES.filter(r => r.agent === 'R' || scene.agents.includes(r.agent))).map(r => ({ ...r }));
+    $('hello').textContent = scene.hello(userName);
+    closeSheet(); closeDrawer();
+    setNow(scene.now);
+    renderTeam(); renderRelay(); renderStrip(); renderDock();
+  }
+  function select(name) {
+    if (name !== 'onboarding' && !SCENES[name]) name = 'evening';
+    document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.scene === name)));
+    try { history.replaceState(null, '', '#' + name); } catch (_) {}
+    if (name === 'onboarding') {
+      load('first');
+      $('ob-name').value = ''; $('ob-day').value = ''; $('ob-next-1').disabled = true;
+      ob.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
+      ob.hidden = false; obStep(1);
+      return;
+    }
+    ob.hidden = true;
+    load(name);
+  }
+  document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => select(b.dataset.scene)));
+  select((location.hash || '#evening').slice(1));
+})();
+</script>

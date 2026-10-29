@@ -90,4 +90,13 @@ interface AgentRepository {
     suspend fun edit(agentId: String, edit: EditProfile): AgentProfile
 
     suspend fun setAbility(agentId: String, abilityId: String, lit: Boolean): AbilitySwitch
+
+    /** What the agents do on a schedule, as Renoa last told it. */
+    val routines: StateFlow<List<Routine>>
+
+    /**
+     * Turns a routine on or off. [operationId] is chosen once for the change, so sending it again
+     * changes the routine once. A routine changed elsewhere since it was read is a [Problem.Conflict].
+     */
+    suspend fun setRoutine(routineId: String, on: Boolean, operationId: String)
 }

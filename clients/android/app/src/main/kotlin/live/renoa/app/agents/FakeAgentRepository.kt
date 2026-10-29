@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import java.time.ZonedDateTime
 import java.util.UUID
 
 /** What an agent says back, or that it could not. */
@@ -61,6 +62,8 @@ class FakeAgentRepository(
     private val script: ReplyScript = ReplyScript.Demo,
     private val newId: () -> String = { UUID.randomUUID().toString() },
     briefing: Briefing? = FakeWorld.briefing(),
+    routineSeeds: List<RoutineSeed> = FakeWorld.routines(),
+    private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) : AgentRepository {
     private class Room(val conversation: MutableStateFlow<Conversation>, val doing: String) {
         val queue = ArrayDeque<String>()
@@ -78,6 +81,36 @@ class FakeAgentRepository(
     private val receipts = mutableMapOf<String, Pair<CreateAgent, String>>()
 
     override val agents: StateFlow<List<AgentSummary>> = roster.asStateFlow()
+
+    private val scheduled = routineSeeds.associateBy { it.id }
+    private val routineOn = routineSeeds.associate { it.id to it.on }.toMutableMap()
+    private val routineList = MutableStateFlow(routinesLocked())
+
+    override val routines: StateFlow<List<Routine>> = routineList.asStateFlow()
+
+    /** Setting a routine to what it is already is no change, so a retried change changes it once. */
+    override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) {
+        synchronized(lock) {
+            if (routineId !in scheduled) throw RepositoryException(Problem.NotFound, "There is no such routine.")
+            routineOn[routineId] = on
+            routineList.value = routinesLocked()
+        }
+    }
+
+    /** Each routine ran at its time today if that has passed, else yesterday, and runs next at the following one. */
+    private fun routinesLocked(): List<Routine> {
+        val at = now()
+        return scheduled.values.map { seed ->
+            val today = at.with(seed.at)
+            val ran = if (today.isAfter(at)) today.minusDays(1) else today
+            val on = routineOn.getValue(seed.id)
+            Routine(
+                seed.id, FakeWorld.idFor(seed.agentName), seed.name, seed.schedule, on,
+                next = if (on) ran.plusDays(1).toInstant() else null,
+                lastRun = if (on) LastRun(ran.toInstant(), RunOutcome.Done) else null,
+            )
+        }
+    }
 
     override val briefing: StateFlow<Briefing?> = MutableStateFlow(briefing).asStateFlow()
 

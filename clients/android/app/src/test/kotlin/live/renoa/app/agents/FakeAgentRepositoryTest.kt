@@ -6,6 +6,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -410,6 +412,29 @@ class FakeAgentRepositoryTest {
     fun theSeededAgentShowsWhatItAddedItself() = runTest {
         val health = repository().profile("tifa").abilities.first { it.id == "health" }
         assertTrue(health.lit && health.addedByAgent)
+    }
+
+    // --- routines ---
+
+    @Test
+    fun aRoutineRanAtItsLastTimeRunsAtItsNextAndOffRunsAtNone() = runTest {
+        val evening = ZonedDateTime.of(2026, 10, 29, 19, 40, 0, 0, ZoneId.of("Asia/Kolkata"))
+        val repo = FakeAgentRepository(backgroundScope, FakeWorld.demo(), now = { evening })
+        val github = repo.routines.value.first { it.id == "github" }
+        assertEquals("optimus", github.agentId)
+        assertEquals(evening.withHour(18).withMinute(30).toInstant(), github.lastRun?.at, "6:30 PM has passed, so it ran today")
+        assertEquals(evening.withHour(18).withMinute(30).plusDays(1).toInstant(), github.next)
+        val checkin = repo.routines.value.first { it.id == "checkin" }
+        assertEquals(evening.withHour(21).withMinute(0).toInstant(), checkin.next, "9 PM is still to come today")
+
+        repo.setRoutine("github", on = false, "op-1")
+        repo.setRoutine("github", on = false, "op-1")
+        val off = repo.routines.value.first { it.id == "github" }
+        assertEquals(false, off.on)
+        assertNull(off.next)
+        repo.setRoutine("github", on = true, "op-2")
+        assertEquals(github, repo.routines.value.first { it.id == "github" }, "back on, it runs as before")
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.setRoutine("nope", on = true, "op-3") }.problem)
     }
 }
 

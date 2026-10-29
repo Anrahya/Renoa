@@ -3,6 +3,7 @@ package live.renoa.app.agents
 import live.renoa.app.agents.AbilityKind.Everyday
 import live.renoa.app.agents.AbilityKind.Machine
 import live.renoa.app.agents.AbilityKind.Soon
+import java.time.LocalTime
 
 /** What a fake agent starts with. [doing] is what it says it is doing while it works on a reply. */
 class AgentSeed(
@@ -11,6 +12,9 @@ class AgentSeed(
     val messages: List<ChatMessage> = emptyList(),
     val doing: String = "Thinking about what you said",
 )
+
+/** A scripted routine: what it is, and the time of day it runs, from which the fake works out its runs. */
+class RoutineSeed(val id: String, val agentName: String, val name: String, val schedule: String, val at: LocalTime, val on: Boolean = true)
 
 /** The scripted roster the app shows until the real repository exists. */
 object FakeWorld {
@@ -60,6 +64,17 @@ object FakeWorld {
 
     fun briefing(): Briefing =
         Briefing(LEAD, "Evening, Yash. Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.")
+
+    /** What the demo agents do every day. */
+    fun routines(): List<RoutineSeed> =
+        listOf(
+            RoutineSeed("brief", "Renoa", "Morning brief", "Every day at 7:30 AM", LocalTime.of(7, 30)),
+            RoutineSeed("lunch", "Tifa", "Lunch photo", "Every day at 1 PM", LocalTime.of(13, 0), on = false),
+            RoutineSeed("github", "Optimus", "GitHub check", "Every day at 6:30 PM", LocalTime.of(18, 30)),
+            RoutineSeed("prices", "Nagisa", "Prices and groceries", "Every day at 7:15 PM", LocalTime.of(19, 15)),
+            RoutineSeed("posts", "Kai'Sa", "Posts worth a reply", "Every day at 8 PM", LocalTime.of(20, 0)),
+            RoutineSeed("checkin", "Renoa", "Evening check-in", "Every day at 9 PM", LocalTime.of(21, 0)),
+        )
 
     /** The owner's own day: food, posting, new projects, groceries and deals. No meetings, no flights. */
     fun demo(): List<AgentSeed> =

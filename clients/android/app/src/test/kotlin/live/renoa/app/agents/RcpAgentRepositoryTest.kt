@@ -5,10 +5,14 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -29,6 +33,8 @@ import live.renoa.rcp.StopOutcome
 import live.renoa.rcp.TargetSummary
 import live.renoa.rcp.TaskEvent
 import live.renoa.rcp.TaskSummary
+import java.time.Instant
+import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -82,6 +88,16 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     /** When set, the Host gives this answer to the next call. */
     var hostAnswer: HostAnswer? = null
+
+    /**
+     * The automations the Host's observation lists, kept apart from [hostCalls]: the app reads them on
+     * every roster check. Null answers the observation 404, as before the Host had any.
+     */
+    var automations: MutableList<JsonObject>? = null
+    var observations = 0
+
+    /** When set, the next observation ends with it instead of reaching the Host. */
+    var observationFailure: Exception? = null
 
     /** When set, the next attach drops the connection after applying this many events. */
     var dropAttachAfter: Int? = null
@@ -198,6 +214,15 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer {
         check(online) { "RCP client is not connected" }
+        if (method == HostMethod.Get && path == "/v1/host") {
+            observations++
+            observationFailure?.let {
+                observationFailure = null
+                throw it
+            }
+            val listed = automations ?: return HostAnswer(404, "{\"error\":\"not found\"}")
+            return HostAnswer(200, buildJsonObject { put("automations", JsonArray(listed)) }.toString())
+        }
         hostCalls += Triple(method, path, body)
         hostFailure?.let {
             hostFailure = null
@@ -207,6 +232,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             hostAnswer = null
             return it
         }
+        if (method == HostMethod.Post && path.startsWith("/v1/host/automations/") && path.endsWith("/enabled")) return enable(path, checkNotNull(body))
         if (method == HostMethod.Post && path == "/v1/host/agents") {
             val request = Json.parseToJsonElement(checkNotNull(body)).jsonObject
             val operation = request.getValue("operation_id").jsonPrimitive.content
@@ -237,6 +263,29 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         return if (method == HostMethod.Get && record != null) HostAnswer(200, record.toString()) else HostAnswer(404, "{\"error\":\"not found\"}")
     }
 
+    /** Pauses or resumes an automation from the revision the request expects, as the Host does. */
+    private fun enable(path: String, body: String): HostAnswer {
+        val id = path.removePrefix("/v1/host/automations/").removeSuffix("/enabled")
+        val listed = automations.orEmpty().toMutableList()
+        val at = listed.indexOfFirst { it.getValue("id").jsonPrimitive.content == id }
+        if (at < 0) return HostAnswer(404, "{\"error\":\"not_found\"}")
+        val request = Json.parseToJsonElement(body).jsonObject
+        val revision = listed[at].getValue("revision").jsonPrimitive.long
+        if (request.getValue("expected_revision").jsonPrimitive.long != revision) return HostAnswer(409, "{\"error\":\"revision_conflict\"}")
+        val enabled = request.getValue("enabled").jsonPrimitive.boolean
+        val changed = JsonObject(listed[at] + mapOf("enabled" to JsonPrimitive(enabled), "revision" to JsonPrimitive(revision + 1)))
+        automations?.set(at, changed)
+        val receipt =
+            buildJsonObject {
+                put("operation_id", request.getValue("operation_id"))
+                put("id", id)
+                put("revision", revision + 1)
+                put("enabled", enabled)
+                put("next_due_ms", changed.getValue("next_due_ms"))
+            }
+        return HostAnswer(200, receipt.toString())
+    }
+
     override suspend fun retryPendingCommands(): List<Uuid> =
         state.pendingCommands().map { command ->
             deliver(command)
@@ -254,7 +303,7 @@ class RcpAgentRepositoryTest {
     private val chat get() = surface.journal("nagisa")
 
     private fun TestScope.started() =
-        RcpAgentRepository(surface, state, backgroundScope, retryAfter = { 5.seconds }, rosterEvery = 1.minutes).also {
+        RcpAgentRepository(surface, state, backgroundScope, retryAfter = { 5.seconds }, rosterEvery = 1.minutes, here = { KOLKATA }).also {
             it.start()
             runCurrent()
         }
@@ -604,4 +653,84 @@ class RcpAgentRepositoryTest {
         assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.create(CreateAgent(kcal, "Kcal", "", emptySet())) }.problem)
         assertTrue(surface.hostAgents.isEmpty())
     }
+
+    private fun automation(id: String, agent: Uuid, expression: String, enabled: Boolean = true, revision: Long = 1, lastRun: JsonObject? = null) =
+        buildJsonObject {
+            put("id", id)
+            put("agent_id", agent.toString())
+            put("name", "Dinner plan")
+            put("schedule", buildJsonObject { put("kind", "cron"); put("expression", expression); put("timezone", "Asia/Kolkata") })
+            put("enabled", enabled)
+            put("revision", revision)
+            put("next_due_ms", NEXT)
+            put("pending_runs", 0)
+            lastRun?.let { put("last_run", it) }
+        }
+
+    @Test
+    fun routinesAreReadFromTheHostWithTheirAgentAndInPlainWords() = runTest {
+        val tifa = Uuid.random()
+        surface.targets += TargetSummary(surface.node, "agent:$tifa", "Tifa")
+        val ran = buildJsonObject { put("id", Uuid.random().toString()); put("status", "failed"); put("due_ms", NEXT - 86_400_000); put("finished_at_ms", NEXT - 86_000_000) }
+        surface.automations = mutableListOf(automation("dinner", tifa, "30 19 * * *", lastRun = ran), automation("brief", Uuid.random(), "0 7 * * 1-5", enabled = false))
+        val repo = started()
+
+        val (dinner, brief) = repo.routines.value
+        assertEquals(Routine("dinner", "${surface.node}/agent:$tifa", "Dinner plan", "Every day at 7:30 PM", true, Instant.ofEpochMilli(NEXT), LastRun(Instant.ofEpochMilli(NEXT - 86_000_000), RunOutcome.Failed)), dinner)
+        assertNull(brief.agentId, "an agent that is not on the roster is not guessed")
+        assertFalse(brief.on)
+        assertNull(brief.next, "a routine that is off runs at no time")
+        assertNull(brief.lastRun)
+    }
+
+    @Test
+    fun routinesAreReadAgainOnEveryRosterCheckAndKeptWhileTheHostCannotBeRead() = runTest {
+        val repo = started()
+        assertTrue(repo.routines.value.isEmpty(), "a Host that lists none shows none, and the chats still open")
+        assertEquals(1, repo.agents.value.size)
+
+        surface.automations = mutableListOf(automation("a", Uuid.random(), "0 9 * * *"))
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("a"), repo.routines.value.map { it.id })
+
+        surface.automations?.add(automation("b", Uuid.random(), "0 10 * * *"))
+        surface.observationFailure = RcpException(RcpErrorCode.NodeOffline, "Host offline", 1)
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("a"), repo.routines.value.map { it.id }, "kept while the Host cannot be read")
+        assertEquals(1, surface.connects, "a Host that cannot be read does not end the connection")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("a", "b"), repo.routines.value.map { it.id })
+    }
+
+    @Test
+    fun aRoutineIsSwitchedFromTheRevisionReadAndAChangeElsewhereIsAConflict() = runTest {
+        surface.automations = mutableListOf(automation("a", Uuid.random(), "0 9 * * *", revision = 4))
+        val repo = started()
+        val operation = Uuid.random().toString()
+
+        repo.setRoutine("a", on = false, operation)
+        val (method, path, body) = surface.hostCalls.single()
+        assertEquals(HostMethod.Post to "/v1/host/automations/a/enabled", method to path)
+        val sent = Json.parseToJsonElement(checkNotNull(body)).jsonObject
+        assertEquals(listOf(operation, "4", "false"), listOf("operation_id", "expected_revision", "enabled").map { sent.getValue(it).jsonPrimitive.content })
+        assertFalse(repo.routines.value.single().on)
+        assertNull(repo.routines.value.single().next)
+
+        repo.setRoutine("a", on = false, operation)
+        assertEquals(1, surface.hostCalls.size, "a routine already off is not asked again")
+
+        surface.automations?.set(0, automation("a", Uuid.random(), "0 9 * * *", enabled = true, revision = 9))
+        val conflict = assertFailsWith<RepositoryException> { repo.setRoutine("a", on = true, Uuid.random().toString()) }
+        assertEquals(Problem.Conflict, conflict.problem)
+        assertTrue(repo.routines.value.single().on, "the conflict read the routine again")
+
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.setRoutine("gone", on = true, Uuid.random().toString()) }.problem)
+    }
 }
+
+private const val NEXT = 1_793_293_200_000L
+private val KOLKATA = ZoneId.of("Asia/Kolkata")
