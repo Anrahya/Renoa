@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Only this page's own two scripts run, and only fonts written into the page load. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-{{nonce}}'; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'">
+<!-- The page's own theme alone, so a browser that darkens pages by force leaves it be. -->
+<meta name="color-scheme" content="{{scheme}}">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<style>
+@font-face { font-family: "Instrument Sans"; src: url(data:font/ttf;base64,{{font}}) format("truetype"); font-weight: 400 700; }
+:root { {{theme}} }
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+/* A diagram wider than the reply scrolls sideways in its own box rather than shrinking. */
+#diagram { overflow-x: auto; overflow-y: hidden; }
+#diagram svg { display: block; max-width: none !important; }
+</style>
+</head>
+<body>
+<div id="diagram"></div>
+<!-- The diagram's source, escaped as text: it is read as data, never run. -->
+<div id="source" hidden>{{source}}</div>
+<script nonce="{{nonce}}">{{pele}}</script>
+<script nonce="{{nonce}}">
+// The app reads the page's title: "h:" and the drawing's height in CSS pixels, or "x" when it cannot be drawn.
+(function () {
+  var box = document.getElementById("diagram");
+  var drawn = false;
+  function say(title) { if (document.title !== title) document.title = title; }
+  function measure() { if (drawn) say("h:" + Math.ceil(box.getBoundingClientRect().height)); }
+  try {
+    pele.mount(box, document.getElementById("source").textContent, {
+      links: false,
+      images: false,
+      zoom: false,
+      onRender: function () { drawn = true; measure(); },
+      onError: function () { if (!drawn) say("x"); }
+    });
+    new ResizeObserver(measure).observe(box);
+  } catch (e) {
+    if (!drawn) say("x");
+  }
+})();
+</script>
+</body>
+</html>

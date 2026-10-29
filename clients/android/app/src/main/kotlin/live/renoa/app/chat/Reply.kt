@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -39,17 +40,26 @@ import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
 
 /**
- * A finished reply, [text] as [parsed], rendered as markdown in Renoa's type and colours. A reply
- * the parser could not read shows as its plain text.
+ * A finished reply, [text] as [parsed], rendered as markdown in Renoa's type and colours, with its
+ * Mermaid fences drawn as the diagrams [diagrams] keeps. A reply the parser could not read shows as
+ * its plain text.
  */
 @Composable
-fun Reply(text: String, parsed: State, modifier: Modifier = Modifier) {
+fun Reply(text: String, parsed: State, modifier: Modifier = Modifier, diagrams: ReplyDiagrams = remember { ReplyDiagrams() }) =
+    ParsedReply(text, parsed, modifier, diagrams, arriving = false)
+
+/** A reply parsed whole; one [arriving] draws a diagram only once its fence has closed. */
+@Composable
+private fun ParsedReply(text: String, parsed: State, modifier: Modifier, diagrams: ReplyDiagrams, arriving: Boolean) {
     if (parsed !is State.Success) {
         Text(text, modifier, style = RenoaType.Body, color = Renoa.colors.foregroundSoft)
         return
     }
-    ReplyStyle(parsed.referenceLinkHandler) { look ->
-        Markdown(state = parsed, colors = look.colors, typography = look.typography, padding = look.padding, dimens = look.dimens, annotator = look.annotator, modifier = modifier)
+    ReplyStyle(parsed.referenceLinkHandler, diagrams, arriving) { look ->
+        Markdown(
+            state = parsed, colors = look.colors, typography = look.typography, padding = look.padding, dimens = look.dimens, annotator = look.annotator,
+            components = look.components, modifier = modifier,
+        )
     }
 }
 
@@ -57,10 +67,11 @@ fun Reply(text: String, parsed: State, modifier: Modifier = Modifier) {
  * A reply still arriving. Each new piece of [text] is parsed on its own, against what came before,
  * so the reply is not parsed whole for every word. Text that does not carry on from what was parsed,
  * as when the agent starts its reply again, starts a new parse; until that parse has something to
- * show, the whole text is parsed at once instead, so the reply never blanks.
+ * show, the whole text is parsed at once instead, so the reply never blanks. A diagram shows once
+ * its fence has closed, kept by [diagrams] as the reply becomes its message.
  */
 @Composable
-fun ArrivingReply(text: String, modifier: Modifier = Modifier) {
+fun ArrivingReply(text: String, modifier: Modifier = Modifier, diagrams: ReplyDiagrams = remember { ReplyDiagrams() }) {
     // Text that does not carry on from what was parsed starts a new parse.
     var restarts by remember { mutableIntStateOf(0) }
     key(restarts) {
@@ -71,11 +82,12 @@ fun ArrivingReply(text: String, modifier: Modifier = Modifier) {
         }
         val snapshot by stream.snapshot.collectAsState()
         if (snapshot.stableAst.isEmpty() && snapshot.unstableAstTail.isEmpty()) {
-            Reply(text, remember(text) { parseMarkdown(text) }, modifier)
+            ParsedReply(text, remember(text) { parseMarkdown(text) }, modifier, diagrams, arriving = true)
         } else {
-            ReplyStyle(stream.referenceLinkHandler) { look ->
+            ReplyStyle(stream.referenceLinkHandler, diagrams, arriving = true) { look ->
                 Markdown(
-                    streamingMarkdownState = stream, colors = look.colors, typography = look.typography, padding = look.padding, dimens = look.dimens, annotator = look.annotator, modifier = modifier,
+                    streamingMarkdownState = stream, colors = look.colors, typography = look.typography, padding = look.padding, dimens = look.dimens, annotator = look.annotator,
+                    components = look.components, modifier = modifier,
                 )
             }
         }
@@ -98,11 +110,21 @@ internal class ParsedReplies(private val capacity: Int = 200) {
 }
 
 /** Everything the markdown renderer takes to draw a reply Renoa's way. */
-private class Look(val colors: MarkdownColors, val typography: MarkdownTypography, val padding: MarkdownPadding, val dimens: MarkdownDimens, val annotator: MarkdownAnnotator)
+private class Look(
+    val colors: MarkdownColors,
+    val typography: MarkdownTypography,
+    val padding: MarkdownPadding,
+    val dimens: MarkdownDimens,
+    val annotator: MarkdownAnnotator,
+    val components: MarkdownComponents,
+)
 
-/** Renoa's colours, type, spacing and link handling for a reply whose references [links] resolves. */
+/**
+ * Renoa's colours, type, spacing and link handling for a reply whose references [links] resolves,
+ * with its diagrams kept by [diagrams] and drawn as for a reply [arriving] or a finished one.
+ */
 @Composable
-private fun ReplyStyle(links: ReferenceLinkHandler, content: @Composable (Look) -> Unit) {
+private fun ReplyStyle(links: ReferenceLinkHandler, diagrams: ReplyDiagrams, arriving: Boolean, content: @Composable (Look) -> Unit) {
     val colors = Renoa.colors
     val body = RenoaType.Body.copy(color = colors.foregroundSoft)
     val heading = RenoaType.Heading.copy(color = colors.foreground)
@@ -139,5 +161,6 @@ private fun ReplyStyle(links: ReferenceLinkHandler, content: @Composable (Look) 
     val web = remember(platform) { WebLinks(platform) }
     val padding = markdownPadding(block = 3.dp, list = 2.dp, listItemTop = 2.dp, listItemBottom = 2.dp, listIndent = 12.dp, codeBlock = PaddingValues(horizontal = 12.dp, vertical = 10.dp))
     val dimens = markdownDimens(codeBackgroundCornerSize = RenoaShapes.Control)
-    CompositionLocalProvider(LocalUriHandler provides web) { content(Look(markdownColors, typography, padding, dimens, annotator)) }
+    val components = remember(diagrams, arriving) { replyComponents(diagrams, arriving) }
+    CompositionLocalProvider(LocalUriHandler provides web) { content(Look(markdownColors, typography, padding, dimens, annotator, components)) }
 }
