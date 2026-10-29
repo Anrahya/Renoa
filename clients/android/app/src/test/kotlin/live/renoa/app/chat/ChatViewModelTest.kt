@@ -132,6 +132,21 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun aRefusedFirstMessageLeavesTheChatOnItsStartWithTheWordsBack() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, seeds = emptyList())
+        val repo = Flaky(inner).apply { refuseSend = true }
+        val tifa = inner.create(CreateAgent("op", "Tifa", "Food", emptySet())).id
+        val vm = ChatViewModel(repo, tifa).also { vm -> backgroundScope.launch { vm.state.collect {} } }
+        runCurrent()
+        vm.onDraft("hello")
+        vm.send()
+        runCurrent()
+        assertEquals("hello", vm.state.value.draft)
+        assertFalse(vm.state.value.sending)
+        assertTrue(vm.state.value.empty)
+    }
+
+    @Test
     fun sendingNothingDoesNothing() = runTest {
         val (vm, _) = model()
         runCurrent()

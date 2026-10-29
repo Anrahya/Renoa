@@ -73,7 +73,7 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
     private val draft = MutableStateFlow("")
     private val notice = MutableStateFlow<String?>(null)
 
-    /** Sends not yet in the chat, or refused. */
+    /** Sends the repository has not finished with yet. */
     private val inFlight = MutableStateFlow(0)
 
     val state: StateFlow<ChatUiState> =
