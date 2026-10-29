@@ -56,6 +56,10 @@ import live.renoa.app.badge.Badge
 import live.renoa.app.badge.PORTRAIT_GROUND
 import androidx.compose.ui.graphics.toArgb
 import live.renoa.app.chat.ChatScreen
+import android.content.Context
+import android.net.wifi.WifiManager
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import live.renoa.app.chat.ChatViewModel
 import live.renoa.app.editor.AgentEditorScreen
 import live.renoa.app.editor.AgentEditorViewModel
@@ -347,6 +351,19 @@ class ScreensTest : ScreenTest() {
 
     private fun agentSays(talk: MutableStateFlow<Conversation>, id: String, text: String) =
         compose.runOnUiThread { talk.update { it.copy(messages = it.messages + ChatMessage(id, Speaker.Agent, text)) } }
+
+    @Test
+    fun anOpenChatKeepsWifiQuickAndLetsGoWhenItCloses() {
+        val wifi = shadowOf(RuntimeEnvironment.getApplication().getSystemService(Context.WIFI_SERVICE) as WifiManager)
+        val model = ChatViewModel(repository, "renoa")
+        var open by mutableStateOf(true)
+        show { if (open) ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        assertEquals(1, wifi.activeLockCount)
+        open = false
+        compose.waitForIdle()
+        assertEquals(0, wifi.activeLockCount)
+    }
 
     @Test
     fun messagesAlreadyThereWhenAChatOpensShowWholeAtOnce() {

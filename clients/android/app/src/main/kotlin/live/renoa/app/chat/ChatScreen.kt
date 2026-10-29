@@ -85,6 +85,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     val risen = remember { mutableSetOf<String>() }
     // Whatever arrives while the chat is open has been read.
     LaunchedEffect(state.messages.size) { viewModel.seen() }
+    QuickWifi()
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
