@@ -1,6 +1,7 @@
 package live.renoa.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.AgentState
+import live.renoa.app.agents.AgentSummary
+import live.renoa.app.badge.AgentHue
+import live.renoa.app.badge.BadgeFrame.Companion.LIFT
+import live.renoa.app.badge.BadgeFrame.Companion.RADIUS
+import live.renoa.app.badge.HALF
+import live.renoa.app.badge.readSvg
+import androidx.compose.ui.geometry.Offset
+import java.io.File
+import kotlin.math.roundToInt
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.badge.Badge
 import live.renoa.app.chat.ChatScreen
@@ -69,16 +79,48 @@ class ScreensTest : ScreenTest() {
         show(theme, seconds = 3.97f) {
             Column(Modifier.background(Renoa.colors.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AgentState.entries.forEach { Badge("Tifa", it, 66.dp, label = "Tifa ${it.name}") }
+                    AgentState.entries.forEach { Badge("Tifa", it, 66.dp, primary = false, hue = AgentHue.Ink, label = "Tifa ${it.name}") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AgentState.entries.forEach { Badge("Renoa", it, 66.dp, primary = true, label = "Renoa ${it.name}") }
+                    AgentState.entries.forEach { Badge("Renoa", it, 66.dp, primary = true, hue = AgentHue.Ink, label = "Renoa ${it.name}") }
                 }
             }
         }
         compose.onNodeWithContentDescription("Tifa Working, working").assertIsDisplayed()
         compose.onNodeWithContentDescription("Tifa Wants, wants you").assertIsDisplayed()
         snapshot("badges-${theme.name.lowercase()}")
+    }
+
+    @Test
+    fun theMainAgentWearsRenoasPortraitInGraphite() = portraitIn(ThemeName.Graphite)
+
+    @Test
+    fun theMainAgentWearsRenoasPortraitInPaper() = portraitIn(ThemeName.Paper)
+
+    /** Her eyes land where her portrait rect puts them on the main agent's tile, and another agent keeps its letter. */
+    private fun portraitIn(theme: ThemeName) {
+        val roster = listOf(AgentSummary("renoa", "Renoa", "", AgentState.Resting, primary = true), AgentSummary("tifa", "Tifa", "", AgentState.Resting))
+        show(theme) {
+            Column(Modifier.background(Renoa.colors.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(40.dp)) {
+                roster.forEach { Badge(it, roster, 140.dp) }
+            }
+        }
+        val picture = picture()
+        val dp = picture.density / 160f
+        // Where the tile's centre is drawn, and how many pixels one unit of the drawing spans.
+        val perTileUnit = 140 * dp / (HALF * 2)
+        val centre = Offset(20 * dp + 70 * dp, 20 * dp + 70 * dp + LIFT * 0.3f * perTileUnit)
+        val crop = readSvg(File("src/main/res/raw/renoa_mascot.svg").readText()).portrait
+        val perUnit = perTileUnit * RADIUS * 2 / crop.width
+        fun at(x: Float, y: Float) = picture.getPixel((centre.x + (x - crop.center.x) * perUnit).roundToInt(), (centre.y + (y - crop.center.y) * perUnit).roundToInt())
+        val iris = 0xFF9A3B2C.toInt()
+        assertEquals(iris, at(82f, 111f), "her left eye")
+        assertEquals(iris, at(118f, 111f), "her right eye")
+
+        val skin = 0xFFF6D9C4.toInt()
+        val below = ((20 + 140 + 20) * dp).roundToInt()
+        assertTrue((0 until picture.width step 2).none { x -> (below until picture.height step 2).any { y -> picture.getPixel(x, y) == skin } }, "another agent keeps its letter")
+        snapshot("badge-portrait-${theme.name.lowercase()}")
     }
 
     @Test

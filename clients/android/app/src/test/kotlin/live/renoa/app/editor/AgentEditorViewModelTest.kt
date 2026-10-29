@@ -15,6 +15,7 @@ import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.agents.FakeWorld
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
+import live.renoa.app.badge.AgentHue
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -174,6 +175,19 @@ class AgentEditorViewModelTest {
         assertTrue(vm.state.value.canSave)
         vm.setName("")
         assertTrue(!vm.state.value.canSave)
+    }
+
+    @Test
+    fun theAgentBeingEditedWearsWhatItWearsOnEveryOtherScreen() = runTest {
+        val repo = repo()
+        val tifa = editing(repo)
+        val renoa = editing(repo, FakeWorld.LEAD)
+        runCurrent()
+        assertEquals(AgentHue.of("tifa", repo.agents.value), tifa.state.value.hue)
+        assertNotEquals(AgentHue.Ink, tifa.state.value.hue)
+        assertTrue(!tifa.state.value.main)
+        assertTrue(renoa.state.value.main, "the main agent wears Renoa's portrait here too")
+        assertEquals(AgentHue.Ink, renoa.state.value.hue)
     }
 
     @Test

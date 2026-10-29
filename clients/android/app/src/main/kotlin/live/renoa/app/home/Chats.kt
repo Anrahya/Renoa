@@ -33,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.badge.hexPath
 import live.renoa.app.theme.LocalMotionClock
@@ -50,22 +49,14 @@ private val RowLine = RenoaType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp)
 internal fun ChatsPage(state: HomeUiState, onOpenChat: (String) -> Unit, onAnswer: (String, String) -> Unit, onNewAgent: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         items(state.people, key = { it.id }) { agent ->
-            PersonRow(
-                agent,
-                AgentHue.of(agent.id, state.roster),
-                agent.id == state.main?.id,
-                state.agent(agent.glance.with),
-                onOpen = { onOpenChat(agent.id) },
-                onAnswer = { onAnswer(agent.id, it) },
-                partnerHue = { AgentHue.of(it.id, state.roster) },
-            )
+            PersonRow(agent, state.roster, state.agent(agent.glance.with), onOpen = { onOpenChat(agent.id) }, onAnswer = { onAnswer(agent.id, it) })
         }
         item(key = "new") { MeetSomeoneNew(onNewAgent) }
     }
 }
 
 @Composable
-private fun PersonRow(agent: AgentSummary, hue: AgentHue, main: Boolean, partner: AgentSummary?, onOpen: () -> Unit, onAnswer: (String) -> Unit, partnerHue: (AgentSummary) -> AgentHue) {
+private fun PersonRow(agent: AgentSummary, roster: List<AgentSummary>, partner: AgentSummary?, onOpen: () -> Unit, onAnswer: (String) -> Unit) {
     val colors = Renoa.colors
     val glance = agent.glance
     Row(
@@ -77,9 +68,9 @@ private fun PersonRow(agent: AgentSummary, hue: AgentHue, main: Boolean, partner
         verticalAlignment = Alignment.Top,
     ) {
         Box(Modifier.size(54.dp)) {
-            Badge(agent.name, agent.state, 54.dp, primary = main, hue = hue)
+            Badge(agent, roster, 54.dp)
             if (partner != null) {
-                Badge(partner.name, partner.state, 26.dp, Modifier.align(Alignment.BottomEnd).offset(6.dp, 6.dp), label = "", hue = partnerHue(partner))
+                Badge(partner, roster, 26.dp, Modifier.align(Alignment.BottomEnd).offset(6.dp, 6.dp), label = "")
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

@@ -36,7 +36,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import live.renoa.app.agents.AgentSummary
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.Renoa
@@ -85,7 +84,7 @@ internal fun Relay(
     ) {
         val shown = list.getOrNull(at)
         if (shown == null) {
-            Quiet(state.main, next, onOpenChat)
+            Quiet(state.main, state.roster, next, onOpenChat)
             return@Box
         }
         AnimatedContent(
@@ -106,7 +105,7 @@ internal fun Relay(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Badge(handover.agent.name, handover.agent.state, 28.dp, label = "", hue = AgentHue.of(handover.agent.id, state.roster))
+                    Badge(handover.agent, state.roster, 28.dp, label = "")
                     Spacer(Modifier.width(8.dp))
                     Text(handover.agent.name, style = RenoaType.Label, color = colors.foreground)
                     Spacer(Modifier.width(6.dp))
@@ -152,7 +151,7 @@ private fun Arrow(glyph: String, label: String, enabled: Boolean, onClick: () ->
 
 /** Nothing to hand over: the main agent says so, says what is next, and offers a talk. */
 @Composable
-private fun Quiet(main: AgentSummary?, next: String, onOpenChat: (String) -> Unit) {
+private fun Quiet(main: AgentSummary?, roster: List<AgentSummary>, next: String, onOpenChat: (String) -> Unit) {
     val colors = Renoa.colors
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (main == null) {
@@ -161,7 +160,7 @@ private fun Quiet(main: AgentSummary?, next: String, onOpenChat: (String) -> Uni
             return@Column
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Badge(main.name, main.state, 28.dp, label = "", primary = true)
+            Badge(main, roster, 28.dp, label = "")
             Text(main.name, style = RenoaType.Label, color = colors.foreground)
         }
         Text("Nothing needs you right now.", style = RenoaType.Heading, color = colors.foreground)

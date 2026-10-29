@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 320" width="400" height="640">
+  <title>Renoa, a placeholder mascot</title>
+  <desc>The app draws this file as written: path, circle and ellipse with fill, stroke, stroke-width and opacity, in order. The rect with id "portrait" marks the head and shoulders a tile shows; it is not drawn.</desc>
+  <rect id="portrait" x="40" y="40" width="120" height="120" fill="none"/>
+
+  <!-- Hair behind: one long fall to the waist -->
+  <path d="M100 26 C46 26 28 74 34 128 C38 168 52 206 72 234 L128 234 C148 206 162 168 166 128 C172 74 154 26 100 26 Z" fill="#221C21" stroke="#17191D" stroke-width="2"/>
+
+  <!-- Legs and boots -->
+  <path d="M80 248 L95 248 L93 290 L82 290 Z" fill="#F6D9C4" stroke="#17191D" stroke-width="2"/>
+  <path d="M105 248 L120 248 L118 290 L107 290 Z" fill="#F6D9C4" stroke="#17191D" stroke-width="2"/>
+  <path d="M80 284 L95 284 L96 304 C96 309 93 311 89 311 L75 311 C71 311 70 306 74 303 L80 298 Z" fill="#3B2B25" stroke="#17191D" stroke-width="2"/>
+  <path d="M120 284 L105 284 L104 304 C104 309 107 311 111 311 L125 311 C129 311 130 306 126 303 L120 298 Z" fill="#3B2B25" stroke="#17191D" stroke-width="2"/>
+
+  <!-- Arms and gloves -->
+  <path d="M71 166 C62 173 57 191 55 214 L66 214 C67 197 70 184 75 175 Z" fill="#F6D9C4" stroke="#17191D" stroke-width="2"/>
+  <path d="M129 166 C138 173 143 191 145 214 L134 214 C133 197 130 184 125 175 Z" fill="#F6D9C4" stroke="#17191D" stroke-width="2"/>
+  <path d="M54 206 L67 206 L68 225 C68 232 62 235 58 233 C54 231 52 227 53 222 Z" fill="#7A3226" stroke="#17191D" stroke-width="2"/>
+  <path d="M146 206 L133 206 L132 225 C132 232 138 235 142 233 C146 231 148 227 147 222 Z" fill="#7A3226" stroke="#17191D" stroke-width="2"/>
+
+  <!-- Neck and the waist between top and skirt -->
+  <path d="M90 138 L110 138 L112 172 L88 172 Z" fill="#F6D9C4" stroke="#17191D" stroke-width="2"/>
+  <path d="M91 146 Q100 154 109 146 L110 153 Q100 160 90 153 Z" fill="#E8B9A2"/>
+  <path d="M68 190 L132 190 L133 216 L67 216 Z" fill="#F6D9C4" stroke="#17191D" stroke-width="2"/>
+
+  <!-- Crop top -->
+  <path d="M67 196 L70 171 C71 164 76 160 82 159 L88 158 C92 168 108 168 112 158 L118 159 C124 160 129 164 130 171 L133 196 C118 201 82 201 67 196 Z" fill="#F5F6F3" stroke="#17191D" stroke-width="2"/>
+  <path d="M69 188 C86 192 114 192 131 188 L132 194 C116 198 84 198 68 194 Z" fill="#DCDDD7"/>
+
+  <!-- Mini skirt and suspenders -->
+  <path d="M66 211 L134 211 L147 251 C122 258 78 258 53 251 Z" fill="#1F2125" stroke="#17191D" stroke-width="2"/>
+  <path d="M84 222 L80 250 M100 222 L100 254 M116 222 L120 250" fill="none" stroke="#3A3D44" stroke-width="1.6"/>
+  <path d="M79 212 L84 212 L87 159 L82 159 Z" fill="#1F2125" stroke="#17191D" stroke-width="1.6"/>
+  <path d="M121 212 L116 212 L113 159 L118 159 Z" fill="#1F2125" stroke="#17191D" stroke-width="1.6"/>
+
+  <!-- Face -->
+  <path d="M58 80 C58 50 142 50 142 80 L142 100 C142 127 118 145 100 147 C82 145 58 127 58 100 Z" fill="#F6D9C4" stroke="#17191D" stroke-width="2"/>
+  <ellipse cx="71" cy="123" rx="7" ry="3.4" fill="#F09C8C" opacity="0.55"/>
+  <ellipse cx="129" cy="123" rx="7" ry="3.4" fill="#F09C8C" opacity="0.55"/>
+
+  <!-- Eyes: lash line, iris, highlights -->
+  <ellipse cx="82" cy="108" rx="8.5" ry="11" fill="#2A1614"/>
+  <ellipse cx="82" cy="111" rx="6.5" ry="7.5" fill="#9A3B2C"/>
+  <circle cx="79" cy="104" r="3" fill="#FFFFFF"/>
+  <circle cx="85" cy="114.5" r="1.4" fill="#FFFFFF"/>
+  <path d="M71 99 Q82 91 93 98" fill="none" stroke="#17191D" stroke-width="2.8"/>
+  <ellipse cx="118" cy="108" rx="8.5" ry="11" fill="#2A1614"/>
+  <ellipse cx="118" cy="111" rx="6.5" ry="7.5" fill="#9A3B2C"/>
+  <circle cx="115" cy="104" r="3" fill="#FFFFFF"/>
+  <circle cx="121" cy="114.5" r="1.4" fill="#FFFFFF"/>
+  <path d="M107 98 Q118 91 129 99" fill="none" stroke="#17191D" stroke-width="2.8"/>
+  <path d="M74 89 Q81 86 88 88" fill="none" stroke="#221C21" stroke-width="1.8"/>
+  <path d="M112 88 Q119 86 126 89" fill="none" stroke="#221C21" stroke-width="1.8"/>
+
+  <!-- Nose and a small smile -->
+  <path d="M99 121 Q100 122.5 101 121" fill="none" stroke="#C98C78" stroke-width="1.4"/>
+  <path d="M94 130 Q100 134.5 106 130" fill="none" stroke="#7A3226" stroke-width="1.8"/>
+
+  <!-- Hair in front: bangs and the locks that frame her face -->
+  <path d="M56 92 C49 120 49 152 57 178 C59 185 64 186 66 179 C61 152 61 124 64 98 Z" fill="#221C21" stroke="#17191D" stroke-width="2"/>
+  <path d="M144 92 C151 120 151 152 143 178 C141 185 136 186 134 179 C139 152 139 124 136 98 Z" fill="#221C21" stroke="#17191D" stroke-width="2"/>
+  <path d="M52 102 C47 60 72 31 100 31 C131 31 153 58 148 100 C145 90 141 82 135 76 C136 87 132 97 126 103 C125 92 120 81 112 73 C113 84 109 95 101 101 C100 89 95 78 87 70 C88 81 84 91 77 99 C76 89 72 81 66 76 C66 87 62 97 52 102 Z" fill="#221C21" stroke="#17191D" stroke-width="2"/>
+  <path d="M72 46 Q100 37 128 46" fill="none" stroke="#4A3D46" stroke-width="3" opacity="0.8"/>
+
+  <!-- The star hairpin: Renoa's own -->
+  <path d="M136 53 L138.5 60 L146 60.3 L140.1 65 L142.2 72.3 L136 68.1 L129.8 72.3 L131.9 65 L126 60.3 L133.5 60 Z" fill="#E3B23C" stroke="#17191D" stroke-width="1.8"/>
+</svg>

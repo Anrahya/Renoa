@@ -106,7 +106,7 @@ private fun Pill(text: String, enabled: Boolean, onClick: () -> Unit, wide: Bool
 private fun CreateHeader(state: EditorUiState, viewModel: AgentEditorViewModel) {
     val colors = Renoa.colors
     Column(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 164.dp, label = state.name.trim())
+        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 164.dp, state.main, state.hue, label = state.name.trim())
         Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
             NameField(state, viewModel, TextAlign.Center)
         }
@@ -119,7 +119,7 @@ private fun CreateHeader(state: EditorUiState, viewModel: AgentEditorViewModel) 
 @Composable
 private fun EditHeader(state: EditorUiState, viewModel: AgentEditorViewModel) {
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 104.dp, label = state.name.trim())
+        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 104.dp, state.main, state.hue, label = state.name.trim())
         Column(Modifier.weight(1f)) {
             NameField(state, viewModel, TextAlign.Start)
         }

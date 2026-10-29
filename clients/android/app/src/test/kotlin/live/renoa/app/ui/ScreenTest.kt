@@ -47,12 +47,16 @@ abstract class ScreenTest {
 
     /** Draws the whole window into a picture. The window is laid out at the size the test class asks for. */
     protected fun snapshot(name: String) {
-        compose.waitForIdle()
-        val root = compose.activity.window.decorView
-        val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
-        root.draw(Canvas(bitmap))
+        val bitmap = picture()
         val dir = File("build/screens").apply { mkdirs() }
         File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    /** The whole window as drawn now. */
+    protected fun picture(): Bitmap {
+        compose.waitForIdle()
+        val root = compose.activity.window.decorView
+        return Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
     }
 }
 
