@@ -49,8 +49,13 @@ data class ChatUiState(
     val hue: AgentHue = AgentHue.Ink,
     val main: Boolean = false,
     val link: Link = Link.Connected,
+    /** A send the owner started has not finished yet. */
+    val sending: Boolean = false,
 ) {
     val working: Boolean get() = agent?.state == AgentState.Working
+
+    /** Nothing has been said here and nothing is on its way, so the chat opens on its start. */
+    val empty: Boolean get() = loaded && messages.isEmpty() && streaming == null && !working && !sending
 
     /** A question waiting for the owner, if the agent asked one. */
     val ask: Ask? get() = agent?.glance?.ask
@@ -68,11 +73,14 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
     private val draft = MutableStateFlow("")
     private val notice = MutableStateFlow<String?>(null)
 
+    /** Sends the repository has not finished with yet. */
+    private val inFlight = MutableStateFlow(0)
+
     val state: StateFlow<ChatUiState> =
-        combine(repository.agents, conversation(), draft, notice, repository.link) { agents, conversation, draft, notice, link ->
+        combine(repository.agents, conversation(), draft, notice.combine(inFlight, ::Pair), repository.link) { agents, conversation, draft, (notice, inFlight), link ->
             ChatUiState(
                 agents.firstOrNull { it.id == agentId }, conversation.messages, conversation.streaming, draft, notice, loaded = true,
-                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId, link = link,
+                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId, link = link, sending = inFlight > 0,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(link = repository.link.value))
 
@@ -112,12 +120,15 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         if (text.isEmpty()) return
         draft.value = ""
         notice.value = null
+        inFlight.update { it + 1 }
         viewModelScope.launch {
             try {
                 repository.send(agentId, text)
             } catch (refused: RepositoryException) {
                 draft.update { if (it.isEmpty()) text else it }
                 notice.value = refused.wordsOr("That did not go through. Try again.")
+            } finally {
+                inFlight.update { it - 1 }
             }
         }
     }
