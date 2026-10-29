@@ -148,6 +148,9 @@ class FakeAgentRepository(
         synchronized(lock) { keepLocked(agentId, room, text.trim()) }
     }
 
+    /** Every message here is kept the moment it is sent, so none is ever left unsent. */
+    override suspend fun retry(agentId: String, messageId: String) = Unit
+
     override suspend fun answer(agentId: String, choice: String) {
         val room = room(agentId)
         synchronized(lock) {

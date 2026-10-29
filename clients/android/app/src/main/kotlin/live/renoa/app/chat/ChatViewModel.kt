@@ -133,6 +133,18 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         }
     }
 
+    /** Sends again a message that did not go ([ChatMessage.notSent]). */
+    fun retry(messageId: String) {
+        notice.value = null
+        viewModelScope.launch {
+            try {
+                repository.retry(agentId, messageId)
+            } catch (refused: RepositoryException) {
+                notice.value = refused.wordsOr("That did not go through. Try again.")
+            }
+        }
+    }
+
     fun stop() {
         viewModelScope.launch {
             try {

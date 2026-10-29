@@ -90,6 +90,9 @@ interface AgentRepository {
     /** Returns once the message is kept. The reply arrives later through [conversation]. */
     suspend fun send(agentId: String, text: String)
 
+    /** Sends again, under its own identity, a message the app stopped sending ([ChatMessage.notSent]). */
+    suspend fun retry(agentId: String, messageId: String)
+
     /** Answers the agent's question with one of its choices. The answer is kept as the owner's message. */
     suspend fun answer(agentId: String, choice: String)
 

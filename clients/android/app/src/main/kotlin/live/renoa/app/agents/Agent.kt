@@ -62,7 +62,8 @@ data class Briefing(val agentId: String, val text: String)
 
 enum class Speaker { Owner, Agent }
 
-data class ChatMessage(val id: String, val speaker: Speaker, val text: String)
+/** [notSent]: the app stopped sending the owner's message because Renoa could not take it; [AgentRepository.retry] sends it again. */
+data class ChatMessage(val id: String, val speaker: Speaker, val text: String, val notSent: Boolean = false)
 
 /**
  * A reply still arriving. It is never stored. It already has the id its whole [ChatMessage] will

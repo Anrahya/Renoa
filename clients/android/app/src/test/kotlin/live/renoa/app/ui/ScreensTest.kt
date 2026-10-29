@@ -30,6 +30,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.agents.ChatMessage
+import live.renoa.app.agents.Conversation
+import live.renoa.app.agents.Speaker
+import kotlinx.coroutines.flow.flowOf
 import live.renoa.app.agents.AgentProfile
 import live.renoa.app.agents.EditProfile
 import live.renoa.app.agents.Problem
@@ -330,6 +334,28 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertDoesNotExist()
         compose.onNodeWithText("Not sure yet").assertIsDisplayed()
+    }
+
+    @Test
+    fun aMessageThatDidNotSendSaysSoAndATapSendsItAgain() {
+        val retried = mutableListOf<String>()
+        val notSent =
+            object : AgentRepository by repository {
+                override fun conversation(agentId: String) =
+                    flowOf(Conversation(listOf(ChatMessage("m1", Speaker.Owner, "Book the table for eight.", notSent = true))))
+
+                override suspend fun retry(agentId: String, messageId: String) {
+                    retried += messageId
+                }
+            }
+        val model = ChatViewModel(notSent, "tifa")
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithText("Didn't send · Tap to retry").assertIsDisplayed()
+        snapshot("chat-not-sent")
+        compose.onNodeWithText("Book the table for eight.").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("m1"), retried)
     }
 
     @Test
