@@ -130,7 +130,7 @@ impl ModelChoice {
     }
 
     /// Opaque surface identity. Provider qualification prevents collisions
-    /// such as `grok-4.5`, which exists in both supported catalogs.
+    /// such as `grok-4.7`, which both the `xai` and `opencode-go` catalogs carry.
     #[must_use]
     pub fn selection_id(&self) -> String {
         format!("{}/{}", self.provider.as_str(), self.id)

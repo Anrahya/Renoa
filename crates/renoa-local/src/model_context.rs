@@ -203,7 +203,7 @@ mod tests {
         summary
     }
 
-    /// Derives Arcee's limits on `deepseek-v4-flash` from the same values
+    /// Derives Arcee's limits on `deepseek-v4.1-flash` from the same values
     /// `runtime.rs` derives them from: a reserve of `MAX_OUTPUT_TOKENS` plus the
     /// larger of a proportional and a fixed safety margin, and a summary capped
     /// by both the checkpoint ceiling and a quarter of the post-compaction

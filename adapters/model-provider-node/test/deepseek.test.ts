@@ -113,12 +113,59 @@ test("DeepSeek sends max_tokens, the deepseek thinking parameter, and replays re
     assert.equal(body.reasoning_effort, "high");
     const messages = body.messages as { role: string; reasoning_content?: string }[];
     assert.equal(messages[0]?.role, "system");
+    assert.equal(messages.some((message) => message.role === "developer"), false);
     const assistant = messages.find((message) => message.role === "assistant");
     assert.equal(assistant?.reasoning_content, "check the city");
 
     const offBody = JSON.parse(off.body) as Record<string, unknown>;
     assert.deepEqual(offBody.thinking, { type: "disabled" });
     assert.equal(offBody.reasoning_effort, undefined);
+  } finally {
+    await server.close();
+    directory.close();
+  }
+});
+
+test("DeepSeek maps low and max effort, sends tool definitions, and never a developer role", async () => {
+  const server = await startFakeServer();
+  server.enqueue({ sse: successfulChat("low") });
+  server.enqueue({ sse: successfulChat("max") });
+  const directory = tempDir();
+  try {
+    for (const reasoningLevel of ["low", "max"] as const) {
+      await runStream({
+        directory: directory.path,
+        provider: "deepseek",
+        modelId: "deepseek-flash",
+        baseUrl: server.origin,
+        credential: DEEPSEEK_KEY,
+        reasoningLevel,
+      });
+    }
+    const bodies = server.requests.map((request) => JSON.parse(request.body) as Record<string, unknown>);
+    assert.deepEqual(
+      bodies.map((body) => [body.thinking, body.reasoning_effort]),
+      [
+        [{ type: "enabled" }, "low"],
+        [{ type: "enabled" }, "max"],
+      ],
+    );
+    for (const body of bodies) {
+      const roles = (body.messages as { role: string }[]).map((message) => message.role);
+      assert.deepEqual(roles, ["system", "user"]);
+      assert.equal(roles.includes("developer"), false);
+      assert.deepEqual(body.tools, [
+        {
+          type: "function",
+          function: {
+            name: "lookup",
+            description: "Look something up",
+            parameters: { type: "object", properties: { q: { type: "string" } } },
+            strict: false,
+          },
+        },
+      ]);
+    }
   } finally {
     await server.close();
     directory.close();

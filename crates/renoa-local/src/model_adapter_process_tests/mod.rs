@@ -34,7 +34,7 @@ use fake_provider::{
 };
 
 /// The loopback tests drive the adapter's Chat Completions transport through
-/// DeepSeek, the provider whose pinned catalog serves that API directly.
+/// the `deepseek` provider, whose pinned catalog serves that API directly.
 const LOOPBACK_PROVIDER: &str = "deepseek";
 const LOOPBACK_MODEL: &str = "deepseek-flash";
 const LOOPBACK_CATALOG: &str = "adapters/model-provider-node/src/upstream/catalogs/deepseek.json";

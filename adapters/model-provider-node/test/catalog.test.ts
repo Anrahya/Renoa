@@ -12,6 +12,7 @@ import {
   toWireCatalog,
   validateModelSpec,
 } from "../src/catalog.js";
+import { readOpenCodeCatalogCache } from "../src/opencode-catalog-cache.js";
 import { loadCatalog } from "../src/runtime.js";
 import {
   OPENCODE_GO_TRANSPORTS,
@@ -75,7 +76,7 @@ test("only chat models on a retained API are advertised", () => {
   assert.equal(isAdvertisableCatalogEntry("xai", { ...chat, api: "openai-completions" }), false);
   assert.equal(isAdvertisableCatalogEntry("xai", { ...chat, api: "openai-responses" }), true);
 
-  for (const provider of ["xai", "opencode-go"] as const) {
+  for (const provider of ["xai", "opencode-go", "deepseek"] as const) {
     for (const entry of loadPinnedCatalog(provider)) {
       assert.notEqual(entry.model.api, "google-generative-ai");
       assert.equal("type" in entry.model, false, `${entry.id} must not carry catalog type`);
@@ -299,6 +300,54 @@ test("OpenCode Go replaces a cached binding learned on the retired zen route", a
   } finally {
     directory.close();
   }
+});
+
+test("an OpenCode Go cache holding a now-pinned model keeps its other dynamic models", async () => {
+  const directory = tempDir();
+  const cachePath = join(directory.path, "catalog.json");
+  try {
+    const pinned = loadPinnedCatalog("opencode-go");
+    const flash = findCatalogModel("opencode-go", "deepseek-v4.1-flash");
+    assert.ok(flash);
+    const live = {
+      id: LIVE_MODEL,
+      name: "Kimi K3.1 Pro",
+      api: "openai-completions",
+      provider: "opencode-go",
+      baseUrl: "https://opencode.ai/inference/go/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_000_000,
+      maxTokens: 131_072,
+    };
+    // Written before deepseek-v4.1-flash was pinned, so it was learned live.
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        version: 1,
+        available_model_ids: ["deepseek-v4.1-flash", LIVE_MODEL],
+        dynamic_models: [{ ...flash.model, name: "stale cached name" }, live],
+      }),
+    );
+    const cache = await readOpenCodeCatalogCache(cachePath, pinned);
+    assert.ok(cache, "the cache must still load");
+    assert.deepEqual(cache.available_model_ids, ["deepseek-v4.1-flash", LIVE_MODEL]);
+    assert.deepEqual(
+      cache.dynamic_models.map((model) => model.id),
+      [LIVE_MODEL],
+    );
+  } finally {
+    directory.close();
+  }
+});
+
+test("OpenCode Go still advertises DeepSeek V4.1 Flash at low, high, and max", () => {
+  const flash = findCatalogModel("opencode-go", "deepseek-v4.1-flash");
+  assert.ok(flash);
+  assert.equal(flash.model.api, "openai-completions");
+  assert.equal(flash.model.baseUrl, "https://opencode.ai/inference/go/v1");
+  assert.deepEqual([...flash.reasoning_levels], ["low", "high", "max"]);
 });
 
 test("OpenCode Go rejects an oversized metadata response", async () => {
