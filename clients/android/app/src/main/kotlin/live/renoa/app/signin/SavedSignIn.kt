@@ -46,6 +46,12 @@ internal class SignInStore(context: Context) {
         check(preferences.edit().putString(ENTRY, Base64.encodeToString(sealed, Base64.NO_WRAP)).commit()) { "could not store the sign-in" }
     }
 
+    /** A sign-in that could not be forgotten is refused again on the next launch, and forgotten then. */
+    @SuppressLint("UseKtx", "ApplySharedPref")
+    fun clear() {
+        preferences.edit().remove(ENTRY).commit()
+    }
+
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }

@@ -50,6 +50,19 @@ enum class Problem {
             }
 }
 
+/** How the app is connected to Renoa. */
+enum class Link {
+    /** The first connection is being made. */
+    Connecting,
+    Connected,
+
+    /** The connection failed or dropped; it is being made again. */
+    Lost,
+
+    /** Renoa refused this phone's sign-in, as after it was signed out elsewhere. Only signing in again helps. */
+    SignedOut,
+}
+
 /** A refusal, or a failure to reach the other side. */
 class RepositoryException(val problem: Problem, message: String) : Exception(message)
 
@@ -61,6 +74,8 @@ fun RepositoryException.wordsOr(fallback: String): String = if (problem == Probl
  * in tests.
  */
 interface AgentRepository {
+    val link: StateFlow<Link>
+
     val agents: StateFlow<List<AgentSummary>>
 
     /** The note at the top of Home, or null when there is nothing to say. */

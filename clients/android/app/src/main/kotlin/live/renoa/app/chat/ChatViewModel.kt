@@ -17,6 +17,7 @@ import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.Ask
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Conversation
+import live.renoa.app.agents.Link
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.StreamingReply
@@ -47,6 +48,7 @@ data class ChatUiState(
     /** The colour the agent wears on every screen, and whether it is the owner's main agent. */
     val hue: AgentHue = AgentHue.Ink,
     val main: Boolean = false,
+    val link: Link = Link.Connected,
 ) {
     val working: Boolean get() = agent?.state == AgentState.Working
 
@@ -67,12 +69,12 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
     private val notice = MutableStateFlow<String?>(null)
 
     val state: StateFlow<ChatUiState> =
-        combine(repository.agents, conversation(), draft, notice) { agents, conversation, draft, notice ->
+        combine(repository.agents, conversation(), draft, notice, repository.link) { agents, conversation, draft, notice, link ->
             ChatUiState(
                 agents.firstOrNull { it.id == agentId }, conversation.messages, conversation.streaming, draft, notice, loaded = true,
-                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId,
+                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId, link = link,
             )
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(link = repository.link.value))
 
     /** An agent that is gone has an empty chat rather than a crash. */
     private fun conversation(): Flow<Conversation> =
