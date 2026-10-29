@@ -226,7 +226,9 @@ private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedR
         // The owner's own words stay plain; an agent's reply is markdown.
         Speaker.Agent -> {
             val modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f)
-            if (streaming) ArrivingReply(message.text, modifier) else Reply(message.text, parses.of(message.id, message.text), modifier)
+            // One for both, so a diagram drawn while the reply arrives stays drawn once the reply is whole.
+            val diagrams = remember { ReplyDiagrams() }
+            if (streaming) ArrivingReply(message.text, modifier, diagrams) else Reply(message.text, parses.of(message.id, message.text), modifier, diagrams)
         }
     }
 }

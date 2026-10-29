@@ -30,7 +30,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
-    // The licences of the fonts and icons the app bundles travel inside it, as their terms ask.
+    // The licences of the fonts, icons and diagram renderer the app bundles travel inside it, as their terms ask.
     sourceSets.getByName("main").assets.directories.add(rootProject.file("licenses").path)
 
     buildFeatures {

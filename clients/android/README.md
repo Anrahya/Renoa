@@ -18,7 +18,8 @@ The Kotlin app shell. Two modules:
   this package and signing certificate (`deploy/README.md`). Once signed in, the screens run on
   `RcpAgentRepository`: chat over `:rcp`, and making an agent or reading its profile through
   the Host over the same connection. Tests use `FakeAgentRepository`. Passkeys need Android 9,
-  so `minSdk` is 28. The font and icon licences (`licenses/`) ship inside the APK as assets.
+  so `minSdk` is 28. The licences of the fonts, icons and diagram renderer (`licenses/`) ship
+  inside the APK as assets.
 
 ## Build
 
@@ -41,3 +42,11 @@ Agent replies render as markdown through `multiplatform-markdown-renderer` (core
 modules only). An image shows as its description, and only web links are links; they open in the
 phone's browser. The Compose BOM is kept on the Compose release that library is built against, so
 the app carries one Compose version.
+
+A fenced code block in the `mermaid` language draws as a diagram. Pele (`assets/diagram/`,
+provenance in `licenses/README.md`) runs in a web view per diagram that blocks network loads,
+reads no files and offers the app no bridge; the page carries Pele, Instrument Sans and the
+diagram's source as escaped text, and takes its colours from the theme. It tells the app its
+height, or that it cannot draw, through its title. A diagram Pele cannot draw shows as its code,
+and one still arriving is a placeholder until its fence closes. `app/build/diagrams` holds the
+pages the tests build, to open in a browser.
