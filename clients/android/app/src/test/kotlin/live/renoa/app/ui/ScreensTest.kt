@@ -49,6 +49,8 @@ import java.io.File
 import kotlin.math.roundToInt
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.badge.Badge
+import live.renoa.app.badge.PORTRAIT_GROUND
+import androidx.compose.ui.graphics.toArgb
 import live.renoa.app.chat.ChatScreen
 import live.renoa.app.chat.ChatViewModel
 import live.renoa.app.editor.AgentEditorScreen
@@ -58,6 +60,9 @@ import live.renoa.app.home.HomeScreen
 import live.renoa.app.home.OPEN_PAGES
 import live.renoa.app.home.HomeViewModel
 import live.renoa.app.signin.SignInScreen
+import live.renoa.app.signup.SignUpMemory
+import live.renoa.app.signup.SignUpScreen
+import live.renoa.app.signup.SignUpViewModel
 import live.renoa.app.signin.SignInState
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.ThemeName
@@ -129,6 +134,24 @@ class ScreensTest : ScreenTest() {
         val below = ((20 + 140 + 20) * dp).roundToInt()
         assertTrue((0 until picture.width step 2).none { x -> (below until picture.height step 2).any { y -> picture.getPixel(x, y) == skin } }, "another agent keeps its letter")
         snapshot("badge-portrait-${theme.name.lowercase()}")
+    }
+
+    @Test
+    fun meetingRenoaInGraphite() {
+        val fresh = FakeAgentRepository(scope, seeds = emptyList())
+        kotlinx.coroutines.runBlocking { fresh.saveOwnerProfile(fresh.ownerProfile().revision, "Name: Yash\nA usual day: Busy\n") }
+        val model = SignUpViewModel(fresh, object : SignUpMemory { override var operationId: String? = null })
+        // Reduced motion: she is there at once, not partway through dropping in.
+        show(ThemeName.Graphite, reducedMotion = true) { SignUpScreen(model, onDone = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithText("I'm Renoa.").assertIsDisplayed()
+        // Past the step's own fade-in, so the picture is of the screen at rest.
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        // Her dark hair would vanish on Graphite's ground, so she stands on Paper's, as in her tile.
+        val figure = compose.onNodeWithContentDescription("Renoa").fetchSemanticsNode().boundsInRoot
+        assertEquals(PORTRAIT_GROUND.toArgb(), picture().getPixel(figure.left.toInt() + 3, figure.top.toInt() + 3))
+        snapshot("sign-up-3-graphite")
     }
 
     @Test

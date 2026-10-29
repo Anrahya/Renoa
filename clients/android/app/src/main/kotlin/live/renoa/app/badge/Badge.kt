@@ -205,6 +205,6 @@ internal fun AgentState.describe(): String =
 
 private val UNIT_DENSITY = Density(1f, 1f)
 
-/** What a portrait sits on: Paper's muted ground, the same in both themes. */
-private val PORTRAIT_GROUND = ThemeName.Paper.colors.muted
+/** What a portrait sits on: Paper's muted ground, the same in both themes, so her dark hair reads on either. */
+internal val PORTRAIT_GROUND = ThemeName.Paper.colors.muted
 private val LETTER_STYLE = RenoaType.Title.copy(fontSize = 30.sp, lineHeight = 30.sp)

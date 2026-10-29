@@ -57,6 +57,7 @@ import live.renoa.app.agents.AgentState
 import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.badge.MascotFigure
+import live.renoa.app.badge.PORTRAIT_GROUND
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaEasing
@@ -194,15 +195,18 @@ private fun ColumnScope.MeetStep(state: SignUpUiState, viewModel: SignUpViewMode
     val arrival = remember { Animatable(if (reduced) 1f else 0f) }
     LaunchedEffect(Unit) { arrival.animateTo(1f, tween(800, easing = RenoaEasing.Ease)) }
     Scrolling(Alignment.CenterHorizontally, Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
-        MascotFigure(
+        // She stands on her tile's ground, so her dark hair reads in either theme.
+        Box(
             Modifier
                 .padding(bottom = 12.dp)
-                .size(width = 210.dp, height = 336.dp)
+                .size(width = 236.dp, height = 344.dp)
                 .graphicsLayer {
                     alpha = arrival.value
                     translationY = (1f - arrival.value) * -36.dp.toPx()
-                },
-        )
+                }
+                .background(PORTRAIT_GROUND, RoundedCornerShape(28.dp)),
+            contentAlignment = Alignment.Center,
+        ) { MascotFigure(Modifier.size(width = 196.dp, height = 312.dp)) }
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Step(3)
             Heading("I'm Renoa.")
