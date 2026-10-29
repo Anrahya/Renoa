@@ -73,9 +73,7 @@ import live.renoa.app.theme.ThemeName
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -85,11 +83,19 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import live.renoa.app.agents.Link
-import live.renoa.app.chat.Reveal
-import live.renoa.app.chat.RevealText
-import live.renoa.app.chat.Revealed
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.home.CHECKING_IN
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.isHeading
+import androidx.compose.ui.test.performFirstLinkClick
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import live.renoa.app.chat.Reply
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
@@ -349,34 +355,62 @@ class ScreensTest : ScreenTest() {
         compose.runOnUiThread { talk.update { it.copy(messages = it.messages + ChatMessage(id, Speaker.Agent, text)) } }
 
     @Test
-    fun messagesAlreadyThereWhenAChatOpensShowWholeAtOnce() {
-        val model = ChatViewModel(repository, "tifa")
-        compose.mainClock.autoAdvance = false
-        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
-        repeat(3) {
-            compose.waitForIdle()
-            compose.mainClock.advanceTimeByFrame()
-        }
-        val old = "Nice one. That's about 620 kcal and 22 g of protein, but light on fibre. Some fruit or a salad later would balance it."
-        assertEquals(old.length, compose.onNodeWithText(old).fetchSemanticsNode().config[Revealed])
+    fun anAgentsReplyShowsItsMarkdownAndOnlyItsWebLinksOpenInTheBrowser() {
+        val opened = mutableListOf<String>()
+        val browser = object : UriHandler { override fun openUri(uri: String) { opened += uri } }
+        val owner = "What's for dinner? **Something** quick."
+        val talk = MutableStateFlow(Conversation(listOf(ChatMessage("q", Speaker.Owner, owner), ChatMessage("a", Speaker.Agent, MARKDOWN_REPLY))))
+        val model = ChatViewModel(chatWith(talk), "optimus")
+        show { CompositionLocalProvider(LocalUriHandler provides browser) { ChatScreen(model, onBack = {}, onOpenProfile = {}) } }
+        compose.waitForIdle()
+
+        // The owner's words stay as typed; the reply shows none of its markdown syntax.
+        compose.onNodeWithText(owner).assertIsDisplayed()
+        for (syntax in listOf("**", "##", "```", "](")) compose.onAllNodes(hasText(syntax, substring = true)).filter(!hasText(owner)).assertCountEquals(0)
+        compose.onNode(hasText("Dinner plan") and isHeading()).assertIsDisplayed()
+        val intro = textOf("Here is what I found for tonight:")
+        assertTrue(intro.spanStyles.any { it.item.fontWeight == FontWeight.Bold && intro.text.substring(it.start, it.end) == "what I found" }, "bold")
+        compose.onAllNodes(hasText("•", substring = true)).assertCountEquals(2)
+        val dal = textOf(compose.onNode(hasText("brown rice", substring = true)))
+        val muted = ThemeName.Graphite.colors.muted
+        assertTrue(dal.spanStyles.any { it.item.background == muted && it.item.fontFamily == RenoaType.Code.fontFamily && dal.text.substring(it.start, it.end).trim() == "brown rice" }, "inline code")
+        compose.onNodeWithText("rice: 1 cup\ndal: 2 cups").assertIsDisplayed()
+
+        val links = compose.onNode(hasText("Recipe at", substring = true))
+        val styles = textOf(links).getLinkAnnotations(0, textOf(links).length).map { it.item.styles?.style?.textDecoration }
+        assertEquals(listOf(TextDecoration.Underline, TextDecoration.Underline), styles, "links look like links")
+        links.performFirstLinkClick { (it.item as LinkAnnotation.Url).url.startsWith("tel:") }
+        compose.waitForIdle()
+        assertEquals(emptyList(), opened, "a phone link does not leave the app")
+        links.performFirstLinkClick()
+        compose.waitForIdle()
+        assertEquals(listOf("https://example.com/dal"), opened)
+        snapshot("chat-markdown")
     }
 
     @Test
-    fun aReplyGrowingEveryFrameShowsEachCharacterWithinTheLagLimit() {
-        var text by mutableStateOf("")
+    fun aReplyStillArrivingDrawsEveryUnfinishedStepOfItsMarkdownWithoutBlankingAndKeepsUp() {
+        var text by mutableStateOf(UNFINISHED_REPLY.take(1))
         compose.mainClock.autoAdvance = false
-        show { RevealText(text, complete = false, animate = true, style = RenoaType.Body, color = Color.White, modifier = Modifier.testTag("reply")) }
-        // Three characters a frame is 180 a second, twice the base pace, so only the catch-up keeps it close.
-        val lagFrames = (Reveal.MAX_LAG_SECONDS * 60).toInt() + 2
-        val arrived = mutableListOf<Int>()
-        repeat(90) { frame ->
-            compose.runOnUiThread { text = "a".repeat(3 * (frame + 1)) }
-            arrived += 3 * (frame + 1)
+        show { Reply(text, Modifier.testTag("reply")) }
+        // The window's first frame, after which every frame is the test's.
+        compose.mainClock.advanceTimeByFrame()
+        val inReply = hasAnyAncestor(hasTestTag("reply"))
+        compose.onNode(hasText("H") and inReply, useUnmergedTree = true).assertExists()
+        // Every prefix, so each unclosed bold, code span, link, list, table and fence is drawn on its way.
+        for (end in 2..UNFINISHED_REPLY.length) {
+            compose.runOnUiThread { text = UNFINISHED_REPLY.take(end) }
             compose.mainClock.advanceTimeByFrame()
-            val shown = compose.onNodeWithTag("reply").fetchSemanticsNode().config[Revealed]
-            if (frame >= lagFrames) assertTrue(shown >= arrived[frame - lagFrames], "frame $frame: $shown shown, ${arrived[frame - lagFrames]} due")
+            // What showed first stays on screen in every frame: nothing blanks while the reply is parsed.
+            compose.onNode(hasText("H", substring = true) and inReply, useUnmergedTree = true).assertExists()
         }
+        // The last words are on screen the frame they arrive, though their fence is still open: the parse does not lag behind the stream.
+        compose.onNode(hasText("val shopping = listOf(\"dal\", \"rice\"", substring = true) and inReply, useUnmergedTree = true).assertExists()
     }
+
+    private fun textOf(text: String) = textOf(compose.onNodeWithText(text))
+
+    private fun textOf(node: SemanticsNodeInteraction) = node.fetchSemanticsNode().config[SemanticsProperties.Text].single()
 
     @Test
     fun theKeyboardsSendSendsPutsTheKeyboardAwayAndBringsTheMessageIntoView() {
@@ -564,3 +598,42 @@ class ScreensTest : ScreenTest() {
 
 /** Thursday 29 October 2026, 7:40 PM, when the demo evening is set. */
 private val EVENING = java.time.ZonedDateTime.of(2026, 10, 29, 19, 40, 0, 0, java.time.ZoneId.of("Asia/Kolkata"))
+
+/** A reply with each kind of markdown an agent is likely to send. */
+private val MARKDOWN_REPLY =
+    """
+    ## Dinner plan
+
+    Here is **what I found** for tonight:
+
+    - Dal with `brown rice`
+    - A side of salad
+
+    ```
+    rice: 1 cup
+    dal: 2 cups
+    ```
+
+    Recipe at [the blog](https://example.com/dal), or [call them](tel:5551234).
+    """.trimIndent()
+
+/** A reply cut off mid-fence, so that streamed in it passes through every kind of unfinished markdown. */
+private val UNFINISHED_REPLY =
+    """
+    Here is the plan. **Dal** with `brown rice` from [the blog](https://example.com/dal).
+
+    ## Shopping
+
+    1. Dal
+    - Rice
+      - Basmati
+
+    | Item | Cups |
+    | --- | --- |
+    | Rice | 1 |
+
+    > Soak the dal first.
+
+    ```kotlin
+    val shopping = listOf("dal", "rice"
+    """.trimIndent()

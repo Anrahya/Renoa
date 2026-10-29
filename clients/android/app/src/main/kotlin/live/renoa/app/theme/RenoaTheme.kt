@@ -69,7 +69,7 @@ object RenoaShapes {
 private fun instrument(weight: Int) =
     Font(R.font.instrument_sans, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
 
-/** Instrument Sans for everything; IBM Plex Mono only for eyebrows and metadata, as the design system sets them. */
+/** Instrument Sans for everything; IBM Plex Mono only for eyebrows, metadata and code, as the design system sets them. */
 private val Sans = FontFamily(instrument(400), instrument(500), instrument(600))
 private val Mono = FontFamily(Font(R.font.ibm_plex_mono_regular, FontWeight.Normal), Font(R.font.ibm_plex_mono_medium, FontWeight.Medium))
 
@@ -84,6 +84,9 @@ object RenoaType {
 
     /** `type-eyebrow`: mono capitals for kickers, times and metadata. Pass the text already upper-cased. */
     val Eyebrow = TextStyle(fontFamily = Mono, fontSize = 11.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.08.em)
+
+    /** `type-code`: code in an agent's reply. */
+    val Code = TextStyle(fontFamily = Mono, fontSize = 13.sp, lineHeight = 19.5.sp)
 }
 
 val LocalRenoaColors = staticCompositionLocalOf { ThemeName.Graphite.colors }

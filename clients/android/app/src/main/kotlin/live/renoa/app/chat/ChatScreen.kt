@@ -171,7 +171,7 @@ private fun Messages(
         items(shown.asReversed(), key = { it.id }) { message ->
             val fresh = message.id !in old && message.id !in risen
             SideEffect { risen += message.id }
-            Rise(fresh) { MessageRow(message, complete = message.id != state.streaming?.id, animate = fresh, onRetry, onDiscard) }
+            Rise(fresh) { MessageRow(message, onRetry, onDiscard) }
         }
     }
 }
@@ -188,7 +188,7 @@ private fun Rise(animate: Boolean, content: @Composable () -> Unit) {
 private const val WORKING = "working"
 
 @Composable
-private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
+private fun MessageRow(message: ChatMessage, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
     val colors = Renoa.colors
     when (message.speaker) {
         Speaker.Owner ->
@@ -219,8 +219,8 @@ private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean
                     }
                 }
             }
-        Speaker.Agent ->
-            RevealText(message.text, complete, animate, RenoaType.Body, colors.foregroundSoft, Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f))
+        // The owner's own words stay plain; an agent's reply is markdown.
+        Speaker.Agent -> Reply(message.text, Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f))
     }
 }
 

@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "live.renoa.app"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "live.renoa.app"
@@ -54,8 +54,9 @@ android {
     lint {
         warningsAsErrors = true
         abortOnError = true
-        // The platform is pinned to 36 on purpose, the level the build and CI images carry.
-        // Moving to a newer one is a decision, not something lint should demand on release day.
+        // The app compiles against 37 but still targets 36, and its pinned AndroidX and OkHttp
+        // versions trail the newest releases. Moving either is a decision, not something lint
+        // should demand on release day.
         disable += setOf("OldTargetApi", "GradleDependency", "NewerVersionAvailable")
     }
 }
@@ -84,6 +85,8 @@ dependencies {
     implementation(libs.androidx.credentials)
     // Credential Manager reaches passkeys through Play services on Android 13 and earlier.
     implementation(libs.androidx.credentials.play.services)
+    // Agent replies render as markdown. Only the core and Material 3 modules: no remote images.
+    implementation(libs.markdown.renderer.m3)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
