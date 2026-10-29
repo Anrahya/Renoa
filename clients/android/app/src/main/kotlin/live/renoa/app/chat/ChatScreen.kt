@@ -2,6 +2,8 @@ package live.renoa.app.chat
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -80,7 +82,13 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     Text(agent?.name.orEmpty(), style = RenoaType.Heading, color = colors.foreground)
                 }
             }
-            Messages(state, old, risen, Modifier.weight(1f))
+            if (state.loaded && state.messages.isEmpty() && state.streaming == null && !state.working) {
+                Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
+                    ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
+                }
+            } else {
+                Messages(state, old, risen, Modifier.weight(1f))
+            }
             state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
             Composer(state, agent?.name.orEmpty(), viewModel)
         }

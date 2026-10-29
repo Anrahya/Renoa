@@ -77,14 +77,17 @@ fun AgentEditorScreen(viewModel: AgentEditorViewModel, onClose: () -> Unit, onFi
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 if (state.creating) CreateHeader(state, viewModel) else EditHeader(state, viewModel)
                 Purpose(state, called, viewModel)
-                Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 22.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                    Text("What $called can do", style = RenoaType.Heading, color = colors.foreground)
-                    Text("Tap to switch", style = RenoaType.Caption, color = colors.mutedForeground)
+                // Renoa does not list abilities to the app yet; an empty grid would only look broken.
+                if (state.abilities.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 22.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                        Text("What $called can do", style = RenoaType.Heading, color = colors.foreground)
+                        Text("Tap to switch", style = RenoaType.Caption, color = colors.mutedForeground)
+                    }
+                    Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.TopCenter) {
+                        AbilityGrid(state.abilities, state.creating, Renoa.colors.foreground, viewModel::toggle)
+                    }
+                    Legend(state, called)
                 }
-                Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.TopCenter) {
-                    AbilityGrid(state.abilities, state.creating, Renoa.colors.foreground, viewModel::toggle)
-                }
-                Legend(state, called)
                 state.notice?.let { Text(it, Modifier.padding(horizontal = 28.dp, vertical = 8.dp), style = RenoaType.Caption, color = colors.stateFailed) }
                 Spacer(Modifier.height(16.dp))
             }
