@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 
 import type { Credential } from "../src/credentials.js";
-import type { WireModelRequest, WireStreamRecord } from "../src/contract.js";
+import type { ProviderId, WireModelRequest, WireStreamRecord } from "../src/contract.js";
 import { ProviderFailure } from "../src/errors.js";
 import { loadRuntime } from "../src/runtime.js";
 import { streamModel } from "../src/stream.js";
@@ -20,7 +20,7 @@ export interface StreamOptions {
   modelId: string;
   baseUrl: string;
   credential: Credential;
-  provider?: "xai" | "opencode-go";
+  provider?: ProviderId;
   reasoningLevel?: "off" | "low" | "medium" | "high" | "xhigh" | "max";
   clock?: ManualClock;
   signal?: AbortSignal;

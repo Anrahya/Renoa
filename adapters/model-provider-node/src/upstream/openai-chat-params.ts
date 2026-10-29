@@ -111,7 +111,7 @@ export function buildParams(
 	}
 
 	if (compat.thinkingFormat === "deepseek" && model.reasoning) {
-		// OpenCode Go deepseek-v4-pro and deepseek-v4.1-flash advertise this format.
+		// DeepSeek models, directly or through OpenCode Go, advertise this format.
 		if (options?.reasoningEffort) {
 			(params as any).thinking = { type: "enabled" };
 		} else if (model.thinkingLevelMap?.off !== null) {

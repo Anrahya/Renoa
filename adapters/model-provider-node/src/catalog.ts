@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import deepseekCatalog from "./upstream/catalogs/deepseek.json" with { type: "json" };
 import xaiCatalog from "./upstream/catalogs/xai.json" with { type: "json" };
 import opencodeGoCatalog from "./upstream/catalogs/opencode-go.json" with { type: "json" };
 import type { CatalogModel, ProviderId, ReasoningLevel } from "./contract.js";
@@ -8,6 +9,7 @@ import {
   opencodeGoTransport,
   type OpenCodeTransport,
 } from "./providers/opencode-go.js";
+import { DEEPSEEK_BASE_URL } from "./providers/deepseek.js";
 import { XAI_BASE_URL } from "./providers/xai.js";
 import { getSupportedThinkingLevels } from "./upstream/thinking.js";
 import type { Api, Model } from "./upstream/types.js";
@@ -25,8 +27,14 @@ export interface CatalogEntry {
  */
 const UNCONSUMED_CATALOG_FIELDS = ["type", "inputLimits"] as const;
 
+const PINNED_CATALOGS: Readonly<Record<ProviderId, unknown>> = {
+  xai: xaiCatalog,
+  "opencode-go": opencodeGoCatalog,
+  deepseek: deepseekCatalog,
+};
+
 export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[] {
-  const raw = provider === "xai" ? xaiCatalog : opencodeGoCatalog;
+  const raw = PINNED_CATALOGS[provider];
   const discovered = flattenCatalog(raw)
     .filter((entry) => isAdvertisableCatalogEntry(provider, entry))
     .map(withoutUnconsumedFields)
@@ -180,9 +188,14 @@ function flattenCatalog(value: unknown): Record<string, unknown>[] {
 }
 
 function supportsApi(provider: ProviderId, api: unknown): api is Api {
-  return provider === "xai"
-    ? api === "openai-responses"
-    : api === "anthropic-messages" || api === "openai-completions" || api === "openai-responses";
+  switch (provider) {
+    case "xai":
+      return api === "openai-responses";
+    case "deepseek":
+      return api === "openai-completions";
+    case "opencode-go":
+      return api === "anthropic-messages" || api === "openai-completions" || api === "openai-responses";
+  }
 }
 
 function trustedBaseUrl(
@@ -199,6 +212,9 @@ function trustedBaseUrl(
   }
   if (provider === "xai") {
     return value === XAI_BASE_URL;
+  }
+  if (provider === "deepseek") {
+    return value === DEEPSEEK_BASE_URL;
   }
   return typeof api === "string" && api in OPENCODE_GO_BASE_URL
     ? value === OPENCODE_GO_BASE_URL[api as OpenCodeTransport]

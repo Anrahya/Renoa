@@ -1,7 +1,7 @@
 # Renoa model-provider adapter
 
 `@renoa/model-provider` is the Node process that translates Renoa's
-provider-neutral model contract into xAI and OpenCode Go API calls.
+provider-neutral model contract into xAI, OpenCode Go, and DeepSeek API calls.
 
 It is not the kernel, the durable loop, compaction, tools, ACP, Waku, or RCP.
 Those remain provider-neutral. A future adapter can replace this process if it
@@ -11,6 +11,7 @@ speaks the same stdin/stdout protocol and environment contract.
 
 - xAI/Grok over OAuth
 - OpenCode Go over its API key
+- DeepSeek over its API key
 - OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages transports
 - one retry policy
 - classified, redacted provider failures
@@ -28,6 +29,7 @@ compaction, ACP, Waku, and RCP. The Rust host launches this process for
 | --- | --- | --- |
 | xAI | OAuth device flow | Responses, as advertised by the bundled catalog |
 | OpenCode Go | API key | Official Go transports only: Responses, Chat Completions, Anthropic Messages |
+| DeepSeek | API key | Chat Completions at `https://api.deepseek.com`, from the bundled catalog only |
 
 OpenCode availability comes from its official `/inference/go/v1/models` endpoint.
 Limits, modalities, tool support, costs, and reasoning levels come from the
@@ -151,14 +153,14 @@ pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scrip
 pnpm --dir adapters/model-provider-node build
 export RENOA_MODEL_BRIDGE="$PWD/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDERS=xai,opencode-go
+export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of xai, opencode-go, deepseek
 export RENOA_MODEL_PROVIDER=opencode-go # default for new ACP sessions
 export RENOA_MODEL=deepseek-v4-pro
 export RENOA_MODEL_REASONING=high # optional
 ```
 
-Authenticate with `pnpm --dir adapters/model-provider-node auth:xai` or
-`auth:opencode-go`. The RCP Pi node still uses `RENOA_PI_*` harness settings
+Authenticate with `pnpm --dir adapters/model-provider-node auth:xai`,
+`auth:opencode-go`, or `auth:deepseek`; API keys are read from standard input. The RCP Pi node still uses `RENOA_PI_*` harness settings
 and is not this adapter.
 
 `renoa-agent` exposes enabled models as `provider/model` ACP identities. The

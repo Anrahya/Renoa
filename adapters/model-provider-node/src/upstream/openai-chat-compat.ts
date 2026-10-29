@@ -38,10 +38,12 @@ export function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRet
 }
 
 /**
- * Compatibility defaults for the two advertised providers. Catalog `compat`
- * entries override these. OpenCode completions models set `maxTokensField`,
+ * Compatibility defaults for xAI and OpenCode Go. Catalog `compat` entries
+ * override these. OpenCode completions models set `maxTokensField`,
  * `thinkingFormat: "deepseek"` where required, and Responses models set
- * `sessionAffinityFormat: "openai-nosession"`.
+ * `sessionAffinityFormat: "openai-nosession"`. DeepSeek catalog entries set
+ * every DeepSeek-specific field explicitly, so Pi's DeepSeek detection is not
+ * copied.
  */
 export function detectCompat(model: Model<"openai-completions">): ResolvedOpenAICompletionsCompat {
 	const provider = model.provider;

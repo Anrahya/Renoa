@@ -1,6 +1,6 @@
 import { loadBridgeConfig } from "./config.js";
 import { runBridgeAction, type DescriptionResult } from "./bridge.js";
-import type { WireStreamRecord } from "./contract.js";
+import { isProviderId, type WireStreamRecord } from "./contract.js";
 import { parseWireModelRequest } from "./wire-request.js";
 import { wireError } from "./stream.js";
 
@@ -56,7 +56,7 @@ async function readStdin(): Promise<string> {
 main().catch((error: unknown) => {
   if (process.env.RENOA_MODEL_ACTION === "stream") {
     const record = wireError(error, {
-      provider: process.env.RENOA_MODEL_PROVIDER === "opencode-go" ? "opencode-go" : "xai",
+      provider: isProviderId(process.env.RENOA_MODEL_PROVIDER) ? process.env.RENOA_MODEL_PROVIDER : "unknown",
       model: process.env.RENOA_MODEL ?? "unknown",
     });
     process.stdout.write(`${JSON.stringify(record)}\n`);

@@ -177,5 +177,8 @@ function requireCredential(
   if (provider === "opencode-go" && credential.type !== "api_key") {
     throw new Error("OpenCode Go requires an API key");
   }
+  if (provider === "deepseek" && credential.type !== "api_key") {
+    throw new Error("DeepSeek requires an API key");
+  }
   return credential;
 }

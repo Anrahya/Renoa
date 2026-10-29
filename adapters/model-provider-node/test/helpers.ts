@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { SqliteCredentialStore, type Credential } from "../src/credentials.js";
-import type { JsonValue } from "../src/contract.js";
+import type { JsonValue, ProviderId } from "../src/contract.js";
 import type { RetryClock } from "../src/retry.js";
 import type { Api, Model } from "../src/upstream/types.js";
 import { findCatalogModel } from "../src/catalog.js";
@@ -295,7 +295,7 @@ export function oauthCredential(expires = Date.now() + 60 * 60 * 1000): Extract<
 }
 
 export function loopbackModel(
-  provider: "xai" | "opencode-go",
+  provider: ProviderId,
   modelId: string,
   baseUrl: string,
 ): Model<Api> {

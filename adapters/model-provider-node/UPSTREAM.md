@@ -21,6 +21,8 @@ OpenCode source code is copied.
 
 Relative imports in adapted TypeScript use `.js` specifiers for this package’s NodeNext tsconfig. Protocol logic is otherwise Pi’s.
 
+The DeepSeek provider takes its base URL (`https://api.deepseek.com`), API-key auth, and Chat Completions API from `packages/ai/src/providers/deepseek.ts` at the same revision.
+
 Catalog JSON files are gitignored in the Pi clone (`packages/ai/src/providers/data/`). They were copied unmodified from the published `@earendil-works/pi-ai@1.4.0` package (`dist/providers/data/`), which is the hydrated output of those source paths at the same version. Their keys use Pi data schema 6 (`chat:<id>`), and entries carry `type`. `src/catalog.ts` advertises only `chat` entries on a retained API and removes the unconsumed `type` and `inputLimits` fields before an entry becomes a model binding.
 
 ## Copied files
@@ -28,7 +30,7 @@ Catalog JSON files are gitignored in the Pi clone (`packages/ai/src/providers/da
 | Renoa path | Pi source path |
 | --- | --- |
 | `src/upstream/LICENSE-MIT` | `LICENSE` |
-| `src/upstream/types.ts` | `packages/ai/src/types.ts` (pruned to xAI/OpenCode: three APIs; thinkingFormat `openai`/`deepseek`; session affinity `openai`/`openai-nosession`; JSON-schema constrained sampling only; Anthropic `forceAdaptiveThinking`; no OpenRouter/Vercel/chat-template/grammar/deferred-tool/transcript/system-message/image-model/classifier types; OAuth types live in `oauth-xai.ts`) |
+| `src/upstream/types.ts` | `packages/ai/src/types.ts` (pruned to xAI/OpenCode Go/DeepSeek: three APIs; thinkingFormat `openai`/`deepseek`; session affinity `openai`/`openai-nosession`; JSON-schema constrained sampling only; Anthropic `forceAdaptiveThinking`; no OpenRouter/Vercel/chat-template/grammar/deferred-tool/transcript/system-message/image-model/classifier types; OAuth types live in `oauth-xai.ts`) |
 | `src/upstream/thinking.ts` | `packages/ai/src/models.ts` (`calculateCost`, `getSupportedThinkingLevels`, `clampThinkingLevel`) |
 | `src/upstream/event-stream.ts` | `packages/ai/src/utils/event-stream.ts` (without `durationMs` timing) |
 | `src/upstream/simple-options.ts` | `packages/ai/src/api/simple-options.ts` |
@@ -63,11 +65,13 @@ Catalog JSON files are gitignored in the Pi clone (`packages/ai/src/providers/da
 | `src/upstream/oauth-xai.ts` | `packages/ai/src/auth/oauth/xai.ts` plus OAuth types from `packages/ai/src/auth/types.ts` |
 | `src/upstream/catalogs/xai.json` | `packages/ai/src/providers/data/xai.json` |
 | `src/upstream/catalogs/opencode-go.json` | `packages/ai/src/providers/data/opencode-go.json` |
+| `src/upstream/catalogs/deepseek.json` | `packages/ai/src/providers/data/deepseek.json` |
+| `src/providers/deepseek.ts` | `packages/ai/src/providers/deepseek.ts` (base URL only; credentials come from Renoa's store) |
 
 ## Not copied
 
 - `packages/ai/src/utils/provider-retry.ts` and `utils/retry.ts` — transports await each request once (`maxRetries: 0`). Renoa retry belongs in `src/retry.ts`.
-- `packages/ai/src/utils/identity.ts` (client identity, `User-Agent`, attribution headers) and the removed `pi-user-agent.ts` — no Pi identity is sent. OpenCode Go requests send `user-agent: renoa/0.1.0` (`src/stream.ts`); xAI requests keep the OpenAI SDK default.
+- `packages/ai/src/utils/identity.ts` (client identity, `User-Agent`, attribution headers) and the removed `pi-user-agent.ts` — no Pi identity is sent. OpenCode Go requests send `user-agent: renoa/0.1.0` (`src/stream.ts`); xAI and DeepSeek requests keep the OpenAI SDK default.
 - `packages/ai/src/utils/transcript.ts`, `utils/text.ts`, and mid-conversation system messages and tool changes (`supportsMidConvoSystemMessages`, `supportsMidConvoToolAdditions`, `supportsMidConvoToolChanges`, `supportsAdditionalTools`, Anthropic `inline-tools-2026-09-15`, `tool_addition` / `tool_removal`). Renoa's contract carries one system prompt and one tool list per request; catalog entries that set these flags are sent through the single-prompt path, which ignores them.
 - Anthropic SDK upgrade to the beta Messages API (`betas` parameter), server-side model fallbacks (`allowedFallbackModels`), mid-conversation effort (`supportsMidConvoEffort`), strict-tool `prefer` fallback, input-transformation diagnostics, and workload identity federation. No advertised model sets those fields, and Renoa tools carry no constrained-sampling configuration.
 - OpenAI Responses `configuration_update` effort items, Sign in with ChatGPT handling, `supportsMaxOutputTokens`, and explicit prompt-cache TTL options. No advertised model sets those fields.
@@ -85,16 +89,17 @@ Catalog JSON files are gitignored in the Pi clone (`packages/ai/src/providers/da
 - OpenAI grammar / custom tools, Claude tool-search defaults, Vertex client injection, and `PI_CACHE_RETENTION`. No advertised catalog entry sets those fields; cache retention is the explicit request field or `"short"`.
 - Claude Code OAuth identity (`You are Claude Code`, `claude-cli` user-agent, `sk-ant-oat` client). Anthropic Messages is used only for OpenCode Go models with an API key.
 - Chat Completions `thinkingFormat: "qwen"` / `enable_thinking` — no advertised model sets it; OpenCode Go Qwen models use Anthropic Messages.
+- Pi's DeepSeek compat detection in `detectCompat` (`isDeepSeek`). Both DeepSeek catalog entries set `thinkingFormat`, `maxTokensField`, `requiresReasoningContentOnAssistantMessages`, `supportsStore`, and `supportsDeveloperRole` explicitly.
 - xAI over Chat Completions. Pi `v1.4.0` serves every xAI model through Responses, so `src/catalog.ts` accepts only `openai-responses` for xAI.
 
 ## Retained unusual branches
 
-These remain because advertised xAI or OpenCode Go models still require them:
+These remain because advertised xAI, OpenCode Go, or DeepSeek models still require them:
 
-- `thinkingFormat: "deepseek"` — OpenCode `deepseek-v4-pro` and `deepseek-v4.1-flash` send `{ thinking: { type } }` on Chat Completions.
+- `thinkingFormat: "deepseek"` — DeepSeek `deepseek-flash` and `deepseek-v4-pro`, and OpenCode `deepseek-v4-pro` and `deepseek-v4.1-flash`, send `{ thinking: { type } }` on Chat Completions and replay `reasoning_content` on assistant messages.
 - `maxTokensField: "max_tokens"` — OpenCode Chat Completions models (GLM, Kimi, MiMo, DeepSeek, and others) still send `max_tokens` rather than `max_completion_tokens`.
 - `sessionAffinityFormat: "openai-nosession"` — OpenCode Responses `grok-4.7`, `gpt-5.6-luna`, `gpt-6-luna`, and the Muse Spark models set this in the pinned catalog. Other Responses models keep the OpenAI default.
-- xAI/OpenCode `supportsStore: false` and `supportsDeveloperRole: false` — both remaining providers reject OpenAI stored responses and the developer role.
+- `supportsStore: false` and `supportsDeveloperRole: false` — xAI, OpenCode Go, and DeepSeek reject OpenAI stored responses and the developer role.
 - Default OpenAI `reasoning_effort` mapping — OpenCode Chat Completions models without a `thinkingFormat` (for example GLM-5.3 and Kimi K3) send kernel levels as `reasoning_effort`.
 - xAI Responses `include: ["reasoning.encrypted_content"]` — xAI returns encrypted reasoning for replay with `store: false`.
 - Anthropic `forceAdaptiveThinking` — OpenCode `claude-haiku-5-5` sends `thinking: { type: "adaptive" }` with `output_config.effort` and no interleaved-thinking beta; `off` sends `thinking: { type: "disabled" }`.

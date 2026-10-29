@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 
-import type { ProviderId, ReasoningLevel } from "./contract.js";
+import { isProviderId, PROVIDER_IDS, type ProviderId, type ReasoningLevel } from "./contract.js";
 
 export interface BridgeConfig {
   readonly action: "catalog" | "describe" | "stream";
@@ -67,10 +67,10 @@ function requiredAction(value: string | undefined): BridgeConfig["action"] {
 }
 
 function requiredProvider(value: string | undefined): ProviderId {
-  if (value === "xai" || value === "opencode-go") {
+  if (isProviderId(value)) {
     return value;
   }
-  throw new Error("RENOA_MODEL_PROVIDER must be opencode-go or xai");
+  throw new Error(`RENOA_MODEL_PROVIDER must be one of ${PROVIDER_IDS.join(", ")}`);
 }
 
 function optionalJson(value: string | undefined, name: string): unknown {

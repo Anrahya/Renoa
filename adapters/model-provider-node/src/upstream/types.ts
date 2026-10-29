@@ -13,7 +13,7 @@ export type { AssistantMessageEventStream } from "./event-stream.js";
 
 export type Api = "openai-completions" | "openai-responses" | "anthropic-messages";
 
-/** Provider id is a string; xAI and OpenCode Go are the adapters that consume this package. */
+/** Provider id is a string; xAI, OpenCode Go, and DeepSeek are the adapters that consume this package. */
 export type ProviderId = string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
