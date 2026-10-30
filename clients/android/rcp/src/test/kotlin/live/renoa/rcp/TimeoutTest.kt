@@ -55,13 +55,30 @@ class TimeoutTest : CoordinatorTest() {
 
     @Test
     fun aProbeRenoaDoesNotAnswerSoonEndsTheConnection() = eventually {
-        val surface = client(timeouts = RcpTimeouts(probe = 300.milliseconds))
+        val surface = client(timeouts = RcpTimeouts(probe = 1.seconds))
         surface.connect()
+        surface.listTargets()
         surface.probe()
 
         coordinator.unanswered = setOf("list_targets")
         val failure = assertFailsWith<Disconnected> { surface.probe() }
         assertSame(failure, surface.awaitDisconnect())
+    }
+
+    @Test
+    fun aProbeBehindALongReplayThatIsStillComingWaitsForIt() = eventually {
+        val taskId = coordinator.seedTask()
+        journal(taskId, 10)
+        coordinator.replayEvery = 200
+        val surface = client(timeouts = RcpTimeouts(probe = 1.seconds))
+        surface.connect()
+        coroutineScope {
+            val attaching = async { surface.attach(taskId) {} }
+            delay(300)
+            val took = measureTime { surface.probe() }
+            assertTrue(took > 1.seconds, "the probe was answered after the replay, $took in")
+            attaching.await()
+        }
     }
 
     @Test

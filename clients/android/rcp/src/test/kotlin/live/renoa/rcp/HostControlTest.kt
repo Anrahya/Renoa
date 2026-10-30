@@ -2,12 +2,14 @@ package live.renoa.rcp
 
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
 import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -41,7 +43,16 @@ class HostControlTest : CoordinatorTest() {
 
         coordinator.unanswered = setOf("call_host")
         val failure = assertFailsWith<Disconnected> { app.callHost(HostMethod.Get, "/v1/host", null) }
-        assertTrue(failure.message.orEmpty().endsWith("within 2s"), failure.message)
+        assertTrue(failure.message.orEmpty().startsWith("Renoa sent nothing for 2s"), failure.message)
+    }
+
+    @Test
+    fun theAppWaitsLongerForAHostCallThanTheCoordinatorDoes() {
+        val source = File(System.getProperty("renoa.docs"), "../crates/renoa-control/src/host_calls.rs").readText()
+        val coordinator = Regex("""HOST_CALL_TIMEOUT: Duration = Duration::from_secs\((\d+)\)""").find(source)
+        assertNotNull(coordinator, "renoa-control no longer declares HOST_CALL_TIMEOUT in seconds; read it again")
+        val waits = coordinator.groupValues[1].toLong().seconds
+        assertTrue(RcpTimeouts().hostReply > waits, "the coordinator answers a Host call after up to $waits")
     }
 
     @Test

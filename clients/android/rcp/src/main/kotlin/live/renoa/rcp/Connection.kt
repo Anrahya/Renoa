@@ -9,6 +9,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Job
 import kotlin.reflect.KClass
 
@@ -33,7 +34,7 @@ internal class Pending(
 )
 
 /** One WebSocket and the requests in flight on it. [ended] holds the exact reason it ended. */
-internal class Connection(val socket: WebSocket, val inbound: Channel<Inbound>) {
+internal class Connection(val socket: WebSocket, val inbound: Channel<Inbound>, private val heard: AtomicLong) {
     val pending = ConcurrentHashMap<Long, Pending>()
     val opened = CompletableDeferred<Unit>()
     val authenticated = CompletableDeferred<Unit>()
@@ -44,10 +45,16 @@ internal class Connection(val socket: WebSocket, val inbound: Channel<Inbound>) 
 
     /** The receive loop. It stops once [ended] completes, and the next connection waits for it first. */
     @Volatile var reader: Job? = null
+
+    /** Whether the socket delivered a frame after [since], a [System.nanoTime] reading. */
+    fun heardSince(since: Long): Boolean = heard.get() - since > 0
 }
 
 internal fun openConnection(http: OkHttpClient, endpoint: String): Connection {
     val inbound = Channel<Inbound>(Channel.UNLIMITED)
+    // Stamped as each frame arrives, before the receive loop gets to it, so a loop busy applying a
+    // replay never makes a connection look silent.
+    val heard = AtomicLong(System.nanoTime())
     val listener =
         object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -55,10 +62,12 @@ internal fun openConnection(http: OkHttpClient, endpoint: String): Connection {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                heard.set(System.nanoTime())
                 inbound.trySend(Inbound.Text(text))
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                heard.set(System.nanoTime())
                 inbound.trySend(Inbound.Binary)
             }
 
@@ -75,7 +84,7 @@ internal fun openConnection(http: OkHttpClient, endpoint: String): Connection {
             }
         }
     val socket = http.newWebSocket(Request.Builder().url(endpoint).build(), listener)
-    return Connection(socket, inbound)
+    return Connection(socket, inbound, heard)
 }
 
 private val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "[::1]", "::1")

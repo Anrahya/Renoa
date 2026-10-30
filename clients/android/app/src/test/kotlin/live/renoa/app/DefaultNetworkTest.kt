@@ -19,4 +19,20 @@ class DefaultNetworkTest {
 
         assertTrue(DefaultNetwork<String>(null).available("wifi"), "online after starting offline")
     }
+
+    @Test
+    fun theSameNetworkOverOtherTransportsOrWithOtherAddressesHasMoved() {
+        val networks = DefaultNetwork("vpn")
+        networks.available("vpn")
+        assertFalse(networks.transports("vpn", setOf("vpn", "wifi")), "the first report is what is in use")
+        assertFalse(networks.addresses("vpn", setOf("10.0.0.2")))
+        assertFalse(networks.transports("vpn", setOf("vpn", "wifi")), "the same again, as when only the signal changed")
+
+        assertTrue(networks.transports("vpn", setOf("vpn", "mobile")), "Wi-Fi to mobile under the VPN")
+        assertTrue(networks.addresses("vpn", setOf("10.0.0.3")), "a new address")
+        assertFalse(networks.addresses("other", setOf("192.168.1.9")), "a network not in use")
+
+        networks.available("wifi")
+        assertFalse(networks.transports("wifi", setOf("wifi")), "a new network's first report is not a second move")
+    }
 }

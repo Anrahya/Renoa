@@ -8,15 +8,17 @@ import kotlin.time.Duration.Companion.seconds
  * try again instead of waiting forever. A phone's Wi-Fi power save can hold packets for seconds,
  * so every bound is well above that. Each is positive and finite.
  *
- * [connect] bounds opening the socket and signing in. [reply] bounds each request's answer, and
- * how long an attach's replay may go without a frame, those [RcpSurface.connect] makes to
- * re-attach included; a replay cut short keeps what it applied, so the next attempt asks for
- * less. [hostReply] bounds a Host call, on which the coordinator waits for the Host up to 60
- * seconds before it answers (`HOST_CALL_TIMEOUT` in renoa-control, mirrored here by hand).
- * [probe] bounds [RcpSurface.probe]. A request not answered in time ends the connection: Renoa
- * answers every request once, so the connection is no longer trusted, and a late answer would end
- * it anyway as an answer to no request. [close] bounds the close handshake of
- * [RcpSurface.disconnect].
+ * [connect] bounds opening the socket and signing in. [reply] bounds how long an attach's replay
+ * may go without an applied event, those [RcpSurface.connect] makes to re-attach included; a
+ * replay cut short keeps what it applied, so the next attempt asks for less.
+ *
+ * [reply] also bounds a request, [hostReply] a Host call, and [probe] a [RcpSurface.probe]: once
+ * Renoa has sent no frame at all for that long while the answer is due, the connection ends.
+ * Frames still arriving mean Renoa is busy, as when the coordinator streams a replay before it
+ * reads the next request, so the wait goes on. The coordinator waits for the Host up to 60
+ * seconds before it answers a Host call (`HOST_CALL_TIMEOUT` in renoa-control, which a test
+ * reads). A connection ends rather than drops one late answer, which would end it anyway as an
+ * answer to no request. [close] bounds the close handshake of [RcpSurface.disconnect].
  *
  * [keepalive] is the WebSocket ping interval. A socket whose pong has not come back by the next
  * ping fails, so a half-open socket, as after a Wi-Fi or NAT change, ends within about twice this

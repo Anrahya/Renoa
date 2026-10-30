@@ -780,6 +780,12 @@ class RcpAgentRepositoryTest {
         runCurrent()
         assertEquals(tries, surface.connects, "a second refusal milliseconds later would sign the phone out")
         assertEquals(Link.Lost, repo.link.value)
+
+        surface.signInRefused = null
+        surface.refuseConnects = 1
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(tries + 1, surface.connects, "the nudge spent in the refusal's wait does not cut the next one")
     }
 
     @Test

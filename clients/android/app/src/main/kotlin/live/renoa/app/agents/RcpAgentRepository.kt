@@ -167,8 +167,9 @@ class RcpAgentRepository(
                 // Live text is not replayed, so a draft cut by the drop would be glued to text from after it.
                 synchronized(lock) { rooms.values.toList() }.forEach { update(it) { connectionLost() } }
                 // A nudge never hurries the retry after a refused sign-in: refused twice running signs the phone out.
+                // One that came meanwhile is spent, so it cannot cut the wait after that retry either.
                 val wait = retryAfter(attempt++)
-                if (refusals > 0) delay(wait) else withTimeoutOrNull(wait) { nudges.receive() }
+                if (refusals > 0) delay(wait).also { nudges.tryReceive() } else withTimeoutOrNull(wait) { nudges.receive() }
             }
         }
     }

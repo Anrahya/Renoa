@@ -56,10 +56,11 @@ private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val app
  * there, and so are [ApplyLiveActivity] callbacks. Retry timing after a disconnect is the caller's policy: this client never reconnects
  * on its own. [connect] re-attaches every task that finished replay on this instance.
  *
- * Each wait for an answer from Renoa fails once the answer is overdue by [timeouts]: [connect]'s
- * sign-in, then each re-attach on its own; every request; each replay while it stalls. A dead
- * socket is found by the keepalive, which is all that bounds [awaitDisconnect]. Fetching a
- * ticket, before the socket opens, is the caller's to bound.
+ * Each wait for an answer from Renoa fails once it is overdue by [timeouts]: [connect]'s sign-in,
+ * then each re-attach on its own; a request once Renoa has sent nothing at all for its deadline;
+ * a replay once it stops moving. [awaitDisconnect] waits as long as the connection lives: the
+ * keepalive ends a dead socket, and [probe] finds one sooner. Fetching a ticket, before the
+ * socket opens, is the caller's to bound.
  */
 class WebSocketRcpSurface(
     private val endpoint: String,
@@ -283,8 +284,13 @@ class WebSocketRcpSurface(
             connection.pending.remove(id)
             throw failure
         }
-        val answer = withTimeoutOrNull(limit) { pending.response.await() } ?: silent(connection, "Renoa did not send ${expected.simpleName} for request $id within $limit")
-        return expected.javaObjectType.cast(answer)
+        while (true) {
+            val since = System.nanoTime()
+            withTimeoutOrNull(limit) { pending.response.await() }?.let { return expected.javaObjectType.cast(it) }
+            // The coordinator answers a connection's requests in order and streams a replay before
+            // reading on, so frames still coming mean busy, not gone.
+            if (!connection.heardSince(since)) silent(connection, "Renoa sent nothing for $limit while ${expected.simpleName} for request $id was due")
+        }
     }
 
     /** Waits for [replay] to finish while each of its events arrives within [RcpTimeouts.reply] of the last. */

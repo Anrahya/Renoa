@@ -62,8 +62,8 @@ interface RcpSurface {
 
     /**
      * Checks the connection with a small request on a short deadline, as when the phone may have
-     * changed networks. One Renoa does not answer in time ends the connection, which
-     * [awaitDisconnect] then reports.
+     * changed networks. If Renoa sends nothing at all within it, the connection ends, which
+     * [awaitDisconnect] then reports; a connection still delivering frames is only busy.
      */
     suspend fun probe()
 
