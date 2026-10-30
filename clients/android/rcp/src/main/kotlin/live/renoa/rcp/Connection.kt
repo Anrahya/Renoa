@@ -9,35 +9,8 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Job
 import kotlin.reflect.KClass
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
-
-/**
- * How long the client waits on Renoa before it counts the connection as gone, so the caller can
- * try again instead of waiting forever. A phone's Wi-Fi power save can hold packets for seconds,
- * so every bound is well above that.
- *
- * [connect] bounds opening the socket and signing in. [reply] bounds each request's answer and
- * each attach's replay, those [RcpSurface.connect] makes to re-attach included; a replay cut short
- * keeps what it applied, so the next attempt asks for less. [hostReply] bounds a Host call, on
- * which the coordinator waits for the Host up to 60 seconds before it answers (`HOST_CALL_TIMEOUT`
- * in renoa-control). A request not answered in time ends the connection: Renoa answers every
- * request once, so the connection is no longer trusted, and a late answer would end it anyway as
- * an answer to no request.
- *
- * [keepalive] is the WebSocket ping interval. A socket whose pong has not come back by the next
- * ping fails, so a half-open socket, as after a Wi-Fi or NAT change, ends within twice this even
- * while nothing else is sent. It matches the coordinator's own 30-second ping, and a pong would
- * have to be held for the whole interval, far longer than power save holds one, to end a socket
- * that still works.
- */
-class RcpTimeouts(
-    val connect: Duration = 30.seconds,
-    val reply: Duration = 30.seconds,
-    val hostReply: Duration = 75.seconds,
-    val keepalive: Duration = 30.seconds,
-)
 
 /** Everything the socket can tell the client, in the order it happened. */
 internal sealed interface Inbound {
@@ -68,6 +41,9 @@ internal class Connection(val socket: WebSocket, val inbound: Channel<Inbound>) 
     /** Whether the coordinator has asked for the device-key proof; it asks at most once. Read on the receive loop only. */
     var challenged = false
     val ended = CompletableDeferred<Throwable>()
+
+    /** The receive loop. It stops once [ended] completes, and the next connection waits for it first. */
+    @Volatile var reader: Job? = null
 }
 
 internal fun openConnection(http: OkHttpClient, endpoint: String): Connection {

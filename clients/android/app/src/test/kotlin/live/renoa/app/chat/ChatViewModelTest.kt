@@ -36,7 +36,7 @@ class ChatViewModelTest {
 
     private class Flaky(private val inner: AgentRepository) : AgentRepository by inner {
         var refuseSend = false
-        var refuseStop = false
+        var refuseStop: Problem? = null
 
         override suspend fun send(agentId: String, text: String) {
             if (refuseSend) throw RepositoryException(Problem.Invalid, "refused")
@@ -44,7 +44,7 @@ class ChatViewModelTest {
         }
 
         override suspend fun stop(agentId: String) {
-            if (refuseStop) throw RepositoryException(Problem.Invalid, "refused")
+            refuseStop?.let { throw RepositoryException(it, "refused") }
             inner.stop(agentId)
         }
     }
@@ -265,11 +265,24 @@ class ChatViewModelTest {
         vm.onDraft("hello")
         vm.send()
         runCurrent()
-        repo.refuseStop = true
+        repo.refuseStop = Problem.Invalid
         vm.stop()
         runCurrent()
         assertNotNull(vm.state.value.notice)
         assertTrue(vm.state.value.working)
+    }
+
+    @Test
+    fun aStopThatMayHaveLandedDoesNotClaimItDidNot() = runTest {
+        val (vm, repo) = model()
+        runCurrent()
+        vm.onDraft("hello")
+        vm.send()
+        runCurrent()
+        repo.refuseStop = Problem.Unavailable
+        vm.stop()
+        runCurrent()
+        assertEquals("It may not have stopped. Try again.", vm.state.value.notice)
     }
 
     @Test

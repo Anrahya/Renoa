@@ -2,7 +2,6 @@ package live.renoa.app
 
 import android.app.Application
 import android.net.ConnectivityManager
-import android.net.Network
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,6 +26,7 @@ import live.renoa.rcp.WebSocketRcpSurface
 /** Owns what outlives a screen. */
 class RenoaApplication : Application() {
     private var repository: RcpAgentRepository? = null
+    private var surface: WebSocketRcpSurface? = null
     private var scope: CoroutineScope? = null
     private var outbox: SavedOutbox? = null
     private var home: SavedHome? = null
@@ -45,34 +45,23 @@ class RenoaApplication : Application() {
             val device = saved.credentials.deviceId
             val kept = SavedHome(homeFile(), owner = "${saved.origin} $device")
             val authentication = Authentication.Device(saved.credentials) { bytes -> DeviceKeys.getOrCreate().sign(bytes) }
-            val surface = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication, state)
+            val client = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication, state)
             val running = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            RcpAgentRepository(surface, state, running, home = kept).also {
+            RcpAgentRepository(client, state, running, home = kept).also {
                 it.start()
                 repository = it
+                surface = client
                 scope = running
                 outbox = state
                 home = kept
-                network = retryOnNetwork(it)
+                network = watchNetwork(getSystemService(ConnectivityManager::class.java), it::retryNow)
             }
         }
 
-    /** A reconnect waiting out its backoff tries at once when the owner comes back to the app. */
+    /** The owner came back to the app: a link that looks up is checked, and one that is down tries again now. */
     @Synchronized
     fun retryNow() {
         repository?.retryNow()
-    }
-
-    /**
-     * A reconnect waiting out its backoff tries at once when a network comes up or the default one
-     * changes. Some Android 11 builds refuse the registration; the backoff then runs as before.
-     */
-    private fun retryOnNetwork(repository: RcpAgentRepository): ConnectivityManager.NetworkCallback? {
-        val callback =
-            object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) = repository.retryNow()
-            }
-        return runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(callback) }.map { callback }.getOrNull()
     }
 
     /**
@@ -86,8 +75,12 @@ class RenoaApplication : Application() {
                 scope?.cancel()
                 scope = null
                 repository = null
-                network?.let { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) }
+                // Closed, so the old socket stops pinging Renoa.
+                surface?.close()
+                surface = null
+                val watching = network
                 network = null
+                runCatching { watching?.let { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
                 (outbox to home).also {
                     outbox = null
                     home = null

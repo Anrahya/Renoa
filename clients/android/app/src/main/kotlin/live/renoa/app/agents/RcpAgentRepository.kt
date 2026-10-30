@@ -19,9 +19,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.PendingTextCommand
-import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
 import live.renoa.rcp.RcpSurface
@@ -90,14 +88,8 @@ class RcpAgentRepository(
         )
     private val hostClient = HostClient(surface)
     private val host = HostAgents(hostClient)
-    private val hostRoutines = HostRoutines(hostClient)
     private val owner = HostOwner(hostClient)
-
-    /** The automations as the Host last listed them, by id, with the revision a change starts from. */
-    private val automations = LinkedHashMap<String, ObservedAutomation>()
-
-    /** Set once the Host has listed the automations; until then the kept routines show. */
-    private var routinesHeard = false
+    private val heldRoutines = HeldRoutines(HostRoutines(hostClient), changed = ::publish)
 
     /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
     private val following = Mutex()
@@ -138,7 +130,7 @@ class RcpAgentRepository(
                         nudges.tryReceive()
                     }
                     refusals = 0
-                    readRoutines()
+                    heldRoutines.read()
                     readPurposes()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
@@ -150,7 +142,7 @@ class RcpAgentRepository(
                                     delay(rosterEvery)
                                     unsent.send()
                                     follow(surface.listTargets())
-                                    readRoutines()
+                                    heldRoutines.read()
                                     readPurposes()
                                 }
                             }
@@ -174,23 +166,29 @@ class RcpAgentRepository(
                 unsent.connectionLost()
                 // Live text is not replayed, so a draft cut by the drop would be glued to text from after it.
                 synchronized(lock) { rooms.values.toList() }.forEach { update(it) { connectionLost() } }
-                withTimeoutOrNull(retryAfter(attempt++)) { nudges.receive() }
+                // A nudge never hurries the retry after a refused sign-in: refused twice running signs the phone out.
+                val wait = retryAfter(attempt++)
+                if (refusals > 0) delay(wait) else withTimeoutOrNull(wait) { nudges.receive() }
             }
         }
     }
 
     /**
-     * Ends the wait before the next connection attempt, as when the owner opens the app or a network
-     * comes up; during an attempt, it ends the wait after it. While connected it does nothing.
+     * For when the owner comes back to the app or the phone changes networks. While connected, it
+     * [probes][RcpSurface.probe] the connection, so a dead one is found in seconds. Otherwise it ends
+     * the wait before the next attempt, or during one the wait after it, unless the last attempt's
+     * sign-in was refused.
      */
     fun retryNow() {
-        synchronized(lock) { if (linkState.value != Link.Connected) nudges.trySend(Unit) }
+        val connected = synchronized(lock) { (linkState.value == Link.Connected).also { if (!it) nudges.trySend(Unit) } }
+        if (connected) scope.launch { runCatching { surface.probe() } }
     }
 
     /**
      * Opens and attaches the chat of each agent not attached yet; [RcpSurface.connect] re-attaches the
      * rest. A room outlives a failed attach, because the client keeps the cursor of what it applied
-     * and replays only what follows. One agent that cannot be opened does not hold up the others.
+     * and replays only what follows. One agent that cannot be opened does not hold up the others; a
+     * connection that ends partway, as when a replay stalls, leaves the rest to the next connect.
      */
     private suspend fun follow(targets: List<TargetSummary>) = following.withLock {
         for (target in targets) {
@@ -233,34 +231,9 @@ class RcpAgentRepository(
                     AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = room.journal.state, glance = room.journal.glance)
                 }
             shown.show(rooms.keys, roster.value)
-            if (!routinesHeard) return
-            val zone = here()
-            shown.routines.value =
-                automations.values.map { automation ->
-                    val agent = rooms.entries.firstOrNull { (_, room) -> room.attached && room.target.target == "$AGENT_TARGET${automation.agentId}" }
-                    automation.routine(agent?.key, zone)
-                }
+            val rosterId = { agent: String -> rooms.entries.firstOrNull { (_, room) -> room.attached && room.target.target == "$AGENT_TARGET$agent" }?.key }
+            heldRoutines.shown(rosterId, here())?.let { shown.routines.value = it }
         }
-    }
-
-    /**
-     * Reads the routines again. While the Host cannot be read, the last ones stay. The Host answers
-     * calls in any order, so a routine the app already holds at a newer revision keeps it.
-     */
-    private suspend fun readRoutines() {
-        val listed =
-            try {
-                hostRoutines.observe()
-            } catch (failed: RepositoryException) {
-                return
-            }
-        synchronized(lock) {
-            val held = automations.toMap()
-            automations.clear()
-            listed.forEach { read -> automations[read.id] = held[read.id]?.takeIf { it.revision > read.revision } ?: read }
-            routinesHeard = true
-        }
-        publish()
     }
 
     /**
@@ -290,33 +263,13 @@ class RcpAgentRepository(
 
     override suspend fun saveOwnerProfile(expectedRevision: String, content: String): OwnerProfile = owner.saveProfile(expectedRevision, content)
 
-    override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) {
-        val automation = synchronized(lock) { automations[routineId] ?: throw RepositoryException(unknown(routinesHeard), "no routine $routineId") }
-        if (automation.enabled == on) return
-        val changed =
-            try {
-                hostRoutines.setEnabled(automation, on, operationId)
-            } catch (refused: RepositoryException) {
-                // A conflict means the routine changed elsewhere; read it again so the next change starts from there.
-                if (refused.problem == Problem.Conflict || refused.problem == Problem.NotFound) readRoutines()
-                throw refused
-            }
-        synchronized(lock) {
-            // A read that answered meanwhile may have dropped the routine or seen a newer revision; either stands.
-            val held = automations[routineId]
-            if (held != null && held.revision < changed.revision) automations[routineId] = changed
-        }
-        publish()
-    }
+    override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) = heldRoutines.set(routineId, on, operationId)
 
     /** The agent's chat, once it is followed. One Renoa lists whose chat could not be opened yet is [Problem.Unavailable]. */
     private fun room(agentId: String): Room {
         val room = synchronized(lock) { rooms[agentId]?.takeIf { it.attached } }
-        return room ?: throw RepositoryException(unknown(shown.heard.value && synchronized(lock) { agentId !in rooms }), "no agent $agentId")
+        return room ?: throw RepositoryException(notHeld(shown.heard.value && synchronized(lock) { agentId !in rooms }), "no agent $agentId")
     }
-
-    /** Something the app does not hold is gone once Renoa has said what there is; before that, Renoa was not reached. */
-    private fun unknown(heard: Boolean) = if (heard) Problem.NotFound else Problem.Unavailable
 
     /**
      * Waits for the agent's chat to be followed, as after a restart that reopened it before the first
@@ -489,10 +442,3 @@ class RcpAgentRepository(
 
 /** Refused sign-ins in a row after which the phone counts as signed out. */
 private const val SIGN_OUT_AFTER = 2
-
-/**
- * A refused sign-in: the handshake's refusal of the device credential (it carries no request id),
- * or a device key the coordinator wants and the phone no longer has.
- */
-private val Exception.signsOut: Boolean
-    get() = this is DeviceKeyRequired || (this is RcpException && code == RcpErrorCode.AuthenticationFailed && requestId == null)

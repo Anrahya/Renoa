@@ -60,6 +60,13 @@ interface RcpSurface {
     /** Suspends until the most recent connection ends and returns the exact reason. */
     suspend fun awaitDisconnect(): Throwable
 
+    /**
+     * Checks the connection with a small request on a short deadline, as when the phone may have
+     * changed networks. One Renoa does not answer in time ends the connection, which
+     * [awaitDisconnect] then reports.
+     */
+    suspend fun probe()
+
     suspend fun listTasks(): List<TaskSummary>
 
     suspend fun listTargets(): List<TargetSummary>

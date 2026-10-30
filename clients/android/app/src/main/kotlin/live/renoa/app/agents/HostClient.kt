@@ -5,23 +5,10 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import live.renoa.rcp.HostAnswer
 import live.renoa.rcp.HostMethod
-import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpSurface
 
 private val hostJson = Json { ignoreUnknownKeys = true }
-
-/** What a coordinator refusal means to the screens. */
-internal fun RcpException.asProblem(): RepositoryException {
-    val problem =
-        when (code) {
-            RcpErrorCode.NotFound -> Problem.NotFound
-            RcpErrorCode.Conflict -> Problem.Conflict
-            RcpErrorCode.InvalidMessage -> Problem.Invalid
-            else -> Problem.Unavailable
-        }
-    return RepositoryException(problem, message.orEmpty())
-}
 
 /**
  * The Host's control, called over the app's RCP connection. Every failure is a

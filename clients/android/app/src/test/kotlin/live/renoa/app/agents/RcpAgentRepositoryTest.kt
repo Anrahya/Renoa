@@ -164,6 +164,20 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     override suspend fun awaitDisconnect(): Throwable = ended.await()
 
+    var probes = 0
+
+    /** When set, a probe goes unanswered, so the connection ends as the client ends it. */
+    var probeUnanswered = false
+
+    override suspend fun probe() {
+        check(online)
+        probes++
+        if (probeUnanswered) {
+            drop()
+            throw Disconnected("probe unanswered")
+        }
+    }
+
     override suspend fun listTasks(): List<TaskSummary> = error("unused")
 
     override suspend fun listTargets(): List<TargetSummary> = targets.also { check(online) }
@@ -733,6 +747,39 @@ class RcpAgentRepositoryTest {
         surface.drop()
         runCurrent()
         assertEquals(3, surface.connects, "a nudge while connected does not cut the wait after the next drop")
+    }
+
+    @Test
+    fun comingBackWhileTheLinkLooksUpChecksItAndADeadOneIsMadeAgain() = runTest {
+        val repo = started()
+        repo.retryNow()
+        runCurrent()
+        assertEquals(1, surface.probes)
+        assertEquals(Link.Connected, repo.link.value, "it answered")
+
+        surface.probeUnanswered = true
+        repo.retryNow()
+        runCurrent()
+        assertEquals(Link.Lost, repo.link.value, "found dead in the probe's time, not the keepalive's")
+        surface.probeUnanswered = false
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(Link.Connected, repo.link.value)
+    }
+
+    @Test
+    fun aNudgeNeverHurriesTheRetryAfterARefusedSignIn() = runTest {
+        val repo = started()
+        surface.signInRefused = RcpException(RcpErrorCode.AuthenticationFailed, "glitch", null)
+        surface.drop()
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        val tries = surface.connects
+
+        repo.retryNow()
+        runCurrent()
+        assertEquals(tries, surface.connects, "a second refusal milliseconds later would sign the phone out")
+        assertEquals(Link.Lost, repo.link.value)
     }
 
     @Test

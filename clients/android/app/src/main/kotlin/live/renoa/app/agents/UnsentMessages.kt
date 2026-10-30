@@ -2,7 +2,6 @@ package live.renoa.app.agents
 
 import kotlinx.coroutines.CancellationException
 import live.renoa.rcp.PendingTextCommand
-import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
 import live.renoa.rcp.RcpSurface
@@ -110,20 +109,3 @@ internal class UnsentMessages(
         val GIVE_UP_AFTER = 1.minutes
     }
 }
-
-/** Whether the coordinator answered this request; an error with no request ends the connection. */
-internal val RcpException.answered: Boolean get() = requestId != null
-
-/**
- * Whether the coordinator answered this request with a refusal that a retry cannot change. One like
- * `node_offline` or `internal` may pass.
- */
-internal val RcpException.refusesTheRequest: Boolean
-    get() =
-        answered &&
-            when (code) {
-                RcpErrorCode.InvalidMessage, RcpErrorCode.InvalidRole, RcpErrorCode.NotFound, RcpErrorCode.Conflict -> true
-                RcpErrorCode.AuthenticationFailed, RcpErrorCode.NodeOffline, RcpErrorCode.Internal,
-                RcpErrorCode.ReplayRequired, RcpErrorCode.VersionMismatch,
-                -> false
-            }

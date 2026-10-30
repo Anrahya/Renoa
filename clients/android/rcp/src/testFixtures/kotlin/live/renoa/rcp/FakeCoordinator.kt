@@ -90,6 +90,12 @@ class FakeCoordinator : AutoCloseable {
     /** When set, an attach replays at most this many events and the rest never come. */
     @Volatile var replayOnly: Int? = null
 
+    /** Milliseconds between the events of a replay, as over a slow link. */
+    @Volatile var replayEvery = 0L
+
+    /** When set, the next submit is admitted and journaled, and its acknowledgement is lost while the connection stays up. */
+    @Volatile var withholdNextAcknowledgement = false
+
     /** When set, every connection attempt is answered with a redirect to this URL instead of an upgrade. */
     @Volatile var redirectTo: String? = null
 
@@ -372,7 +378,10 @@ class FakeCoordinator : AutoCloseable {
             val through = record.journal.size - 1L
             reply(requestId, "attached") { put("task_id", taskId.toString()); put("through_sequence", if (through < 0) JsonNull else JsonPrimitive(through)) }
             val replayed = record.journal.filter { it.getValue("event").jsonObject.getValue("sequence").jsonPrimitive.long > after }
-            for (event in replayed.take(replayOnly ?: replayed.size)) socket.send(event.toString())
+            for (event in replayed.take(replayOnly ?: replayed.size)) {
+                Thread.sleep(replayEvery)
+                socket.send(event.toString())
+            }
             attached += taskId
             if (live) attachedLive += taskId
         }
@@ -444,6 +453,10 @@ class FakeCoordinator : AutoCloseable {
             if (dropNextAcknowledgement) {
                 dropNextAcknowledgement = false
                 socket.cancel()
+                return
+            }
+            if (withholdNextAcknowledgement) {
+                withholdNextAcknowledgement = false
                 return
             }
             reply(requestId, "command_accepted") { put("command_id", commandId) }
