@@ -106,3 +106,56 @@ internal class HostRoutines(private val host: HostClient) {
         return automation.copy(revision = changed.revision, enabled = changed.enabled, nextDueMs = changed.nextDueMs)
     }
 }
+
+/**
+ * The automations as the Host last listed them, by id, with the revision a change starts from. The
+ * Host answers calls in any order, so a routine held at a newer revision keeps it. [changed] runs
+ * after each change to what is held.
+ */
+internal class HeldRoutines(private val host: HostRoutines, private val changed: () -> Unit) {
+    private val lock = Any()
+    private val automations = LinkedHashMap<String, ObservedAutomation>()
+
+    /** Set once the Host has listed the automations; until then the kept routines show. */
+    private var heard = false
+
+    /** Reads the routines again. While the Host cannot be read, the last ones stay. */
+    suspend fun read() {
+        val listed =
+            try {
+                host.observe()
+            } catch (failed: RepositoryException) {
+                return
+            }
+        synchronized(lock) {
+            val held = automations.toMap()
+            automations.clear()
+            listed.forEach { read -> automations[read.id] = held[read.id]?.takeIf { it.revision > read.revision } ?: read }
+            heard = true
+        }
+        changed()
+    }
+
+    /** Turns the routine on or off from the revision held. A refusal that says it changed elsewhere reads it again first. */
+    suspend fun set(routineId: String, on: Boolean, operationId: String) {
+        val automation = synchronized(lock) { automations[routineId] ?: throw RepositoryException(notHeld(heard), "no routine $routineId") }
+        if (automation.enabled == on) return
+        val receipt =
+            try {
+                host.setEnabled(automation, on, operationId)
+            } catch (refused: RepositoryException) {
+                if (refused.problem == Problem.Conflict || refused.problem == Problem.NotFound) read()
+                throw refused
+            }
+        synchronized(lock) {
+            // A read that answered meanwhile may have dropped the routine or seen a newer revision; either stands.
+            val held = automations[routineId]
+            if (held != null && held.revision < receipt.revision) automations[routineId] = receipt
+        }
+        changed()
+    }
+
+    /** The routines as the owner sees them, each named by its agent's roster id; null until the Host has listed them. */
+    fun shown(rosterId: (agentId: String) -> String?, here: ZoneId): List<Routine>? =
+        synchronized(lock) { automations.values.map { it.routine(rosterId(it.agentId), here) }.takeIf { heard } }
+}

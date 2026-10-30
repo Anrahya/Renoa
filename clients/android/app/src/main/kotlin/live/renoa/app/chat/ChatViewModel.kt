@@ -163,7 +163,8 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
             try {
                 repository.stop(agentId)
             } catch (refused: RepositoryException) {
-                notice.value = refused.wordsOr("Could not stop. Try again.")
+                // Not reaching Renoa leaves the stop unknown; asking again is safe.
+                notice.value = if (refused.problem == Problem.Unavailable) "It may not have stopped. Try again." else "Could not stop. Try again."
             }
         }
     }

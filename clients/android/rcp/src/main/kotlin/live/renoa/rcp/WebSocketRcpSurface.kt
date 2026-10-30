@@ -7,14 +7,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.reflect.KClass
-import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration
 import java.util.Base64
 import kotlin.uuid.Uuid
 
@@ -29,9 +32,10 @@ internal fun deviceProofText(deviceId: Uuid, nonce: String): ByteArray =
 /** Bytes as the coordinator carries keys and signatures: base64url without padding, which it requires. */
 internal fun base64Url(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
-/** Replay of one attachment: complete once the event at [through] has been applied. */
+/** Replay of one attachment: complete once the event at [through] has been applied. [applied] hears each event applied before then. */
 private class Replay {
     val done = CompletableDeferred<Unit>()
+    val applied = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile
     var through: Long? = null
@@ -51,6 +55,12 @@ private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val app
  * Frames are handled one at a time, in arrival order, on [context]; [attach] callbacks run
  * there, and so are [ApplyLiveActivity] callbacks. Retry timing after a disconnect is the caller's policy: this client never reconnects
  * on its own. [connect] re-attaches every task that finished replay on this instance.
+ *
+ * Each wait for an answer from Renoa fails once it is overdue by [timeouts]: [connect]'s sign-in,
+ * then each re-attach on its own; a request once Renoa has sent nothing at all for its deadline;
+ * a replay once it stops moving. [awaitDisconnect] waits as long as the connection lives: the
+ * keepalive ends a dead socket, and [probe] finds one sooner. Fetching a ticket, before the
+ * socket opens, is the caller's to bound.
  */
 class WebSocketRcpSurface(
     private val endpoint: String,
@@ -59,12 +69,18 @@ class WebSocketRcpSurface(
     private val http: OkHttpClient = OkHttpClient(),
     context: CoroutineContext = Dispatchers.Default,
     private val newCommandId: () -> Uuid = { Uuid.random() },
+    private val timeouts: RcpTimeouts = RcpTimeouts(),
 ) : RcpSurface {
     private val scope = CoroutineScope(SupervisorJob() + context)
 
     // Credentials go in the first frame after the upgrade, so a redirect could carry them to a
     // host, or a plain-text scheme, that requireSecureEndpoint never saw. Redirects fail the upgrade.
-    private val socketClient = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    private val socketClient =
+        http.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .pingInterval(timeouts.keepalive.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+            .build()
 
     private val attachments = LinkedHashMap<Uuid, Attachment>()
     private val nextRequestId = AtomicLong(1)
@@ -88,6 +104,9 @@ class WebSocketRcpSurface(
         check(connecting.compareAndSet(false, true)) { "RCP client is already connecting" }
         try {
             check(current == null) { "RCP client is already connected" }
+            // The last connection's loop may still be applying the frame it held when it ended;
+            // its cursor must be stored before this one asks to replay from it.
+            latest?.reader?.join()
             val identity = identityFrame()
             val connection = openConnection(socketClient, endpoint)
             current = connection
@@ -95,11 +114,19 @@ class WebSocketRcpSurface(
             // close() sets closed and then reads current; this sets current and then reads closed,
             // so a close that raced with this connect ends the connection one way or the other.
             if (closed) end(connection, Disconnected("RCP client closed"), 1000)
-            scope.launch { receive(connection) }
+            connection.reader = scope.launch { receive(connection) }
             try {
-                connection.opened.await()
-                send(connection, identity)
-                connection.authenticated.await()
+                val signedIn =
+                    withTimeoutOrNull(timeouts.connect) {
+                        connection.opened.await()
+                        send(connection, identity)
+                        connection.authenticated.await()
+                    }
+                if (signedIn == null) {
+                    val late = Disconnected("Renoa did not finish connecting within ${timeouts.connect}")
+                    end(connection, late, null)
+                    throw late
+                }
                 for (attachment in synchronized(attachments) { attachments.values.toList() }) {
                     reattach(attachment)
                 }
@@ -115,12 +142,16 @@ class WebSocketRcpSurface(
     override suspend fun disconnect() {
         val connection = current ?: return
         connection.socket.close(1000, "client disconnect")
-        withTimeoutOrNull(2.seconds) { connection.ended.await() }
+        withTimeoutOrNull(timeouts.close) { connection.ended.await() }
             ?: end(connection, Disconnected("the server did not finish the close handshake"), 1000)
     }
 
     override suspend fun awaitDisconnect(): Throwable =
         checkNotNull(latest) { "RCP client has not connected" }.ended.await()
+
+    override suspend fun probe() {
+        request(ServerMessage.TargetList::class, { ClientMessage.ListTargets(it) }, timeouts.probe)
+    }
 
     override suspend fun listTasks(): List<TaskSummary> =
         request(ServerMessage.TaskList::class, { ClientMessage.ListTasks(it) }).tasks
@@ -172,7 +203,7 @@ class WebSocketRcpSurface(
         }.outcome
 
     override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer =
-        request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) })
+        request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) }, timeouts.hostReply)
             .let { HostAnswer(it.status, it.body) }
 
     override suspend fun resendPending(command: PendingTextCommand) {
@@ -235,6 +266,7 @@ class WebSocketRcpSurface(
     private suspend fun <R : ServerMessage> request(
         expected: KClass<R>,
         build: (Long) -> ClientMessage,
+        limit: Duration = timeouts.reply,
         onReceive: (R) -> Unit = {},
     ): R {
         val connection = connected()
@@ -252,7 +284,34 @@ class WebSocketRcpSurface(
             connection.pending.remove(id)
             throw failure
         }
-        return expected.javaObjectType.cast(pending.response.await())
+        while (true) {
+            val since = System.nanoTime()
+            withTimeoutOrNull(limit) { pending.response.await() }?.let { return expected.javaObjectType.cast(it) }
+            // The coordinator answers a connection's requests in order and streams a replay before
+            // reading on, so frames still coming mean busy, not gone.
+            if (!connection.heardSince(since)) silent(connection, "Renoa sent nothing for $limit while ${expected.simpleName} for request $id was due")
+        }
+    }
+
+    /** Waits for [replay] to finish while each of its events arrives within [RcpTimeouts.reply] of the last. */
+    private suspend fun awaitReplay(connection: Connection, replay: Replay, taskId: Uuid) {
+        while (true) {
+            val finished =
+                withTimeoutOrNull(timeouts.reply) {
+                    select<Boolean> {
+                        replay.done.onAwait { true }
+                        replay.applied.onReceive { false }
+                    }
+                } ?: silent(connection, "Renoa sent no more of the replay of task $taskId for ${timeouts.reply}")
+            if (finished) return
+        }
+    }
+
+    /** An answer that is overdue ends [connection], as [RcpTimeouts] says, so every other wait on it fails too. */
+    private fun silent(connection: Connection, reason: String): Nothing {
+        val silent = Disconnected(reason)
+        end(connection, silent, null)
+        throw silent
     }
 
     /** A task the coordinator no longer has would fail every later connect, so it is forgotten as the failure is reported. */
@@ -266,6 +325,7 @@ class WebSocketRcpSurface(
     }
 
     private suspend fun attachExisting(attachment: Attachment) {
+        val connection = connected()
         attachment.cursor = state.cursor(attachment.taskId)
         val replay = Replay()
         attachment.replay = replay
@@ -281,7 +341,7 @@ class WebSocketRcpSurface(
                 replay.done.complete(Unit)
             }
         }
-        replay.done.await()
+        awaitReplay(connection, replay, attachment.taskId)
     }
 
     private suspend fun receive(connection: Connection) {
@@ -397,6 +457,8 @@ class WebSocketRcpSurface(
         if (replay != null && through != null && event.sequence >= through) {
             attachment.replay = null
             replay.done.complete(Unit)
+        } else {
+            replay?.applied?.trySend(Unit)
         }
     }
 
@@ -428,6 +490,7 @@ class WebSocketRcpSurface(
             }
         }
         if (closeCode != null) connection.socket.close(closeCode, null) else connection.socket.cancel()
-        connection.inbound.close()
+        // Frames still queued are dropped, not applied: the next connection replays from the cursor.
+        connection.inbound.cancel()
     }
 }

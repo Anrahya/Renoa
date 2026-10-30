@@ -1,6 +1,7 @@
 package live.renoa.app
 
 import android.app.Application
+import android.net.ConnectivityManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,10 +25,12 @@ import live.renoa.rcp.WebSocketRcpSurface
 
 /** Owns what outlives a screen. */
 class RenoaApplication : Application() {
-    private var repository: AgentRepository? = null
+    private var repository: RcpAgentRepository? = null
+    private var surface: WebSocketRcpSurface? = null
     private var scope: CoroutineScope? = null
     private var outbox: SavedOutbox? = null
     private var home: SavedHome? = null
+    private var network: ConnectivityManager.NetworkCallback? = null
 
     /**
      * The owner's Renoa, connected on first use and kept while the process lives. The first use
@@ -42,16 +45,24 @@ class RenoaApplication : Application() {
             val device = saved.credentials.deviceId
             val kept = SavedHome(homeFile(), owner = "${saved.origin} $device")
             val authentication = Authentication.Device(saved.credentials) { bytes -> DeviceKeys.getOrCreate().sign(bytes) }
-            val surface = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication, state)
+            val client = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication, state)
             val running = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            RcpAgentRepository(surface, state, running, home = kept).also {
+            RcpAgentRepository(client, state, running, home = kept).also {
                 it.start()
                 repository = it
+                surface = client
                 scope = running
                 outbox = state
                 home = kept
+                network = watchNetwork(getSystemService(ConnectivityManager::class.java), it::retryNow)
             }
         }
+
+    /** The owner came back to the app: a link that looks up is checked, and one that is down tries again now. */
+    @Synchronized
+    fun retryNow() {
+        repository?.retryNow()
+    }
 
     /**
      * Forgets this phone's sign-in, the Renoa it connected to, its unsent messages, the Home it kept,
@@ -64,6 +75,12 @@ class RenoaApplication : Application() {
                 scope?.cancel()
                 scope = null
                 repository = null
+                // Closed, so the old socket stops pinging Renoa.
+                surface?.close()
+                surface = null
+                val watching = network
+                network = null
+                runCatching { watching?.let { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
                 (outbox to home).also {
                     outbox = null
                     home = null
@@ -92,5 +109,10 @@ class MainActivity : ComponentActivity() {
         // A credential from another Renoa, as after a build that signs in elsewhere, does not count.
         val signedIn = store.load()?.origin == RENOA_ORIGIN
         setContent { RenoaApp(application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut) }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        (application as RenoaApplication).retryNow()
     }
 }

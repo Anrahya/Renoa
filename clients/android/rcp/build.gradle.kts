@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
+    // The fake coordinator, which the app's tests also run its client against.
+    `java-test-fixtures`
 }
 
 kotlin {
@@ -14,6 +16,9 @@ dependencies {
     api(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
+
+    testFixturesApi(libs.kotlinx.serialization.json)
+    testFixturesImplementation(libs.okhttp.mockwebserver)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
