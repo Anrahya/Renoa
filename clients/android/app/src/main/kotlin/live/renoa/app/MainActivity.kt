@@ -1,6 +1,8 @@
 package live.renoa.app
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,10 +26,11 @@ import live.renoa.rcp.WebSocketRcpSurface
 
 /** Owns what outlives a screen. */
 class RenoaApplication : Application() {
-    private var repository: AgentRepository? = null
+    private var repository: RcpAgentRepository? = null
     private var scope: CoroutineScope? = null
     private var outbox: SavedOutbox? = null
     private var home: SavedHome? = null
+    private var network: ConnectivityManager.NetworkCallback? = null
 
     /**
      * The owner's Renoa, connected on first use and kept while the process lives. The first use
@@ -50,8 +53,27 @@ class RenoaApplication : Application() {
                 scope = running
                 outbox = state
                 home = kept
+                network = retryOnNetwork(it)
             }
         }
+
+    /** A reconnect waiting out its backoff tries at once when the owner comes back to the app. */
+    @Synchronized
+    fun retryNow() {
+        repository?.retryNow()
+    }
+
+    /**
+     * A reconnect waiting out its backoff tries at once when a network comes up or the default one
+     * changes. Some Android 11 builds refuse the registration; the backoff then runs as before.
+     */
+    private fun retryOnNetwork(repository: RcpAgentRepository): ConnectivityManager.NetworkCallback? {
+        val callback =
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = repository.retryNow()
+            }
+        return runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(callback) }.map { callback }.getOrNull()
+    }
 
     /**
      * Forgets this phone's sign-in, the Renoa it connected to, its unsent messages, the Home it kept,
@@ -64,6 +86,8 @@ class RenoaApplication : Application() {
                 scope?.cancel()
                 scope = null
                 repository = null
+                network?.let { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) }
+                network = null
                 (outbox to home).also {
                     outbox = null
                     home = null
@@ -92,5 +116,10 @@ class MainActivity : ComponentActivity() {
         // A credential from another Renoa, as after a build that signs in elsewhere, does not count.
         val signedIn = store.load()?.origin == RENOA_ORIGIN
         setContent { RenoaApp(application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut) }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        (application as RenoaApplication).retryNow()
     }
 }

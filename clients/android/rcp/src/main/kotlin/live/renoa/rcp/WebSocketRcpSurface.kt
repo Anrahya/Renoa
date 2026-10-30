@@ -3,6 +3,7 @@ package live.renoa.rcp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -10,10 +11,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.reflect.KClass
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import java.util.Base64
 import kotlin.uuid.Uuid
@@ -50,7 +53,9 @@ private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val app
  *
  * Frames are handled one at a time, in arrival order, on [context]; [attach] callbacks run
  * there, and so are [ApplyLiveActivity] callbacks. Retry timing after a disconnect is the caller's policy: this client never reconnects
- * on its own. [connect] re-attaches every task that finished replay on this instance.
+ * on its own. [connect] re-attaches every task that finished replay on this instance. Each wait on
+ * Renoa's socket is bounded by [timeouts], so each call returns or fails in time and a dead socket
+ * ends; fetching a ticket, before the socket opens, is the caller's to bound.
  */
 class WebSocketRcpSurface(
     private val endpoint: String,
@@ -59,12 +64,18 @@ class WebSocketRcpSurface(
     private val http: OkHttpClient = OkHttpClient(),
     context: CoroutineContext = Dispatchers.Default,
     private val newCommandId: () -> Uuid = { Uuid.random() },
+    private val timeouts: RcpTimeouts = RcpTimeouts(),
 ) : RcpSurface {
     private val scope = CoroutineScope(SupervisorJob() + context)
 
     // Credentials go in the first frame after the upgrade, so a redirect could carry them to a
     // host, or a plain-text scheme, that requireSecureEndpoint never saw. Redirects fail the upgrade.
-    private val socketClient = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    private val socketClient =
+        http.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .pingInterval(timeouts.keepalive.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+            .build()
 
     private val attachments = LinkedHashMap<Uuid, Attachment>()
     private val nextRequestId = AtomicLong(1)
@@ -97,9 +108,17 @@ class WebSocketRcpSurface(
             if (closed) end(connection, Disconnected("RCP client closed"), 1000)
             scope.launch { receive(connection) }
             try {
-                connection.opened.await()
-                send(connection, identity)
-                connection.authenticated.await()
+                val signedIn =
+                    withTimeoutOrNull(timeouts.connect) {
+                        connection.opened.await()
+                        send(connection, identity)
+                        connection.authenticated.await()
+                    }
+                if (signedIn == null) {
+                    val late = Disconnected("Renoa did not finish connecting within ${timeouts.connect}")
+                    end(connection, late, null)
+                    throw late
+                }
                 for (attachment in synchronized(attachments) { attachments.values.toList() }) {
                     reattach(attachment)
                 }
@@ -172,7 +191,7 @@ class WebSocketRcpSurface(
         }.outcome
 
     override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer =
-        request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) })
+        request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) }, timeouts.hostReply)
             .let { HostAnswer(it.status, it.body) }
 
     override suspend fun resendPending(command: PendingTextCommand) {
@@ -235,6 +254,7 @@ class WebSocketRcpSurface(
     private suspend fun <R : ServerMessage> request(
         expected: KClass<R>,
         build: (Long) -> ClientMessage,
+        limit: Duration = timeouts.reply,
         onReceive: (R) -> Unit = {},
     ): R {
         val connection = connected()
@@ -252,8 +272,19 @@ class WebSocketRcpSurface(
             connection.pending.remove(id)
             throw failure
         }
-        return expected.javaObjectType.cast(pending.response.await())
+        return expected.javaObjectType.cast(awaitAnswer(connection, pending.response, limit) { "${expected.simpleName} for request $id" })
     }
+
+    /**
+     * Waits up to [limit] for [answer]. One that does not come in time ends [connection], as
+     * [RcpTimeouts] says, so every other wait on it fails too.
+     */
+    private suspend fun <T : Any> awaitAnswer(connection: Connection, answer: Deferred<T>, limit: Duration, what: () -> String): T =
+        withTimeoutOrNull(limit) { answer.await() } ?: run {
+            val silent = Disconnected("Renoa did not send ${what()} within $limit")
+            end(connection, silent, null)
+            throw silent
+        }
 
     /** A task the coordinator no longer has would fail every later connect, so it is forgotten as the failure is reported. */
     private suspend fun reattach(attachment: Attachment) {
@@ -266,6 +297,7 @@ class WebSocketRcpSurface(
     }
 
     private suspend fun attachExisting(attachment: Attachment) {
+        val connection = connected()
         attachment.cursor = state.cursor(attachment.taskId)
         val replay = Replay()
         attachment.replay = replay
@@ -281,7 +313,7 @@ class WebSocketRcpSurface(
                 replay.done.complete(Unit)
             }
         }
-        replay.done.await()
+        awaitAnswer(connection, replay.done, timeouts.reply) { "the replay of task ${attachment.taskId}" }
     }
 
     private suspend fun receive(connection: Connection) {

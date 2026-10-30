@@ -3,6 +3,7 @@ package live.renoa.app.agents
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -101,6 +102,9 @@ class RcpAgentRepository(
     /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
     private val following = Mutex()
 
+    /** At most one [retryNow] held for the reconnect wait. */
+    private val nudges = Channel<Unit>(Channel.CONFLATED)
+
     private val linkState = MutableStateFlow(Link.Connecting)
 
     override val link: StateFlow<Link> = linkState.asStateFlow()
@@ -129,7 +133,10 @@ class RcpAgentRepository(
                     follow(surface.listTargets())
                     shown.heard.value = true
                     publish()
-                    linkState.value = Link.Connected
+                    synchronized(lock) {
+                        linkState.value = Link.Connected
+                        nudges.tryReceive()
+                    }
                     refusals = 0
                     readRoutines()
                     readPurposes()
@@ -167,9 +174,17 @@ class RcpAgentRepository(
                 unsent.connectionLost()
                 // Live text is not replayed, so a draft cut by the drop would be glued to text from after it.
                 synchronized(lock) { rooms.values.toList() }.forEach { update(it) { connectionLost() } }
-                delay(retryAfter(attempt++))
+                withTimeoutOrNull(retryAfter(attempt++)) { nudges.receive() }
             }
         }
+    }
+
+    /**
+     * Ends the wait before the next connection attempt, as when the owner opens the app or a network
+     * comes up; during an attempt, it ends the wait after it. While connected it does nothing.
+     */
+    fun retryNow() {
+        synchronized(lock) { if (linkState.value != Link.Connected) nudges.trySend(Unit) }
     }
 
     /**
@@ -470,18 +485,6 @@ class RcpAgentRepository(
 
         fun AgentRecord.profile(agentId: String) = AgentProfile(agentId, name, operational.purpose.orEmpty(), abilities = emptyList())
     }
-}
-
-/** What a coordinator refusal means to the screens. */
-internal fun RcpException.asProblem(): RepositoryException {
-    val problem =
-        when (code) {
-            RcpErrorCode.NotFound -> Problem.NotFound
-            RcpErrorCode.Conflict -> Problem.Conflict
-            RcpErrorCode.InvalidMessage -> Problem.Invalid
-            else -> Problem.Unavailable
-        }
-    return RepositoryException(problem, message.orEmpty())
 }
 
 /** Refused sign-ins in a row after which the phone counts as signed out. */

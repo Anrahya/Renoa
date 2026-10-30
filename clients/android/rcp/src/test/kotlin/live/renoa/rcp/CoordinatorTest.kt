@@ -26,8 +26,9 @@ abstract class CoordinatorTest {
         authentication: Authentication = Authentication.Device(coordinator.credentials),
         rcpState: RcpState = state,
         newCommandId: () -> Uuid = { Uuid.random() },
+        timeouts: RcpTimeouts = RcpTimeouts(),
     ): RcpSurface =
-        WebSocketRcpSurface(coordinator.endpoint, authentication, rcpState, newCommandId = newCommandId).also { clients += it }
+        WebSocketRcpSurface(coordinator.endpoint, authentication, rcpState, newCommandId = newCommandId, timeouts = timeouts).also { clients += it }
 
     /** Waits until the app has stored the event at [sequence], which happens only after it applied it. */
     protected suspend fun awaitCursor(taskId: Uuid, sequence: Long) {

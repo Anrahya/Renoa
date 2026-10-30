@@ -712,6 +712,48 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun comingBackToTheAppOrANetworkComingUpRetriesWithoutWaitingOutTheBackoff() = runTest {
+        surface.refuseConnects = 2
+        val repo = RcpAgentRepository(surface, state, backgroundScope, retryAfter = { 1.minutes }, rosterEvery = 1.minutes, here = { KOLKATA })
+        repo.start()
+        runCurrent()
+        assertEquals(Link.Lost, repo.link.value)
+
+        repo.retryNow()
+        runCurrent()
+        assertEquals(2, surface.connects, "tried again at once")
+        assertEquals(Link.Lost, repo.link.value, "refused again, so it waits again")
+
+        repo.retryNow()
+        runCurrent()
+        assertEquals(Link.Connected, repo.link.value, "no time passed")
+
+        repo.retryNow()
+        surface.refuseConnects = 1
+        surface.drop()
+        runCurrent()
+        assertEquals(3, surface.connects, "a nudge while connected does not cut the wait after the next drop")
+    }
+
+    @Test
+    fun aNudgeDuringAnAttemptThatConnectsIsNotKeptForTheNextDrop() = runTest {
+        val opening = CompletableDeferred<Unit>()
+        surface.openGate = opening
+        val repo = RcpAgentRepository(surface, state, backgroundScope, retryAfter = { 1.minutes }, rosterEvery = 1.minutes, here = { KOLKATA })
+        repo.start()
+        runCurrent()
+        repo.retryNow()
+        opening.complete(Unit)
+        runCurrent()
+        assertEquals(Link.Connected, repo.link.value)
+
+        surface.refuseConnects = 1
+        surface.drop()
+        runCurrent()
+        assertEquals(1, surface.connects, "the drop waits out its backoff")
+    }
+
+    @Test
     fun aRefusedSignInSignsThePhoneOutAndNothingRetriesIt() = runTest {
         for (refusal in listOf(RcpException(RcpErrorCode.AuthenticationFailed, "unknown device", null), DeviceKeyRequired("no key"))) {
             surface.signInRefused = null

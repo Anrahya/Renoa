@@ -26,6 +26,7 @@ import java.security.SecureRandom
 import java.security.Signature
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
@@ -75,6 +76,19 @@ class FakeCoordinator : AutoCloseable {
 
     /** The owner's Host: answers a `call_host` with a status and JSON text, or null to refuse it as offline. */
     @Volatile var host: (method: String, path: String, body: String?) -> Pair<Int, String>? = { _, _, _ -> 200 to "{}" }
+
+    /** Frames of these types are read and never answered, as when the answer is lost on its way. */
+    @Volatile var unanswered: Set<String> = emptySet()
+
+    /**
+     * When set, a connection goes silent once it is authenticated, as a peer behind a Wi-Fi or NAT
+     * change: it reads nothing more, so it answers no request and no ping, and never closes.
+     */
+    @Volatile var vanishAfterAuthenticating = false
+    private val vanished = CountDownLatch(1)
+
+    /** When set, an attach replays at most this many events and the rest never come. */
+    @Volatile var replayOnly: Int? = null
 
     /** When set, every connection attempt is answered with a redirect to this URL instead of an upgrade. */
     @Volatile var redirectTo: String? = null
@@ -173,6 +187,7 @@ class FakeCoordinator : AutoCloseable {
         }.toString()
 
     override fun close() {
+        vanished.countDown()
         server.close()
     }
 
@@ -204,8 +219,11 @@ class FakeCoordinator : AutoCloseable {
             val frame = Json.parseToJsonElement(text).jsonObject
             received += frame
             val type = frame.getValue("type").jsonPrimitive.content
+            if (type in unanswered) return
             if (type == "authenticate" || type == "authenticate_ticket") {
                 authenticate(frame, type)
+                // Holding the reader holds every pong: the server answers a ping only once it reads it.
+                if (authenticated && vanishAfterAuthenticating) vanished.await()
                 return
             }
             if (type == "device_proof" && nonce != null && !authenticated) {
@@ -353,9 +371,8 @@ class FakeCoordinator : AutoCloseable {
             val after = frame.getValue("after_sequence").let { if (it is JsonNull) -1L else it.jsonPrimitive.long }
             val through = record.journal.size - 1L
             reply(requestId, "attached") { put("task_id", taskId.toString()); put("through_sequence", if (through < 0) JsonNull else JsonPrimitive(through)) }
-            for (event in record.journal) {
-                if (event.getValue("event").jsonObject.getValue("sequence").jsonPrimitive.long > after) socket.send(event.toString())
-            }
+            val replayed = record.journal.filter { it.getValue("event").jsonObject.getValue("sequence").jsonPrimitive.long > after }
+            for (event in replayed.take(replayOnly ?: replayed.size)) socket.send(event.toString())
             attached += taskId
             if (live) attachedLive += taskId
         }
