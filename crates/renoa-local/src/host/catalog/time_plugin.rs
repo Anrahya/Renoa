@@ -47,6 +47,7 @@ pub(super) fn move_turn_timing_to_plugin(
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_40(connection: &rusqlite::Connection) {
+    super::restore_schema_41(connection);
     connection
         .execute_batch(
             "DROP TABLE host_agent_plugin_settings;

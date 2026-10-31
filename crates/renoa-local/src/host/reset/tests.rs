@@ -284,7 +284,11 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
 
     let report = reset_host_data_root(&root.join("data")).expect("reset");
 
-    assert_eq!(report.total_rows(), 5, "{report:?}");
+    assert_eq!(report.total_rows(), 6, "{report:?}");
+    assert_eq!(
+        report.removed_rows["host_main_agent"], 1,
+        "the main agent's marker goes with it"
+    );
     assert_eq!(report.removed_sessions, 1);
     assert_eq!(report.removed_document_roots, 1);
     assert_eq!(

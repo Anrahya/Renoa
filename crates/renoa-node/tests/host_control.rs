@@ -1037,6 +1037,60 @@ async fn an_expired_once_schedule_cannot_be_resumed() {
     .await;
 }
 
+#[tokio::test]
+async fn the_owner_names_the_main_agent_from_the_revision_it_read() {
+    within(Box::pin(async {
+        let mut f = Fixture::new().await;
+        let second = json!(seed_automation(&f.host).await.spec.agent_id);
+        f.start_node().await;
+        let observed = f.browser.json_of("/v1/host").await;
+        let first = observed["main_agent"]["main_agent_id"].clone();
+        assert_eq!(observed["main_agent"]["revision"], 1);
+        assert_ne!(first, second, "the first agent made is the main agent");
+
+        let change = json!({"operation_id": Uuid::new_v4(), "expected_revision": 1, "agent_id": second});
+        let response = f.browser.post("/v1/host/main-agent", &change).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let named: Value = response.json().await.expect("main agent");
+        assert_eq!(named, json!({"main_agent_id": second, "revision": 2}));
+        assert_eq!(f.browser.json_of("/v1/host").await["main_agent"], named);
+        let retried = f.browser.post("/v1/host/main-agent", &change).await;
+        assert_eq!(retried.status(), StatusCode::OK);
+        assert_eq!(retried.json::<Value>().await.expect("receipt"), named);
+
+        let mut another_body = change.clone();
+        another_body["agent_id"] = first.clone();
+        let mut forged = change.clone();
+        forged["principal_id"] = json!(Uuid::new_v4());
+        for (body, status, code) in [
+            (another_body, StatusCode::CONFLICT, "operation_conflict"),
+            (
+                json!({"operation_id": Uuid::new_v4(), "expected_revision": 1, "agent_id": first}),
+                StatusCode::CONFLICT,
+                "revision_conflict",
+            ),
+            (
+                json!({"operation_id": Uuid::new_v4(), "expected_revision": 2, "agent_id": Uuid::new_v4()}),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (forged, StatusCode::UNPROCESSABLE_ENTITY, "invalid_request"),
+            (
+                json!({"oversized": "a".repeat(5000)}),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "body_too_large",
+            ),
+        ] {
+            let refused = f.browser.post("/v1/host/main-agent", &body).await;
+            assert_eq!(refused.status(), status, "{body}");
+            assert_eq!(refused.json::<Value>().await.expect("refusal")["code"], code);
+        }
+        assert_eq!(f.browser.json_of("/v1/host").await["main_agent"], named);
+        f.close().await;
+    }))
+    .await;
+}
+
 const MODEL: &str = r"
 import {createHash} from 'node:crypto'; import fs from 'node:fs';
 let input=''; for await (const part of process.stdin) input+=part;

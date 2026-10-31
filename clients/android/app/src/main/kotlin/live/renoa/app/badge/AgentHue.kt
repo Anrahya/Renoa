@@ -5,8 +5,9 @@ import live.renoa.app.agents.AgentSummary
 import live.renoa.app.theme.RenoaColors
 
 /**
- * The main agent: the one marked [AgentSummary.primary], or the first on the roster until one is
- * marked. Home seats it in the middle, and it is the one the owner talks to first.
+ * The main agent: the one marked [AgentSummary.primary], as the Host names it. While none is marked,
+ * before the Host has named one or while the one it names is not on this roster, the first on the
+ * roster stands in. Home seats it in the middle, and it is the one the owner talks to first.
  */
 fun mainAgent(roster: List<AgentSummary>): AgentSummary? = roster.firstOrNull { it.primary } ?: roster.firstOrNull()
 

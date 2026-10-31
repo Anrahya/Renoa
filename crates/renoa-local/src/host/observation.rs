@@ -6,7 +6,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::catalog::{self, HostCatalogError};
-use crate::LocalHostError;
+use crate::{LocalHostError, MainAgent};
 
 mod inventory;
 mod sessions;
@@ -28,6 +28,9 @@ pub use sessions::{
 pub struct HostObservation {
     pub host_id: Uuid,
     pub agents: Vec<ObservedAgent>,
+    /// The Host's main agent and the revision a change names; null only while
+    /// the Host has no agent.
+    pub main_agent: Option<MainAgent>,
     pub sessions: Vec<ObservedSession>,
     pub automations: Vec<ObservedAutomation>,
     /// The automation scheduler's last heartbeat; null until one has run.
@@ -86,6 +89,7 @@ impl HostObserver {
         let mut result = HostObservation {
             host_id: self.host_id,
             agents: inventory::agents(&tx)?,
+            main_agent: super::definition::main_agent::read(&tx)?,
             sessions: Vec::new(),
             automations: inventory::automations(&tx)?,
             automation_scheduler: inventory::scheduler(&tx)?,

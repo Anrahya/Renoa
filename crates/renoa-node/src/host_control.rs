@@ -9,6 +9,7 @@
 mod agents;
 mod automations;
 mod discord;
+mod main_agent;
 mod profile;
 mod reply;
 
@@ -49,6 +50,7 @@ enum Operation {
     DiscordChannels,
     DiscordBind,
     AutomationEnabled(String),
+    MainAgentSet,
 }
 
 /// Every operation at a path, by method. The one table of the Host's control
@@ -68,6 +70,7 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         ["discord", "channels"] => vec![(Get, Op::DiscordChannels)],
         ["discord", "bindings"] => vec![(Post, Op::DiscordBind)],
         ["automations", id, "enabled"] => vec![(Post, Op::AutomationEnabled((*id).to_owned()))],
+        ["main-agent"] => vec![(Post, Op::MainAgentSet)],
         _ => Vec::new(),
     }
 }
@@ -201,6 +204,14 @@ impl HostControl {
                     "Send an operation ID, expected revision, and enabled state as JSON.",
                 )?;
                 automations::set_enabled(host, host_id, principal, &id, request).await
+            }
+            Operation::MainAgentSet => {
+                let change = decode(
+                    body,
+                    BODY_LIMIT,
+                    "Send an operation ID, expected revision, and agent ID as JSON.",
+                )?;
+                main_agent::set(host, host_id, principal, change).await
             }
         })
     }

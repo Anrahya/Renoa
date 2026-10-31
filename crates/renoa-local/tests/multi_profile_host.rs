@@ -88,7 +88,11 @@ async fn host_assembles_and_restores_an_exact_non_alpha_agent() {
     catalog
         .execute_batch("PRAGMA foreign_keys = OFF;")
         .expect("detach the corruption fixture from dependent rows");
-    for table in ["host_agent_creations", "host_agent_tool_selections"] {
+    for table in [
+        "host_agent_creations",
+        "host_agent_tool_selections",
+        "host_main_agent",
+    ] {
         catalog
             .execute(
                 &format!("DELETE FROM {table} WHERE agent_id = ?1"),

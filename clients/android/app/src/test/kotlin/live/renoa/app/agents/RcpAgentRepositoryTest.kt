@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import live.renoa.app.badge.mainAgent
 import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.ApplyLiveActivity
 import live.renoa.rcp.CommandSubmission
@@ -103,6 +104,9 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
      */
     var automations: MutableList<JsonObject>? = null
     var observations = 0
+
+    /** The Host agent the observation names as main, or none, as for a Host with no agent. */
+    var mainAgent: Uuid? = null
 
     /** When set, the next observation ends with it instead of reaching the Host. */
     var observationFailure: Exception? = null
@@ -281,7 +285,15 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
                 observationHeld = null
                 it.await()
             }
-            return HostAnswer(200, buildJsonObject { put("automations", JsonArray(listed)); put("agents", JsonArray(hostAgents.values.toList())) }.toString())
+            val main = mainAgent?.let { buildJsonObject { put("main_agent_id", it.toString()); put("revision", 1) } } ?: JsonNull
+            return HostAnswer(
+                200,
+                buildJsonObject {
+                    put("automations", JsonArray(listed))
+                    put("agents", JsonArray(hostAgents.values.toList()))
+                    put("main_agent", main)
+                }.toString(),
+            )
         }
         if (path == "/v1/host/profile") return profileCall(method, body)
         hostCalls += Triple(method, path, body)
@@ -305,6 +317,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             val request = Json.parseToJsonElement(checkNotNull(body)).jsonObject
             val operation = request.getValue("operation_id").jsonPrimitive.content
             val id = made.getOrPut(operation) { Uuid.random().toString() }
+            if (mainAgent == null) mainAgent = Uuid.parse(id)
             val record =
                 hostAgents.getOrPut(id) {
                     buildJsonObject {
@@ -704,6 +717,78 @@ class RcpAgentRepositoryTest {
         assertEquals(setOf("expected_revision", "content"), surface.profileEdits.single().keys)
         assertEquals(saved, repo.saveOwnerProfile(empty.revision, "Name: Yash\n"), "a repeat of a save that landed")
         assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.saveOwnerProfile(empty.revision, "Name: Asha\n") }.problem)
+    }
+
+    /** Two Host agents listed in id order, as the Host lists them, with [mainSortsFirst] saying which the Host names main. */
+    private fun TestScope.theHostsMainAgentIsMarkedMain(mainSortsFirst: Boolean) {
+        val (low, high) = listOf(Uuid.random(), Uuid.random()).sortedBy { it.toString() }
+        surface.targets = listOf(TargetSummary(surface.node, "agent:$low", "Low"), TargetSummary(surface.node, "agent:$high", "High"))
+        surface.automations = mutableListOf()
+        surface.mainAgent = if (mainSortsFirst) low else high
+        val repo = started()
+        assertEquals(listOf(mainSortsFirst, !mainSortsFirst), repo.agents.value.map { it.primary })
+        assertEquals("${surface.node}/agent:${surface.mainAgent}", mainAgent(repo.agents.value)?.id)
+        assertEquals(1, surface.observations, "one read of the observation serves the routines and the main agent")
+    }
+
+    @Test
+    fun theHostsMainAgentIsMainWhenItsIdSortsFirst() = runTest { theHostsMainAgentIsMarkedMain(mainSortsFirst = true) }
+
+    @Test
+    fun theHostsMainAgentIsMainWhenItsIdSortsLast() = runTest { theHostsMainAgentIsMarkedMain(mainSortsFirst = false) }
+
+    @Test
+    fun untilTheHostNamesAnAgentOnTheRosterTheFirstOnTheRosterStandsIn() = runTest {
+        val other = Uuid.random()
+        surface.targets += TargetSummary(surface.node, "agent:$other", "Other")
+        val repo = started()
+        assertEquals(listOf(false, false), repo.agents.value.map { it.primary }, "a Host that has not answered marks no one")
+        assertEquals(nagisa, mainAgent(repo.agents.value)?.id)
+
+        surface.automations = mutableListOf()
+        surface.mainAgent = Uuid.random()
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf(false, false), repo.agents.value.map { it.primary })
+        assertEquals(nagisa, mainAgent(repo.agents.value)?.id, "the agent the Host named is not on this roster, so Home is not left empty")
+
+        surface.mainAgent = other
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals("${surface.node}/agent:$other", mainAgent(repo.agents.value)?.id, "a change on the Host shows on the next roster check")
+
+        surface.automations = null
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals("${surface.node}/agent:$other", mainAgent(repo.agents.value)?.id, "kept while the Host cannot be read")
+    }
+
+    @Test
+    fun theFirstAgentMadeOnAnEmptyHostIsMainAtOnce() = runTest {
+        surface.targets = emptyList()
+        surface.automations = mutableListOf()
+        val repo = started()
+        assertTrue(repo.agents.value.isEmpty())
+        val made = making(repo)
+        runCurrent()
+        surface.advertise(kcal)
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(kcalId, made.await().id)
+        assertEquals(listOf(true), repo.agents.value.map { it.primary }, "marked before the next roster check")
+        assertEquals(kcalId, mainAgent(repo.agents.value)?.id)
+    }
+
+    @Test
+    fun theLastLaunchsMainAgentStaysMainUntilTheHostSays() = runTest {
+        val kaede = "${surface.node}/kaede"
+        surface.targets += TargetSummary(surface.node, "kaede", "Kaede")
+        val last = listOf(AgentSummary(nagisa, "Nagisa", "", AgentState.Resting), AgentSummary(kaede, "Kaede", "", AgentState.Resting, primary = true))
+        kept().keep(flowOf(HomeSnapshot(last, emptyList())))
+        val repo = started(kept())
+        assertEquals(listOf(false, true), repo.agents.value.map { it.primary }, "a Host that cannot be read leaves the kept mark")
+        assertEquals(kaede, mainAgent(repo.agents.value)?.id)
+        assertEquals(listOf(false, true), kept().load()?.agents?.map { it.primary }, "and the kept mark is what is saved")
     }
 
     @Test

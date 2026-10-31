@@ -87,7 +87,7 @@ class HandoverTest {
         val roster = listOf(agent("a"), agent("lead", primary = true), agent("b"), agent("c"), agent("d"))
         assertEquals("lead", mainAgent(roster)?.id)
         assertEquals(listOf(AgentHue.Clay, AgentHue.Ink, AgentHue.Cobalt, AgentHue.Ochre, AgentHue.Clay), roster.map { AgentHue.of(it.id, roster) })
-        assertEquals("a", mainAgent(listOf(agent("a"), agent("b")))?.id, "until one is marked, the first on the roster is the main agent")
+        assertEquals("a", mainAgent(listOf(agent("a"), agent("b")))?.id, "until one is marked, the first on the roster stands in")
         assertEquals(AgentHue.Ink, AgentHue.of("stranger", roster))
 
         for (theme in ThemeName.entries) {

@@ -40,7 +40,10 @@ data class AgentSummary(
     val purpose: String,
     val state: AgentState,
     val glance: Glance = Glance(),
-    /** The owner's main agent: the first one made, the one they talk to and that hands work to the others. */
+    /**
+     * Whether this is the owner's main agent, the one they talk to and that hands work to the others.
+     * The Host names it: the first agent made, until the owner names another.
+     */
     val primary: Boolean = false,
 )
 

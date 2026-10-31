@@ -371,6 +371,12 @@ async fn remove_agent_definition(data: &std::path::Path, agent_id: AgentId) {
         connection
             .pragma_update(None, "foreign_keys", "OFF")
             .expect("relax catalog foreign keys");
+        connection
+            .execute(
+                "DELETE FROM host_main_agent WHERE agent_id = ?1",
+                [agent_id.to_string()],
+            )
+            .expect("unmark the main agent");
         let removed = connection
             .execute(
                 "DELETE FROM host_agents WHERE agent_id = ?1",

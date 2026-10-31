@@ -60,8 +60,9 @@ pub use credential_file::credential_file_is_private;
 pub use documents::UserProfile;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
-    AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate, MAX_AGENT_PAGE,
-    PresetMove, RenameAgent, ResolvedAgentDefinition, derived_agent_id,
+    AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate,
+    HostMainAgentControl, MAX_AGENT_PAGE, MainAgent, MainAgentChange, MainAgentError, PresetMove,
+    RenameAgent, ResolvedAgentDefinition, derived_agent_id,
 };
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{

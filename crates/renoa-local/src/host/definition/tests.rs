@@ -798,6 +798,7 @@ async fn agents_from_one_preset_own_independent_selections() {
     assert_eq!(untouched.tool_selection, second.tool_selection);
 }
 
+mod main_agent;
 mod management;
 mod migrations;
 mod preset_move;

@@ -79,15 +79,26 @@ internal data class ObservedRun(
     @SerialName("finished_at_ms") val finishedAtMs: Long? = null,
 )
 
+/**
+ * The parts of the Host's observation (`GET /v1/host`) the app reads on each roster check. The main
+ * agent is required, so a Host that does not say is not read as naming none.
+ */
 @Serializable
-private data class Observation(val automations: List<ObservedAutomation>)
+internal data class Observation(
+    val automations: List<ObservedAutomation>,
+    @SerialName("main_agent") val mainAgent: ObservedMainAgent?,
+)
+
+/** The Host's main agent, by its Host agent id. */
+@Serializable
+internal data class ObservedMainAgent(@SerialName("main_agent_id") val id: String)
 
 @Serializable
 private data class Enablement(val revision: Long, val enabled: Boolean, @SerialName("next_due_ms") val nextDueMs: Long)
 
 /** The Host's automations: read from its observation, and paused or resumed by the owner. */
 internal class HostRoutines(private val host: HostClient) {
-    suspend fun observe(): List<ObservedAutomation> = host.call(HostMethod.Get, "/v1/host", null, Observation.serializer()).automations
+    suspend fun observe(): Observation = host.call(HostMethod.Get, "/v1/host", null, Observation.serializer())
 
     /**
      * Turns [automation] on or off from the revision the app last read, so a change made elsewhere
@@ -119,14 +130,18 @@ internal class HeldRoutines(private val host: HostRoutines, private val changed:
     /** Set once the Host has listed the automations; until then the kept routines show. */
     private var heard = false
 
-    /** Reads the routines again. While the Host cannot be read, the last ones stay. */
-    suspend fun read() {
-        val listed =
+    /**
+     * Reads the routines again and returns the observation they came in, for the caller's other
+     * reads. While the Host cannot be read it returns null, and the last routines stay.
+     */
+    suspend fun read(): Observation? {
+        val observed =
             try {
                 host.observe()
             } catch (failed: RepositoryException) {
-                return
+                return null
             }
+        val listed = observed.automations
         synchronized(lock) {
             val held = automations.toMap()
             automations.clear()
@@ -134,6 +149,7 @@ internal class HeldRoutines(private val host: HostRoutines, private val changed:
             heard = true
         }
         changed()
+        return observed
     }
 
     /** Turns the routine on or off from the revision held. A refusal that says it changed elsewhere reads it again first. */

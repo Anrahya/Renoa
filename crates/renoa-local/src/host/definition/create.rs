@@ -217,6 +217,8 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         crate::mcp::McpCatalogStore::require_complete_catalog(&transaction, connection_id)?;
     }
     store::insert(&transaction, definition)?;
+    // The first agent made on the Host becomes its main agent, whoever made it.
+    super::main_agent::mark_first_if_unmarked(&transaction)?;
     for plugin in *host_plugins_off {
         crate::plugins::host::state::turn_off(&transaction, definition.id, *plugin)
             .map_err(catalog_error)?;
