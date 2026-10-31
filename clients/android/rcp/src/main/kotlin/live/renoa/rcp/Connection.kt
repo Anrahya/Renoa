@@ -43,8 +43,17 @@ internal class Connection(val socket: WebSocket, val inbound: Channel<Inbound>, 
     var challenged = false
     val ended = CompletableDeferred<Throwable>()
 
-    /** Whether a caller has begun ending this connection. Read and written only while holding this connection's lock. */
-    var ending = false
+    /** Whether a caller has begun ending this connection. Guarded by this connection's lock. */
+    private var ending = false
+
+    /** True for the one caller that ends this connection. [onClaim] runs for it under the lock, before any other caller returns. */
+    fun claimEnd(onClaim: () -> Unit): Boolean =
+        synchronized(this) {
+            if (ending) return false
+            ending = true
+            onClaim()
+            true
+        }
 
     /** The receive loop. It stops once [ended] completes, and the next connection waits for it first. */
     @Volatile var reader: Job? = null
