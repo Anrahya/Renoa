@@ -43,6 +43,9 @@ internal class Connection(val socket: WebSocket, val inbound: Channel<Inbound>, 
     var challenged = false
     val ended = CompletableDeferred<Throwable>()
 
+    /** Whether a caller has begun ending this connection. Read and written only while holding this connection's lock. */
+    var ending = false
+
     /** The receive loop. It stops once [ended] completes, and the next connection waits for it first. */
     @Volatile var reader: Job? = null
 

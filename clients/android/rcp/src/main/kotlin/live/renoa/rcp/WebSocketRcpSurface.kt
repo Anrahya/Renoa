@@ -477,8 +477,15 @@ class WebSocketRcpSurface(
     }
 
     private fun end(connection: Connection, reason: Throwable, closeCode: Int?) {
-        if (!connection.ended.complete(reason)) return
-        if (current === connection) current = null
+        // Whoever waits for the end may connect again at once, on another thread, so the client
+        // stops counting this connection as current before it says the connection ended. A caller
+        // that finds the end already begun returns only after that, too.
+        synchronized(connection) {
+            if (connection.ending) return
+            connection.ending = true
+            if (current === connection) current = null
+        }
+        connection.ended.complete(reason)
         connection.opened.completeExceptionally(reason)
         connection.authenticated.completeExceptionally(reason)
         for (pending in connection.pending.values) pending.response.completeExceptionally(reason)

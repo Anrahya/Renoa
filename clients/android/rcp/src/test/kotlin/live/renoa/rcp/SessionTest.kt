@@ -1,6 +1,7 @@
 package live.renoa.rcp
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonArray
@@ -149,6 +150,23 @@ class SessionTest : CoordinatorTest() {
         val surface = client()
         surface.connect()
         assertFailsWith<IllegalStateException> { surface.connect() }
+    }
+
+    @Test
+    fun whoeverWaitsForAConnectionToEndCanConnectAgainAtOnce() = eventually {
+        val surface = client()
+        surface.connect()
+        coroutineScope {
+            // Unconfined runs the waiter inside the end itself, the earliest any thread can see it.
+            val reconnect =
+                async(Dispatchers.Unconfined) {
+                    surface.awaitDisconnect()
+                    surface.connect()
+                }
+            surface.disconnect()
+            reconnect.await()
+        }
+        assertEquals(emptyList(), surface.listTasks())
     }
 
     @Test
