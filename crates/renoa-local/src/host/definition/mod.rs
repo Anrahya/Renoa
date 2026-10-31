@@ -19,6 +19,7 @@ use crate::{
 #[cfg(test)]
 mod commit_fault;
 mod create;
+pub(in crate::host) mod main_agent;
 mod manage;
 mod preset_move;
 mod resolve;
@@ -28,6 +29,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+pub use main_agent::{HostMainAgentControl, MainAgent, MainAgentChange, MainAgentError};
 pub(crate) use manage::binding as agent_manage_binding;
 pub use preset_move::PresetMove;
 pub use resolve::ResolvedAgentDefinition;

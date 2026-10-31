@@ -239,8 +239,8 @@ the trusted runtime; a model-supplied agent ID is never proof of authority. The
 CLI is another optional adapter and may be run on the Host machine or, after
 device enrollment is implemented, remotely. The owner identity exists before
 any agent. A personal operator receives explicit management authority and can
-be replaced; being the first agent or creating a child grants no implicit root
-authority. Human management must not impersonate Arcee to reuse an agent API.
+be replaced; being the first agent, the Host's main agent, or creating a child
+grants no implicit root authority. Human management must not impersonate Arcee to reuse an agent API.
 
 Future agent editing selects supported installed components and persists that
 selection before runtime assembly. Installing a capability, selecting it for an
@@ -321,6 +321,28 @@ Deleted automations return 404; replaying an older receipt cannot restore them.
 Host identity is checked inside the mutation transaction, including on replay.
 Owner receipts remain distinct from agent receipts and cannot grant agent tools
 owner authority. Definition editing and delegation remain separate from this operation.
+
+### The main agent
+
+Each Host has one main agent, not one per person: the agent its owner talks to
+first and that hands work to the others. The first agent made on the Host
+becomes it, whoever made it, inside the creation transaction; a later creation
+or a replayed creation receipt leaves it alone. Only the owner names another.
+`host_main_agent` holds the one marker and its revision. Its foreign key restricts
+deleting the agent it names, so the marker can never point at a missing agent;
+the bounded reset clears it with the other agent-owned rows. The Host
+observation carries it as `main_agent` (`{main_agent_id, revision}`, null only
+while the Host has no agent), and an app reads it there.
+
+`HostMainAgentControl` adapts the owner's change without constructing an
+execution Host. `POST /v1/host/main-agent` takes `operation_id`,
+`expected_revision`, and `agent_id`, rejects unknown fields and bodies over
+4 KiB, and returns the new `{main_agent_id, revision}`. The change and its owner
+receipt commit in one transaction. An identical retry returns the original
+answer even after a later change; the same operation ID with another body, or a
+stale revision, returns 409; an agent not on the Host returns 404. Host identity
+is checked inside the transaction. The Android app reads the marker and shows
+the agent it names as main; the Control Room control is separate work.
 
 ### Owner creation and Discord channels
 
@@ -452,7 +474,7 @@ surface processes are clients of those records. One logical Host does not requir
 one process, and a second data root is not implicitly part of the same Host.
 
 `HostObserver::open` opens an existing compatible data root and pins its Host UUID.
-`snapshot` reads agent identities, ordinary session operation summaries, automations
+`snapshot` reads agent identities, the main agent and its revision, ordinary session operation summaries, automations
 with their run statuses, the automation scheduler's heartbeat,
 shared connection selections, recorded plugin/skill revisions, and the shared
 plugin registry binding with its failing synchronization, if any.
@@ -1152,7 +1174,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 41
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 42
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1160,7 +1182,9 @@ and moving automation runs onto RCP tasks. A schema 32 or 33 catalog already
 holds current selections and exact plugin activations, so its upgrade skips the
 selection step, a schema 34 catalog only moves its runs, a schema 35 catalog
 also gains the shared-registry failure record, and a schema 36 catalog only
-gives its runs a status. Live selections
+gives its runs a status. Every catalog below schema 42 gains the main-agent
+marker on its earliest-created agent, ties broken by agent id; a Host with no
+agent stays unmarked until its first creation. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1205,8 +1229,8 @@ guidance. Reopening the upgraded catalog does not repeat the conversion.
    re-running the reset converges because both removals are idempotent.
 4. Provision the configured bootstrap agent. `renoa-host <config.json> provision
    <provision.json>` performs the one canonical creation operation with a
-   trusted `System`/`Provisioning` actor, so an empty Host gets its first agent
-   without a model call. Surfaces never create agents; they receive explicit
+   trusted `System`/`Provisioning` actor, so an empty Host gets its first agent,
+   which becomes its main agent, without a model call. Surfaces never create agents; they receive explicit
    agent ids.
 5. Start and health-check the current runtime. The Host fails closed when the
    schema or Host identity is incompatible, and each surface fails closed rather

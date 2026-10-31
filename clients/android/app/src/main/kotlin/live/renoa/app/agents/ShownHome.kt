@@ -23,11 +23,13 @@ internal class ShownHome(private val home: SavedHome?) {
     /**
      * Once Renoa is [heard], shows every agent it has listed this launch, in [listed] order: as
      * [followed] has it, or, while its chat could not be opened, as it was kept. So a refused open
-     * never shrinks the roster, and one Renoa has not listed this launch is not shown.
+     * never shrinks the roster, and one Renoa has not listed this launch is not shown. Each is
+     * marked main or not as [primary] says, kept ones too.
      */
-    fun show(listed: Collection<String>, followed: List<AgentSummary>) {
+    fun show(listed: Collection<String>, followed: List<AgentSummary>, primary: (agentId: String) -> Boolean?) {
         if (!heard.value) return
-        agents.value = listed.mapNotNull { id -> followed.firstOrNull { it.id == id } ?: kept?.agents?.firstOrNull { it.id == id } }
+        agents.value =
+            listed.mapNotNull { id -> (followed.firstOrNull { it.id == id } ?: kept?.agents?.firstOrNull { it.id == id })?.copy(primary = primary(id)) }
     }
 
     /** Keeps what is shown from the first answer on, until the caller is cancelled. */

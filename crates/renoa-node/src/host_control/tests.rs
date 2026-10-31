@@ -19,6 +19,7 @@ fn name(operation: &Operation) -> &'static str {
         Operation::DiscordChannels => "discord_channels",
         Operation::DiscordBind => "discord_bind",
         Operation::AutomationEnabled(_) => "automation_enabled",
+        Operation::MainAgentSet => "main_agent_set",
     }
 }
 
@@ -58,6 +59,7 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
             format!("/v1/host/automations/{id}/enabled"),
             "automation_enabled",
         ),
+        (Post, "/v1/host/main-agent".to_owned(), "main_agent_set"),
     ];
     let mut reached = BTreeSet::new();
     for (method, path, expected) in &routes {
@@ -78,6 +80,7 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
         "discord_channels",
         "discord_bind",
         "automation_enabled",
+        "main_agent_set",
     ]
     .into_iter()
     .collect();
@@ -90,6 +93,7 @@ fn a_known_path_with_another_method_is_refused_and_an_unknown_path_is_not_found(
     assert_eq!(status(Get, "/v1/host/agents"), 405);
     assert_eq!(status(Put, "/v1/host/agents/options"), 405);
     assert_eq!(status(Get, "/v1/host/discord/inspection"), 405);
+    assert_eq!(status(Get, "/v1/host/main-agent"), 405);
     for path in [
         "/v1/hostile",
         "/v1/host/",

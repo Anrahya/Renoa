@@ -85,5 +85,5 @@ pub(in crate::host) fn initialize(transaction: &Transaction<'_>) -> Result<(), H
             result_json TEXT NOT NULL CHECK (json_valid(result_json))
         ) STRICT;",
     )?;
-    Ok(())
+    super::main_agent::initialize(transaction)
 }

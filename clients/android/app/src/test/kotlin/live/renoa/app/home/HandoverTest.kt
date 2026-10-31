@@ -13,7 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class HandoverTest {
-    private fun agent(id: String, state: AgentState = AgentState.Resting, glance: Glance = Glance(), primary: Boolean = false) = AgentSummary(id, id, "", state, glance, primary)
+    private fun agent(id: String, state: AgentState = AgentState.Resting, glance: Glance = Glance(), primary: Boolean? = null) = AgentSummary(id, id, "", state, glance, primary)
 
     @Test
     fun whatNeedsTheOwnerComesFirstThenWhatIsForThemThenWhoIsWorking() {
@@ -87,7 +87,8 @@ class HandoverTest {
         val roster = listOf(agent("a"), agent("lead", primary = true), agent("b"), agent("c"), agent("d"))
         assertEquals("lead", mainAgent(roster)?.id)
         assertEquals(listOf(AgentHue.Clay, AgentHue.Ink, AgentHue.Cobalt, AgentHue.Ochre, AgentHue.Clay), roster.map { AgentHue.of(it.id, roster) })
-        assertEquals("a", mainAgent(listOf(agent("a"), agent("b")))?.id, "until one is marked, the first on the roster is the main agent")
+        assertEquals("a", mainAgent(listOf(agent("a"), agent("b")))?.id, "until the Host has said, the first on the roster stands in")
+        assertNull(mainAgent(listOf(agent("a", primary = false), agent("b", primary = false))), "once the Host has said, no one else stands in for the agent it named")
         assertEquals(AgentHue.Ink, AgentHue.of("stranger", roster))
 
         for (theme in ThemeName.entries) {

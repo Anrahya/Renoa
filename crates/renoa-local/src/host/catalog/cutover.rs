@@ -178,6 +178,9 @@ fn retire_agent_owners(transaction: &rusqlite::Transaction<'_>) -> Result<(), Ho
         "host_agent_creations",
         "host_agent_tool_selection_operations",
         "host_agent_renames",
+        // The marker names a row of `host_agents`, so it goes with them.
+        "host_main_agent_operations",
+        "host_main_agent",
         "host_agents",
         "agent_skill_bindings",
         "agent_skill_source_rejections",

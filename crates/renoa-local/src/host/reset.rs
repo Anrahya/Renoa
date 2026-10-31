@@ -39,6 +39,9 @@ const AGENT_OWNED_TABLES: &[&str] = &[
     "host_agent_creations",
     "host_agent_tool_selection_operations",
     "host_agent_renames",
+    "host_main_agent_operations",
+    // Its foreign key restricts deleting the agent it names, so it goes first.
+    "host_main_agent",
     "host_agents",
     "agent_skill_bindings",
     "agent_skill_source_rejections",

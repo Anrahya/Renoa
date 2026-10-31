@@ -41,9 +41,10 @@ import kotlin.uuid.Uuid
  * [ChatMessage.notSent] until [retry] or [discard]. A message the outbox held when the chat opened
  * shows until it arrives.
  *
- * Making an agent, reading its profile and the routines are Host control, carried by the same
- * connection ([HostAgents], [HostRoutines]). The routines are read again on every roster check, and
- * each Host agent's purpose until the Host has answered for it.
+ * Making an agent, reading its profile, the routines and which agent is main are Host control,
+ * carried by the same connection ([HostAgents], [HostRoutines], [HostOwner]). The routines and the
+ * main agent are read again on every roster check, and each Host agent's purpose until the Host has
+ * answered for it.
  * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
  * follows its chat. Abilities and edits are not on the Host's agent API yet, so those calls are
  * refused as [Problem.NotYet] and nothing is sent.
@@ -71,6 +72,12 @@ class RcpAgentRepository(
         /** What the agent is for, as the Host keeps it; null until read. */
         var purpose: String? = null
     }
+
+    /** The Host's answer to which agent is main: [id] is its Host agent id, or null when the Host has no agent. */
+    private class MainAnswer(val id: Uuid?)
+
+    /** Null until the Host has said which agent is main; the last answer stands while it cannot be read. */
+    private var main: MainAnswer? = null
 
     private val lock = Any()
     private val rooms = LinkedHashMap<String, Room>()
@@ -132,6 +139,7 @@ class RcpAgentRepository(
                     refusals = 0
                     heldRoutines.read()
                     readPurposes()
+                    readMainAgent()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
                     coroutineScope {
@@ -144,6 +152,7 @@ class RcpAgentRepository(
                                     follow(surface.listTargets())
                                     heldRoutines.read()
                                     readPurposes()
+                                    readMainAgent()
                                 }
                             }
                         surface.awaitDisconnect()
@@ -222,8 +231,8 @@ class RcpAgentRepository(
     }
 
     /**
-     * Lists the attached agents, and names each routine's agent from them. It writes under the lock,
-     * so an older roster never overwrites a newer one.
+     * Lists the attached agents, marks the one the Host names as main, and names each routine's agent
+     * from them. It writes under the lock, so an older roster never overwrites a newer one.
      */
     private fun publish() {
         synchronized(lock) {
@@ -231,7 +240,8 @@ class RcpAgentRepository(
                 rooms.filterValues { it.attached }.map { (id, room) ->
                     AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = room.journal.state, glance = room.journal.glance)
                 }
-            shown.show(rooms.keys, roster.value)
+            val named = main
+            shown.show(rooms.keys, roster.value) { id -> named?.let { it.id != null && hostAgentId(id) == it.id } }
             val rosterId = { agent: String -> rooms.entries.firstOrNull { (_, room) -> room.attached && room.target.target == "$AGENT_TARGET$agent" }?.key }
             heldRoutines.shown(rosterId, here())?.let { shown.routines.value = it }
         }
@@ -256,6 +266,18 @@ class RcpAgentRepository(
             synchronized(lock) { room.purpose = purpose }
             publish()
         }
+    }
+
+    /** Reads which agent the Host names as main. While the Host cannot be read, the last answer stands. */
+    private suspend fun readMainAgent() {
+        val named =
+            try {
+                owner.mainAgent()
+            } catch (failed: RepositoryException) {
+                return
+            }
+        synchronized(lock) { main = MainAnswer(named) }
+        publish()
     }
 
     override suspend fun hasAgents(): Boolean = owner.hasAgents()
