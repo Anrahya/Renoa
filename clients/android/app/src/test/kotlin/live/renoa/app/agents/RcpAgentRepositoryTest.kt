@@ -317,6 +317,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             val request = Json.parseToJsonElement(checkNotNull(body)).jsonObject
             val operation = request.getValue("operation_id").jsonPrimitive.content
             val id = made.getOrPut(operation) { Uuid.random().toString() }
+            if (mainAgent == null) mainAgent = Uuid.parse(id)
             val record =
                 hostAgents.getOrPut(id) {
                     buildJsonObject {
@@ -727,6 +728,7 @@ class RcpAgentRepositoryTest {
         val repo = started()
         assertEquals(listOf(mainSortsFirst, !mainSortsFirst), repo.agents.value.map { it.primary })
         assertEquals("${surface.node}/agent:${surface.mainAgent}", mainAgent(repo.agents.value)?.id)
+        assertEquals(1, surface.observations, "one read of the observation serves the routines and the main agent")
     }
 
     @Test
@@ -736,11 +738,11 @@ class RcpAgentRepositoryTest {
     fun theHostsMainAgentIsMainWhenItsIdSortsLast() = runTest { theHostsMainAgentIsMarkedMain(mainSortsFirst = false) }
 
     @Test
-    fun untilTheHostNamesItsMainAgentTheFirstOnTheRosterStandsIn() = runTest {
+    fun untilTheHostNamesAnAgentOnTheRosterTheFirstOnTheRosterStandsIn() = runTest {
         val other = Uuid.random()
         surface.targets += TargetSummary(surface.node, "agent:$other", "Other")
         val repo = started()
-        assertEquals(listOf(null, null), repo.agents.value.map { it.primary }, "a Host that has not answered marks no one")
+        assertEquals(listOf(false, false), repo.agents.value.map { it.primary }, "a Host that has not answered marks no one")
         assertEquals(nagisa, mainAgent(repo.agents.value)?.id)
 
         surface.automations = mutableListOf()
@@ -748,7 +750,7 @@ class RcpAgentRepositoryTest {
         advanceTimeBy(1.minutes)
         runCurrent()
         assertEquals(listOf(false, false), repo.agents.value.map { it.primary })
-        assertNull(mainAgent(repo.agents.value), "the agent the Host named is not on the roster, and no one stands in")
+        assertEquals(nagisa, mainAgent(repo.agents.value)?.id, "the agent the Host named is not on this roster, so Home is not left empty")
 
         surface.mainAgent = other
         advanceTimeBy(1.minutes)
@@ -759,6 +761,34 @@ class RcpAgentRepositoryTest {
         advanceTimeBy(1.minutes)
         runCurrent()
         assertEquals("${surface.node}/agent:$other", mainAgent(repo.agents.value)?.id, "kept while the Host cannot be read")
+    }
+
+    @Test
+    fun theFirstAgentMadeOnAnEmptyHostIsMainAtOnce() = runTest {
+        surface.targets = emptyList()
+        surface.automations = mutableListOf()
+        val repo = started()
+        assertTrue(repo.agents.value.isEmpty())
+        val made = making(repo)
+        runCurrent()
+        surface.advertise(kcal)
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(kcalId, made.await().id)
+        assertEquals(listOf(true), repo.agents.value.map { it.primary }, "marked before the next roster check")
+        assertEquals(kcalId, mainAgent(repo.agents.value)?.id)
+    }
+
+    @Test
+    fun theLastLaunchsMainAgentStaysMainUntilTheHostSays() = runTest {
+        val kaede = "${surface.node}/kaede"
+        surface.targets += TargetSummary(surface.node, "kaede", "Kaede")
+        val last = listOf(AgentSummary(nagisa, "Nagisa", "", AgentState.Resting), AgentSummary(kaede, "Kaede", "", AgentState.Resting, primary = true))
+        kept().keep(flowOf(HomeSnapshot(last, emptyList())))
+        val repo = started(kept())
+        assertEquals(listOf(false, true), repo.agents.value.map { it.primary }, "a Host that cannot be read leaves the kept mark")
+        assertEquals(kaede, mainAgent(repo.agents.value)?.id)
+        assertEquals(listOf(false, true), kept().load()?.agents?.map { it.primary }, "and the kept mark is what is saved")
     }
 
     @Test

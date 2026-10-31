@@ -340,8 +340,10 @@ execution Host. `POST /v1/host/main-agent` takes `operation_id`,
 4 KiB, and returns the new `{main_agent_id, revision}`. The change and its owner
 receipt commit in one transaction. An identical retry returns the original
 answer even after a later change; the same operation ID with another body, or a
-stale revision, returns 409; an agent not on the Host returns 404. Host identity
-is checked inside the transaction. The Android app reads the marker and shows
+stale revision, returns 409; an agent not on the Host returns 404. Naming the
+agent that is already main changes nothing and returns the current revision; its
+receipt still replays. Host identity is checked when the control opens and again
+inside the transaction. The Android app reads the marker and shows
 the agent it names as main; the Control Room control is separate work.
 
 ### Owner creation and Discord channels

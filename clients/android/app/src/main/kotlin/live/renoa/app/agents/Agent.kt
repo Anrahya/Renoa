@@ -42,10 +42,9 @@ data class AgentSummary(
     val glance: Glance = Glance(),
     /**
      * Whether this is the owner's main agent, the one they talk to and that hands work to the others.
-     * The Host names it: the first agent made, until the owner names another. Null until the Host
-     * has said which agent is main.
+     * The Host names it: the first agent made, until the owner names another.
      */
-    val primary: Boolean? = null,
+    val primary: Boolean = false,
 )
 
 /** A question only the owner can answer, with the answers the agent offers. */

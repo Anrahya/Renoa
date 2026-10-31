@@ -159,7 +159,8 @@ impl HostMainAgentControl {
 
     /// Names another main agent from the revision the caller read. The change
     /// and its receipt commit in one transaction; an identical retry, even
-    /// after a later change, returns the original receipt. Cancelling this
+    /// after a later change, returns the original receipt. Naming the agent
+    /// that is already main returns the current revision unchanged. Cancelling this
     /// future does not prove rollback: retry the identical request.
     /// # Errors
     /// Rejects other principals, a replaced Host, a stale revision, an agent
@@ -222,17 +223,24 @@ fn apply(
     if current.revision != change.expected_revision {
         return Err(MainAgentError::Stale);
     }
-    let next = MainAgent {
-        main_agent_id: change.agent_id,
-        revision: current
-            .revision
-            .checked_add(1)
-            .ok_or(MainAgentError::Stale)?,
+    // Naming the agent that is already main changes nothing, so the revision
+    // stays; the receipt is still written so a retry replays this answer.
+    let next = if current.main_agent_id == change.agent_id {
+        current
+    } else {
+        let next = MainAgent {
+            main_agent_id: change.agent_id,
+            revision: current
+                .revision
+                .checked_add(1)
+                .ok_or(MainAgentError::Stale)?,
+        };
+        transaction.execute(
+            "UPDATE host_main_agent SET agent_id = ?1, revision = ?2 WHERE singleton = 1",
+            params![next.main_agent_id.to_string(), next.revision],
+        )?;
+        next
     };
-    transaction.execute(
-        "UPDATE host_main_agent SET agent_id = ?1, revision = ?2 WHERE singleton = 1",
-        params![next.main_agent_id.to_string(), next.revision],
-    )?;
     transaction.execute(
         "INSERT INTO host_main_agent_operations(operation_id, principal_id, request_json, result_json)
          VALUES (?1, ?2, ?3, ?4)",

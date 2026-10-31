@@ -333,3 +333,106 @@ async fn the_main_agent_cannot_be_deleted_and_a_reset_clears_the_mark() {
     let fresh = make(&host, system("test"), specialist(Uuid::new_v4(), "Fresh")).await;
     assert_eq!(main_agent(&host), Some(marked(fresh.id, 1)));
 }
+
+#[tokio::test]
+async fn naming_the_agent_already_main_keeps_its_revision_and_replays() {
+    let (directory, host) = fixture();
+    let owner = Uuid::new_v4();
+    let first = make(&host, system("test"), specialist(Uuid::new_v4(), "First")).await;
+    let second = make(&host, system("test"), specialist(Uuid::new_v4(), "Second")).await;
+    let control = HostMainAgentControl::open(
+        &directory.path().join("data"),
+        host.host_id().await.expect("Host identity"),
+        owner,
+    )
+    .expect("control");
+    let again = MainAgentChange {
+        operation_id: Uuid::new_v4(),
+        expected_revision: 1,
+        agent_id: uuid(first.id),
+    };
+    assert_eq!(
+        control.set(owner, again).await.expect("no-op"),
+        marked(first.id, 1)
+    );
+    assert_eq!(observed(directory.path()).await, Some(marked(first.id, 1)));
+
+    control
+        .set(
+            owner,
+            MainAgentChange {
+                operation_id: Uuid::new_v4(),
+                expected_revision: 1,
+                agent_id: uuid(second.id),
+            },
+        )
+        .await
+        .expect("the revision the no-op left still applies");
+    assert_eq!(
+        control.set(owner, again).await.expect("retry"),
+        marked(first.id, 1),
+        "the no-op's receipt replays after a later change"
+    );
+    assert_eq!(observed(directory.path()).await, Some(marked(second.id, 2)));
+}
+
+#[tokio::test]
+async fn the_control_refuses_a_host_that_is_not_the_one_it_was_opened_for() {
+    let (directory, host) = fixture();
+    let owner = Uuid::new_v4();
+    let first = make(&host, system("test"), specialist(Uuid::new_v4(), "First")).await;
+    let second = make(&host, system("test"), specialist(Uuid::new_v4(), "Second")).await;
+    let root = directory.path().join("data");
+    let host_id = host.host_id().await.expect("Host identity");
+    assert!(
+        HostMainAgentControl::open(&root, Uuid::new_v4(), owner).is_err(),
+        "storage holding another Host is refused at open"
+    );
+    let control = HostMainAgentControl::open(&root, host_id, owner).expect("control");
+    Connection::open(&host.config.database)
+        .expect("catalog")
+        .execute(
+            "UPDATE host_identity SET host_id = ?1 WHERE singleton = 1",
+            [Uuid::new_v4().to_string()],
+        )
+        .expect("replace the Host beneath the control");
+    let refused = control
+        .set(
+            owner,
+            MainAgentChange {
+                operation_id: Uuid::new_v4(),
+                expected_revision: 1,
+                agent_id: uuid(second.id),
+            },
+        )
+        .await
+        .expect_err("a replaced Host is refused inside the transaction");
+    assert!(
+        refused.to_string().contains("Host identity changed"),
+        "{refused}"
+    );
+    assert_eq!(main_agent(&host), Some(marked(first.id, 1)));
+}
+
+#[tokio::test]
+async fn a_first_creation_that_fails_to_commit_leaves_no_main_agent() {
+    let (_directory, host) = fixture();
+    let operation = Uuid::new_v4();
+    super::super::commit_fault::arm(operation);
+    let (creator, origin) = system("test");
+    host.create_agent(
+        creator,
+        origin,
+        specialist(operation, "First"),
+        CancellationToken::new(),
+    )
+    .await
+    .expect_err("the injected commit failure");
+    assert_eq!(
+        main_agent(&host),
+        None,
+        "the mark rolled back with the agent"
+    );
+    let first = make(&host, system("test"), specialist(operation, "First")).await;
+    assert_eq!(main_agent(&host), Some(marked(first.id, 1)));
+}

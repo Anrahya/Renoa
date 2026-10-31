@@ -5,12 +5,11 @@ import live.renoa.app.agents.AgentSummary
 import live.renoa.app.theme.RenoaColors
 
 /**
- * The main agent: the one marked [AgentSummary.primary]. Until the Host has said which agent is main,
- * the first on the roster stands in; once it has, no other agent does, even while the one it named
- * is not on the roster. Home seats it in the middle, and it is the one the owner talks to first.
+ * The main agent: the one marked [AgentSummary.primary], as the Host names it. While none is marked,
+ * before the Host has named one or while the one it names is not on this roster, the first on the
+ * roster stands in. Home seats it in the middle, and it is the one the owner talks to first.
  */
-fun mainAgent(roster: List<AgentSummary>): AgentSummary? =
-    roster.firstOrNull { it.primary == true } ?: roster.firstOrNull()?.takeIf { roster.all { it.primary == null } }
+fun mainAgent(roster: List<AgentSummary>): AgentSummary? = roster.firstOrNull { it.primary } ?: roster.firstOrNull()
 
 /**
  * The colour an agent's tile wears. The main agent stays ink; the others take the landing page's

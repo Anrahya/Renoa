@@ -42,9 +42,9 @@ import kotlin.uuid.Uuid
  * shows until it arrives.
  *
  * Making an agent, reading its profile, the routines and which agent is main are Host control,
- * carried by the same connection ([HostAgents], [HostRoutines], [HostOwner]). The routines and the
- * main agent are read again on every roster check, and each Host agent's purpose until the Host has
- * answered for it.
+ * carried by the same connection ([HostAgents], [HostRoutines]). The routines and the main agent come
+ * from one read of the Host's observation on every roster check and after a new agent is made, and
+ * each Host agent's purpose is read until the Host has answered for it.
  * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
  * follows its chat. Abilities and edits are not on the Host's agent API yet, so those calls are
  * refused as [Problem.NotYet] and nothing is sent.
@@ -137,9 +137,8 @@ class RcpAgentRepository(
                         nudges.tryReceive()
                     }
                     refusals = 0
-                    heldRoutines.read()
+                    readObservation()
                     readPurposes()
-                    readMainAgent()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
                     coroutineScope {
@@ -150,9 +149,8 @@ class RcpAgentRepository(
                                     delay(rosterEvery)
                                     unsent.send()
                                     follow(surface.listTargets())
-                                    heldRoutines.read()
+                                    readObservation()
                                     readPurposes()
-                                    readMainAgent()
                                 }
                             }
                         surface.awaitDisconnect()
@@ -240,8 +238,9 @@ class RcpAgentRepository(
                 rooms.filterValues { it.attached }.map { (id, room) ->
                     AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = room.journal.state, glance = room.journal.glance)
                 }
-            val named = main
-            shown.show(rooms.keys, roster.value) { id -> named?.let { it.id != null && hostAgentId(id) == it.id } }
+            // A Host that names no agent, or one not on this roster, marks no one, so the first stands in.
+            val named = main?.id
+            shown.show(rooms.keys, roster.value, main?.let { { id: String -> named != null && hostAgentId(id) == named } })
             val rosterId = { agent: String -> rooms.entries.firstOrNull { (_, room) -> room.attached && room.target.target == "$AGENT_TARGET$agent" }?.key }
             heldRoutines.shown(rosterId, here())?.let { shown.routines.value = it }
         }
@@ -268,15 +267,15 @@ class RcpAgentRepository(
         }
     }
 
-    /** Reads which agent the Host names as main. While the Host cannot be read, the last answer stands. */
-    private suspend fun readMainAgent() {
-        val named =
-            try {
-                owner.mainAgent()
-            } catch (failed: RepositoryException) {
-                return
-            }
-        synchronized(lock) { main = MainAnswer(named) }
+    /**
+     * Reads the Host's observation once, for the routines and the main agent. While the Host cannot
+     * be read, or names its main agent by something that is not an id, the last answer stands.
+     */
+    private suspend fun readObservation() {
+        val observed = heldRoutines.read() ?: return
+        val named = observed.mainAgent
+        val id = if (named == null) null else Uuid.parseOrNull(named.id) ?: return
+        synchronized(lock) { main = MainAnswer(id) }
         publish()
     }
 
@@ -410,6 +409,8 @@ class RcpAgentRepository(
     override suspend fun create(request: CreateAgent): AgentProfile {
         if (request.litAbilities.isNotEmpty()) throw RepositoryException(Problem.Invalid, "the Host cannot switch abilities yet")
         val record = host.create(request.operationId, request.name, request.purpose.trim().ifEmpty { null })
+        // The Host may have just named this agent main; read that before its chat is shown.
+        readObservation()
         val target = "$AGENT_TARGET${record.id}"
         val joined =
             try {

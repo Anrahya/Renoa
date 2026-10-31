@@ -1075,6 +1075,11 @@ async fn the_owner_names_the_main_agent_from_the_revision_it_read() {
                 "not_found",
             ),
             (forged, StatusCode::UNPROCESSABLE_ENTITY, "invalid_request"),
+            (
+                json!({"oversized": "a".repeat(5000)}),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "body_too_large",
+            ),
         ] {
             let refused = f.browser.post("/v1/host/main-agent", &body).await;
             assert_eq!(refused.status(), status, "{body}");
