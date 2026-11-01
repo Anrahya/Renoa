@@ -1089,9 +1089,11 @@ notebook's zone and the time there; like every message-context entry it is
 frozen into the command. The first note creates the notebook, which Mnem does
 only once it accepts the note; the person's private directory must exist first,
 so one that call created is removed again when the note is refused, and a
-refused note leaves nothing. After every kept note the person's directory and
-`users/` are made private again, and a first note syncs the new notebook's
-entry and the directories above it before it is acknowledged. Recall, zoom and
+refused note leaves nothing. Every kept note syncs the person's directory,
+`users/` and the data directory, which hold the notebook's entry and the two
+above it, since an earlier note's syncs may not have finished; then it makes the person's directory and `users/` private again, all
+before it is acknowledged. A failure in that work tells the agent the note was
+written and to recall before noting it again. Recall, zoom and
 `MIND.md` open the notebook read-only: with no notebook they return nothing and
 create nothing. A recall pattern holds at most 256 bytes; Mnem bounds the
 compiled regex too. Mnem's compaction, Dream, agenda and heartbeat do not run

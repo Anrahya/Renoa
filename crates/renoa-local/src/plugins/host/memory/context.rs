@@ -113,3 +113,48 @@ pub(crate) fn session_block(
         text: format!("{MIND_HEADING}\n{}", shared.text),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use jiff::{Timestamp, tz::TimeZone};
+
+    use super::same_wall_time;
+
+    #[test]
+    fn a_zone_without_a_name_shows_the_same_wall_time_by_offset() {
+        let zone = |name: &str| TimeZone::get(name).expect("zone");
+        let fixed = |minutes: i32| {
+            let offset = jiff::tz::Offset::from_seconds(minutes * 60).expect("offset");
+            let zone = TimeZone::fixed(offset);
+            assert_eq!(zone.iana_name(), None, "{offset} is unnamed");
+            zone
+        };
+        let winter: Timestamp = "2026-01-15T12:00:00Z".parse().expect("winter");
+        let summer: Timestamp = "2026-07-15T12:00:00Z".parse().expect("summer");
+        for (left, right, at, same) in [
+            (zone("Asia/Kolkata"), fixed(330), winter, true),
+            (fixed(330), zone("Asia/Kolkata"), winter, true),
+            (fixed(330), fixed(330), winter, true),
+            (fixed(330), fixed(345), winter, false),
+            (zone("Asia/Kathmandu"), fixed(330), winter, false),
+            (zone("America/New_York"), fixed(-300), winter, true),
+            (zone("America/New_York"), fixed(-300), summer, false),
+            // Named zones agree by name, not by today's offset.
+            (
+                zone("America/New_York"),
+                zone("America/Toronto"),
+                winter,
+                false,
+            ),
+            (zone("Asia/Kolkata"), zone("Asia/Kolkata"), winter, true),
+        ] {
+            assert_eq!(
+                same_wall_time(&left, &right, at),
+                same,
+                "{:?} and {:?} at {at}",
+                left.iana_name(),
+                right.iana_name()
+            );
+        }
+    }
+}

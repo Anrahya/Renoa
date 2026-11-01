@@ -82,9 +82,9 @@ fn note(
     let prepared = prepare_person_directory(data_directory, principal)
         .map_err(|error| profile_error(&error))?;
     let person = prepared.directory();
-    let first = notebook_in(person)?.is_none();
+    notebook_in(person)?;
     #[cfg(test)]
-    tests::RACE.with_borrow_mut(|race| race.take().map(|race| race()));
+    tests::BEFORE_WRITE.with_borrow_mut(|hook| hook.take().map(|hook| hook()));
     let written = Memory::create_with_note(&person.join(NOTEBOOK_DIRECTORY), author, text, now);
     let (_, outcome) = match written {
         Ok(written) => written,
@@ -93,17 +93,28 @@ fn note(
             return Err(tool_error(error, true));
         }
     };
+    #[cfg(test)]
+    tests::AFTER_WRITE.with_borrow_mut(|hook| hook.take().map(|hook| hook()));
+    // The notebook, the person's directory and `users/` may be new entries,
+    // from this note or from an earlier one whose syncs never finished, so
+    // every note makes all three durable before it is acknowledged.
+    for directory in person.ancestors().take(3) {
+        sync_directory(directory)?;
+    }
     // Restrict again: another call's refused first note may have withdrawn the
     // directory while Mnem re-created it with default modes for this one.
-    prepare_person_directory(data_directory, principal).map_err(|error| profile_error(&error))?;
-    if first {
-        // The new notebook, the person's directory and `users/` may all be
-        // new entries; make each durable before the note is acknowledged.
-        for directory in person.ancestors().take(3) {
-            sync_directory(directory)?;
-        }
-    }
+    prepare_person_directory(data_directory, principal).map_err(|error| {
+        kept_note_error("this person's directory could not be kept private", error)
+    })?;
     Ok(outcome)
+}
+
+/// A failure after Mnem kept the note: retrying it could write it twice.
+fn kept_note_error(what: &str, error: impl std::fmt::Display) -> ToolError {
+    ToolError::io(
+        format!("the note was written, but {what} ({error}); recall it before noting it again"),
+        true,
+    )
 }
 
 /// The latest `limit` notes matching `pattern`; none when the person has no
@@ -182,16 +193,10 @@ fn notebook_in(person: &Path) -> Result<Option<PathBuf>, ToolError> {
 fn sync_directory(directory: &Path) -> Result<(), ToolError> {
     #[cfg(test)]
     tests::SYNCED.with_borrow_mut(|synced| synced.push(directory.to_path_buf()));
-    fs::File::open(directory)
-        .and_then(|handle| handle.sync_all())
-        .map_err(|error| {
-            ToolError::io(
-                format!(
-                    "the note was written, but its new notebook could not be made durable ({error}); recall it before noting it again"
-                ),
-                true,
-            )
-        })
+    let synced = fs::File::open(directory).and_then(|handle| handle.sync_all());
+    #[cfg(test)]
+    let synced = synced.and_then(|()| tests::sync_fault(directory));
+    synced.map_err(|error| kept_note_error("its notebook could not be made durable", error))
 }
 
 /// Mnem's error as the agent sees it. Invalid input carries Mnem's own advice

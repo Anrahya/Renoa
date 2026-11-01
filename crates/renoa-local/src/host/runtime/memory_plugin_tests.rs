@@ -349,6 +349,32 @@ async fn notes_are_dated_in_the_main_agents_zone_whoever_writes_them() {
 }
 
 #[tokio::test]
+async fn a_host_with_agents_but_no_main_agent_keeps_the_notebook_in_the_host_zone() {
+    let directory = tempfile::tempdir().expect("directory");
+    let root = directory.path();
+    let host = host(root);
+    let host_zone = jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC);
+    let agent_zone = if host_zone.iana_name() == Some("Pacific/Kiritimati") {
+        "Pacific/Pago_Pago"
+    } else {
+        "Pacific/Kiritimati"
+    };
+    zoned(&host, root, "East", agent_zone, true).await;
+    zoned(&host, root, "West", agent_zone, true).await;
+    let catalog = rusqlite::Connection::open(&host.config.database).expect("catalog");
+    catalog
+        .execute("DELETE FROM host_main_agent", [])
+        .expect("no main agent");
+    let zone = crate::plugins::host::memory::notebook_zone(&catalog).expect("zone");
+    let now = jiff::Timestamp::now();
+    assert_eq!(
+        (zone.iana_name(), zone.to_offset(now)),
+        (host_zone.iana_name(), host_zone.to_offset(now)),
+        "the Host zone, not any agent's {agent_zone}"
+    );
+}
+
+#[tokio::test]
 async fn an_agent_whose_clock_is_not_the_notebooks_is_told_the_notebooks_time() {
     let directory = tempfile::tempdir().expect("directory");
     let root = directory.path();

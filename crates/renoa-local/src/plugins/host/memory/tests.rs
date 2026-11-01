@@ -14,8 +14,22 @@ thread_local! {
     pub(super) static SYNCED: std::cell::RefCell<Vec<std::path::PathBuf>> =
         const { std::cell::RefCell::new(Vec::new()) };
     /// Runs once just before Mnem writes a note, as another call would.
-    pub(super) static RACE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+    pub(super) static BEFORE_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    /// Runs once just after Mnem kept a note.
+    pub(super) static AFTER_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    /// A directory whose sync this thread fails, after it really synced.
+    static SYNC_FAULT: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The injected failure for a sync of `directory`, when one is armed.
+pub(super) fn sync_fault(directory: &Path) -> std::io::Result<()> {
+    if SYNC_FAULT.with_borrow(|fault| fault.as_deref() == Some(directory)) {
+        return Err(std::io::Error::other("injected sync failure"));
+    }
+    Ok(())
 }
 
 fn at(raw: &str) -> DateTime {
@@ -241,7 +255,7 @@ fn a_busy_notebook_is_unavailable_and_a_stale_job_a_conflict() {
 
 #[cfg(unix)]
 #[test]
-fn a_note_keeps_the_person_directory_private_and_a_first_one_durable() {
+fn a_note_keeps_the_person_directory_private_and_every_one_durable() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let directory = tempfile::tempdir().expect("data directory");
@@ -264,9 +278,10 @@ fn a_note_keeps_the_person_directory_private_and_a_first_one_durable() {
     assert_eq!(mode(&users(data)), 0o700);
     let canonical = data.canonicalize().expect("canonical");
     let person_canonical = canonical.join("users").join(person.to_string());
+    let ancestors = [person_canonical, canonical.join("users"), canonical.clone()];
     assert_eq!(
         SYNCED.with_borrow(Clone::clone),
-        [person_canonical, canonical.join("users"), canonical.clone()],
+        ancestors,
         "the new notebook's entry and every parent above it"
     );
 
@@ -278,9 +293,10 @@ fn a_note_keeps_the_person_directory_private_and_a_first_one_durable() {
         0o700,
         "restricted after every note"
     );
-    assert!(
-        SYNCED.with_borrow(Vec::is_empty),
-        "a later note adds no directory entry"
+    assert_eq!(
+        SYNCED.with_borrow(Clone::clone),
+        ancestors,
+        "a later note cannot know an earlier one's syncs finished"
     );
 
     // Another call's refused first note withdraws the directory after this one
@@ -288,11 +304,75 @@ fn a_note_keeps_the_person_directory_private_and_a_first_one_durable() {
     let raced = Uuid::new_v4();
     let raced_directory = canonical.join("users").join(raced.to_string());
     let gone = raced_directory.clone();
-    RACE.with_borrow_mut(|race| {
-        *race = Some(Box::new(move || {
+    BEFORE_WRITE.with_borrow_mut(|hook| {
+        *hook = Some(Box::new(move || {
             fs::remove_dir(&gone).expect("the other call withdrew it");
         }));
     });
     note(data, raced, "Arcee", "Reads before bed", now).expect("raced note");
     assert_eq!(mode(&raced_directory), 0o700, "restricted after the note");
+}
+
+/// A failure after Mnem kept a note says the note may be written, so the
+/// agent recalls before it notes again instead of writing it twice.
+fn assert_kept(error: &renoa_agent::ToolError, what: &str) {
+    assert_eq!(error.code(), ToolErrorCode::Io, "{error}");
+    assert!(error.partial_changes_possible(), "{error}");
+    let text = error.to_string();
+    assert!(text.starts_with("the note was written, but "), "{text}");
+    assert!(text.contains(what), "{text}");
+    assert!(text.ends_with("recall it before noting it again"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failure_after_the_note_is_kept_says_it_was_written() {
+    let directory = tempfile::tempdir().expect("data directory");
+    let data = directory.path();
+    let person = Uuid::new_v4();
+    let now = at("2026-10-31T09:00");
+    let canonical = data.canonicalize().expect("canonical");
+    let person_directory = canonical.join("users").join(person.to_string());
+    let ancestors = [
+        person_directory.clone(),
+        canonical.join("users"),
+        canonical.clone(),
+    ];
+
+    SYNC_FAULT.with_borrow_mut(|fault| *fault = Some(person_directory.clone()));
+    let unsynced = note(data, person, "Arcee", "Walks every evening", now)
+        .expect_err("the first note's directory sync fails");
+    SYNC_FAULT.with_borrow_mut(|fault| *fault = None);
+    assert_kept(&unsynced, "could not be made durable");
+    assert_eq!(recall(data, person, ".", 20).expect("recall").len(), 1);
+
+    SYNCED.with_borrow_mut(Vec::clear);
+    note(data, person, "Arcee", "Swims on Sundays", now).expect("second note");
+    assert_eq!(
+        SYNCED.with_borrow(Clone::clone),
+        ancestors,
+        "the next note makes the first one's entries durable"
+    );
+
+    // The person's directory turns into a link after Mnem kept the note: the
+    // syncs run first, then restricting refuses the link.
+    let moved = canonical.join("users").join("moved");
+    let (from, to) = (person_directory.clone(), moved.clone());
+    AFTER_WRITE.with_borrow_mut(|hook| {
+        *hook = Some(Box::new(move || {
+            fs::rename(&from, &to).expect("move the directory");
+            std::os::unix::fs::symlink(&to, &from).expect("link it back");
+        }));
+    });
+    SYNCED.with_borrow_mut(Vec::clear);
+    let unrestricted = note(data, person, "Arcee", "Reads before bed", now)
+        .expect_err("restricting refuses the link");
+    assert_kept(&unrestricted, "could not be kept private");
+    assert_eq!(
+        SYNCED.with_borrow(Clone::clone),
+        ancestors,
+        "durable before the directory is restricted"
+    );
+    let log = fs::read_to_string(moved.join("mnem").join("LOG.txt")).expect("log");
+    assert!(log.contains("Reads before bed"), "{log}");
 }

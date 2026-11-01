@@ -2,7 +2,7 @@ use rusqlite::{OptionalExtension, TransactionBehavior};
 
 use crate::{
     CommandId, Kernel, KernelError, OperationSnapshot, SessionId, SessionSnapshot,
-    admission::{from_sql_integer, parse_agent_id, parse_operation_id},
+    admission::{UNFINISHED_OPERATION, from_sql_integer, parse_agent_id, parse_operation_id},
     effect_store::load_effect_batch_snapshots,
     operation_store::StoredOperationRow,
     schema::sqlite_error,
@@ -75,12 +75,13 @@ impl Kernel {
         })
     }
 
-    /// Where `command_id` stands in `session_id`, from one indexed read
-    /// instead of a whole snapshot.
+    /// Where `command_id` stands in `session_id`, from one read instead of a
+    /// whole snapshot.
     ///
     /// # Errors
     ///
-    /// Returns a storage failure.
+    /// Returns [`KernelError::SessionNotFound`] for a session the kernel does
+    /// not hold, or a storage failure.
     pub fn command_standing(
         &self,
         session_id: SessionId,
@@ -89,16 +90,21 @@ impl Kernel {
         let connection = self.database.connection()?;
         let (admitted, other_unfinished) = connection
             .query_row(
-                "SELECT
-                    EXISTS (SELECT 1 FROM operations
-                            WHERE session_id = ?1 AND command_id = ?2),
-                    EXISTS (SELECT 1 FROM operations
-                            WHERE session_id = ?1 AND command_id <> ?2
-                              AND outcome_json IS NULL)",
+                &format!(
+                    "SELECT
+                        EXISTS (SELECT 1 FROM operations
+                                WHERE session_id = ?1 AND command_id = ?2),
+                        EXISTS (SELECT 1 FROM operations
+                                WHERE session_id = ?1 AND command_id <> ?2
+                                  AND {UNFINISHED_OPERATION})
+                     FROM sessions WHERE session_id = ?1"
+                ),
                 [session_id.to_string(), command_id.to_string()],
                 |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
             )
-            .map_err(sqlite_error)?;
+            .optional()
+            .map_err(sqlite_error)?
+            .ok_or(KernelError::SessionNotFound(session_id))?;
         Ok(CommandStanding {
             admitted,
             other_unfinished,

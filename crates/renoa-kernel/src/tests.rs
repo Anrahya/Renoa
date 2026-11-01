@@ -464,12 +464,102 @@ async fn command_standing_follows_admission_and_outcome() {
         (false, false),
         "a finished one does not count"
     );
+    let missing = SessionId::new();
     assert!(
-        !kernel
-            .command_standing(SessionId::new(), first)
+        matches!(
+            kernel.command_standing(missing, first),
+            Err(crate::KernelError::SessionNotFound(session)) if session == missing
+        ),
+        "a session the kernel does not hold is not found, as in `inspect`"
+    );
+}
+
+/// The outcome the kernel stores with each phase. A new phase fails to
+/// compile here until it is decided, and the walk below checks the list
+/// against the phases the schema stores.
+fn outcome_stored_with(phase: crate::operation_phase::OperationPhase) -> Option<OperationOutcome> {
+    use crate::operation_phase::OperationPhase as Phase;
+    match phase {
+        Phase::Queued
+        | Phase::NeedDecision
+        | Phase::EffectIntent
+        | Phase::EffectDispatched
+        | Phase::OutcomeUnknown => None,
+        Phase::Waiting => Some(OperationOutcome::WaitingForInput),
+        Phase::Completed => Some(OperationOutcome::Completed),
+        Phase::Failed => Some(OperationOutcome::Failed {
+            reason: "failed".to_owned(),
+        }),
+        Phase::Cancelled => Some(OperationOutcome::Cancelled),
+    }
+}
+
+#[test]
+fn command_standing_and_exclusive_admission_agree_in_every_phase() {
+    use crate::operation_phase::OperationPhase as Phase;
+    let phases = [
+        Phase::Queued,
+        Phase::NeedDecision,
+        Phase::EffectIntent,
+        Phase::EffectDispatched,
+        Phase::OutcomeUnknown,
+        Phase::Waiting,
+        Phase::Completed,
+        Phase::Failed,
+        Phase::Cancelled,
+    ];
+    let directory = tempdir().expect("temporary directory");
+    let mut stored = Vec::new();
+    for (index, phase) in phases.into_iter().enumerate() {
+        let (kernel, session_id) = kernel_with_command(&directory.path().join(format!("{index}")));
+        let connection = kernel.database.connection().expect("connection");
+        if index == 0 {
+            let schema: String = connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name = 'operations'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("operations schema");
+            let listed = &schema[schema.find("phase IN (").expect("phase check") + 10..];
+            stored = listed[..listed.find(')').expect("phase list")]
+                .split(',')
+                .map(|phase| phase.trim().trim_matches('\'').to_owned())
+                .collect();
+        }
+        let outcome = outcome_stored_with(phase)
+            .map(|outcome| serde_json::to_string(&outcome).expect("outcome json"));
+        connection
+            .execute(
+                "UPDATE operations SET phase = ?1, outcome_json = ?2",
+                rusqlite::params![phase.as_str(), outcome],
+            )
+            .expect("set the phase");
+        let probe = CommandId::new();
+        let standing = kernel
+            .command_standing(session_id, probe)
             .expect("standing")
-            .admitted,
-        "a command is admitted in its own session only"
+            .other_unfinished;
+        let refused =
+            match kernel.submit_exclusive(session_id, Command::new(probe, serde_json::json!({}))) {
+                Err(crate::KernelError::UnfinishedOperation { .. }) => true,
+                Ok(_) => false,
+                Err(error) => panic!("{phase:?}: {error}"),
+            };
+        assert_eq!(
+            standing, refused,
+            "{phase:?}: standing and admission differ"
+        );
+        assert_eq!(
+            standing,
+            outcome_stored_with(phase).is_none(),
+            "{phase:?}: an operation is unfinished exactly while it has no outcome"
+        );
+    }
+    let walked: Vec<_> = phases.iter().map(|phase| phase.as_str()).collect();
+    assert_eq!(
+        stored, walked,
+        "the walk covers every phase the schema stores"
     );
 }
 
