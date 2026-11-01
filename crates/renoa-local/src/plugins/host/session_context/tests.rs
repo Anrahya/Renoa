@@ -8,7 +8,10 @@ use super::{
     CommandStanding, ContextRequest, MAX_BLOCK_BYTES, MIND_HEADING, PIN_FILE, SessionContext,
     resolve,
 };
-use crate::{host::catalog, plugins::host::memory::fixtures};
+use crate::{
+    host::catalog,
+    plugins::host::memory::{self, fixtures},
+};
 
 struct Fixture {
     _directory: tempfile::TempDir,
@@ -40,6 +43,16 @@ impl Fixture {
 
     fn notebook(&self) -> std::path::PathBuf {
         fixtures::notebook(&self.data, self.person)
+    }
+
+    /// The revision of the person's MIND.md as an agent that is not the
+    /// Host's main agent sees it, as this fixture's agent is not.
+    fn shared_revision(&self) -> String {
+        memory::mind(&self.data, self.person)
+            .expect("mind")
+            .expect("written")
+            .without_nudges()
+            .revision
     }
 
     fn pin(&self) -> std::path::PathBuf {
@@ -82,7 +95,8 @@ fn a_block_needs_a_mind_and_renders_escaped_after_its_source() {
     assert!(!fixture.data.join("users").exists(), "nothing is created");
     assert!(!fixture.pin().exists(), "an empty context needs no pin");
 
-    let revision = fixtures::dream(&fixture.notebook(), "Moving <house> & job");
+    fixtures::dream(&fixture.notebook(), "Moving <house> & job");
+    let revision = fixture.shared_revision();
     let (context, skipped) = fixture.resolve(CommandId::new(), NEW);
     assert_eq!(skipped, 0);
     let rendered = context.render().expect("a block");
@@ -93,7 +107,7 @@ fn a_block_needs_a_mind_and_renders_escaped_after_its_source() {
         "{rendered}"
     );
     assert!(
-        rendered.contains("- Moving &lt;house&gt; &amp; job (#4)"),
+        rendered.contains("- Moving &lt;house&gt; &amp; job (#0)"),
         "{rendered}"
     );
     assert!(
@@ -105,12 +119,14 @@ fn a_block_needs_a_mind_and_renders_escaped_after_its_source() {
 #[test]
 fn a_pinned_command_keeps_its_block_and_a_new_one_reloads() {
     let fixture = Fixture::new();
-    let first = fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    let first = fixture.shared_revision();
     let command = CommandId::new();
     let (admitted, _) = fixture.resolve(command, NEW);
     assert_eq!(revision(&admitted), Some(first.as_str()));
 
-    let second = fixtures::dream(&fixture.notebook(), "Recovering from a sprain");
+    fixtures::dream(&fixture.notebook(), "Recovering from a sprain");
+    let second = fixture.shared_revision();
     assert_ne!(first, second);
     for standing in [NEW, ADMITTED] {
         let (retried, skipped) = fixture.resolve(command, standing);

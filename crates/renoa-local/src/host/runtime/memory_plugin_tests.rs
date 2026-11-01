@@ -459,7 +459,25 @@ async fn a_recovered_command_keeps_the_block_it_was_admitted_with() {
         () = appears(&started) => {}
     }
     fs::remove_file(root.join("hang")).expect("release");
-    let second = fixtures::dream(&notebook, "Recovering from a sprain");
+    let second = fixtures::dream_with_nudge(
+        &notebook,
+        "Recovering from a sprain",
+        Some("Ask about the ankle"),
+    );
+    // Arcee, made first, was the main agent; the owner names another.
+    let scout = agent(&host, crate::presets::APP_PRESET_ID, "Scout").await;
+    rusqlite::Connection::open(&host.config.database)
+        .expect("catalog")
+        .execute(
+            "UPDATE host_main_agent SET agent_id = ?1, revision = revision + 1",
+            [scout.to_string()],
+        )
+        .expect("a new main agent");
+    assert_ne!(
+        second,
+        shared_revision(root, owner),
+        "the main agent's view differs"
+    );
 
     let recovered = loop {
         match turn(&arcee, command, person, "show").await {
@@ -478,8 +496,68 @@ async fn a_recovered_command_keeps_the_block_it_was_admitted_with() {
     );
     assert_eq!(
         block_revision(&say(&arcee, person, "show").await),
-        second,
-        "the next command reloads"
+        shared_revision(root, owner),
+        "the next command reloads, as an agent that is not the main one"
+    );
+}
+
+/// The revision of the person's MIND.md as every agent but the main one sees
+/// it: without its Nudges.
+fn shared_revision(root: &Path, owner: Uuid) -> String {
+    crate::plugins::host::memory::mind(&data(root), owner)
+        .expect("mind")
+        .expect("written")
+        .without_nudges()
+        .revision
+}
+
+#[tokio::test]
+async fn only_the_main_agent_sees_the_nudges() {
+    let directory = tempfile::tempdir().expect("directory");
+    let root = directory.path();
+    let host = host(root);
+    let owner = Uuid::new_v4();
+    let person = Speaker::Principal(owner);
+    // The first agent made on a Host is its main agent.
+    let arcee = session(
+        &host,
+        root,
+        agent(&host, crate::presets::APP_PRESET_ID, "Arcee").await,
+    )
+    .await;
+    let scout = session(
+        &host,
+        root,
+        agent(&host, crate::presets::APP_PRESET_ID, "Scout").await,
+    )
+    .await;
+    let notebook = fixtures::notebook(&data(root), owner);
+    let full = fixtures::dream_with_nudge(
+        &notebook,
+        "Training for a 10k",
+        Some("Ask how the long run went"),
+    );
+
+    let main = say(&arcee, person, "show").await;
+    assert_eq!(block_revision(&main), full);
+    assert!(main.contains("Ask how the long run went"), "{main}");
+    let other = say(&scout, person, "show").await;
+    assert!(other.contains("Training for a 10k"), "{other}");
+    assert!(!other.contains("Ask how the long run went"), "{other}");
+    assert_eq!(block_revision(&other), shared_revision(root, owner));
+
+    fixtures::dream_with_nudge(&notebook, "Training for a 10k", Some("Suggest a rest day"));
+    let changed = say(&arcee, person, "show").await;
+    assert_ne!(
+        block_revision(&changed),
+        full,
+        "the main agent's view moves"
+    );
+    assert!(changed.contains("Suggest a rest day"), "{changed}");
+    assert_eq!(
+        say(&scout, person, "show").await,
+        other,
+        "a nudge-only change leaves every other agent's block as it was"
     );
 }
 

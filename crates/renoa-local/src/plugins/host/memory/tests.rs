@@ -1,13 +1,13 @@
 use std::{fs, path::Path};
 
 use jiff::{Timestamp, civil::DateTime, tz::TimeZone};
-use mnem::memory::{AUTHOR_MAX, Memory, strip_author};
+use mnem::memory::{AUTHOR_MAX, ENTRY_CHARS, Memory, MemoryError, strip_author};
 use mnem::span::Span;
 use renoa_agent::ToolErrorCode;
 use renoa_kernel::AgentId;
 use uuid::Uuid;
 
-use super::{author, first_note, fixtures, local_time, mind, note, recall, zoom};
+use super::{author, fixtures, local_time, mind, note, recall, tool_error, zoom};
 
 fn at(raw: &str) -> DateTime {
     raw.parse().expect("a test time")
@@ -85,9 +85,10 @@ fn a_refused_first_note_leaves_nothing_and_a_kept_one_creates_the_notebook() {
     for refused in [
         "",
         "  \t",
+        "\u{1c}\u{1f}",
         "two\nlines",
         "[updates #0] corrects nothing yet",
-        &"x".repeat(281),
+        &"x".repeat(ENTRY_CHARS),
     ] {
         let error = note(data, person, "Arcee", refused, now).expect_err("Mnem refuses it");
         assert_eq!(error.code(), ToolErrorCode::InvalidInput, "{refused:?}");
@@ -114,7 +115,7 @@ fn a_refused_first_note_leaves_nothing_and_a_kept_one_creates_the_notebook() {
                 .into_owned()
         })
         .collect();
-    assert_eq!(entries, ["mnem"], "no staging is left behind");
+    assert_eq!(entries, ["mnem"], "only the notebook is created");
     let notes = recall(data, person, "dentist", 20).expect("recall");
     let [found] = notes.as_slice() else {
         panic!("one note: {notes:?}");
@@ -138,24 +139,42 @@ fn a_refused_first_note_leaves_nothing_and_a_kept_one_creates_the_notebook() {
 }
 
 #[test]
-fn a_first_note_that_loses_the_race_joins_the_winners_notebook() {
+fn a_refused_note_leaves_an_existing_person_directory_as_it_was() {
     let directory = tempfile::tempdir().expect("data directory");
     let data = directory.path();
     let person = Uuid::new_v4();
     let now = at("2026-10-31T09:00");
-    note(data, person, "Arcee", "Lives near the lake", now).expect("the winner's note");
-    // The loser looked before the winner renamed its notebook into place.
-    let joined = first_note(data, person, "Scout", "Walks every evening", now).expect("joined");
-    assert_eq!(joined.id, 1, "written into the winner's notebook");
     let person_directory = users(data).join(person.to_string());
-    assert_eq!(
-        fs::read_dir(&person_directory)
-            .expect("person directory")
-            .count(),
-        1,
-        "the loser's staging is gone"
+    fs::create_dir_all(&person_directory).expect("person directory");
+    fs::write(person_directory.join("USER.md"), "Lives near the lake.\n").expect("USER.md");
+
+    let refused = note(data, person, "Arcee", "two\nlines", now);
+    assert!(refused.is_err());
+    assert!(
+        !person_directory.join("mnem").exists(),
+        "Mnem checks a first note before it creates the notebook"
     );
-    assert_eq!(recall(data, person, ".", 20).expect("recall").len(), 2);
+    assert!(
+        person_directory.join("USER.md").is_file(),
+        "the directory stays"
+    );
+
+    // A notebook directory without a log is not a notebook yet: reads find
+    // nothing and create nothing, and the first kept note makes it one.
+    let notebook = person_directory.join("mnem");
+    fs::create_dir(&notebook).expect("an unfinished notebook");
+    assert!(recall(data, person, ".", 20).expect("recall").is_empty());
+    assert_eq!(mind(data, person).expect("mind"), None);
+    assert_eq!(
+        fs::read_dir(&notebook).expect("notebook").count(),
+        0,
+        "a read creates nothing"
+    );
+    assert!(note(data, person, "Arcee", "", now).is_err());
+    assert_eq!(fs::read_dir(&notebook).expect("notebook").count(), 0);
+    let kept = note(data, person, "Arcee", "Walks every evening", now).expect("kept");
+    assert_eq!(kept.id, 0);
+    assert_eq!(recall(data, person, ".", 20).expect("recall").len(), 1);
 }
 
 #[cfg(unix)]
@@ -191,4 +210,22 @@ fn mind_reads_what_dream_wrote() {
     let read = mind(data, person).expect("mind").expect("written");
     assert_eq!(read.revision, revision);
     assert!(read.text.contains("Training for a 10k"), "{}", read.text);
+}
+
+#[test]
+fn a_busy_notebook_is_unavailable_and_a_stale_job_a_conflict() {
+    let busy = tool_error(
+        MemoryError::Busy {
+            message: "another dream is running".to_owned(),
+        },
+        false,
+    );
+    assert_eq!(busy.code(), ToolErrorCode::Unavailable, "ask again later");
+    let stale = tool_error(
+        MemoryError::Conflict {
+            message: "the job is stale".to_owned(),
+        },
+        false,
+    );
+    assert_eq!(stale.code(), ToolErrorCode::Conflict);
 }

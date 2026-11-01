@@ -86,6 +86,12 @@ pub(in crate::host) fn read(
     .transpose()
 }
 
+/// Whether `agent` is the Host's main agent, for what only it is shown. It
+/// grants no authority.
+pub(crate) fn is_main(connection: &Connection, agent: AgentId) -> Result<bool, HostCatalogError> {
+    Ok(read(connection)?.is_some_and(|main| AgentId::from_uuid(main.main_agent_id) == agent))
+}
+
 /// One logical change. Retry with this same identity after an uncertain
 /// response; a new identity represents a new change.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

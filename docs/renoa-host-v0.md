@@ -1079,24 +1079,27 @@ creates nothing. A note is signed `[by <agent name>]`, with brackets and control
 characters removed and the name cut to Mnem's 32 bytes, or `agent-<id prefix>`
 when nothing is left, and dated in the agent's `renoa.time` zone, else the Host
 zone, whether or not `renoa.time` is enabled. The first note creates the
-notebook: it is written into a hidden staging notebook and renamed into place
-only once Mnem accepts it, so a refused note leaves nothing; a crash in between
-can leave a hidden `.mnem-staging-*` directory with no visible note. Recall and
-zoom with no notebook return nothing and create nothing. Mnem's compaction,
+notebook, which Mnem does only once it accepts the note; the person's private
+directory must exist first, so one that call created is removed again when the
+note is refused, and a refused note leaves nothing. Recall, zoom and `MIND.md`
+open the notebook read-only: with no notebook they return nothing and create
+nothing. Mnem's compaction,
 Dream, agenda and heartbeat do not run yet; the notebook accumulates notes.
 
 The session-context point adds attributed blocks to the system prompt of a turn
 that talks to a person: today one, the person's `MIND.md`, present only when
-Mnem's Dream has written it and `renoa.memory` is enabled. The block carries
-`MIND.md`'s revision, so the prompt's bytes, and the provider's cached prefix,
-change only when the file does; recent notes stay out of it for the same
-reason. A block over 32 KiB, or one that cannot be read, is left out, recorded
+Mnem's Dream has written it and `renoa.memory` is enabled. The Host's main agent
+sees the whole file; every other agent sees it without its Nudges section,
+which says what to do for the person and when. Each view carries its own Mnem
+revision, so the prompt's bytes, and the provider's cached prefix, change only
+when that view does, and a change to the nudges alone leaves every other
+agent's prompt as it was; recent notes stay out of it for the same reason. A block over 32 KiB, or one that cannot be read, is left out, recorded
 as a `session_context_skipped` trace event, and never blocks the turn. The
 blocks are read when a command first resolves its runtime and, when there is
 one, pinned to that command in `sessions/<session-uuid>/session-context.json`
 before it is admitted, so a retried or recovered command rebuilds the system
-prompt its kernel manifest froze, even after `MIND.md` changed or the plugin was
-turned off. A command already admitted without a pin keeps no block.
+prompt its kernel manifest froze, even after `MIND.md` changed, the plugin was
+turned off, or the owner named another main agent. A command already admitted without a pin keeps no block.
 
 `LocalHost::ensure_agent_session` accepts a caller-chosen UUID for durable surface
 admission. Repeating it resolves the already-published session with its stored

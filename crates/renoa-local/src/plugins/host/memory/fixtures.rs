@@ -3,11 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use jiff::civil::DateTime;
-use mnem::{
-    dream::Trigger,
-    memory::{Memory, MemoryError},
-    model::Answer,
-};
+use mnem::{dream::Trigger, memory::Memory, model::Answer};
 use uuid::Uuid;
 
 /// Where the notebook of `principal` lives under a Host data directory.
@@ -22,26 +18,17 @@ fn at(raw: &str) -> DateTime {
     raw.parse().expect("a fixture time")
 }
 
-/// Runs a Dream step again while Mnem reports another dream. Dream takes its
-/// lock with a non-blocking `flock`, and a child another test forks inherits
-/// the lock's open file until it execs, so a lock this fixture just released
-/// can still look held for a moment.
-fn unbusy<T>(mut step: impl FnMut() -> Result<T, MemoryError>) -> Result<T, MemoryError> {
-    for _ in 0..200 {
-        match step() {
-            Err(MemoryError::Conflict { .. }) => {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            settled => return settled,
-        }
-    }
-    step()
-}
-
 /// Gives the notebook at `directory`, created if needed, a `MIND.md` whose
 /// Active section is `active`: five notes, then a nightly Dream Mnem accepts.
 /// Returns the new revision.
 pub(crate) fn dream(directory: &Path, active: &str) -> String {
+    dream_with_nudge(directory, active, None)
+}
+
+/// [`dream`], with one next-session nudge whose action is `nudge`. Active
+/// cites the first note, so two dreams with the same `active` differ only in
+/// their Nudges.
+pub(crate) fn dream_with_nudge(directory: &Path, active: &str, nudge: Option<&str>) -> String {
     let memory = Memory::create(directory).expect("a notebook");
     let mut last = 0;
     for n in 0..5 {
@@ -55,13 +42,18 @@ pub(crate) fn dream(directory: &Path, active: &str) -> String {
             .id;
     }
     let now = at("2026-10-31T03:00");
-    let job = unbusy(|| memory.dream_job(Trigger::Nightly, None, now))
+    let job = memory
+        .dream_job(Trigger::Nightly, None, now)
         .expect("a dream job")
         .expect("five new notes make a dream due");
+    let nudges = nudge.map_or_else(String::new, |action| {
+        format!("- check-in | next session | - | {action} | Seen again (#{last}) | notify\n")
+    });
     let draft = format!(
-        "<mind>\n## Durable\n## Active\n- {active} (#{last})\n## Hunches\n## Nudges\n</mind>\n"
+        "<mind>\n## Durable\n## Active\n- {active} (#0)\n## Hunches\n## Nudges\n{nudges}</mind>\n"
     );
-    unbusy(|| memory.apply_dream(&job.id, Answer::Reply(draft.clone()), now))
+    memory
+        .apply_dream(&job.id, Answer::Reply(draft), now)
         .expect("Mnem accepts the dream");
     memory
         .mind()

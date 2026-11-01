@@ -7,8 +7,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use jiff::Timestamp;
-use mnem::config::Knob;
-use mnem::memory::{Entry, NoteView};
+use mnem::memory::{ENTRY_CHARS, Entry, NoteView};
 use mnem::span::Span;
 use renoa_agent::{
     BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
@@ -69,8 +68,9 @@ pub(crate) fn bindings(turn: MemoryTurn) -> [AgentToolBinding; 3] {
 }
 
 fn spec(kind: Kind) -> ToolSpec {
-    // Mnem's default note limit; a notebook the Host creates keeps it.
-    let note_bytes = Knob::EntryChars.default_value();
+    // Mnem's default note limit, prefix included. The Host writes no notebook
+    // config, so every notebook it creates keeps it.
+    let note_bytes = ENTRY_CHARS;
     match kind {
         Kind::Note => ToolSpec {
             name: NOTE.to_owned(),

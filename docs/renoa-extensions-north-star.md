@@ -706,8 +706,9 @@ library, pinned to one revision, and keeps one notebook per person at
 `users/<principal-id>/mnem/`, shared by every agent that talks to them. Its
 tools, `memory_note`, `memory_recall` and `memory_zoom`, act on the notebook of
 the person the turn talks to and refuse a turn with no person. Its
-`session_context` block is that person's `MIND.md`, keyed by Mnem's revision of
-the file. It is enabled by default for every agent and has no settings; a note
+`session_context` block is that person's `MIND.md`: the whole file for the
+Host's main agent, and the file without its Nudges section for every other
+agent, each keyed by Mnem's revision of that view. It is enabled by default for every agent and has no settings; a note
 is dated in the agent's `renoa.time` zone. `USER.md` keeps the person's lasting
 profile; time-bound and inferred facts go to the notebook. Mnem's compaction,
 Dream, agenda and heartbeat are later steps and do not run yet.

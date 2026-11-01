@@ -1780,7 +1780,7 @@ dependencies = [
 [[package]]
 name = "mnem"
 version = "0.1.0"
-source = "git+https://github.com/Anrahya/mnem?rev=0a0af7f64eb2613e24322628fd18e44b17133348#0a0af7f64eb2613e24322628fd18e44b17133348"
+source = "git+https://github.com/Anrahya/mnem?rev=41a0e81f5eae260222720dd24b215371091cb0bc#41a0e81f5eae260222720dd24b215371091cb0bc"
 dependencies = [
  "jiff",
  "regex",

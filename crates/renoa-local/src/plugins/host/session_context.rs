@@ -10,7 +10,8 @@
 //! to that command in its session directory before it is admitted. A retried or
 //! recovered command reuses the pin, so it builds the prompt the kernel froze
 //! into its manifest even after the source changed or the plugin was turned
-//! off. A command that is already admitted without a pin was admitted with no
+//! off, or the Host's main agent changed. A command that is already admitted
+//! without a pin was admitted with no
 //! block and keeps none. A contributor that fails or exceeds the budget is left
 //! out and reported, and never blocks the turn.
 //!
@@ -29,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{HostPluginId, Skipped, memory, state};
-use crate::host::catalog;
+use crate::host::{catalog, definition::is_main_agent};
 
 /// The file in a session directory that holds the latest pinned command.
 pub(crate) const PIN_FILE: &str = "session-context.json";
@@ -183,10 +184,20 @@ fn contribution(
             let Some(mind) = memory::mind(request.data_directory, request.principal)? else {
                 return Ok(None);
             };
+            // Nudges are what to do for the person and when; only the main
+            // agent acts on them. Each rendering carries its own revision, so
+            // a nudge-only change leaves every other agent's prompt as it was.
+            let (revision, text) =
+                if is_main_agent(db, request.agent).map_err(|error| error.to_string())? {
+                    (mind.revision, mind.text)
+                } else {
+                    let shared = mind.without_nudges();
+                    (shared.revision, shared.text)
+                };
             Ok(Some(SessionBlock {
                 source: format!("plugin:{}", plugin.id()),
-                revision: mind.revision,
-                text: format!("{MIND_HEADING}\n{}", mind.text),
+                revision,
+                text: format!("{MIND_HEADING}\n{text}"),
             }))
         }
         HostPluginId::Agents

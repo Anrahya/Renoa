@@ -38,9 +38,6 @@ pub(crate) const RECALL: &str = "memory_recall";
 pub(crate) const ZOOM: &str = "memory_zoom";
 
 const NOTEBOOK_DIRECTORY: &str = "mnem";
-/// A first note is written into a fresh notebook under this prefix and moved
-/// into place only once Mnem accepts it, so a refused note leaves nothing.
-const STAGING_PREFIX: &str = ".mnem-staging-";
 const FALLBACK_AUTHOR_PREFIX: &str = "agent-";
 
 /// The `[by <author>]` name an agent's notes carry: its name without brackets
@@ -69,7 +66,9 @@ pub(crate) fn local_time(zone: &TimeZone, at: Timestamp) -> DateTime {
 }
 
 /// Writes one note in the notebook of `principal`, creating the notebook with
-/// its first note.
+/// its first note. Mnem checks a first note before it creates anything, but
+/// the person's private directory must exist first, so one this call creates
+/// is withdrawn when the note is refused.
 fn note(
     data_directory: &Path,
     principal: Uuid,
@@ -77,19 +76,30 @@ fn note(
     text: &str,
     now: DateTime,
 ) -> Result<NoteOutcome, ToolError> {
-    // Mnem checks the note with its `[by …]` prefix, which is never blank, so
-    // a blank note would be kept as an author with nothing said.
-    if text.trim().is_empty() {
-        return Err(ToolError::invalid_input(
-            "The note is empty; write what to remember as one line of text.",
-        ));
+    if let Some(person) = existing_person_directory(data_directory, principal)
+        .map_err(|error| profile_error(&error))?
+    {
+        return write(&person, author, text, now);
     }
-    if let Some(notebook) = existing_notebook(data_directory, principal)? {
-        return open(&notebook)?
-            .note(author, text, now)
-            .map_err(|error| tool_error(error, true));
+    let prepared = prepare_person_directory(data_directory, principal)
+        .map_err(|error| profile_error(&error))?;
+    let written = write(prepared.directory(), author, text, now);
+    if written.is_err() {
+        prepared.withdraw();
     }
-    first_note(data_directory, principal, author, text, now)
+    written
+}
+
+/// Writes the note into the notebook in `person`, which a first note creates.
+fn write(person: &Path, author: &str, text: &str, now: DateTime) -> Result<NoteOutcome, ToolError> {
+    let existed = notebook_in(person)?.is_some();
+    let (_, outcome) =
+        Memory::create_with_note(&person.join(NOTEBOOK_DIRECTORY), author, text, now)
+            .map_err(|error| tool_error(error, true))?;
+    if !existed {
+        sync_directory(person)?;
+    }
+    Ok(outcome)
 }
 
 /// The latest `limit` notes matching `pattern`; none when the person has no
@@ -100,10 +110,10 @@ fn recall(
     pattern: &str,
     limit: usize,
 ) -> Result<Vec<NoteView>, ToolError> {
-    let Some(notebook) = existing_notebook(data_directory, principal)? else {
+    let Some(memory) = read_only(data_directory, principal)? else {
         return Ok(Vec::new());
     };
-    open(&notebook)?
+    memory
         .recall(pattern, limit)
         .map_err(|error| tool_error(error, false))
 }
@@ -111,35 +121,44 @@ fn recall(
 /// The halves of `block`; none when the person has no notebook, which is not
 /// created.
 fn zoom(data_directory: &Path, principal: Uuid, block: Span) -> Result<Vec<Entry>, ToolError> {
-    let Some(notebook) = existing_notebook(data_directory, principal)? else {
+    let Some(memory) = read_only(data_directory, principal)? else {
         return Ok(Vec::new());
     };
-    open(&notebook)?
-        .zoom(block)
-        .map_err(|error| tool_error(error, false))
+    memory.zoom(block).map_err(|error| tool_error(error, false))
 }
 
 /// The person's `MIND.md`, when they have a notebook and Mnem's Dream wrote
 /// one. Nothing is created.
 pub(crate) fn mind(data_directory: &Path, principal: Uuid) -> Result<Option<MindView>, String> {
-    let Some(notebook) =
-        existing_notebook(data_directory, principal).map_err(|error| error.to_string())?
+    let Some(memory) = read_only(data_directory, principal).map_err(|error| error.to_string())?
     else {
         return Ok(None);
     };
-    Memory::open(&notebook)
-        .and_then(|memory| memory.mind())
-        .map_err(|error| error.to_string())
+    memory.mind().map_err(|error| error.to_string())
 }
 
-/// The person's notebook directory, if it exists. A link or another file in
-/// its place is refused, never followed.
-fn existing_notebook(data_directory: &Path, principal: Uuid) -> Result<Option<PathBuf>, ToolError> {
+/// The person's notebook opened for reading, which creates nothing; `None`
+/// when they have none.
+fn read_only(data_directory: &Path, principal: Uuid) -> Result<Option<Memory>, ToolError> {
     let Some(person) = existing_person_directory(data_directory, principal)
         .map_err(|error| profile_error(&error))?
     else {
         return Ok(None);
     };
+    let Some(notebook) = notebook_in(&person)? else {
+        return Ok(None);
+    };
+    match Memory::open_read_only(&notebook) {
+        Ok(memory) => Ok(Some(memory)),
+        // A directory without a log is not a notebook yet.
+        Err(MemoryError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(tool_error(error, false)),
+    }
+}
+
+/// The notebook directory in `person`, if it exists. A link or another file
+/// in its place is refused, never followed.
+fn notebook_in(person: &Path) -> Result<Option<PathBuf>, ToolError> {
     let notebook = person.join(NOTEBOOK_DIRECTORY);
     match fs::symlink_metadata(&notebook) {
         Ok(metadata) if metadata.is_dir() => Ok(Some(notebook)),
@@ -154,60 +173,7 @@ fn existing_notebook(data_directory: &Path, principal: Uuid) -> Result<Option<Pa
     }
 }
 
-/// Creates the person's notebook with its first note. The note is written into
-/// a fresh notebook beside the final one and renamed into place, so a note
-/// Mnem refuses leaves no notebook and no directory this call created. Two
-/// agents writing a person's first note at once both succeed: the one that
-/// renames second writes its note into the first one's notebook.
-fn first_note(
-    data_directory: &Path,
-    principal: Uuid,
-    author: &str,
-    text: &str,
-    now: DateTime,
-) -> Result<NoteOutcome, ToolError> {
-    let prepared = prepare_person_directory(data_directory, principal)
-        .map_err(|error| profile_error(&error))?;
-    let person = prepared.directory();
-    let staging = person.join(format!("{STAGING_PREFIX}{}", Uuid::new_v4()));
-    let written = Memory::create(&staging).and_then(|memory| memory.note(author, text, now));
-    let outcome = match written {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            discard(&staging);
-            prepared.withdraw();
-            return Err(tool_error(error, false));
-        }
-    };
-    let notebook = person.join(NOTEBOOK_DIRECTORY);
-    match fs::rename(&staging, &notebook) {
-        Ok(()) => {
-            sync_directory(person)?;
-            Ok(outcome)
-        }
-        Err(_) if fs::symlink_metadata(&notebook).is_ok_and(|metadata| metadata.is_dir()) => {
-            discard(&staging);
-            open(&notebook)?
-                .note(author, text, now)
-                .map_err(|error| tool_error(error, true))
-        }
-        Err(error) => {
-            discard(&staging);
-            prepared.withdraw();
-            Err(ToolError::io(
-                format!("this person's notebook could not be created: {error}"),
-                false,
-            ))
-        }
-    }
-}
-
-/// Removes a staged notebook no one else can see. Best effort: it is hidden
-/// and holds no note any agent was told was kept.
-fn discard(staging: &Path) {
-    let _ = fs::remove_dir_all(staging);
-}
-
+/// Makes a new notebook's entry in the person's directory durable.
 fn sync_directory(directory: &Path) -> Result<(), ToolError> {
     fs::File::open(directory)
         .and_then(|handle| handle.sync_all())
@@ -221,16 +187,14 @@ fn sync_directory(directory: &Path) -> Result<(), ToolError> {
         })
 }
 
-fn open(notebook: &Path) -> Result<Memory, ToolError> {
-    Memory::open(notebook).map_err(|error| tool_error(error, false))
-}
-
 /// Mnem's error as the agent sees it. Invalid input carries Mnem's own advice
 /// on the correct call; storage details stay out of the model's view.
 fn tool_error(error: MemoryError, writing: bool) -> ToolError {
     match error {
         MemoryError::Invalid { message } => ToolError::invalid_input(message),
         MemoryError::Conflict { message } => ToolError::conflict(message),
+        // Nothing was changed, and the same call can succeed later.
+        MemoryError::Busy { message } => ToolError::unavailable(message),
         MemoryError::Corrupt { .. } => ToolError::internal(
             "this person's notebook cannot be read as Mnem wrote it; the Host owner must repair it",
         ),
