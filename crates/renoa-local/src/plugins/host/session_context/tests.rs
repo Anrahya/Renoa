@@ -1,11 +1,12 @@
 use std::fs;
 
-use mnem::mind::{ACTIVE_MAX, DURABLE_MAX, HUNCHES_MAX, LINE_MAX, Mind, NUDGES_MAX, render};
-use renoa_kernel::{AgentId, CommandId};
+use mnem::mind::FILE_MAX;
+use renoa_kernel::{AgentId, CommandId, CommandStanding};
 use uuid::Uuid;
 
 use super::{
-    CommandStanding, ContextRequest, MAX_BLOCK_BYTES, MIND_HEADING, PIN_FILE, SessionContext,
+    ContextRequest, PIN_FILE, STAGED_PIN_FILE, SessionContext,
+    pin_fault::{self, Stage},
     resolve,
 };
 use crate::{
@@ -180,7 +181,7 @@ fn a_corrupt_or_oversized_mind_is_skipped_and_reported() {
     let oversized = Fixture::new();
     let long = format!(
         "## Durable\n- {} (#0)\n## Active\n## Hunches\n## Nudges\n",
-        "x".repeat(MAX_BLOCK_BYTES)
+        "x".repeat(FILE_MAX)
     );
     write_mind(&oversized, &long);
     assert_eq!(
@@ -207,16 +208,59 @@ fn an_unreadable_pin_is_reported_and_replaced() {
 }
 
 #[test]
-fn every_mind_mnem_can_write_fits_the_budget() {
-    let lines = DURABLE_MAX + ACTIVE_MAX + HUNCHES_MAX + NUDGES_MAX;
-    // The block's heading line, Dream's header and headings, then each kept
-    // line with its `- `, its newline, and room for a hunch's cadence tag such
-    // as `[weekly] `.
-    let largest = MIND_HEADING.len()
-        + 1
-        + render(&Mind::default()).len()
-        + lines * (LINE_MAX + "- \n".len() + 16);
-    assert!(largest <= MAX_BLOCK_BYTES, "{largest} > {MAX_BLOCK_BYTES}");
+fn every_mind_mnem_accepts_renders_however_it_escapes() {
+    for largest in fixtures::largest_minds() {
+        assert!(largest.len() <= FILE_MAX);
+        let fixture = Fixture::new();
+        write_mind(&fixture, &largest);
+        assert!(
+            memory::mind(&fixture.data, fixture.person)
+                .expect("Mnem accepts it")
+                .is_some()
+        );
+        let (context, skipped) = fixture.resolve(CommandId::new(), NEW);
+        assert_eq!(skipped, 0, "none is left out for its size");
+        assert!(context.render().is_some());
+    }
+}
+
+#[test]
+fn a_pin_replaced_but_not_made_durable_still_carries_its_block() {
+    let fixture = Fixture::new();
+    fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    let command = CommandId::new();
+    pin_fault::arm(&fixture.pin(), Stage::AfterRename);
+    let (context, skipped) = fixture.resolve(command, NEW);
+    assert!(
+        context.render().is_some(),
+        "the prompt carries what the pin holds"
+    );
+    assert_eq!(skipped, 1, "the failure is reported");
+    assert_eq!(
+        fixture.resolve(command, ADMITTED),
+        (context, 0),
+        "a retry reads the same pin"
+    );
+}
+
+#[test]
+fn a_pin_not_written_leaves_no_staged_file_and_no_block() {
+    let fixture = Fixture::new();
+    fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    let command = CommandId::new();
+    pin_fault::arm(&fixture.pin(), Stage::BeforeRename);
+    let (context, skipped) = fixture.resolve(command, NEW);
+    assert_eq!((context.render(), skipped), (None, 1));
+    assert!(
+        !fixture.session.join(STAGED_PIN_FILE).exists(),
+        "no staged file"
+    );
+    assert!(!fixture.pin().exists());
+    assert_eq!(
+        fixture.resolve(command, ADMITTED),
+        (SessionContext::default(), 0),
+        "a retry finds no block either"
+    );
 }
 
 #[test]

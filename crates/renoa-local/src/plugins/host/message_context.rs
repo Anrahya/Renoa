@@ -11,7 +11,7 @@ use std::path::Path;
 use renoa_agent_loop::{ContextContribution, TurnContext};
 use renoa_kernel::AgentId;
 
-use super::{HostPluginId, Skipped, settings, state, time::TimeSettings};
+use super::{HostPluginId, Skipped, memory, settings, state, time::TimeSettings};
 use crate::{Speaker, host::catalog, plugins::PluginError};
 
 /// The context for a prompt from `speaker` admitted at `observed_at_ms`, after
@@ -48,7 +48,7 @@ pub(crate) fn admit(
         }
     };
     for plugin in HostPluginId::ALL {
-        let added = contribution(&db, agent, plugin, observed_at_ms, previous_ms);
+        let added = contribution(&db, agent, speaker, plugin, observed_at_ms, previous_ms);
         add(&mut context, &mut skipped, plugin.id(), added);
     }
     (context, skipped)
@@ -85,6 +85,7 @@ fn add(
 fn contribution(
     db: &rusqlite::Connection,
     agent: AgentId,
+    speaker: Speaker,
     plugin: HostPluginId,
     observed_at_ms: i64,
     previous_ms: Option<i64>,
@@ -98,11 +99,15 @@ fn contribution(
                 .contribution(observed_at_ms, previous_ms)
                 .map(Some)
         }
+        // The notebook is a person's; a turn without one has no notebook time.
+        HostPluginId::Memory => match speaker.principal() {
+            Some(_) => memory::message_entry(db, agent, observed_at_ms),
+            None => Ok(None),
+        },
         HostPluginId::Agents
         | HostPluginId::Automations
         | HostPluginId::Documents
         | HostPluginId::Skills
-        | HostPluginId::Git
-        | HostPluginId::Memory => Ok(None),
+        | HostPluginId::Git => Ok(None),
     }
 }

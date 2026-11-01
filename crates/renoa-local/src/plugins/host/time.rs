@@ -56,14 +56,19 @@ impl TimeSettings {
         )
     }
 
-    /// The zone `agent` keeps time in, from its stored `renoa.time` settings.
-    /// It holds whether or not the plugin is enabled: turning the time entry off
-    /// does not move the agent to another zone.
+    /// The zone `agent` keeps time in, from its stored `renoa.time` settings,
+    /// or the Host zone when there is no agent. It holds whether or not the
+    /// plugin is enabled: turning the time entry off does not move the agent to
+    /// another zone.
     pub(crate) fn zone_of(
         db: &rusqlite::Connection,
-        agent: AgentId,
+        agent: Option<AgentId>,
     ) -> Result<TimeZone, PluginError> {
-        Self::validate(settings::read_in(db, agent, HostPluginId::Time)?)?.zone()
+        match agent {
+            Some(agent) => Self::validate(settings::read_in(db, agent, HostPluginId::Time)?)?,
+            None => Self::default(),
+        }
+        .zone()
     }
 
     /// The entry for a message admitted at `observed_at_ms`.

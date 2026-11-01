@@ -17,7 +17,8 @@ use crate::{
 
 /// `note: <text>`, `recall: <pattern>` and `zoom: <block>` call that memory
 /// tool through plugin discovery and answer with its result, prefixed `error: `
-/// when it failed. `prompt` answers with the whole system prompt and `show`
+/// when it failed. `prompt` answers with the whole system prompt, `context`
+/// with the user message as the model received it, and `show`
 /// with its `<session_context>` element or `none`; `show` hangs after writing
 /// `started` beside this file while a `hang` file is there.
 const MODEL: &str = r#"
@@ -40,6 +41,7 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   const verb=prompt.split(": ")[0];
   const tools={note:["memory_note","text"],recall:["memory_recall","pattern"],zoom:["memory_zoom","block"]};
   if (prompt==="prompt") say(request.system_prompt);
+  else if (prompt==="context") say(JSON.stringify(request.messages[index].content));
   else if (prompt==="show") {
     if (existsSync(new URL("./hang", import.meta.url))) {
       writeFileSync(new URL("./started", import.meta.url), "");
@@ -264,58 +266,129 @@ async fn a_guest_or_unidentified_turn_has_no_notebook_and_no_mind() {
         })
         .collect();
     assert_eq!(users, [owner.to_string()], "nothing was created for them");
+    let refusal = say(&arcee, Speaker::Unidentified, "note: x").await;
     assert!(
-        say(&arcee, Speaker::Unidentified, "note: x")
-            .await
-            .contains("No person is identified"),
-        "the refusal says why"
+        refusal.contains("No person is identified"),
+        "the refusal says why: {refusal}"
+    );
+    assert!(
+        refusal.contains("tell them you cannot keep notes for them here"),
+        "and what to tell the person, as on Telegram and Slack: {refusal}"
     );
 }
 
+/// An agent keeping time in `zone`, with `renoa.time` off unless `clock`.
+async fn zoned(
+    host: &LocalHost,
+    root: &Path,
+    name: &str,
+    zone: &str,
+    clock: bool,
+) -> Arc<AgentSession> {
+    let id = agent(host, crate::presets::GENERAL_PRESET_ID, name).await;
+    settings::configure(
+        &host.config.database,
+        id,
+        HostPluginId::Time,
+        json!({"timezone": zone}),
+        name,
+    )
+    .expect("zone");
+    if !clock {
+        state::change(
+            &host.config.database,
+            id,
+            HostPluginId::Time,
+            false,
+            "clock-off",
+        )
+        .expect("off");
+    }
+    session(host, root, id).await
+}
+
+/// `format` of the current time in `zone`.
+fn now_in(zone: &str, format: &str) -> String {
+    jiff::fmt::strtime::format(format, &jiff::Timestamp::now().in_tz(zone).expect("zone"))
+        .expect("format")
+}
+
 #[tokio::test]
-async fn notes_are_dated_in_the_agents_time_zone() {
+async fn notes_are_dated_in_the_main_agents_zone_whoever_writes_them() {
     let directory = tempfile::tempdir().expect("directory");
     let root = directory.path();
     let host = host(root);
     let person = Speaker::Principal(Uuid::new_v4());
-    // Twenty-five hours apart, so the two dates always differ.
-    let mut dates = Vec::new();
-    for (name, zone) in [
-        ("East", "Pacific/Kiritimati"),
-        ("West", "Pacific/Pago_Pago"),
-    ] {
-        let id = agent(&host, crate::presets::GENERAL_PRESET_ID, name).await;
-        settings::configure(
-            &host.config.database,
-            id,
-            HostPluginId::Time,
-            json!({"timezone": zone}),
-            name,
-        )
-        .expect("zone");
-        let today = || {
-            jiff::Timestamp::now()
-                .in_tz(zone)
-                .expect("zone")
-                .date()
-                .to_string()
-        };
-        let before = today();
-        let writer = session(&host, root, id).await;
-        say(&writer, person, &format!("note: Written by {name}")).await;
-        dates.push((before, today()));
-    }
-    let reader = agent(&host, crate::presets::GENERAL_PRESET_ID, "Reader").await;
-    let reader = session(&host, root, reader).await;
-    let found = notes(&say(&reader, person, "recall: written by").await);
-    for (note, (before, after)) in found.iter().zip(&dates) {
+    // Twenty-five hours apart, so their dates always differ, and the Host
+    // zone's date can match only one. The main agent, made first, takes the
+    // other, so its date is neither the writer's nor the Host's.
+    let host_today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC))
+        .date()
+        .to_string();
+    let (main, other) = if now_in("Pacific/Kiritimati", "%Y-%m-%d") == host_today {
+        ("Pacific/Pago_Pago", "Pacific/Kiritimati")
+    } else {
+        ("Pacific/Kiritimati", "Pacific/Pago_Pago")
+    };
+    let east = zoned(&host, root, "East", main, true).await;
+    let west = zoned(&host, root, "West", other, true).await;
+    let before = now_in(main, "%Y-%m-%d");
+    say(&east, person, "note: Written by East").await;
+    say(&west, person, "note: Written by West").await;
+    let after = now_in(main, "%Y-%m-%d");
+    let found = notes(&say(&west, person, "recall: written by").await);
+    assert_eq!(found.len(), 2);
+    for note in &found {
         let written = note["written"].as_str().expect("written");
         assert!(
             written == before || written == after,
-            "{note} not in {before}..{after}"
+            "{note} not in {before}..{after}, the main agent's dates"
         );
     }
-    assert_ne!(found[0]["written"], found[1]["written"]);
+}
+
+#[tokio::test]
+async fn an_agent_whose_clock_is_not_the_notebooks_is_told_the_notebooks_time() {
+    let directory = tempfile::tempdir().expect("directory");
+    let root = directory.path();
+    let host = host(root);
+    let person = Speaker::Principal(Uuid::new_v4());
+    let main = zoned(&host, root, "Arcee", "Asia/Kolkata", true).await;
+    let helper = zoned(&host, root, "Helper", "UTC", true).await;
+    let twin = zoned(&host, root, "Twin", "Asia/Kolkata", true).await;
+    let clockless = zoned(&host, root, "Clockless", "Asia/Kolkata", false).await;
+    let entry = "Memory times are in Asia/Kolkata; it is now ";
+
+    let before = now_in("Asia/Kolkata", "%Y-%m-%d %H:%M");
+    let told = say(&helper, person, "context").await;
+    let after = now_in("Asia/Kolkata", "%Y-%m-%d %H:%M");
+    let shown = told
+        .split(entry)
+        .nth(1)
+        .and_then(|rest| rest.get(..16))
+        .unwrap_or_else(|| panic!("the helper in UTC is told IST: {told}"));
+    assert!(
+        shown == before || shown == after,
+        "{shown} is the time in Kolkata ({before}..{after})"
+    );
+    assert!(
+        say(&clockless, person, "context").await.contains(entry),
+        "an agent without a clock is told"
+    );
+    for (name, session) in [("the main agent", &main), ("a twin", &twin)] {
+        let context = say(session, person, "context").await;
+        assert!(
+            !context.contains(entry),
+            "{name} already shows it: {context}"
+        );
+    }
+    assert!(
+        !say(&helper, Speaker::Unidentified, "context")
+            .await
+            .contains(entry),
+        "a turn with no person has no notebook"
+    );
 }
 
 fn block_revision(block: &str) -> &str {
@@ -402,6 +475,15 @@ async fn mind_enters_the_prompt_after_user_md_and_follows_its_revision() {
         "memory-on",
     )
     .expect("on");
+
+    for largest in fixtures::largest_minds() {
+        fs::write(notebook.join("MIND.md"), largest).expect("the largest MIND.md");
+        assert_ne!(
+            say(&arcee, person, "show").await,
+            "none",
+            "the main agent's whole view fits however it escapes"
+        );
+    }
 
     fs::write(notebook.join("MIND.md"), "not a mind").expect("corrupt MIND.md");
     assert_eq!(
@@ -541,9 +623,15 @@ async fn only_the_main_agent_sees_the_nudges() {
     let main = say(&arcee, person, "show").await;
     assert_eq!(block_revision(&main), full);
     assert!(main.contains("Ask how the long run went"), "{main}");
+    let handed = "before it is handed to you";
+    assert!(
+        main.contains(handed),
+        "the main agent is told how nudges arrive"
+    );
     let other = say(&scout, person, "show").await;
     assert!(other.contains("Training for a 10k"), "{other}");
     assert!(!other.contains("Ask how the long run went"), "{other}");
+    assert!(!other.contains(handed), "{other}");
     assert_eq!(block_revision(&other), shared_revision(root, owner));
 
     fixtures::dream_with_nudge(&notebook, "Training for a 10k", Some("Suggest a rest day"));

@@ -9,6 +9,15 @@ use uuid::Uuid;
 
 use super::{author, fixtures, local_time, mind, note, recall, tool_error, zoom};
 
+thread_local! {
+    /// The directories this thread synced, in order.
+    pub(super) static SYNCED: std::cell::RefCell<Vec<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// Runs once just before Mnem writes a note, as another call would.
+    pub(super) static RACE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 fn at(raw: &str) -> DateTime {
     raw.parse().expect("a test time")
 }
@@ -228,4 +237,62 @@ fn a_busy_notebook_is_unavailable_and_a_stale_job_a_conflict() {
         false,
     );
     assert_eq!(stale.code(), ToolErrorCode::Conflict);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_note_keeps_the_person_directory_private_and_a_first_one_durable() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let directory = tempfile::tempdir().expect("data directory");
+    let data = directory.path();
+    let person = Uuid::new_v4();
+    let now = at("2026-10-31T09:00");
+    let person_directory = users(data).join(person.to_string());
+    let open = |path: &Path| {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("open it up");
+    };
+    let mode = |path: &Path| fs::metadata(path).expect("mode").permissions().mode() & 0o777;
+    // A directory an interrupted run left with default modes.
+    fs::create_dir_all(&person_directory).expect("person directory");
+    open(&users(data));
+    open(&person_directory);
+
+    SYNCED.with_borrow_mut(Vec::clear);
+    note(data, person, "Arcee", "Walks every evening", now).expect("first note");
+    assert_eq!(mode(&person_directory), 0o700);
+    assert_eq!(mode(&users(data)), 0o700);
+    let canonical = data.canonicalize().expect("canonical");
+    let person_canonical = canonical.join("users").join(person.to_string());
+    assert_eq!(
+        SYNCED.with_borrow(Clone::clone),
+        [person_canonical, canonical.join("users"), canonical.clone()],
+        "the new notebook's entry and every parent above it"
+    );
+
+    open(&person_directory);
+    SYNCED.with_borrow_mut(Vec::clear);
+    note(data, person, "Arcee", "Swims on Sundays", now).expect("second note");
+    assert_eq!(
+        mode(&person_directory),
+        0o700,
+        "restricted after every note"
+    );
+    assert!(
+        SYNCED.with_borrow(Vec::is_empty),
+        "a later note adds no directory entry"
+    );
+
+    // Another call's refused first note withdraws the directory after this one
+    // prepared it, and Mnem re-creates it with default modes.
+    let raced = Uuid::new_v4();
+    let raced_directory = canonical.join("users").join(raced.to_string());
+    let gone = raced_directory.clone();
+    RACE.with_borrow_mut(|race| {
+        *race = Some(Box::new(move || {
+            fs::remove_dir(&gone).expect("the other call withdrew it");
+        }));
+    });
+    note(data, raced, "Arcee", "Reads before bed", now).expect("raced note");
+    assert_eq!(mode(&raced_directory), 0o700, "restricted after the note");
 }

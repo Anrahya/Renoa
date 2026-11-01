@@ -18,6 +18,30 @@ fn at(raw: &str) -> DateTime {
     raw.parse().expect("a fixture time")
 }
 
+/// The largest `MIND.md` files Mnem accepts that grow most in a prompt: one
+/// line of `&`, which escaping grows fivefold, and as many one-character
+/// hunches as fit, which the view without Nudges grows by a space each.
+pub(crate) fn largest_minds() -> [String; 2] {
+    let max = mnem::mind::FILE_MAX;
+    let escaped = {
+        let frame = ["## Durable\n- ", "\n## Active\n## Hunches\n## Nudges\n"];
+        let room = max - frame.concat().len();
+        format!("{}{}{}", frame[0], "&".repeat(room), frame[1])
+    };
+    let rerendered = {
+        let frame = ["## Durable\n## Active\n## Hunches\n", "## Nudges\n"];
+        let hunch = "- [daily]&\n";
+        let room = max - frame.concat().len();
+        format!(
+            "{}{}{}",
+            frame[0],
+            hunch.repeat(room / hunch.len()),
+            frame[1]
+        )
+    };
+    [escaped, rerendered]
+}
+
 /// Gives the notebook at `directory`, created if needed, a `MIND.md` whose
 /// Active section is `active`: five notes, then a nightly Dream Mnem accepts.
 /// Returns the new revision.

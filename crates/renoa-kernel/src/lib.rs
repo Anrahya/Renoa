@@ -33,6 +33,7 @@ pub use events::{EventCursor, EventPage, SemanticEvent};
 pub use ids::{
     AgentId, CancellationId, CommandId, EffectBatchId, EffectId, EventId, OperationId, SessionId,
 };
+pub use inspection::CommandStanding;
 pub use observation::{OperationObservation, SessionObservation, observe_session};
 pub use runtime::{
     Checkpoint, EffectAdapter, EffectBatchFacts, EffectBinding, EffectCompletion, EffectFact,

@@ -601,7 +601,7 @@ field on every plugin.
 |---|---|
 | `tools`, `skills`, `mcp_servers` | implemented |
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
-| `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` |
+| `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
 | `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
 | `delivery`: private owner channels offered by surfaces | planned, for #104 and #86 |
 
@@ -667,9 +667,11 @@ cache:
    the Host asks each enabled contributor for at most one block, passing the
    agent and the person. A guest's or an unidentified speaker's turn gets none.
 2. Each block is attributed to its source (`plugin:<id>`), carries its source's
-   revision, and is bounded at 32 KiB; its text is escaped. A contributor that
-   fails or exceeds the bound is left out while the others stay; the omission
-   is traced as `session_context_skipped` and never blocks the turn.
+   revision, and is escaped. Each plugin declares its largest block as
+   rendered, from what its source can hold, and the point enforces it. A
+   contributor that fails or exceeds its bound is left out while the others
+   stay; the omission is traced as `session_context_skipped` and never blocks
+   the turn. What a block holds is the plugin's policy, not the point's.
 3. The blocks are rendered as one `<session_context>` element after `USER.md`.
    Their bytes change only when a revision does, so the cached prefix survives
    every turn in between. Content that changes with every write, such as recent
@@ -678,7 +680,9 @@ cache:
    blocks are pinned to the command in its session directory before admission.
    A retry or recovery reuses the pin and rebuilds the same prompt, even after
    the source changed or the plugin was turned off. An empty result needs no
-   pin: a command admitted without one resolves to no block again.
+   pin: a command admitted without one resolves to no block again. A pin that
+   was not written carries no block; one written but not synced carries its
+   block, so the prompt and the pin agree.
 
 ### Settings
 
@@ -708,10 +712,14 @@ tools, `memory_note`, `memory_recall` and `memory_zoom`, act on the notebook of
 the person the turn talks to and refuse a turn with no person. Its
 `session_context` block is that person's `MIND.md`: the whole file for the
 Host's main agent, and the file without its Nudges section for every other
-agent, each keyed by Mnem's revision of that view. It is enabled by default for every agent and has no settings; a note
-is dated in the agent's `renoa.time` zone. `USER.md` keeps the person's lasting
-profile; time-bound and inferred facts go to the notebook. Mnem's compaction,
-Dream, agenda and heartbeat are later steps and do not run yet.
+agent, each keyed by Mnem's revision of that view. It is enabled by default
+for every agent and has no settings. The notebook keeps the person's wall time,
+the Host's main agent's `renoa.time` zone, and an agent whose own clock shows
+another zone gets a `message_context` entry naming it. `USER.md` keeps the
+person's lasting profile; time-bound and inferred facts go to the notebook.
+Surfaces that admit messages as an unidentified speaker, Telegram and Slack
+today, have no notebook. Mnem's compaction, Dream, agenda and heartbeat are
+later steps and do not run yet.
 
 ### What stays closed
 

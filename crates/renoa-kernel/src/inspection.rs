@@ -1,7 +1,7 @@
 use rusqlite::{OptionalExtension, TransactionBehavior};
 
 use crate::{
-    Kernel, KernelError, OperationSnapshot, SessionId, SessionSnapshot,
+    CommandId, Kernel, KernelError, OperationSnapshot, SessionId, SessionSnapshot,
     admission::{from_sql_integer, parse_agent_id, parse_operation_id},
     effect_store::load_effect_batch_snapshots,
     operation_store::StoredOperationRow,
@@ -74,4 +74,45 @@ impl Kernel {
             operations,
         })
     }
+
+    /// Where `command_id` stands in `session_id`, from one indexed read
+    /// instead of a whole snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure.
+    pub fn command_standing(
+        &self,
+        session_id: SessionId,
+        command_id: CommandId,
+    ) -> Result<CommandStanding, KernelError> {
+        let connection = self.database.connection()?;
+        let (admitted, other_unfinished) = connection
+            .query_row(
+                "SELECT
+                    EXISTS (SELECT 1 FROM operations
+                            WHERE session_id = ?1 AND command_id = ?2),
+                    EXISTS (SELECT 1 FROM operations
+                            WHERE session_id = ?1 AND command_id <> ?2
+                              AND outcome_json IS NULL)",
+                [session_id.to_string(), command_id.to_string()],
+                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .map_err(sqlite_error)?;
+        Ok(CommandStanding {
+            admitted,
+            other_unfinished,
+        })
+    }
+}
+
+/// Where one command stands in its session before a caller resolves its
+/// runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommandStanding {
+    /// The kernel holds an operation for this command.
+    pub admitted: bool,
+    /// Another operation in the session has no outcome, which exclusive
+    /// admission refuses this command for.
+    pub other_unfinished: bool,
 }

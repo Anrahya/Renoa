@@ -1074,32 +1074,53 @@ is projected as it was.
 `users/<principal-id>/mnem/`, beside their `USER.md`, shared by every agent that
 talks to them. Its tools are `memory_note`, `memory_recall` and `memory_zoom`,
 bound to the person the turn talks to the way `agent_documents` chooses whose
-`USER.md` it edits; a guest's or an unidentified speaker's call is refused and
-creates nothing. A note is signed `[by <agent name>]`, with brackets and control
-characters removed and the name cut to Mnem's 32 bytes, or `agent-<id prefix>`
-when nothing is left, and dated in the agent's `renoa.time` zone, else the Host
-zone, whether or not `renoa.time` is enabled. The first note creates the
-notebook, which Mnem does only once it accepts the note; the person's private
-directory must exist first, so one that call created is removed again when the
-note is refused, and a refused note leaves nothing. Recall, zoom and `MIND.md`
-open the notebook read-only: with no notebook they return nothing and create
-nothing. Mnem's compaction,
-Dream, agenda and heartbeat do not run yet; the notebook accumulates notes.
+`USER.md` it edits; a guest's or an unidentified speaker's call is refused,
+creates nothing, and tells the agent to say it cannot keep notes there. The
+Telegram and Slack workers admit every message as an unidentified speaker, so
+their agents have no notebook. A note is signed `[by <agent name>]`, with
+brackets and control characters removed and the name cut to Mnem's 32 bytes, or
+`agent-<id prefix>` when nothing is left. The notebook's wall time is the
+person's: the Host's main agent's `renoa.time` zone, or the Host zone while
+there is no main agent, whichever agent writes and whether or not `renoa.time`
+is enabled. A note is dated in it, and `[at …]` and `[on …]` are read in it, so
+an agent whose own `renoa.time` shows another zone, or is off, gets a
+`plugin:renoa.memory` entry with each message from a person naming the
+notebook's zone and the time there; like every message-context entry it is
+frozen into the command. The first note creates the notebook, which Mnem does
+only once it accepts the note; the person's private directory must exist first,
+so one that call created is removed again when the note is refused, and a
+refused note leaves nothing. After every kept note the person's directory and
+`users/` are made private again, and a first note syncs the new notebook's
+entry and the directories above it before it is acknowledged. Recall, zoom and
+`MIND.md` open the notebook read-only: with no notebook they return nothing and
+create nothing. A recall pattern holds at most 256 bytes; Mnem bounds the
+compiled regex too. Mnem's compaction, Dream, agenda and heartbeat do not run
+yet; the notebook accumulates notes.
 
 The session-context point adds attributed blocks to the system prompt of a turn
-that talks to a person: today one, the person's `MIND.md`, present only when
-Mnem's Dream has written it and `renoa.memory` is enabled. The Host's main agent
-sees the whole file; every other agent sees it without its Nudges section,
-which says what to do for the person and when. Each view carries its own Mnem
-revision, so the prompt's bytes, and the provider's cached prefix, change only
-when that view does, and a change to the nudges alone leaves every other
-agent's prompt as it was; recent notes stay out of it for the same reason. A block over 32 KiB, or one that cannot be read, is left out, recorded
-as a `session_context_skipped` trace event, and never blocks the turn. The
-blocks are read when a command first resolves its runtime and, when there is
-one, pinned to that command in `sessions/<session-uuid>/session-context.json`
-before it is admitted, so a retried or recovered command rebuilds the system
-prompt its kernel manifest froze, even after `MIND.md` changed, the plugin was
-turned off, or the owner named another main agent. A command already admitted without a pin keeps no block.
+that talks to a person, asking each compiled plugin enabled for the agent for at
+most one. Today only `renoa.memory` adds one, the person's `MIND.md`, present
+only when Mnem's Dream has written it. The Host's main agent sees the whole
+file, with a line telling it not to act on a nudge before it is handed over;
+every other agent sees it without its Nudges section, which says what to do for
+the person and when. Each view carries its own Mnem revision, so the prompt's
+bytes, and the provider's cached prefix, change only when that view does, and a
+change to the nudges alone leaves every other agent's prompt as it was; recent
+notes stay out of it for the same reason. Each plugin declares its largest
+block, as escaped into the prompt. Mnem refuses a `MIND.md` over
+`mnem::mind::FILE_MAX` without reading it whole; `renoa.memory`'s bound allows a
+view of that file re-rendered and with every byte escaped as `&amp;`, so every
+`MIND.md` Mnem accepts renders. A block over its plugin's bound, or one that
+cannot be read, is left out, recorded as a `session_context_skipped` trace
+event, and never blocks the turn. The blocks are read when a command first
+resolves its runtime and, when there is one, pinned to that command in
+`sessions/<session-uuid>/session-context.json` before it is admitted, so a
+retried or recovered command rebuilds the system prompt its kernel manifest
+froze, even after `MIND.md` changed, the plugin was turned off, or the owner
+named another main agent. A command already admitted without a pin keeps no
+block. A pin that could not be written leaves no staged file, and the command
+carries no block; one that replaced the old pin but could not be synced still
+carries its block, with the failure traced.
 
 `LocalHost::ensure_agent_session` accepts a caller-chosen UUID for durable surface
 admission. Repeating it resolves the already-published session with its stored

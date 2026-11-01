@@ -9,7 +9,8 @@
 //!
 //! Mnem is synchronous and takes file locks, so every call here blocks and
 //! runs off the async executor. It never reads the clock: the Host passes the
-//! agent's local time.
+//! wall time in the notebook's zone, which [`context`] owns with what the
+//! plugin adds to the two context points.
 
 use std::{
     fs, io,
@@ -25,10 +26,12 @@ use uuid::Uuid;
 
 use crate::documents::{existing_person_directory, prepare_person_directory, profile_error};
 
+mod context;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod tools;
 
+pub(crate) use context::{SESSION_BLOCK_MAX, message_entry, notebook_zone, session_block};
 pub(crate) use tools::{MemoryTurn, bindings};
 
 pub(crate) const PLUGIN_ID: &str = "renoa.memory";
@@ -76,28 +79,29 @@ fn note(
     text: &str,
     now: DateTime,
 ) -> Result<NoteOutcome, ToolError> {
-    if let Some(person) = existing_person_directory(data_directory, principal)
-        .map_err(|error| profile_error(&error))?
-    {
-        return write(&person, author, text, now);
-    }
     let prepared = prepare_person_directory(data_directory, principal)
         .map_err(|error| profile_error(&error))?;
-    let written = write(prepared.directory(), author, text, now);
-    if written.is_err() {
-        prepared.withdraw();
-    }
-    written
-}
-
-/// Writes the note into the notebook in `person`, which a first note creates.
-fn write(person: &Path, author: &str, text: &str, now: DateTime) -> Result<NoteOutcome, ToolError> {
-    let existed = notebook_in(person)?.is_some();
-    let (_, outcome) =
-        Memory::create_with_note(&person.join(NOTEBOOK_DIRECTORY), author, text, now)
-            .map_err(|error| tool_error(error, true))?;
-    if !existed {
-        sync_directory(person)?;
+    let person = prepared.directory();
+    let first = notebook_in(person)?.is_none();
+    #[cfg(test)]
+    tests::RACE.with_borrow_mut(|race| race.take().map(|race| race()));
+    let written = Memory::create_with_note(&person.join(NOTEBOOK_DIRECTORY), author, text, now);
+    let (_, outcome) = match written {
+        Ok(written) => written,
+        Err(error) => {
+            prepared.withdraw();
+            return Err(tool_error(error, true));
+        }
+    };
+    // Restrict again: another call's refused first note may have withdrawn the
+    // directory while Mnem re-created it with default modes for this one.
+    prepare_person_directory(data_directory, principal).map_err(|error| profile_error(&error))?;
+    if first {
+        // The new notebook, the person's directory and `users/` may all be
+        // new entries; make each durable before the note is acknowledged.
+        for directory in person.ancestors().take(3) {
+            sync_directory(directory)?;
+        }
     }
     Ok(outcome)
 }
@@ -128,7 +132,8 @@ fn zoom(data_directory: &Path, principal: Uuid, block: Span) -> Result<Vec<Entry
 }
 
 /// The person's `MIND.md`, when they have a notebook and Mnem's Dream wrote
-/// one. Nothing is created.
+/// one. Nothing is created. Mnem refuses a file over `mnem::mind::FILE_MAX`
+/// without reading it whole.
 pub(crate) fn mind(data_directory: &Path, principal: Uuid) -> Result<Option<MindView>, String> {
     let Some(memory) = read_only(data_directory, principal).map_err(|error| error.to_string())?
     else {
@@ -173,8 +178,10 @@ fn notebook_in(person: &Path) -> Result<Option<PathBuf>, ToolError> {
     }
 }
 
-/// Makes a new notebook's entry in the person's directory durable.
+/// Makes the entries in `directory` durable.
 fn sync_directory(directory: &Path) -> Result<(), ToolError> {
+    #[cfg(test)]
+    tests::SYNCED.with_borrow_mut(|synced| synced.push(directory.to_path_buf()));
     fs::File::open(directory)
         .and_then(|handle| handle.sync_all())
         .map_err(|error| {

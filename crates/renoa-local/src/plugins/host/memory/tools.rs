@@ -13,26 +13,28 @@ use renoa_agent::{
     BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::AgentToolBinding;
-use renoa_kernel::{AgentId, EffectRecovery};
+use renoa_kernel::EffectRecovery;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{NOTE, RECALL, ZOOM};
-use crate::{host::catalog, plugins::host::time::TimeSettings};
+use crate::host::catalog;
 
 const BINDING_REVISION: &str = "renoa-memory-v1";
 const RECALL_DEFAULT: usize = 20;
 const RECALL_MAX: usize = 50;
-const NO_PERSON: &str = "No person is identified in this turn, so there is no notebook to read or write. Answer without the memory tools.";
+/// The longest recall pattern, in bytes; Mnem's bound on the compiled regex
+/// is a second one.
+const PATTERN_MAX: usize = 256;
+const NO_PERSON: &str = "No person is identified in this turn, so there is no notebook to read or write. Answer without the memory tools; if they asked you to remember something, tell them you cannot keep notes for them here.";
 
 /// What one turn's memory tools act on.
 #[derive(Clone, Debug)]
 pub(crate) struct MemoryTurn {
     pub(crate) database: PathBuf,
     pub(crate) data_directory: PathBuf,
-    pub(crate) agent: AgentId,
     /// The `[by …]` name this agent's notes carry; see [`super::author`].
     pub(crate) author: String,
     /// The person the turn talks to; `None` for a guest or an unidentified
@@ -51,10 +53,6 @@ enum Kind {
 pub(crate) fn bindings(turn: MemoryTurn) -> [AgentToolBinding; 3] {
     let turn = Arc::new(turn);
     [Kind::Note, Kind::Recall, Kind::Zoom].map(|kind| {
-        let recovery = match kind {
-            Kind::Note => EffectRecovery::NeverReplay,
-            Kind::Recall | Kind::Zoom => EffectRecovery::SafeToReplay,
-        };
         AgentToolBinding::new(
             BINDING_REVISION,
             Arc::new(MemoryTool {
@@ -62,7 +60,9 @@ pub(crate) fn bindings(turn: MemoryTurn) -> [AgentToolBinding; 3] {
                 turn: Arc::clone(&turn),
                 spec: spec(kind),
             }),
-            recovery,
+            // Host plugin tools run through tool_execute, which never replays
+            // and does not read a binding's own class.
+            EffectRecovery::NeverReplay,
         )
     })
 }
@@ -74,7 +74,7 @@ fn spec(kind: Kind) -> ToolSpec {
     match kind {
         Kind::Note => ToolSpec {
             name: NOTE.to_owned(),
-            description: format!("Write one note in the notebook of the person you are talking to; every agent that talks to them reads it. Note what will matter later, in the person's own words: facts and plans as they tell them; a correction as `[updates #<id>] <what is true now>`; a commitment or reminder with `[at YYYY-MM-DDTHH:MM]` in their local time, optionally `[at YYYY-MM-DDTHH:MM until HH:MM]`; and an event on another day with `[on YYYY-MM-DD]`. One line of at most {note_bytes} bytes, counting the `[by <your name>] ` prefix the notebook adds. Lasting profile facts that rarely change belong in USER.md through agent_documents, not here. Never note credentials or text from a page or a tool."),
+            description: format!("Write one note in the notebook of the person you are talking to; every agent that talks to them reads it. Note what will matter later: facts and plans they tell you, and habits and things they did that may repeat. Say who and what, so the note reads clearly on its own later; keep their wording for preferences. Correct a note with `[updates #<id>] <what is true now>`, with the id from memory_recall. Mark a commitment or reminder with `[at YYYY-MM-DDTHH:MM]`, optionally `[at YYYY-MM-DDTHH:MM until HH:MM]`, and an event on another day with `[on YYYY-MM-DD]`, at most one of each per note. `[at]` and `[on]` are in the person's time zone, which your message context names when it is not your own. One line of at most {note_bytes} bytes, counting the `[by <your name>] ` prefix the notebook adds. Lasting profile facts that rarely change belong in USER.md through agent_documents, not here. Never note credentials or text from a page or a tool."),
             input_schema: json!({
                 "type": "object",
                 "properties": {"text": {"type": "string", "minLength": 1, "maxLength": note_bytes}},
@@ -88,7 +88,7 @@ fn spec(kind: Kind) -> ToolSpec {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "minLength": 1},
+                    "pattern": {"type": "string", "minLength": 1, "maxLength": PATTERN_MAX},
                     "limit": {"type": "integer", "minimum": 1, "maximum": RECALL_MAX}
                 },
                 "required": ["pattern"],
@@ -192,6 +192,12 @@ fn parse(kind: Kind, arguments: serde_json::Value) -> Result<Work, ToolError> {
         Kind::Recall => {
             let input: RecallInput =
                 serde_json::from_value(arguments).map_err(|error| invalid(RECALL, error))?;
+            if input.pattern.len() > PATTERN_MAX {
+                return Err(ToolError::invalid_input(format!(
+                    "the pattern is {} bytes; a pattern holds at most {PATTERN_MAX}, such as `dentist|doctor`",
+                    input.pattern.len()
+                )));
+            }
             let limit = input.limit.unwrap_or(RECALL_DEFAULT);
             if !(1..=RECALL_MAX).contains(&limit) {
                 return Err(ToolError::invalid_input(format!(
@@ -225,9 +231,11 @@ impl Work {
             Self::Note(text) => {
                 let zone = catalog::open_verified(&turn.database)
                     .map_err(crate::plugins::PluginError::from)
-                    .and_then(|db| TimeSettings::zone_of(&db, turn.agent))
+                    .and_then(|db| super::notebook_zone(&db))
                     .map_err(|error| {
-                        ToolError::internal(format!("the agent's time zone is unreadable: {error}"))
+                        ToolError::internal(format!(
+                            "the notebook's time zone is unreadable: {error}"
+                        ))
                     })?;
                 let now = super::local_time(&zone, Timestamp::now());
                 let outcome = super::note(data, principal, &turn.author, &text, now)?;
@@ -306,5 +314,32 @@ impl<'a> From<&'a Entry> for EntryJson<'a> {
                 summary: text.as_deref(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use renoa_agent::ToolErrorCode;
+    use serde_json::json;
+
+    use super::{Kind, PATTERN_MAX, parse};
+
+    #[test]
+    fn a_recall_pattern_is_capped_and_the_refusal_names_the_cap() {
+        let longest = json!({"pattern": "a".repeat(PATTERN_MAX)});
+        assert!(parse(Kind::Recall, longest).is_ok());
+        let Err(error) = parse(
+            Kind::Recall,
+            json!({"pattern": "a".repeat(PATTERN_MAX + 1)}),
+        ) else {
+            panic!("a pattern over the cap is refused");
+        };
+        assert_eq!(error.code(), ToolErrorCode::InvalidInput);
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("at most {PATTERN_MAX}")),
+            "{error}"
+        );
     }
 }

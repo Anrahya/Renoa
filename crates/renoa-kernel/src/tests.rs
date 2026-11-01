@@ -422,6 +422,57 @@ async fn activation_and_terminal_commits_are_recovered_without_duplicate_loop_wo
     );
 }
 
+#[tokio::test]
+async fn command_standing_follows_admission_and_outcome() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+    kernel.create_agent(agent_id).expect("create agent");
+    kernel
+        .create_session(session_id, agent_id)
+        .expect("create session");
+    let (first, second) = (CommandId::new(), CommandId::new());
+    let standing = |command| {
+        let standing = kernel
+            .command_standing(session_id, command)
+            .expect("standing");
+        (standing.admitted, standing.other_unfinished)
+    };
+    assert_eq!(standing(first), (false, false), "an empty session");
+
+    kernel
+        .submit(session_id, Command::new(first, serde_json::json!({})))
+        .expect("submit command");
+    assert_eq!(
+        standing(first),
+        (true, false),
+        "its own operation is not another"
+    );
+    assert_eq!(standing(second), (false, true), "the first is unfinished");
+
+    kernel
+        .drive(
+            session_id,
+            &completing_runtime(Arc::new(AtomicUsize::new(0))),
+        )
+        .await
+        .expect("complete the first");
+    assert_eq!(standing(first), (true, false));
+    assert_eq!(
+        standing(second),
+        (false, false),
+        "a finished one does not count"
+    );
+    assert!(
+        !kernel
+            .command_standing(SessionId::new(), first)
+            .expect("standing")
+            .admitted,
+        "a command is admitted in its own session only"
+    );
+}
+
 fn kernel_with_command(path: &std::path::Path) -> (Kernel, SessionId) {
     let kernel = Kernel::open(path).expect("open kernel");
     let agent_id = AgentId::new();

@@ -193,7 +193,6 @@ pub(crate) fn protocol_bindings(
         crate::plugins::host::memory::MemoryTurn {
             database: host.database.clone(),
             data_directory: host.home.path().to_path_buf(),
-            agent,
             author: crate::plugins::host::memory::author(definition.name(), agent),
             principal: definition.principal(),
         },
