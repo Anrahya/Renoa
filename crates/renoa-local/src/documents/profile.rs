@@ -97,16 +97,25 @@ impl PersonProfile {
     /// Returns an error when a profile directory is a link or another file, or
     /// the profile is not a readable UTF-8 regular file.
     pub(super) fn read(&self) -> Result<DocumentSnapshot, AgentDefinitionError> {
-        for directory in [&self.users, &self.directory] {
-            if !plain_directory(directory)? {
-                return Ok(empty());
-            }
+        if !self.exists()? {
+            return Ok(empty());
         }
         let path = self.path();
         match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(empty()),
             _ => read_snapshot(&path),
         }
+    }
+
+    /// Whether the person's private directory exists. A link or another file
+    /// in place of either directory is an error, never followed.
+    fn exists(&self) -> Result<bool, AgentDefinitionError> {
+        for directory in [&self.users, &self.directory] {
+            if !plain_directory(directory)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Replaces the profile against the revision its editor last read.
@@ -148,27 +157,98 @@ impl PersonProfile {
     ///
     /// Returns an error when a directory cannot be created or restricted, or
     /// an existing one is a link or another file.
-    fn prepare(&self) -> Result<(), AgentDefinitionError> {
+    fn prepare(&self) -> Result<PreparedPerson, AgentDefinitionError> {
+        let mut prepared = PreparedPerson {
+            directory: self.directory.clone(),
+            created: Vec::new(),
+        };
         for directory in [&self.users, &self.directory] {
-            if let Err(source) = fs::create_dir(directory)
-                && source.kind() != io::ErrorKind::AlreadyExists
-            {
+            if let Err(error) = prepared.create(directory) {
+                prepared.withdraw();
+                return Err(error);
+            }
+        }
+        Ok(prepared)
+    }
+}
+
+/// The private directory kept for `principal` under a Host data directory,
+/// `<data directory>/users/<principal id>`, which holds their `USER.md` and
+/// every other file kept for them, such as their Mnem notebook. `None` while
+/// nothing has been kept for them.
+///
+/// # Errors
+///
+/// Returns an error when the data directory cannot be resolved, or a profile
+/// directory is a link or another file, which is never followed.
+pub(crate) fn existing_person_directory(
+    data_directory: &Path,
+    principal: Uuid,
+) -> Result<Option<PathBuf>, AgentDefinitionError> {
+    let person = PersonProfile::new(&canonical_data_directory(data_directory)?, principal);
+    Ok(person.exists()?.then_some(person.directory))
+}
+
+/// Creates the private directory kept for `principal`, as a first profile edit
+/// does, and reports what it created so a write that is then refused can
+/// withdraw it.
+///
+/// # Errors
+///
+/// Returns the errors of a first profile edit's directory preparation.
+pub(crate) fn prepare_person_directory(
+    data_directory: &Path,
+    principal: Uuid,
+) -> Result<PreparedPerson, AgentDefinitionError> {
+    PersonProfile::new(&canonical_data_directory(data_directory)?, principal).prepare()
+}
+
+/// A person's private directory, ready to be written into.
+#[derive(Debug)]
+pub(crate) struct PreparedPerson {
+    directory: PathBuf,
+    /// The directories this preparation created, outermost first.
+    created: Vec<PathBuf>,
+}
+
+impl PreparedPerson {
+    pub(crate) fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    /// Creates one private directory unless it exists, recording that this
+    /// preparation created it.
+    fn create(&mut self, directory: &Path) -> Result<(), AgentDefinitionError> {
+        match fs::create_dir(directory) {
+            Ok(()) => self.created.push(directory.to_path_buf()),
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(source) => {
                 return Err(document_io(
                     "create user profile directory",
                     directory,
                     source,
                 ));
             }
-            // Refuse a link before restricting, since changing permissions
-            // follows it.
-            if !plain_directory(directory)? {
-                return Err(AgentDefinitionError::ProfileDirectory {
-                    path: directory.clone(),
-                });
-            }
-            restrict_directory(directory)?;
         }
-        Ok(())
+        // Refuse a link before restricting, since changing permissions
+        // follows it.
+        if !plain_directory(directory)? {
+            return Err(AgentDefinitionError::ProfileDirectory {
+                path: directory.to_path_buf(),
+            });
+        }
+        restrict_directory(directory)
+    }
+
+    /// Removes the directories this preparation created, innermost first, if
+    /// they are still empty. A directory something else wrote into meanwhile
+    /// stays; this never removes a file.
+    pub(crate) fn withdraw(&self) {
+        for directory in self.created.iter().rev() {
+            // Best effort: a directory that is no longer empty belongs to a
+            // concurrent writer and must stay.
+            let _ = fs::remove_dir(directory);
+        }
     }
 }
 
@@ -204,7 +284,7 @@ fn empty() -> DocumentSnapshot {
 
 /// A linked, non-regular, or non-UTF-8 profile is invalid as it stands; every
 /// other failure is a storage failure.
-fn profile_error(error: &AgentDefinitionError) -> ToolError {
+pub(crate) fn profile_error(error: &AgentDefinitionError) -> ToolError {
     match error {
         AgentDefinitionError::ProfileDirectory { .. }
         | AgentDefinitionError::DocumentNotFile { .. }

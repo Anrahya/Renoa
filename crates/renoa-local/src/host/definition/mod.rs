@@ -29,6 +29,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use main_agent::current as main_agent;
 pub use main_agent::{HostMainAgentControl, MainAgent, MainAgentChange, MainAgentError};
 pub(crate) use manage::binding as agent_manage_binding;
 pub use preset_move::PresetMove;

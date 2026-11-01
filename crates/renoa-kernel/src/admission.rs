@@ -246,17 +246,25 @@ fn existing_admission(
     }))
 }
 
+/// The one definition of an unfinished operation, over `operations`: it has
+/// no outcome yet. Exclusive admission refuses a new command while one
+/// exists, and [`Kernel::command_standing`](crate::Kernel::command_standing)
+/// reports the same rows.
+pub(crate) const UNFINISHED_OPERATION: &str = "outcome_json IS NULL";
+
 fn require_no_unfinished_operation(
     transaction: &rusqlite::Transaction<'_>,
     session_id: SessionId,
 ) -> Result<(), KernelError> {
     let unfinished = transaction
         .query_row(
-            "SELECT operation_id, command_id
-             FROM operations
-             WHERE session_id = ?1 AND outcome_json IS NULL
-             ORDER BY position
-             LIMIT 1",
+            &format!(
+                "SELECT operation_id, command_id
+                 FROM operations
+                 WHERE session_id = ?1 AND {UNFINISHED_OPERATION}
+                 ORDER BY position
+                 LIMIT 1"
+            ),
             [session_id.to_string()],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )

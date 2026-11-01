@@ -65,11 +65,11 @@ fn move_to_preset_moves_once_and_then_reports_no_change() {
         .expect("agent id")
         .to_owned();
 
-    let moved = json_of(&host(root, &["move-to-preset", &agent, "renoa.app.v1"]));
+    let moved = json_of(&host(root, &["move-to-preset", &agent, "renoa.app.v2"]));
     assert_eq!(moved["changed"], true);
     assert_eq!(moved["definition"]["id"], agent.as_str());
     assert_eq!(moved["definition"]["name"], "Renoa");
-    assert_eq!(moved["definition"]["preset_id"], "renoa.app.v1");
+    assert_eq!(moved["definition"]["preset_id"], "renoa.app.v2");
     assert!(
         root.join("data/agents")
             .join(&agent)
@@ -77,7 +77,7 @@ fn move_to_preset_moves_once_and_then_reports_no_change() {
             .is_file()
     );
 
-    let again = json_of(&host(root, &["move-to-preset", &agent, "renoa.app.v1"]));
+    let again = json_of(&host(root, &["move-to-preset", &agent, "renoa.app.v2"]));
     assert_eq!(again["changed"], false);
     assert_eq!(again["definition"], moved["definition"]);
 
@@ -88,6 +88,6 @@ fn move_to_preset_moves_once_and_then_reports_no_change() {
         "{}",
         String::from_utf8_lossy(&unknown.stderr)
     );
-    let malformed = host(root, &["move-to-preset", "not-an-agent", "renoa.app.v1"]);
+    let malformed = host(root, &["move-to-preset", "not-an-agent", "renoa.app.v2"]);
     assert!(!malformed.status.success());
 }

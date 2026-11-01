@@ -189,6 +189,14 @@ pub(crate) fn protocol_bindings(
         command_id,
     ));
     controls.extend(peer_bindings(host, agent, command_id));
+    controls.extend(crate::plugins::host::memory::bindings(
+        crate::plugins::host::memory::MemoryTurn {
+            database: host.database.clone(),
+            data_directory: host.home.path().to_path_buf(),
+            author: crate::plugins::host::memory::author(definition.name(), agent),
+            principal: definition.principal(),
+        },
+    ));
     controls.extend(agent_skill_bindings(
         agent,
         host.skill_store.clone(),
@@ -227,6 +235,8 @@ pub(crate) fn protocol_bindings(
 
 #[cfg(test)]
 mod execution_tests;
+#[cfg(test)]
+mod memory_plugin_tests;
 #[cfg(test)]
 mod time_plugin_tests;
 

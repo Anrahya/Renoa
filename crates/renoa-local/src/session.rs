@@ -2,7 +2,9 @@ use std::path::Path;
 
 use renoa_agent::{Message, StopReason};
 use renoa_agent_loop::MESSAGE_EVENT_KIND;
-use renoa_kernel::{AgentId, CommandId, EventCursor, Kernel, KernelError, OperationId, SessionId};
+use renoa_kernel::{
+    AgentId, CommandId, CommandStanding, EventCursor, Kernel, KernelError, OperationId, SessionId,
+};
 use thiserror::Error;
 
 mod execution;
@@ -167,6 +169,20 @@ impl LocalSession {
     #[must_use]
     pub const fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    /// Where `command_id` stands before its runtime is resolved: whether the
+    /// kernel holds it, and whether another command is unfinished, which the
+    /// kernel's exclusive admission refuses this one for.
+    ///
+    /// # Errors
+    ///
+    /// Returns kernel storage failures.
+    pub(crate) fn command_standing(
+        &self,
+        command_id: CommandId,
+    ) -> Result<CommandStanding, LocalSessionError> {
+        Ok(self.kernel.command_standing(self.session_id, command_id)?)
     }
 
     /// Projects the complete gapless durable conversation for surface replay.

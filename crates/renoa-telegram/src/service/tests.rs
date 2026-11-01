@@ -187,7 +187,7 @@ async fn an_unprovisioned_configured_agent_refuses_startup_before_any_effect() {
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v3").expect("Arcee preset id"),
+                AgentPresetId::new("renoa.personal.arcee.v4").expect("Arcee preset id"),
                 "Arcee",
             ),
             CancellationToken::new(),
@@ -244,7 +244,7 @@ async fn service_fixture() -> ServiceFixture {
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v3").expect("Arcee preset id"),
+                AgentPresetId::new("renoa.personal.arcee.v4").expect("Arcee preset id"),
                 "Arcee",
             ),
             CancellationToken::new(),

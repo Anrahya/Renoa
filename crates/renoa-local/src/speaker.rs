@@ -14,18 +14,19 @@ const GUEST_REFUSAL: &str =
 /// edits, the plugin context it is admitted with, and whether its tool calls run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Speaker {
-    /// A person the Host knows: the turn reads and may edit their `USER.md`.
+    /// A person the Host knows: the turn reads and may edit their `USER.md`
+    /// and their notebook.
     Principal(Uuid),
     /// Someone on a surface whose chat identities are not Host principals: the
-    /// turn has no `USER.md`, but keeps plugin context and every tool.
+    /// turn has no `USER.md` or notebook, but keeps plugin context and every tool.
     Unidentified,
     /// Someone other than the owner in a conversation the owner shares: no
-    /// `USER.md`, no plugin context, and every tool call is refused.
+    /// `USER.md` or notebook, no plugin context, and every tool call is refused.
     Guest,
 }
 
 impl Speaker {
-    /// The person whose `USER.md` the turn reads and may edit.
+    /// The person whose `USER.md` and notebook the turn reads and may edit.
     #[must_use]
     pub(crate) const fn principal(self) -> Option<Uuid> {
         match self {

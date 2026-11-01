@@ -9,9 +9,11 @@ use std::fmt::Write as _;
 
 use jiff::{SignedDuration, Timestamp, fmt::strtime, tz::TimeZone};
 use renoa_agent_loop::ContextContribution;
+use renoa_kernel::AgentId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::{HostPluginId, settings};
 use crate::plugins::PluginError;
 
 pub(crate) const PLUGIN_ID: &str = "renoa.time";
@@ -52,6 +54,21 @@ impl TimeSettings {
                 })
             },
         )
+    }
+
+    /// The zone `agent` keeps time in, from its stored `renoa.time` settings,
+    /// or the Host zone when there is no agent. It holds whether or not the
+    /// plugin is enabled: turning the time entry off does not move the agent to
+    /// another zone.
+    pub(crate) fn zone_of(
+        db: &rusqlite::Connection,
+        agent: Option<AgentId>,
+    ) -> Result<TimeZone, PluginError> {
+        match agent {
+            Some(agent) => Self::validate(settings::read_in(db, agent, HostPluginId::Time)?)?,
+            None => Self::default(),
+        }
+        .zone()
     }
 
     /// The entry for a message admitted at `observed_at_ms`.

@@ -10,6 +10,7 @@ mod automation_rename;
 mod cron_schedules;
 mod cutover;
 mod main_agent;
+mod memory_plugin;
 mod migrations;
 mod registry_sync;
 mod run_retention;
@@ -30,13 +31,15 @@ pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 #[cfg(test)]
 pub(crate) use main_agent::restore_schema_41;
 #[cfg(test)]
+pub(crate) use memory_plugin::restore_schema_42;
+#[cfg(test)]
 pub(crate) use registry_sync::restore_schema_35;
 #[cfg(test)]
 pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 #[cfg(test)]
 pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 42;
+const SCHEMA_VERSION: u32 = 43;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -277,7 +280,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=41 => {
+        28..=42 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -320,6 +323,9 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             }
             if version < 42 {
                 main_agent::mark_main_agent(&transaction)?;
+            }
+            if version < 43 {
+                memory_plugin::admit_memory_plugin(&transaction)?;
             }
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",

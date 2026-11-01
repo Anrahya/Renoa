@@ -18,6 +18,7 @@ pub(super) fn mark_main_agent(transaction: &Transaction<'_>) -> Result<(), HostC
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_41(connection: &rusqlite::Connection) {
+    super::restore_schema_42(connection);
     connection
         .execute_batch(
             "DROP TABLE host_main_agent_operations;

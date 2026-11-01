@@ -86,6 +86,13 @@ pub(in crate::host) fn read(
     .transpose()
 }
 
+/// The Host's main agent, `None` only while the Host has no agent. Plugins
+/// read it for what only the main agent is shown and whose settings speak for
+/// the Host; it grants no authority.
+pub(crate) fn current(connection: &Connection) -> Result<Option<AgentId>, HostCatalogError> {
+    Ok(read(connection)?.map(|main| AgentId::from_uuid(main.main_agent_id)))
+}
+
 /// One logical change. Retry with this same identity after an uncertain
 /// response; a new identity represents a new change.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

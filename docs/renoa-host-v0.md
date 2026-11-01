@@ -34,9 +34,9 @@ The first concrete coding preset is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable creation preset identity is
 `renoa.coding.alpha.v3`. Alpha is one code-owned creation preset, not a special
 Host execution type. Arcee is the first personal-operator preset, with stable
-identity `renoa.personal.arcee.v3`; Telegram is only its first surface. A
+identity `renoa.personal.arcee.v4`; Telegram is only its first surface. A
 caller-defined agent uses the explicit creation schema; `renoa.general.v1` is an optional general template.
-`renoa.app.v1` seeds the everyday helpers people make in the Android app: plain-spoken
+`renoa.app.v2` seeds the everyday helpers people make in the Android app: plain-spoken
 instructions, its own `SOUL.md` from a neutral default, the person's `USER.md`, no
 workspace instructions, and no native file or shell tools; Host plugins such as Git,
 skills and agent management stay available, as for every agent. Every agent is
@@ -59,7 +59,8 @@ Each turn composes the system prompt from the stored definition in this order:
 the instructions; an `<identity>` block, `Your name is <name>.`, so a rename
 reaches the next turn; the `<purpose>` block; the agent's `SOUL.md`; the person's
 `USER.md`, which renders empty, with the revision of empty content, until that
-person has a profile; and, when enabled, the workspace `AGENTS.md`. Because the
+person has a profile; the `<session_context>` block the person's plugins add,
+such as their `MIND.md`; and, when enabled, the workspace `AGENTS.md`. Because the
 name is quoted into that block, a name is 1 to 512 bytes on one line with no
 surrounding whitespace, control character, `<`, or `>`; creation, rename, and
 every read of a stored row apply that one rule.
@@ -98,7 +99,9 @@ concurrent edits from two agents safe. Existing files are never overwritten
 during startup. Neither file changes kernel state or the surface binding.
 
 The agent learns durable facts during ordinary work and may update either
-document through `agent_documents` when the evidence is strong enough. Startup
+document through `agent_documents` when the evidence is strong enough. `USER.md`
+holds what rarely changes about the person; commitments, plans, reminders and
+dated events go to their notebook through `memory_note` instead. Startup
 does not interrogate the user or invent durable user facts from environment
 data.
 
@@ -358,7 +361,7 @@ its stable operation receipt after restart without another provider lookup.
 uncertain requests in tab storage and retries their exact operation ID and fields.
 The Android app makes the same calls over its RCP connection
 ([`call_host`](rcp-json-ws-v0.md#call-the-host)). It creates from
-`renoa.app.v1` with a name and, when the owner wrote one, a purpose. It then
+`renoa.app.v2` with a name and, when the owner wrote one, a purpose. It then
 waits up to thirty seconds for a node to advertise the `agent:<id>` target, and
 succeeds once that agent's chat is open. Otherwise the owner reads that Renoa could
 not be reached, although the agent may exist; saving the same fields again repeats
@@ -537,7 +540,9 @@ the agent's own operational document, so a preset change requires a new preset i
 and never rewrites an existing agent. A test pins a digest of each preset's
 whole seed to its id, as a tripwire against editing a released preset in place;
 nothing enforces it at runtime. Only the owner's `move-to-preset` command moves an
-existing agent onto a newer preset. A session manifest persists the exact agent
+existing agent onto a newer preset. A new id replaces the old one in the
+catalog: an agent whose row still names a retired id keeps running from its own
+snapshot, and creation and moves accept only current ids. A session manifest persists the exact agent
 id; Host catalog storage holds the definition. Loading fails closed when the agent
 definition is absent or corrupt. Caller-defined agents store their own
 instructions, and every agent definition is stored in `host.sqlite3` and resolved
@@ -608,9 +613,10 @@ machine tools for a child; it exposes no operation to grant tools to its caller.
 owner operations. Their revision-checked receipts remain independent of the
 original creation receipt. Active operations retain their frozen grants.
 
-Six compiled Host plugins use the same discovery and management boundary as
-external plugins. Five contribute tools, invoked through the same exact-schema
-lookup as external MCP tools; `renoa.time` contributes context to each message:
+Seven compiled Host plugins use the same discovery and management boundary as
+external plugins. Six contribute tools, invoked through the same exact-schema
+lookup as external MCP tools; `renoa.time` contributes context to each message,
+and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 
 | Plugin | Capabilities |
 | --- | --- |
@@ -620,10 +626,12 @@ lookup as external MCP tools; `renoa.time` contributes context to each message:
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
 | `renoa.git` | Inspect local changes, diffs, and commits |
 | `renoa.time` | Show the current time and the time since the previous message |
+| `renoa.memory` | Note, recall and zoom into the speaking person's shared notebook; show their `MIND.md` |
 
 These plugins start enabled, except that an agent created from the Alpha preset
 starts with `renoa.time` off; document tools exist only for definitions that enable
-documents, and `USER.md` is editable only in a turn that names a principal. `plugin_manage` can enable or deactivate a compiled plugin for its
+documents, and `USER.md` is editable only in a turn that names a principal, as is
+the notebook. `plugin_manage` can enable or deactivate a compiled plugin for its
 caller, and `configure_plugin` replaces the caller's settings for one that takes
 them. Stored state is checked again on discovery and dispatch. Imported
 manifests cannot register native implementations or change machine grants.
@@ -1062,6 +1070,65 @@ durable suffix, which preserves the exact prompt prefix used by provider
 caches. A command admitted before schema 41 keeps its stored `turn_timing` and
 is projected as it was.
 
+`renoa.memory` keeps one Mnem notebook per principal at
+`users/<principal-id>/mnem/`, beside their `USER.md`, shared by every agent that
+talks to them. Its tools are `memory_note`, `memory_recall` and `memory_zoom`,
+bound to the person the turn talks to the way `agent_documents` chooses whose
+`USER.md` it edits; a guest's or an unidentified speaker's call is refused,
+creates nothing, and tells the agent to say it cannot keep notes there. The
+Telegram and Slack workers admit every message as an unidentified speaker, so
+their agents have no notebook. A note is signed `[by <agent name>]`, with
+brackets and control characters removed and the name cut to Mnem's 32 bytes, or
+`agent-<id prefix>` when nothing is left. The notebook's wall time is the
+person's: the Host's main agent's `renoa.time` zone, or the Host zone while
+there is no main agent, whichever agent writes and whether or not `renoa.time`
+is enabled. A note is dated in it, and `[at …]` and `[on …]` are read in it, so
+an agent whose own `renoa.time` shows another zone, or is off, gets a
+`plugin:renoa.memory` entry with each message from a person naming the
+notebook's zone and the time there; like every message-context entry it is
+frozen into the command. The first note creates the notebook, which Mnem does
+only once it accepts the note; the person's private directory must exist first,
+so one that call created is removed again when the note is refused, and a
+refused note leaves nothing. Every kept note syncs the person's directory,
+`users/` and the data directory, which hold the notebook's entry and the two
+above it, since an earlier note's syncs may not have finished; then it makes the person's directory and `users/` private again, all
+before it is acknowledged. A failure in that work tells the agent the note was
+written and to recall before noting it again. Recall, zoom and
+`MIND.md` open the notebook read-only: with no notebook they return nothing and
+create nothing. A recall pattern holds at most 256 bytes; Mnem bounds the
+compiled regex too. Mnem's compaction, Dream, agenda and heartbeat do not run
+yet; the notebook accumulates notes.
+
+The session-context point adds attributed blocks to the system prompt of a turn
+that talks to a person, asking each compiled plugin enabled for the agent for at
+most one. Today only `renoa.memory` adds one, the person's `MIND.md`, present
+only when Mnem's Dream has written it. The Host's main agent sees the whole
+file, with a line telling it not to act on a nudge before it is handed over;
+every other agent sees it without its Nudges section, which says what to do for
+the person and when. Each view carries its own Mnem revision, so the prompt's
+bytes, and the provider's cached prefix, change only when that view does, and a
+change to the nudges alone leaves every other agent's prompt as it was; recent
+notes stay out of it for the same reason. Each plugin declares its largest
+block, as escaped into the prompt. Mnem bounds the raw file: it refuses a
+`MIND.md` over `mnem::mind::FILE_MAX` without reading it whole. `renoa.memory`
+bounds its block at the headings plus one and a half times `FILE_MAX`, room for
+the view without Nudges and ordinary escaping; the block goes out with every
+turn, so a file that escapes past the bound, such as one full of `&`, is left
+out. A block over its plugin's bound, or one that cannot be read, is left out,
+recorded as a `session_context_skipped` trace event, and never blocks the
+turn. The blocks are read when a command first
+resolves its runtime and, when there is one, pinned to that command in
+`sessions/<session-uuid>/session-context.json` before it is admitted, so a
+retried or recovered command rebuilds the system prompt its kernel manifest
+froze, even after `MIND.md` changed, the plugin was turned off, or the owner
+named another main agent. A command already admitted without a pin keeps no
+block. A pin that could not be written leaves no staged file, and the command
+carries no block; one that replaced the old pin but could not be synced still
+carries its block, with the failure traced. That pin is not durable: if the
+machine crashes before the directory reaches disk, the old pin can come back,
+and recovering the command then fails with a runtime mismatch instead of
+rebuilding its prompt.
+
 `LocalHost::ensure_agent_session` accepts a caller-chosen UUID for durable surface
 admission. Repeating it resolves the already-published session with its stored
 model selection, Agent identity, and workspace instead of validating a
@@ -1122,6 +1189,7 @@ another writer's files to empty a directory.
     workspace/                     scheduled/headless agent workspace
   users/<principal-id>/
     USER.md                        one person's profile, shared by their agents
+    mnem/                          their Mnem notebook and MIND.md, shared too
   state/
     host.sqlite3                   definitions, plugins, connections, receipts
     skills/<sha256>/               imported immutable skill revisions
@@ -1137,6 +1205,7 @@ another writer's files to empty a directory.
     runtime.jsonl                  provider/model/reasoning selections
     kernel.sqlite3                 execution and recovery truth
     trace.sqlite3                  diagnostics
+    session-context.json           the latest command's pinned session context
   runtime/                         owner-installed runtime assets
 ```
 
@@ -1176,7 +1245,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 42
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 43
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1186,7 +1255,9 @@ selection step, a schema 34 catalog only moves its runs, a schema 35 catalog
 also gains the shared-registry failure record, and a schema 36 catalog only
 gives its runs a status. Every catalog below schema 42 gains the main-agent
 marker on its earliest-created agent, ties broken by agent id; a Host with no
-agent stays unmarked until its first creation. Live selections
+agent stays unmarked until its first creation. Every catalog below schema 43
+admits `renoa.memory` in its compiled-plugin table, keeping every stored
+activation, so every existing agent has the plugin at its default, on. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1214,8 +1285,8 @@ guidance. Reopening the upgraded catalog does not repeat the conversion.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
    agent-owned rows, the session directories, enabled SOUL files, and
    predecessor document roots. It preserves canonical
-   `agents/<agent-id>/workspace` directories and people's `users/` profiles,
-   and never deletes workspace files or the Host's shared state. One transaction
+   `agents/<agent-id>/workspace` directories and people's `users/` profiles and
+   notebooks, and never deletes workspace files or the Host's shared state. One transaction
    deletes the whole row set with foreign keys deferred, so the order it is
    written in cannot break a reset, and a test that classifies every catalog
    table is what keeps the delete list complete.
@@ -1658,6 +1729,9 @@ Schema 41 moves turn timing from agent behavior to `renoa.time`: behavior loses
 stored creation request, so a retried creation still replays; an agent
 that had it off gets `renoa.time` turned off, and per-agent plugin settings gain
 their table.
+Schema 42 marks the Host's main agent. Schema 43 rebuilds the compiled-plugin
+table so its `CHECK` admits `renoa.memory`, copying every stored activation and
+adding none.
 
 ## Local CLI
 

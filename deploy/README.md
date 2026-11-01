@@ -350,14 +350,15 @@ The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and
 `POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
-This release requires Host schema 41. A schema 28–40 catalog upgrades in place
+This release requires Host schema 43. A schema 28–42 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
 [RCP execution node](#rcp-execution-node)), adds the record of a failing
 shared-registry synchronization, gives finished automation runs a status, and
 moves automations to cron schedules, bounds automation run history, and moves
-each agent's turn timing onto the `renoa.time` plugin; it
+each agent's turn timing onto the `renoa.time` plugin, marks the Host's main
+agent, and admits the `renoa.memory` plugin, on by default for every agent; it
 refuses to upgrade while a daily or interval automation remains. `renoa.time`
 shows the time in an agent's `timezone` setting, or else in the zone `TZ` sets
 for the service that runs the Host (`renoa-node.service` sets `Asia/Kolkata`).
@@ -929,6 +930,13 @@ remained loopback-only, and the proof used the tailnet-only port above.
 
 ## Shared Host schema readers
 
+The Arcee preset is now `renoa.personal.arcee.v4` and the app preset
+`renoa.app.v2`; the Host no longer creates agents from `renoa.personal.arcee.v3`
+or `renoa.app.v1`. Existing agents keep their own snapshot until the owner runs
+`renoa-host <config> move-to-preset <agent-id> <preset-id>` for each one. An
+Android build that still sends `renoa.app.v1` gets "unknown preset" when it makes
+an agent, so the app and the Host ship together.
+
 Build all readers of the shared Host schema together:
 
 ```sh
@@ -937,7 +945,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the node, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 41. Install the new binaries
+root before the new Host brings it to schema 43. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must

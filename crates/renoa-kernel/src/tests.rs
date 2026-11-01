@@ -422,6 +422,147 @@ async fn activation_and_terminal_commits_are_recovered_without_duplicate_loop_wo
     );
 }
 
+#[tokio::test]
+async fn command_standing_follows_admission_and_outcome() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+    kernel.create_agent(agent_id).expect("create agent");
+    kernel
+        .create_session(session_id, agent_id)
+        .expect("create session");
+    let (first, second) = (CommandId::new(), CommandId::new());
+    let standing = |command| {
+        let standing = kernel
+            .command_standing(session_id, command)
+            .expect("standing");
+        (standing.admitted, standing.other_unfinished)
+    };
+    assert_eq!(standing(first), (false, false), "an empty session");
+
+    kernel
+        .submit(session_id, Command::new(first, serde_json::json!({})))
+        .expect("submit command");
+    assert_eq!(
+        standing(first),
+        (true, false),
+        "its own operation is not another"
+    );
+    assert_eq!(standing(second), (false, true), "the first is unfinished");
+
+    kernel
+        .drive(
+            session_id,
+            &completing_runtime(Arc::new(AtomicUsize::new(0))),
+        )
+        .await
+        .expect("complete the first");
+    assert_eq!(standing(first), (true, false));
+    assert_eq!(
+        standing(second),
+        (false, false),
+        "a finished one does not count"
+    );
+    let missing = SessionId::new();
+    assert!(
+        matches!(
+            kernel.command_standing(missing, first),
+            Err(crate::KernelError::SessionNotFound(session)) if session == missing
+        ),
+        "a session the kernel does not hold is not found, as in `inspect`"
+    );
+}
+
+/// The outcome the kernel stores with each phase. A new phase fails to
+/// compile here until it is decided, and the walk below checks the list
+/// against the phases the schema stores.
+fn outcome_stored_with(phase: crate::operation_phase::OperationPhase) -> Option<OperationOutcome> {
+    use crate::operation_phase::OperationPhase as Phase;
+    match phase {
+        Phase::Queued
+        | Phase::NeedDecision
+        | Phase::EffectIntent
+        | Phase::EffectDispatched
+        | Phase::OutcomeUnknown => None,
+        Phase::Waiting => Some(OperationOutcome::WaitingForInput),
+        Phase::Completed => Some(OperationOutcome::Completed),
+        Phase::Failed => Some(OperationOutcome::Failed {
+            reason: "failed".to_owned(),
+        }),
+        Phase::Cancelled => Some(OperationOutcome::Cancelled),
+    }
+}
+
+#[test]
+fn command_standing_and_exclusive_admission_agree_in_every_phase() {
+    use crate::operation_phase::OperationPhase as Phase;
+    let phases = [
+        Phase::Queued,
+        Phase::NeedDecision,
+        Phase::EffectIntent,
+        Phase::EffectDispatched,
+        Phase::OutcomeUnknown,
+        Phase::Waiting,
+        Phase::Completed,
+        Phase::Failed,
+        Phase::Cancelled,
+    ];
+    let directory = tempdir().expect("temporary directory");
+    let mut stored = Vec::new();
+    for (index, phase) in phases.into_iter().enumerate() {
+        let (kernel, session_id) = kernel_with_command(&directory.path().join(format!("{index}")));
+        let connection = kernel.database.connection().expect("connection");
+        if index == 0 {
+            let schema: String = connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name = 'operations'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("operations schema");
+            let listed = &schema[schema.find("phase IN (").expect("phase check") + 10..];
+            stored = listed[..listed.find(')').expect("phase list")]
+                .split(',')
+                .map(|phase| phase.trim().trim_matches('\'').to_owned())
+                .collect();
+        }
+        let outcome = outcome_stored_with(phase)
+            .map(|outcome| serde_json::to_string(&outcome).expect("outcome json"));
+        connection
+            .execute(
+                "UPDATE operations SET phase = ?1, outcome_json = ?2",
+                rusqlite::params![phase.as_str(), outcome],
+            )
+            .expect("set the phase");
+        let probe = CommandId::new();
+        let standing = kernel
+            .command_standing(session_id, probe)
+            .expect("standing")
+            .other_unfinished;
+        let refused =
+            match kernel.submit_exclusive(session_id, Command::new(probe, serde_json::json!({}))) {
+                Err(crate::KernelError::UnfinishedOperation { .. }) => true,
+                Ok(_) => false,
+                Err(error) => panic!("{phase:?}: {error}"),
+            };
+        assert_eq!(
+            standing, refused,
+            "{phase:?}: standing and admission differ"
+        );
+        assert_eq!(
+            standing,
+            outcome_stored_with(phase).is_none(),
+            "{phase:?}: an operation is unfinished exactly while it has no outcome"
+        );
+    }
+    let walked: Vec<_> = phases.iter().map(|phase| phase.as_str()).collect();
+    assert_eq!(
+        stored, walked,
+        "the walk covers every phase the schema stores"
+    );
+}
+
 fn kernel_with_command(path: &std::path::Path) -> (Kernel, SessionId) {
     let kernel = Kernel::open(path).expect("open kernel");
     let agent_id = AgentId::new();

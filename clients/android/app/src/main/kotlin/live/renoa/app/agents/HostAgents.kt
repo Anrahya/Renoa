@@ -8,7 +8,7 @@ import live.renoa.rcp.HostMethod
 import kotlin.uuid.Uuid
 
 /** Every agent the app makes starts from this Host preset. */
-internal const val APP_PRESET = "renoa.app.v1"
+internal const val APP_PRESET = "renoa.app.v2"
 
 /**
  * The fields of the Host's agent definition the app reads. The definition's shape is owned by the

@@ -2,7 +2,8 @@
 //!
 //! Resolution reads the root row and its children, attaches the agent's
 //! documents, and composes the system prompt for one workspace and, when a
-//! turn names one, the person it talks to. A preset is
+//! turn names one, the person it talks to and the session context resolved for
+//! that person. A preset is
 //! never consulted here: the stored definition is the only operational owner.
 
 use std::{fs, io::Read as _, path::Path};
@@ -15,6 +16,7 @@ use crate::{
     AgentDefinition, AgentDefinitionError, AgentToolSelection, AutomaticCompaction, ModelProvider,
     documents::AgentDocumentStore,
     host::{HostConfig, LocalHostError, catalog},
+    plugins::host::session_context::SessionContext,
 };
 
 const PROJECT_INSTRUCTIONS_FILE: &str = "AGENTS.md";
@@ -25,12 +27,26 @@ const MAX_PROJECT_INSTRUCTIONS_BYTES_U64: u64 = 32 * 1024;
 pub struct ResolvedAgentDefinition {
     definition: AgentDefinition,
     documents: Option<AgentDocumentStore>,
+    principal: Option<uuid::Uuid>,
+    session_context: SessionContext,
 }
 
 impl ResolvedAgentDefinition {
     #[must_use]
     pub(crate) fn agent_id(&self) -> AgentId {
         self.definition.id
+    }
+
+    /// The agent's stored name, as this turn's prompt shows it.
+    #[must_use]
+    pub(crate) fn name(&self) -> &str {
+        &self.definition.name
+    }
+
+    /// The person this turn talks to; see [`Self::with_principal`].
+    #[must_use]
+    pub(crate) const fn principal(&self) -> Option<uuid::Uuid> {
+        self.principal
     }
 
     #[must_use]
@@ -53,12 +69,22 @@ impl ResolvedAgentDefinition {
     }
 
     /// Selects the person one turn talks to, whose `USER.md` the prompt shows
-    /// and `agent_documents` edits. `None` leaves the turn without a `USER.md`.
+    /// and `agent_documents` edits, and whose notebook the memory tools use.
+    /// `None` leaves the turn without a `USER.md` or a notebook.
     #[must_use]
     pub(crate) fn with_principal(mut self, principal: Option<uuid::Uuid>) -> Self {
         self.documents = self
             .documents
             .map(|documents| documents.with_principal(principal));
+        self.principal = principal;
+        self
+    }
+
+    /// Adds the session context resolved for this turn's command, which the
+    /// prompt shows after `USER.md`.
+    #[must_use]
+    pub(crate) fn with_session_context(mut self, context: SessionContext) -> Self {
+        self.session_context = context;
         self
     }
 
@@ -88,10 +114,12 @@ impl ResolvedAgentDefinition {
         };
         let purpose = self.definition.operational.purpose.as_deref();
         let name = &self.definition.name;
+        let session_context = self.session_context.render();
         let capacity = base.len()
             + name.len()
             + purpose.map_or(0, str::len)
             + documents.as_ref().map_or(0, String::len)
+            + session_context.as_ref().map_or(0, String::len)
             + project.as_ref().map_or(0, String::len)
             + 256;
         let mut prompt = String::with_capacity(capacity);
@@ -109,6 +137,10 @@ impl ResolvedAgentDefinition {
         if let Some(documents) = documents {
             prompt.push_str("\n\n");
             prompt.push_str(&documents);
+        }
+        if let Some(session_context) = session_context {
+            prompt.push_str("\n\n");
+            prompt.push_str(&session_context);
         }
         if let Some(project) = project {
             let project = project.strip_prefix('\u{feff}').unwrap_or(&project);
@@ -163,6 +195,8 @@ pub(crate) async fn resolve_definition(
         Ok(ResolvedAgentDefinition {
             definition,
             documents,
+            principal: None,
+            session_context: SessionContext::default(),
         })
     })
     .await?

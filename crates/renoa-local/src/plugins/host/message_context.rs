@@ -11,16 +11,8 @@ use std::path::Path;
 use renoa_agent_loop::{ContextContribution, TurnContext};
 use renoa_kernel::AgentId;
 
-use super::{HostPluginId, settings, state, time::TimeSettings};
+use super::{HostPluginId, Skipped, memory, settings, state, time::TimeSettings};
 use crate::{Speaker, host::catalog, plugins::PluginError};
-
-/// A contributor left out of one message, and why: `surface`, a plugin id,
-/// or `*` when no plugin could be asked.
-#[derive(Debug, serde::Serialize)]
-pub(crate) struct Skipped {
-    pub(crate) source: &'static str,
-    pub(crate) reason: String,
-}
 
 /// The context for a prompt from `speaker` admitted at `observed_at_ms`, after
 /// a previous prompt admitted at `previous_ms`, whose surface described where
@@ -56,7 +48,7 @@ pub(crate) fn admit(
         }
     };
     for plugin in HostPluginId::ALL {
-        let added = contribution(&db, agent, plugin, observed_at_ms, previous_ms);
+        let added = contribution(&db, agent, speaker, plugin, observed_at_ms, previous_ms);
         add(&mut context, &mut skipped, plugin.id(), added);
     }
     (context, skipped)
@@ -93,6 +85,7 @@ fn add(
 fn contribution(
     db: &rusqlite::Connection,
     agent: AgentId,
+    speaker: Speaker,
     plugin: HostPluginId,
     observed_at_ms: i64,
     previous_ms: Option<i64>,
@@ -106,6 +99,11 @@ fn contribution(
                 .contribution(observed_at_ms, previous_ms)
                 .map(Some)
         }
+        // The notebook is a person's; a turn without one has no notebook time.
+        HostPluginId::Memory => match speaker.principal() {
+            Some(_) => memory::message_entry(db, agent, observed_at_ms),
+            None => Ok(None),
+        },
         HostPluginId::Agents
         | HostPluginId::Automations
         | HostPluginId::Documents

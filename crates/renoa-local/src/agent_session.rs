@@ -20,6 +20,7 @@ use crate::{
     trace::TraceStore,
 };
 
+mod context;
 mod execution;
 
 /// One durable Agent session assembled from one canonical agent definition.
@@ -30,6 +31,7 @@ pub struct AgentSession {
     kernel: LocalSession,
     workspace: PathBuf,
     selection_path: PathBuf,
+    session_context_pin: PathBuf,
     trace: TraceStore,
     state: Mutex<SessionState>,
     idle: tokio::sync::Notify,
@@ -40,6 +42,8 @@ pub(crate) struct AgentSessionStorage {
     pub(crate) kernel: LocalSession,
     pub(crate) workspace: PathBuf,
     pub(crate) selection_path: PathBuf,
+    /// Where the session context of its latest pinned command is kept.
+    pub(crate) session_context_pin: PathBuf,
     pub(crate) trace: TraceStore,
 }
 
@@ -85,6 +89,7 @@ impl AgentSession {
             kernel: storage.kernel,
             workspace: storage.workspace,
             selection_path: storage.selection_path,
+            session_context_pin: storage.session_context_pin,
             trace: storage.trace,
             state: Mutex::new(SessionState {
                 models,

@@ -16,6 +16,7 @@ flate2.workspace = true
 getrandom.workspace = true
 globset.workspace = true
 jiff.workspace = true
+mnem.workspace = true
 nix.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
 renoa-agent-loop = { path = "../renoa-agent-loop", version = "0.1.0" }

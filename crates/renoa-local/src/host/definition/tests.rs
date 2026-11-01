@@ -555,6 +555,27 @@ async fn validation_rejects_untrusted_pairs_unknown_names_and_preset_mismatches(
             .await,
         Err(LocalHostError::Definition(_))
     ));
+    // A retired preset id is unknown too: an app still sending it is refused
+    // until it updates.
+    for retired in ["renoa.app.v1", "renoa.personal.arcee.v3"] {
+        let request = AgentCreateRequest::from_preset(
+            Uuid::new_v4(),
+            AgentPresetId::new(retired).expect("preset id"),
+            "Retired preset",
+        );
+        let refused = host
+            .create_agent(creator.clone(), origin, request, CancellationToken::new())
+            .await;
+        assert!(
+            matches!(
+                &refused,
+                Err(LocalHostError::Definition(
+                    crate::AgentDefinitionError::UnknownPreset { preset }
+                )) if preset == retired
+            ),
+            "{retired}: {refused:?}"
+        );
+    }
 
     let missing = AgentCreateRequest::new(Uuid::new_v4(), "No instructions", "");
     assert!(matches!(
