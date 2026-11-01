@@ -30,7 +30,8 @@ pub(crate) struct RuntimeRequest<'a> {
 /// Resolves one agent's runtime from its stored definition.
 ///
 /// Machine tools follow the exact stored grants. Every agent receives the plugin
-/// protocol; enabled Host and external plugins are discovered through it.
+/// protocol; enabled Host and external plugins are discovered through it, and
+/// the resident tools of its enabled Host plugins are bound beside it.
 pub(crate) async fn resolve_runtime(
     host: &Arc<HostConfig>,
     request: RuntimeRequest<'_>,
@@ -219,7 +220,9 @@ pub(crate) fn protocol_bindings(
     )
     .pop()
     .ok_or_else(|| LocalHostError::Configuration("MCP executor is unavailable".to_owned()))?;
-    Ok(vec![
+    let resident = crate::plugins::host::resident::bindings(&plugins)
+        .map_err(|error| LocalHostError::Configuration(error.to_string()))?;
+    let mut bindings = vec![
         crate::plugins::search_binding_with_host(agent, host.plugins.clone(), Arc::clone(&plugins)),
         agent_plugin_binding(
             agent,
@@ -230,7 +233,9 @@ pub(crate) fn protocol_bindings(
         ),
         crate::plugins::host::executor::binding(plugins, &executor)
             .map_err(|error| LocalHostError::Configuration(error.to_string()))?,
-    ])
+    ];
+    bindings.extend(resident);
+    Ok(bindings)
 }
 
 #[cfg(test)]
@@ -313,12 +318,25 @@ mod tests {
             offered.len(),
             "runtime tool names must be unique"
         );
-        let expected = BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"]);
+        let resident = [
+            "agent_documents",
+            "memory_note",
+            "memory_recall",
+            "memory_zoom",
+        ];
+        let mut expected = BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"]);
+        expected.extend(resident);
         assert_eq!(actual, expected);
+        // Code Mode hides only the executor: resident tools stay direct.
         let (visible, hidden) =
             partition_selected_tools(offered, true).expect("partition selected tools");
-        assert_eq!(visible.len(), 2);
-        assert_eq!(visible[0].tool_name(), "plugin_search");
+        assert_eq!(
+            visible
+                .iter()
+                .map(AgentToolBinding::tool_name)
+                .collect::<Vec<_>>(),
+            [&["plugin_search", "plugin_manage"][..], &resident[..]].concat()
+        );
         assert_eq!(
             hidden.expect("hidden MCP executor").tool_name(),
             "tool_execute"

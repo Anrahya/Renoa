@@ -317,7 +317,7 @@ Two skills are active.
 Confirm restoration.` }]);
   process.exit(0);
 }
-const expectedTools = ["read_file", "edit_file", "write_file", "bash", "grep", "find", "plugin_search", "plugin_manage", "tool_execute"];
+const expectedTools = ["read_file", "edit_file", "write_file", "bash", "grep", "find", "plugin_search", "plugin_manage", "tool_execute", "memory_note", "memory_recall", "memory_zoom"];
 if (request.tools.map(tool=>tool.name).sort().join(",") !== expectedTools.sort().join(",")) fail("unexpected model-visible tool set");
 const promptIndex = request.messages.findLastIndex(message => message.role === "user");
 const prompt = request.messages[promptIndex].content[0].text;

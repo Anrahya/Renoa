@@ -276,12 +276,23 @@ async fn migrated_selections_remain_usable_through_host_consumers_and_replays() 
                 Vec::new(),
             )
             .unwrap();
+            let mut expected = BTreeSet::from([
+                "plugin_manage",
+                "plugin_search",
+                "tool_execute",
+                "memory_note",
+                "memory_recall",
+                "memory_zoom",
+            ]);
+            if resolved.document_binding().is_some() {
+                expected.insert("agent_documents");
+            }
             assert_eq!(
                 bindings
                     .iter()
                     .map(renoa_agent_loop::AgentToolBinding::tool_name)
                     .collect::<BTreeSet<_>>(),
-                BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"])
+                expected
             );
         }
         assert_eq!(

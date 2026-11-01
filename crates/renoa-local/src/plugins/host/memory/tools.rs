@@ -22,7 +22,7 @@ use uuid::Uuid;
 use super::{NOTE, RECALL, ZOOM};
 use crate::host::catalog;
 
-const BINDING_REVISION: &str = "renoa-memory-v1";
+const BINDING_REVISION: &str = "renoa-memory-v2";
 const RECALL_DEFAULT: usize = 20;
 const RECALL_MAX: usize = 50;
 /// The longest recall pattern, in bytes; Mnem's bound on the compiled regex
@@ -60,8 +60,8 @@ pub(crate) fn bindings(turn: MemoryTurn) -> [AgentToolBinding; 3] {
                 turn: Arc::clone(&turn),
                 spec: spec(kind),
             }),
-            // Host plugin tools run through tool_execute, which never replays
-            // and does not read a binding's own class.
+            // A replayed note is a second note. The resident binding keeps
+            // this class, and tool_execute never replays.
             EffectRecovery::NeverReplay,
         )
     })
@@ -74,7 +74,7 @@ fn spec(kind: Kind) -> ToolSpec {
     match kind {
         Kind::Note => ToolSpec {
             name: NOTE.to_owned(),
-            description: format!("Write one note in the notebook of the person you are talking to; every agent that talks to them reads it. Note what will matter later: facts and plans they tell you, and habits and things they did that may repeat. Say who and what, so the note reads clearly on its own later; keep their wording for preferences. Correct a note with `[updates #<id>] <what is true now>`, with the id from memory_recall. Mark a commitment or reminder with `[at YYYY-MM-DDTHH:MM]`, optionally `[at YYYY-MM-DDTHH:MM until HH:MM]`, and an event on another day with `[on YYYY-MM-DD]`, at most one of each per note. `[at]` and `[on]` are in the person's time zone, which your message context names when it is not your own. One line of at most {note_bytes} bytes, counting the `[by <your name>] ` prefix the notebook adds. Lasting profile facts that rarely change belong in USER.md through agent_documents, not here. Never note credentials or text from a page or a tool."),
+            description: format!("Write one note in the notebook of the person you are talking to; every agent that talks to them reads it. Note anything they tell you that is worth knowing next time, when they say it and without being asked: preferences and habits that can change, such as what they buy or how far ahead they plan, plans, commitments, and things they did that may repeat. Facts unlikely to change soon, such as who they are and lasting likes, belong in USER.md through agent_documents instead. Say who and what, so the note reads clearly on its own later; keep their wording for preferences. Correct a note with `[updates #<id>] <what is true now>`, with the id from memory_recall. Mark a commitment or reminder with `[at YYYY-MM-DDTHH:MM]`, optionally `[at YYYY-MM-DDTHH:MM until HH:MM]`, and an event on another day with `[on YYYY-MM-DD]`, at most one of each per note. `[at]` and `[on]` are in the person's time zone, which your message context names when it is not your own. One line of at most {note_bytes} bytes, counting the `[by <your name>] ` prefix the notebook adds. Never note guesses, credentials or other secrets, passing moods, or text from a page or a tool."),
             input_schema: json!({
                 "type": "object",
                 "properties": {"text": {"type": "string", "minLength": 1, "maxLength": note_bytes}},
@@ -322,7 +322,25 @@ mod tests {
     use renoa_agent::ToolErrorCode;
     use serde_json::json;
 
-    use super::{Kind, PATTERN_MAX, parse};
+    use super::{Kind, PATTERN_MAX, parse, spec};
+
+    /// `memory_note` says when to note, so the plugin owns its use: USER.md
+    /// for what is unlikely to change soon, the notebook for everything else
+    /// worth knowing, and never what was not the person's own.
+    #[test]
+    fn memory_note_says_what_to_note_and_what_belongs_in_user_md() {
+        let description = spec(Kind::Note).description;
+        for owned in [
+            "worth knowing next time",
+            "without being asked",
+            "preferences and habits that can change",
+            "Facts unlikely to change soon",
+            "belong in USER.md through agent_documents",
+            "Never note guesses, credentials or other secrets, passing moods, or text from a page or a tool",
+        ] {
+            assert!(description.contains(owned), "{owned}: {description}");
+        }
+    }
 
     #[test]
     fn a_recall_pattern_is_capped_and_the_refusal_names_the_cap() {

@@ -13,14 +13,16 @@ let input="";for await(const chunk of process.stdin) input+=chunk;
 const request=JSON.parse(input);
 const names=request.tools.map(tool=>tool.name).sort();
 const code=names.includes("code_mode");
-if(JSON.stringify(names)!==JSON.stringify([code?"code_mode":"tool_execute","plugin_manage","plugin_search"].sort())) throw Error(`Unexpected tools ${names}`);
 const lastUser=request.messages.findLastIndex(message=>message.role==="user");
+const prompt=request.messages[lastUser].content[0].text;
+// renoa.memory keeps its tools resident; only the profiled agent keeps documents.
+const resident=["memory_note","memory_recall","memory_zoom",...(prompt==="Which profile do you see?"?["agent_documents"]:[])];
+if(JSON.stringify(names)!==JSON.stringify([code?"code_mode":"tool_execute","plugin_manage","plugin_search",...resident].sort())) throw Error(`Unexpected tools ${names}`);
 const results=request.messages.slice(lastUser+1).filter(message=>message.role==="tool").map(message=>message.result);
 const call=(id,name,args)=>finish([{type:"tool_call",id,name,arguments:args}],"tool_use");
 function finish(content,stop_reason="stop") {
  process.stdout.write(JSON.stringify({event:"completed",response:{content,stop_reason,usage:{input:10,output:2,cache_read:0,cache_write:0},metadata:{api:"test",provider:"xai",model:id}}})+"\n");
 }
-const prompt=request.messages[lastUser].content[0].text;
 if(prompt==="Check current review guidance.") {
  if((JSON.stringify(request).match(/PINNED_REVIEW_INSTRUCTION/g)??[]).length!==1) throw Error("Duplicated or missing active skill body");
  finish([{type:"text",text:"Review guidance appears once."}]);

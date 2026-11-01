@@ -121,7 +121,14 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             .iter()
             .map(AgentToolBinding::tool_name)
             .collect::<Vec<_>>(),
-        ["plugin_search", "plugin_manage", "tool_execute"]
+        [
+            "plugin_search",
+            "plugin_manage",
+            "tool_execute",
+            "memory_note",
+            "memory_recall",
+            "memory_zoom"
+        ]
     );
     let browse = value(
         &invoke(&bindings, "plugin_search", "browse", json!({"query":"*"}))
@@ -217,7 +224,8 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         )
         .unwrap()
         .len(),
-        3
+        6,
+        "the plugin protocol and the three resident memory tools"
     );
     assert!(
         invoke(

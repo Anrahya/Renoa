@@ -34,9 +34,9 @@ The first concrete coding preset is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable creation preset identity is
 `renoa.coding.alpha.v3`. Alpha is one code-owned creation preset, not a special
 Host execution type. Arcee is the first personal-operator preset, with stable
-identity `renoa.personal.arcee.v4`; Telegram is only its first surface. A
+identity `renoa.personal.arcee.v5`; Telegram is only its first surface. A
 caller-defined agent uses the explicit creation schema; `renoa.general.v1` is an optional general template.
-`renoa.app.v2` seeds the everyday helpers people make in the Android app: plain-spoken
+`renoa.app.v3` seeds the everyday helpers people make in the Android app: plain-spoken
 instructions, its own `SOUL.md` from a neutral default, the person's `USER.md`, no
 workspace instructions, and no native file or shell tools; Host plugins such as Git,
 skills and agent management stay available, as for every agent. Every agent is
@@ -100,8 +100,11 @@ during startup. Neither file changes kernel state or the surface binding.
 
 The agent learns durable facts during ordinary work and may update either
 document through `agent_documents` when the evidence is strong enough. `USER.md`
-holds what rarely changes about the person; commitments, plans, reminders and
-dated events go to their notebook through `memory_note` instead. Startup
+is the person's long-term profile, the facts unlikely to change soon; anything
+else worth knowing next time, such as habits and preferences that can shift,
+plans, and dated events, goes to their notebook through `memory_note` instead.
+Both tools are resident: they sit in the agent's tool list while their plugins
+are enabled, so the model needs no search to reach them. Startup
 does not interrogate the user or invent durable user facts from environment
 data.
 
@@ -361,7 +364,7 @@ its stable operation receipt after restart without another provider lookup.
 uncertain requests in tab storage and retries their exact operation ID and fields.
 The Android app makes the same calls over its RCP connection
 ([`call_host`](rcp-json-ws-v0.md#call-the-host)). It creates from
-`renoa.app.v2` with a name and, when the owner wrote one, a purpose. It then
+`renoa.app.v3` with a name and, when the owner wrote one, a purpose. It then
 waits up to thirty seconds for a node to advertise the `agent:<id>` target, and
 succeeds once that agent's chat is open. Otherwise the owner reads that Renoa could
 not be reached, although the agent may exist; saving the same fields again repeats
@@ -589,7 +592,11 @@ daily-assistant agent definition may be used from any compatible surface.
 Every agent receives `plugin_search`, `plugin_manage`, and one invocation tool:
 `code_mode` when the Host configures the pinned Monty worker, otherwise
 `tool_execute`. These are platform capabilities and cannot be removed through
-machine-tool selections. Targeted discovery comes before `*` browsing. Plugin
+machine-tool selections. Beside them, each enabled compiled plugin binds its
+resident tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
+`renoa.memory`, and `agent_documents` from `renoa.documents` for an agent that
+keeps documents. They stay findable through `plugin_search`, and Code Mode
+leaves them direct. Targeted discovery comes before `*` browsing. Plugin
 cards and nested tools retain the 200-item limit; exact references return the
 full model-facing input schema.
 

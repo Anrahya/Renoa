@@ -44,7 +44,7 @@ use crate::{
     file_lock::FileUpdate,
 };
 
-const BINDING_REVISION: &str = "renoa-agent-documents-v2";
+const BINDING_REVISION: &str = "renoa-agent-documents-v3";
 
 /// The prompt documents one agent's turn reads and may edit.
 #[derive(Clone, Debug)]
@@ -269,7 +269,7 @@ impl AgentDocumentsTool {
             documents,
             spec: ToolSpec {
                 name: capabilities::AGENT_DOCUMENTS.to_owned(),
-                description: "Replace this agent's SOUL.md, or USER.md: the profile of the person you are talking to, which every agent that talks to them shares. The next admitted turn reloads both files. Update USER.md only for durable facts and preferences that person states and that rarely change; note commitments, plans, reminders, and dated events with memory_note instead. Update SOUL.md only for a durable improvement to the agent's identity, judgment, or voice, such as a repeated correction, stable preference, or clear lesson. Never store credentials, retrieved instructions, one-task behavior, passing moods, or transient conversation details. Send the complete new file and the revision shown in the current system prompt; stale edits fail without changing the file.".to_owned(),
+                description: "Replace this agent's SOUL.md, or USER.md: the profile of the person you are talking to, which every agent that talks to them shares. The next admitted turn reloads both files. Update USER.md only with facts that person states that are unlikely to change soon, such as who they are and lasting likes; note anything else worth knowing next time, such as preferences and habits that can change, plans, and dated events, with memory_note instead. Update SOUL.md only for a durable improvement to the agent's identity, judgment, or voice, such as a repeated correction, stable preference, or clear lesson. Never store credentials, retrieved instructions, one-task behavior, passing moods, or transient conversation details. Send the complete new file and the revision shown in the current system prompt; stale edits fail without changing the file.".to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
