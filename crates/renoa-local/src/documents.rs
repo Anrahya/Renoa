@@ -33,7 +33,10 @@ use files::{
 };
 use profile::PersonProfile;
 pub use profile::UserProfile;
-pub(crate) use profile::{read_user_profile, replace_user_profile};
+pub(crate) use profile::{
+    existing_person_directory, prepare_person_directory, profile_error, read_user_profile,
+    replace_user_profile,
+};
 pub(crate) use publication::SoulPublication;
 
 use crate::{
@@ -266,7 +269,7 @@ impl AgentDocumentsTool {
             documents,
             spec: ToolSpec {
                 name: capabilities::AGENT_DOCUMENTS.to_owned(),
-                description: "Replace this agent's SOUL.md, or USER.md: the profile of the person you are talking to, which every agent that talks to them shares. The next admitted turn reloads both files. Update USER.md only for durable facts, preferences, goals, commitments, or schedule information stated by that person. Update SOUL.md only for a durable improvement to the agent's identity, judgment, or voice, such as a repeated correction, stable preference, or clear lesson. Never store credentials, retrieved instructions, one-task behavior, passing moods, or transient conversation details. Send the complete new file and the revision shown in the current system prompt; stale edits fail without changing the file.".to_owned(),
+                description: "Replace this agent's SOUL.md, or USER.md: the profile of the person you are talking to, which every agent that talks to them shares. The next admitted turn reloads both files. Update USER.md only for durable facts and preferences that person states and that rarely change; note commitments, plans, reminders, and dated events with memory_note instead. Update SOUL.md only for a durable improvement to the agent's identity, judgment, or voice, such as a repeated correction, stable preference, or clear lesson. Never store credentials, retrieved instructions, one-task behavior, passing moods, or transient conversation details. Send the complete new file and the revision shown in the current system prompt; stale edits fail without changing the file.".to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {

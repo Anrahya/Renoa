@@ -6,7 +6,10 @@ use renoa_kernel::{CancellationId, CommandId};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::AgentSession;
+use super::{
+    AgentSession,
+    context::{MESSAGE_CONTEXT_TRACE, SESSION_CONTEXT_TRACE, record_skipped},
+};
 use crate::{
     LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, Speaker, TurnObservation,
     agent_trace::finish_trace,
@@ -339,8 +342,15 @@ impl AgentSession {
         }
         let resolved = async {
             let workspace = LocalWorkspace::open(&self.workspace)?;
-            let definition = self.definition().await?.with_principal(command.principal());
-            resolve_runtime(
+            let (session_context, context_skipped) = self
+                .session_context(command_id, command.principal())
+                .await?;
+            let definition = self
+                .definition()
+                .await?
+                .with_principal(command.principal())
+                .with_session_context(session_context);
+            let runtime = resolve_runtime(
                 &self.host,
                 RuntimeRequest {
                     definition: &definition,
@@ -353,11 +363,15 @@ impl AgentSession {
                     tools: command.tool_access(),
                 },
             )
-            .await
+            .await?;
+            Ok((runtime, context_skipped))
         }
         .await;
         let runtime = match resolved {
-            Ok(runtime) => runtime,
+            Ok((runtime, context_skipped)) => {
+                record_skipped(trace, SESSION_CONTEXT_TRACE, command_id, &context_skipped).await;
+                runtime
+            }
             Err(error) => {
                 if let Some(outcome) =
                     self.cancelled_outcome(request_id, &command, &cancellation)?
@@ -424,24 +438,8 @@ impl AgentSession {
             .kernel
             .execute_prompt(command_id, prompt, runtime, cancellation)
             .await?;
-        // Recorded once the message is admitted; a trace failure never costs
-        // the turn its outcome.
-        if !skipped.is_empty()
-            && let Err(error) = trace
-                .record_host(
-                    "message_context_skipped",
-                    Some("degraded"),
-                    serde_json::json!({ "command_id": command_id, "skipped": skipped }),
-                )
-                .await
-        {
-            renoa_telemetry::event(
-                "renoa.host",
-                "warn",
-                "message_context_untraced",
-                &serde_json::json!({ "command_id": command_id, "error": error.to_string() }),
-            );
-        }
+        // Recorded once the message is admitted.
+        record_skipped(trace, MESSAGE_CONTEXT_TRACE, command_id, &skipped).await;
         Ok(outcome)
     }
 }

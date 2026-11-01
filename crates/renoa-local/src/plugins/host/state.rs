@@ -16,7 +16,7 @@ pub struct HostPluginActivation {
 /// Which compiled plugins each agent turned on or off; no row is the default, on.
 pub(crate) const BUILTIN_PLUGINS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_agent_builtin_plugins (
         agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-        plugin_id TEXT NOT NULL CHECK(plugin_id IN ('renoa.agents','renoa.automations','renoa.documents','renoa.skills','renoa.git','renoa.time')),
+        plugin_id TEXT NOT NULL CHECK(plugin_id IN ('renoa.agents','renoa.automations','renoa.documents','renoa.skills','renoa.git','renoa.time','renoa.memory')),
         enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), PRIMARY KEY(agent_id,plugin_id)
     ) STRICT;";
 

@@ -1778,6 +1778,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnem"
+version = "0.1.0"
+source = "git+https://github.com/Anrahya/mnem?rev=0a0af7f64eb2613e24322628fd18e44b17133348#0a0af7f64eb2613e24322628fd18e44b17133348"
+dependencies = [
+ "jiff",
+ "regex",
+]
+
+[[package]]
 name = "monty-fs"
 version = "1.0.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2269,6 +2278,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "regex-automata"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2447,6 +2468,7 @@ dependencies = [
  "getrandom 0.4.3",
  "globset",
  "jiff",
+ "mnem",
  "monty-pool",
  "monty-types",
  "nix",

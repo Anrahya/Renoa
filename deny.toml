@@ -72,7 +72,8 @@ reason = "Current proc macros use syn 2; serde, schemars, and ACP derive use syn
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# Mnem, the owner's memory library behind `renoa.memory`, pinned by revision.
+allow-git = ["https://github.com/Anrahya/mnem"]
 
 [sources.allow-org]
 github = []

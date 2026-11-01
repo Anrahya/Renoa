@@ -59,7 +59,8 @@ Each turn composes the system prompt from the stored definition in this order:
 the instructions; an `<identity>` block, `Your name is <name>.`, so a rename
 reaches the next turn; the `<purpose>` block; the agent's `SOUL.md`; the person's
 `USER.md`, which renders empty, with the revision of empty content, until that
-person has a profile; and, when enabled, the workspace `AGENTS.md`. Because the
+person has a profile; the `<session_context>` block the person's plugins add,
+such as their `MIND.md`; and, when enabled, the workspace `AGENTS.md`. Because the
 name is quoted into that block, a name is 1 to 512 bytes on one line with no
 surrounding whitespace, control character, `<`, or `>`; creation, rename, and
 every read of a stored row apply that one rule.
@@ -98,7 +99,9 @@ concurrent edits from two agents safe. Existing files are never overwritten
 during startup. Neither file changes kernel state or the surface binding.
 
 The agent learns durable facts during ordinary work and may update either
-document through `agent_documents` when the evidence is strong enough. Startup
+document through `agent_documents` when the evidence is strong enough. `USER.md`
+holds what rarely changes about the person; commitments, plans, reminders and
+dated events go to their notebook through `memory_note` instead. Startup
 does not interrogate the user or invent durable user facts from environment
 data.
 
@@ -608,9 +611,10 @@ machine tools for a child; it exposes no operation to grant tools to its caller.
 owner operations. Their revision-checked receipts remain independent of the
 original creation receipt. Active operations retain their frozen grants.
 
-Six compiled Host plugins use the same discovery and management boundary as
-external plugins. Five contribute tools, invoked through the same exact-schema
-lookup as external MCP tools; `renoa.time` contributes context to each message:
+Seven compiled Host plugins use the same discovery and management boundary as
+external plugins. Six contribute tools, invoked through the same exact-schema
+lookup as external MCP tools; `renoa.time` contributes context to each message,
+and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 
 | Plugin | Capabilities |
 | --- | --- |
@@ -620,10 +624,12 @@ lookup as external MCP tools; `renoa.time` contributes context to each message:
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
 | `renoa.git` | Inspect local changes, diffs, and commits |
 | `renoa.time` | Show the current time and the time since the previous message |
+| `renoa.memory` | Note, recall and zoom into the speaking person's shared notebook; show their `MIND.md` |
 
 These plugins start enabled, except that an agent created from the Alpha preset
 starts with `renoa.time` off; document tools exist only for definitions that enable
-documents, and `USER.md` is editable only in a turn that names a principal. `plugin_manage` can enable or deactivate a compiled plugin for its
+documents, and `USER.md` is editable only in a turn that names a principal, as is
+the notebook. `plugin_manage` can enable or deactivate a compiled plugin for its
 caller, and `configure_plugin` replaces the caller's settings for one that takes
 them. Stored state is checked again on discovery and dispatch. Imported
 manifests cannot register native implementations or change machine grants.
@@ -1062,6 +1068,34 @@ durable suffix, which preserves the exact prompt prefix used by provider
 caches. A command admitted before schema 41 keeps its stored `turn_timing` and
 is projected as it was.
 
+`renoa.memory` keeps one Mnem notebook per principal at
+`users/<principal-id>/mnem/`, beside their `USER.md`, shared by every agent that
+talks to them. Its tools are `memory_note`, `memory_recall` and `memory_zoom`,
+bound to the person the turn talks to the way `agent_documents` chooses whose
+`USER.md` it edits; a guest's or an unidentified speaker's call is refused and
+creates nothing. A note is signed `[by <agent name>]`, with brackets and control
+characters removed and the name cut to Mnem's 32 bytes, or `agent-<id prefix>`
+when nothing is left, and dated in the agent's `renoa.time` zone, else the Host
+zone, whether or not `renoa.time` is enabled. The first note creates the
+notebook: it is written into a hidden staging notebook and renamed into place
+only once Mnem accepts it, so a refused note leaves nothing; a crash in between
+can leave a hidden `.mnem-staging-*` directory with no visible note. Recall and
+zoom with no notebook return nothing and create nothing. Mnem's compaction,
+Dream, agenda and heartbeat do not run yet; the notebook accumulates notes.
+
+The session-context point adds attributed blocks to the system prompt of a turn
+that talks to a person: today one, the person's `MIND.md`, present only when
+Mnem's Dream has written it and `renoa.memory` is enabled. The block carries
+`MIND.md`'s revision, so the prompt's bytes, and the provider's cached prefix,
+change only when the file does; recent notes stay out of it for the same
+reason. A block over 32 KiB, or one that cannot be read, is left out, recorded
+as a `session_context_skipped` trace event, and never blocks the turn. The
+blocks are read when a command first resolves its runtime and, when there is
+one, pinned to that command in `sessions/<session-uuid>/session-context.json`
+before it is admitted, so a retried or recovered command rebuilds the system
+prompt its kernel manifest froze, even after `MIND.md` changed or the plugin was
+turned off. A command already admitted without a pin keeps no block.
+
 `LocalHost::ensure_agent_session` accepts a caller-chosen UUID for durable surface
 admission. Repeating it resolves the already-published session with its stored
 model selection, Agent identity, and workspace instead of validating a
@@ -1122,6 +1156,7 @@ another writer's files to empty a directory.
     workspace/                     scheduled/headless agent workspace
   users/<principal-id>/
     USER.md                        one person's profile, shared by their agents
+    mnem/                          their Mnem notebook and MIND.md, shared too
   state/
     host.sqlite3                   definitions, plugins, connections, receipts
     skills/<sha256>/               imported immutable skill revisions
@@ -1137,6 +1172,7 @@ another writer's files to empty a directory.
     runtime.jsonl                  provider/model/reasoning selections
     kernel.sqlite3                 execution and recovery truth
     trace.sqlite3                  diagnostics
+    session-context.json           the latest command's pinned session context
   runtime/                         owner-installed runtime assets
 ```
 
@@ -1176,7 +1212,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 42
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 43
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1186,7 +1222,9 @@ selection step, a schema 34 catalog only moves its runs, a schema 35 catalog
 also gains the shared-registry failure record, and a schema 36 catalog only
 gives its runs a status. Every catalog below schema 42 gains the main-agent
 marker on its earliest-created agent, ties broken by agent id; a Host with no
-agent stays unmarked until its first creation. Live selections
+agent stays unmarked until its first creation. Every catalog below schema 43
+admits `renoa.memory` in its compiled-plugin table, keeping every stored
+activation, so every existing agent has the plugin at its default, on. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1214,8 +1252,8 @@ guidance. Reopening the upgraded catalog does not repeat the conversion.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
    agent-owned rows, the session directories, enabled SOUL files, and
    predecessor document roots. It preserves canonical
-   `agents/<agent-id>/workspace` directories and people's `users/` profiles,
-   and never deletes workspace files or the Host's shared state. One transaction
+   `agents/<agent-id>/workspace` directories and people's `users/` profiles and
+   notebooks, and never deletes workspace files or the Host's shared state. One transaction
    deletes the whole row set with foreign keys deferred, so the order it is
    written in cannot break a reset, and a test that classifies every catalog
    table is what keeps the delete list complete.
@@ -1658,6 +1696,9 @@ Schema 41 moves turn timing from agent behavior to `renoa.time`: behavior loses
 stored creation request, so a retried creation still replays; an agent
 that had it off gets `renoa.time` turned off, and per-agent plugin settings gain
 their table.
+Schema 42 marks the Host's main agent. Schema 43 rebuilds the compiled-plugin
+table so its `CHECK` admits `renoa.memory`, copying every stored activation and
+adding none.
 
 ## Local CLI
 

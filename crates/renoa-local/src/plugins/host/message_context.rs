@@ -11,16 +11,8 @@ use std::path::Path;
 use renoa_agent_loop::{ContextContribution, TurnContext};
 use renoa_kernel::AgentId;
 
-use super::{HostPluginId, settings, state, time::TimeSettings};
+use super::{HostPluginId, Skipped, settings, state, time::TimeSettings};
 use crate::{Speaker, host::catalog, plugins::PluginError};
-
-/// A contributor left out of one message, and why: `surface`, a plugin id,
-/// or `*` when no plugin could be asked.
-#[derive(Debug, serde::Serialize)]
-pub(crate) struct Skipped {
-    pub(crate) source: &'static str,
-    pub(crate) reason: String,
-}
 
 /// The context for a prompt from `speaker` admitted at `observed_at_ms`, after
 /// a previous prompt admitted at `previous_ms`, whose surface described where
@@ -110,6 +102,7 @@ fn contribution(
         | HostPluginId::Automations
         | HostPluginId::Documents
         | HostPluginId::Skills
-        | HostPluginId::Git => Ok(None),
+        | HostPluginId::Git
+        | HostPluginId::Memory => Ok(None),
     }
 }

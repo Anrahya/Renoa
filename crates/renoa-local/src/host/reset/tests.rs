@@ -281,6 +281,8 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     let profile = root.join("data/users").join(Uuid::new_v4().to_string());
     fs::create_dir_all(&profile).expect("profile directory");
     fs::write(profile.join("USER.md"), "Prefers mornings.\n").expect("profile");
+    let notebook = profile.join("mnem");
+    let revision = crate::plugins::host::memory::fixtures::dream(&notebook, "Training for a 10k");
 
     let report = reset_host_data_root(&root.join("data")).expect("reset");
 
@@ -317,6 +319,13 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
         fs::read_to_string(profile.join("USER.md")).expect("a person's profile survives"),
         "Prefers mornings.\n",
         "a person's USER.md is not agent state"
+    );
+    let kept = mnem::memory::Memory::open(&notebook).expect("a person's notebook survives");
+    assert_eq!(kept.recall(".", 20).expect("notes").len(), 5);
+    assert_eq!(
+        kept.mind().expect("MIND.md").map(|mind| mind.revision),
+        Some(revision),
+        "a person's notebook is not agent state either"
     );
 
     let second = reset_host_data_root(&root.join("data")).expect("repeat reset");

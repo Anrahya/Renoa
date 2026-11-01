@@ -1,0 +1,222 @@
+use std::fs;
+
+use mnem::mind::{ACTIVE_MAX, DURABLE_MAX, HUNCHES_MAX, LINE_MAX, Mind, NUDGES_MAX, render};
+use renoa_kernel::{AgentId, CommandId};
+use uuid::Uuid;
+
+use super::{
+    CommandStanding, ContextRequest, MAX_BLOCK_BYTES, MIND_HEADING, PIN_FILE, SessionContext,
+    resolve,
+};
+use crate::{host::catalog, plugins::host::memory::fixtures};
+
+struct Fixture {
+    _directory: tempfile::TempDir,
+    database: std::path::PathBuf,
+    data: std::path::PathBuf,
+    session: std::path::PathBuf,
+    agent: AgentId,
+    person: Uuid,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().expect("fixture");
+        let data = directory.path().join("data");
+        let session = directory.path().join("session");
+        fs::create_dir_all(&data).expect("data");
+        fs::create_dir_all(&session).expect("session");
+        let database = directory.path().join("host.sqlite3");
+        catalog::initialize(&database).expect("catalog");
+        Self {
+            _directory: directory,
+            database,
+            data,
+            session,
+            agent: AgentId::new(),
+            person: Uuid::new_v4(),
+        }
+    }
+
+    fn notebook(&self) -> std::path::PathBuf {
+        fixtures::notebook(&self.data, self.person)
+    }
+
+    fn pin(&self) -> std::path::PathBuf {
+        self.session.join(PIN_FILE)
+    }
+
+    fn resolve(&self, command: CommandId, standing: CommandStanding) -> (SessionContext, usize) {
+        let pin = self.pin();
+        let (context, skipped) = resolve(&ContextRequest {
+            database: &self.database,
+            data_directory: &self.data,
+            agent: self.agent,
+            principal: self.person,
+            command,
+            standing,
+            pin: &pin,
+        });
+        (context, skipped.len())
+    }
+}
+
+const NEW: CommandStanding = CommandStanding {
+    admitted: false,
+    other_unfinished: false,
+};
+const ADMITTED: CommandStanding = CommandStanding {
+    admitted: true,
+    other_unfinished: false,
+};
+
+fn revision(context: &SessionContext) -> Option<&str> {
+    context.blocks.first().map(|block| block.revision.as_str())
+}
+
+#[test]
+fn a_block_needs_a_mind_and_renders_escaped_after_its_source() {
+    let fixture = Fixture::new();
+    let (empty, skipped) = fixture.resolve(CommandId::new(), NEW);
+    assert_eq!((empty.render(), skipped), (None, 0));
+    assert!(!fixture.data.join("users").exists(), "nothing is created");
+    assert!(!fixture.pin().exists(), "an empty context needs no pin");
+
+    let revision = fixtures::dream(&fixture.notebook(), "Moving <house> & job");
+    let (context, skipped) = fixture.resolve(CommandId::new(), NEW);
+    assert_eq!(skipped, 0);
+    let rendered = context.render().expect("a block");
+    assert!(
+        rendered.starts_with(&format!(
+            "<session_context>\n<context source=\"plugin:renoa.memory\" revision=\"{revision}\">\nMIND.md: "
+        )),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("- Moving &lt;house&gt; &amp; job (#4)"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.ends_with("\n</context>\n</session_context>"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_pinned_command_keeps_its_block_and_a_new_one_reloads() {
+    let fixture = Fixture::new();
+    let first = fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    let command = CommandId::new();
+    let (admitted, _) = fixture.resolve(command, NEW);
+    assert_eq!(revision(&admitted), Some(first.as_str()));
+
+    let second = fixtures::dream(&fixture.notebook(), "Recovering from a sprain");
+    assert_ne!(first, second);
+    for standing in [NEW, ADMITTED] {
+        let (retried, skipped) = fixture.resolve(command, standing);
+        assert_eq!(
+            (retried, skipped),
+            (admitted.clone(), 0),
+            "a retry reuses its pin"
+        );
+    }
+    let (next, _) = fixture.resolve(CommandId::new(), NEW);
+    assert_eq!(
+        revision(&next),
+        Some(second.as_str()),
+        "a new command reloads"
+    );
+}
+
+#[test]
+fn an_admitted_command_without_a_pin_keeps_no_block_and_a_refused_one_writes_none() {
+    let fixture = Fixture::new();
+    fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    let (none, _) = fixture.resolve(CommandId::new(), ADMITTED);
+    assert_eq!(none.render(), None, "it was admitted with no block");
+
+    let unfinished = CommandId::new();
+    let (pinned, _) = fixture.resolve(unfinished, NEW);
+    let refused = CommandStanding {
+        admitted: false,
+        other_unfinished: true,
+    };
+    let (shown, _) = fixture.resolve(CommandId::new(), refused);
+    assert_eq!(shown, pinned, "the refused command still reads the block");
+    let (recovered, _) = fixture.resolve(unfinished, ADMITTED);
+    assert_eq!(recovered, pinned, "the unfinished command keeps its pin");
+}
+
+fn write_mind(fixture: &Fixture, text: &str) {
+    fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    fs::write(fixture.notebook().join("MIND.md"), text).expect("MIND.md");
+}
+
+#[test]
+fn a_corrupt_or_oversized_mind_is_skipped_and_reported() {
+    let corrupt = Fixture::new();
+    write_mind(&corrupt, "not a mind");
+    assert_eq!(
+        corrupt.resolve(CommandId::new(), NEW),
+        (SessionContext::default(), 1)
+    );
+
+    let oversized = Fixture::new();
+    let long = format!(
+        "## Durable\n- {} (#0)\n## Active\n## Hunches\n## Nudges\n",
+        "x".repeat(MAX_BLOCK_BYTES)
+    );
+    write_mind(&oversized, &long);
+    assert_eq!(
+        oversized.resolve(CommandId::new(), NEW),
+        (SessionContext::default(), 1)
+    );
+    assert!(!oversized.pin().exists(), "a skipped block is not pinned");
+}
+
+#[test]
+fn an_unreadable_pin_is_reported_and_replaced() {
+    let fixture = Fixture::new();
+    fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    fs::write(fixture.pin(), "{").expect("a torn pin");
+    let command = CommandId::new();
+    let (context, skipped) = fixture.resolve(command, NEW);
+    assert!(context.render().is_some());
+    assert_eq!(skipped, 1);
+    assert_eq!(
+        fixture.resolve(command, ADMITTED),
+        (context, 0),
+        "pinned again"
+    );
+}
+
+#[test]
+fn every_mind_mnem_can_write_fits_the_budget() {
+    let lines = DURABLE_MAX + ACTIVE_MAX + HUNCHES_MAX + NUDGES_MAX;
+    // The block's heading line, Dream's header and headings, then each kept
+    // line with its `- `, its newline, and room for a hunch's cadence tag such
+    // as `[weekly] `.
+    let largest = MIND_HEADING.len()
+        + 1
+        + render(&Mind::default()).len()
+        + lines * (LINE_MAX + "- \n".len() + 16);
+    assert!(largest <= MAX_BLOCK_BYTES, "{largest} > {MAX_BLOCK_BYTES}");
+}
+
+#[test]
+fn the_pin_is_one_file_in_the_session_directory() {
+    let fixture = Fixture::new();
+    fixtures::dream(&fixture.notebook(), "Training for a 10k");
+    fixture.resolve(CommandId::new(), NEW);
+    let entries: Vec<String> = fs::read_dir(&fixture.session)
+        .expect("session directory")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(entries, [PIN_FILE], "no staged file is left behind");
+}

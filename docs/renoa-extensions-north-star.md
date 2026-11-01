@@ -568,7 +568,8 @@ of the same skill name.
 ## Compiled Host plugins
 
 The same protocol also discovers compiled `renoa.agents`, `renoa.automations`,
-`renoa.documents`, `renoa.skills`, `renoa.git`, and `renoa.time` plugins. Their
+`renoa.documents`, `renoa.skills`, `renoa.git`, `renoa.time`, and `renoa.memory`
+plugins. Their
 implementations are registered by the Host and cannot be loaded from an
 imported package. `plugin_manage` enables or deactivates them for its caller
 using durable receipts, and `configure_plugin` replaces the caller's settings
@@ -577,7 +578,8 @@ current state. Host references bind a real tool's schema and revision. Machine
 grants remain owner-controlled and cannot be added to the caller by plugin
 management. Every created agent receives the plugin protocol regardless of its
 machine selection. Schema 32 owns these activation records alongside external
-plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings.
+plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings, and
+schema 43 adds `renoa.memory`.
 
 ## Contribution model
 
@@ -600,9 +602,10 @@ field on every plugin.
 | `tools`, `skills`, `mcp_servers` | implemented |
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` |
+| `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
 | `delivery`: private owner channels offered by surfaces | planned, for #104 and #86 |
 
-Other points (session context, triggers, views) are named only as direction.
+Other points (triggers, views) are named only as direction.
 They get no type, table, or field until a consumer and a test prove their
 shape.
 
@@ -614,17 +617,18 @@ shape.
   plugin (#84) is a provenance of this kind, not a separate point.
 
 Third-party code never runs in a Renoa process. A point declares which kinds it
-accepts. `message_context` accepts compiled contributors only; a remote
-contributor would call a third party before admission, outside the effect
-journal, so it waits until it can run as a journaled loop effect with a
-declared replay class.
+accepts. `message_context` and `session_context` accept compiled contributors
+only; a remote contributor would call a third party before admission, outside
+the effect journal, so it waits until it can run as a journaled loop effect
+with a declared replay class.
 
 ### Identity: which plugin it is
 
 Compiled plugins are one closed list in the Host, each with a `renoa.*` id and
 a description; packages are identified by content digest. Per-point storage
-keys on that id. The settings and message-context points match every compiled
-plugin exhaustively, so the compiler checks each new plugin against both.
+keys on that id. The settings, message-context, and session-context points
+match every compiled plugin exhaustively, so the compiler checks each new
+plugin against all three.
 
 ### Message context
 
@@ -653,6 +657,29 @@ Contributors see no message origin. A guest's message (someone other than the
 owner in a shared conversation) gets the surface entry and no plugin context;
 a contributor would have to opt in to serve guests.
 
+### Session context
+
+`session_context` is the point that lets a plugin add standing context about
+the person a turn talks to, in the system prompt, without breaking the prompt
+cache:
+
+1. When a command first resolves its runtime, and the turn talks to a person,
+   the Host asks each enabled contributor for at most one block, passing the
+   agent and the person. A guest's or an unidentified speaker's turn gets none.
+2. Each block is attributed to its source (`plugin:<id>`), carries its source's
+   revision, and is bounded at 32 KiB; its text is escaped. A contributor that
+   fails or exceeds the bound is left out while the others stay; the omission
+   is traced as `session_context_skipped` and never blocks the turn.
+3. The blocks are rendered as one `<session_context>` element after `USER.md`.
+   Their bytes change only when a revision does, so the cached prefix survives
+   every turn in between. Content that changes with every write, such as recent
+   notes, does not belong here; agents read it through tools.
+4. The kernel freezes the system prompt into each operation's manifest, so the
+   blocks are pinned to the command in its session directory before admission.
+   A retry or recovery reuses the pin and rebuilds the same prompt, even after
+   the source changed or the plugin was turned off. An empty result needs no
+   pin: a command admitted without one resolves to no block again.
+
 ### Settings
 
 A compiled plugin validates its own settings before anything is stored; they
@@ -671,6 +698,19 @@ zone and the time since the previous admitted prompt. It replaces the built-in
 turn-timing behavior: an agent that had timing off starts with `renoa.time`
 off, and so does a new agent from the Alpha preset. Commands and events stored
 under the earlier behavior remain readable.
+
+### `renoa.memory`
+
+The first consumer of `session_context`. It wraps Mnem, the owner's memory
+library, pinned to one revision, and keeps one notebook per person at
+`users/<principal-id>/mnem/`, shared by every agent that talks to them. Its
+tools, `memory_note`, `memory_recall` and `memory_zoom`, act on the notebook of
+the person the turn talks to and refuse a turn with no person. Its
+`session_context` block is that person's `MIND.md`, keyed by Mnem's revision of
+the file. It is enabled by default for every agent and has no settings; a note
+is dated in the agent's `renoa.time` zone. `USER.md` keeps the person's lasting
+profile; time-bound and inferred facts go to the notebook. Mnem's compaction,
+Dream, agenda and heartbeat are later steps and do not run yet.
 
 ### What stays closed
 

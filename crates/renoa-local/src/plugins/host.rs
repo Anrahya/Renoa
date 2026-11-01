@@ -1,6 +1,7 @@
 //! Compiled Host capabilities use the same discovery and invocation boundary as MCP plugins.
 //! Imported manifests cannot register implementations or grant machine access.
-//! A compiled plugin contributes tools, per-message context, or both.
+//! A compiled plugin contributes tools, per-message context, session context,
+//! or a mix of them.
 
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
@@ -10,7 +11,9 @@ use renoa_kernel::AgentId;
 use serde::Serialize;
 
 pub(crate) mod executor;
+pub(crate) mod memory;
 pub(crate) mod message_context;
+pub(crate) mod session_context;
 pub(crate) mod settings;
 pub(crate) mod state;
 pub(crate) mod time;
@@ -23,16 +26,18 @@ pub(crate) enum HostPluginId {
     Skills,
     Git,
     Time,
+    Memory,
 }
 
 impl HostPluginId {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Agents,
         Self::Automations,
         Self::Documents,
         Self::Skills,
         Self::Git,
         Self::Time,
+        Self::Memory,
     ];
     pub(crate) const fn id(self) -> &'static str {
         match self {
@@ -42,6 +47,7 @@ impl HostPluginId {
             Self::Skills => "renoa.skills",
             Self::Git => "renoa.git",
             Self::Time => time::PLUGIN_ID,
+            Self::Memory => memory::PLUGIN_ID,
         }
     }
     pub(crate) fn parse(id: &str) -> Option<Self> {
@@ -61,6 +67,7 @@ impl HostPluginId {
                 "Inspect local Git changes, diffs, and pinned commits without shell access."
             }
             Self::Time => time::DESCRIPTION,
+            Self::Memory => memory::DESCRIPTION,
         }
     }
     pub(crate) fn owner(tool: &str) -> Option<Self> {
@@ -70,9 +77,18 @@ impl HostPluginId {
             "agent_documents" => Some(Self::Documents),
             "skill_search" | "skill_load" => Some(Self::Skills),
             "git_changes" | "git_diff" | "git_show" => Some(Self::Git),
+            memory::NOTE | memory::RECALL | memory::ZOOM => Some(Self::Memory),
             _ => None,
         }
     }
+}
+
+/// A contributor one point left out of one command, and why: `surface`, a
+/// plugin id, or `*` when no plugin could be asked.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct Skipped {
+    pub(crate) source: &'static str,
+    pub(crate) reason: String,
 }
 
 struct RegisteredTool {

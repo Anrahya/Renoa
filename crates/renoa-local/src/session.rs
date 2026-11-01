@@ -5,6 +5,8 @@ use renoa_agent_loop::MESSAGE_EVENT_KIND;
 use renoa_kernel::{AgentId, CommandId, EventCursor, Kernel, KernelError, OperationId, SessionId};
 use thiserror::Error;
 
+use crate::plugins::host::session_context::CommandStanding;
+
 mod execution;
 pub(crate) use execution::PromptAdmission;
 #[cfg(test)]
@@ -167,6 +169,29 @@ impl LocalSession {
     #[must_use]
     pub const fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    /// Where `command_id` stands before its runtime is resolved: whether the
+    /// kernel holds it, and whether another command is unfinished, which the
+    /// kernel's exclusive admission refuses this one for. Unfinished means no
+    /// outcome, the kernel's own test.
+    ///
+    /// # Errors
+    ///
+    /// Returns kernel storage failures.
+    pub(crate) fn command_standing(
+        &self,
+        command_id: CommandId,
+    ) -> Result<CommandStanding, LocalSessionError> {
+        let operations = self.kernel.inspect(self.session_id)?.operations;
+        Ok(CommandStanding {
+            admitted: operations
+                .iter()
+                .any(|operation| operation.command_id == command_id),
+            other_unfinished: operations
+                .iter()
+                .any(|operation| operation.command_id != command_id && operation.outcome.is_none()),
+        })
     }
 
     /// Projects the complete gapless durable conversation for surface replay.
