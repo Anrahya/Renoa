@@ -28,19 +28,18 @@ const MIND_HEADING: &str = "MIND.md: what the shared notebook of the person you 
 const NUDGES_HEADING: &str =
     "Don't act on a nudge before it is handed to you, and one that was handed over is done.";
 
-/// The largest `MIND.md` view, in bytes, before escaping. Mnem refuses a file
-/// over `mind::FILE_MAX`. The view without Nudges re-renders the parsed file:
-/// it adds a fixed preamble and section headings, well under 1 KiB, and one
-/// byte per hunch, whose line in the file takes at least 11.
-const VIEW_MAX: usize = mnem::mind::FILE_MAX + mnem::mind::FILE_MAX / 10 + 1024;
-/// How much escaping can grow a byte: `&` becomes `&amp;`.
-const ESCAPE_GROWTH: usize = "&amp;".len();
-
-/// The largest block this plugin adds, as the prompt carries it: a heading,
-/// then a view escaped. Every `MIND.md` Mnem accepts fits, so none is left out
-/// for its size.
-pub(crate) const SESSION_BLOCK_MAX: usize =
-    MIND_HEADING.len() + 1 + NUDGES_HEADING.len() + 1 + ESCAPE_GROWTH * VIEW_MAX;
+/// The largest block this plugin adds, as the prompt carries it: the headings,
+/// then a view of `MIND.md` escaped. Mnem refuses a file over
+/// `mind::FILE_MAX`; the half again on top is room for the view without
+/// Nudges, which re-renders the file, and for ordinary escaping. A file that
+/// escapes past it, such as one full of `&`, is left out and reported: the
+/// block goes out with every turn, so it stays small.
+pub(crate) const SESSION_BLOCK_MAX: usize = MIND_HEADING.len()
+    + 1
+    + NUDGES_HEADING.len()
+    + 1
+    + mnem::mind::FILE_MAX
+    + mnem::mind::FILE_MAX / 2;
 
 /// The zone the notebook keeps wall time in: the Host's main agent's
 /// `renoa.time` zone, or the Host zone while there is no main agent.

@@ -476,14 +476,20 @@ async fn mind_enters_the_prompt_after_user_md_and_follows_its_revision() {
     )
     .expect("on");
 
-    for largest in fixtures::largest_minds() {
+    for largest in fixtures::largest_prose_minds() {
         fs::write(notebook.join("MIND.md"), largest).expect("the largest MIND.md");
         assert_ne!(
             say(&arcee, person, "show").await,
             "none",
-            "the main agent's whole view fits however it escapes"
+            "the main agent's whole view of ordinary prose fits"
         );
     }
+    fs::write(notebook.join("MIND.md"), fixtures::escaping_mind()).expect("an escaping MIND.md");
+    assert_eq!(
+        say(&arcee, person, "show").await,
+        "none",
+        "one that escapes past the bound is left out, and the turn runs"
+    );
 
     fs::write(notebook.join("MIND.md"), "not a mind").expect("corrupt MIND.md");
     assert_eq!(
@@ -498,7 +504,11 @@ async fn mind_enters_the_prompt_after_user_md_and_follows_its_revision() {
     fs::write(notebook.join("MIND.md"), oversized).expect("oversized MIND.md");
     assert_eq!(say(&arcee, person, "show").await, "none");
     let reports = skipped(&host, &arcee);
-    assert_eq!(reports.len(), 2, "{reports:?}");
+    assert_eq!(
+        reports.len(),
+        3,
+        "escaping, corrupt, oversized: {reports:?}"
+    );
     assert!(
         reports.iter().all(|report| report.contains("renoa.memory")),
         "{reports:?}"

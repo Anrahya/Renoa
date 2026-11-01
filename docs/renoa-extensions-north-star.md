@@ -682,7 +682,8 @@ cache:
    the source changed or the plugin was turned off. An empty result needs no
    pin: a command admitted without one resolves to no block again. A pin that
    was not written carries no block; one written but not synced carries its
-   block, so the prompt and the pin agree.
+   block, so the prompt and the pin agree, but a crash can still lose it, and
+   the recovered command then fails with a runtime mismatch.
 
 ### Settings
 

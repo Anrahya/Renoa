@@ -1107,12 +1107,14 @@ the person and when. Each view carries its own Mnem revision, so the prompt's
 bytes, and the provider's cached prefix, change only when that view does, and a
 change to the nudges alone leaves every other agent's prompt as it was; recent
 notes stay out of it for the same reason. Each plugin declares its largest
-block, as escaped into the prompt. Mnem refuses a `MIND.md` over
-`mnem::mind::FILE_MAX` without reading it whole; `renoa.memory`'s bound allows a
-view of that file re-rendered and with every byte escaped as `&amp;`, so every
-`MIND.md` Mnem accepts renders. A block over its plugin's bound, or one that
-cannot be read, is left out, recorded as a `session_context_skipped` trace
-event, and never blocks the turn. The blocks are read when a command first
+block, as escaped into the prompt. Mnem bounds the raw file: it refuses a
+`MIND.md` over `mnem::mind::FILE_MAX` without reading it whole. `renoa.memory`
+bounds its block at the headings plus one and a half times `FILE_MAX`, room for
+the view without Nudges and ordinary escaping; the block goes out with every
+turn, so a file that escapes past the bound, such as one full of `&`, is left
+out. A block over its plugin's bound, or one that cannot be read, is left out,
+recorded as a `session_context_skipped` trace event, and never blocks the
+turn. The blocks are read when a command first
 resolves its runtime and, when there is one, pinned to that command in
 `sessions/<session-uuid>/session-context.json` before it is admitted, so a
 retried or recovered command rebuilds the system prompt its kernel manifest
@@ -1120,7 +1122,10 @@ froze, even after `MIND.md` changed, the plugin was turned off, or the owner
 named another main agent. A command already admitted without a pin keeps no
 block. A pin that could not be written leaves no staged file, and the command
 carries no block; one that replaced the old pin but could not be synced still
-carries its block, with the failure traced.
+carries its block, with the failure traced. That pin is not durable: if the
+machine crashes before the directory reaches disk, the old pin can come back,
+and recovering the command then fails with a runtime mismatch instead of
+rebuilding its prompt.
 
 `LocalHost::ensure_agent_session` accepts a caller-chosen UUID for durable surface
 admission. Repeating it resolves the already-published session with its stored

@@ -18,28 +18,36 @@ fn at(raw: &str) -> DateTime {
     raw.parse().expect("a fixture time")
 }
 
-/// The largest `MIND.md` files Mnem accepts that grow most in a prompt: one
-/// line of `&`, which escaping grows fivefold, and as many one-character
-/// hunches as fit, which the view without Nudges grows by a space each.
-pub(crate) fn largest_minds() -> [String; 2] {
-    let max = mnem::mind::FILE_MAX;
-    let escaped = {
-        let frame = ["## Durable\n- ", "\n## Active\n## Hunches\n## Nudges\n"];
-        let room = max - frame.concat().len();
-        format!("{}{}{}", frame[0], "&".repeat(room), frame[1])
-    };
-    let rerendered = {
-        let frame = ["## Durable\n## Active\n## Hunches\n", "## Nudges\n"];
-        let hunch = "- [daily]&\n";
-        let room = max - frame.concat().len();
-        format!(
-            "{}{}{}",
-            frame[0],
-            hunch.repeat(room / hunch.len()),
-            frame[1]
-        )
-    };
-    [escaped, rerendered]
+/// A `MIND.md` of Mnem's largest size whose one Durable line repeats `text`.
+fn one_line_mind(text: &str) -> String {
+    let frame = ["## Durable\n- ", "\n## Active\n## Hunches\n## Nudges\n"];
+    let room = mnem::mind::FILE_MAX - frame.concat().len();
+    let line: String = text.chars().cycle().take(room).collect();
+    format!("{}{line}{}", frame[0], frame[1])
+}
+
+/// The largest `MIND.md` files of ordinary prose Mnem accepts: one long line,
+/// and as many one-letter hunches as fit, which the view without Nudges grows
+/// by a space each.
+pub(crate) fn largest_prose_minds() -> [String; 2] {
+    let frame = ["## Durable\n## Active\n## Hunches\n", "## Nudges\n"];
+    let hunch = "- [daily]x\n";
+    let room = mnem::mind::FILE_MAX - frame.concat().len();
+    let hunches = format!(
+        "{}{}{}",
+        frame[0],
+        hunch.repeat(room / hunch.len()),
+        frame[1]
+    );
+    [
+        one_line_mind("Walks the dog at dawn; reads before bed, (mostly) fiction! "),
+        hunches,
+    ]
+}
+
+/// The largest `MIND.md` full of `&`, which escaping grows fivefold.
+pub(crate) fn escaping_mind() -> String {
+    one_line_mind("&")
 }
 
 /// Gives the notebook at `directory`, created if needed, a `MIND.md` whose

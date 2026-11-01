@@ -208,8 +208,8 @@ fn an_unreadable_pin_is_reported_and_replaced() {
 }
 
 #[test]
-fn every_mind_mnem_accepts_renders_however_it_escapes() {
-    for largest in fixtures::largest_minds() {
+fn the_largest_prose_mind_renders_and_one_that_escapes_past_the_bound_is_left_out() {
+    for largest in fixtures::largest_prose_minds() {
         assert!(largest.len() <= FILE_MAX);
         let fixture = Fixture::new();
         write_mind(&fixture, &largest);
@@ -219,9 +219,22 @@ fn every_mind_mnem_accepts_renders_however_it_escapes() {
                 .is_some()
         );
         let (context, skipped) = fixture.resolve(CommandId::new(), NEW);
-        assert_eq!(skipped, 0, "none is left out for its size");
+        assert_eq!(skipped, 0, "ordinary prose fits");
         assert!(context.render().is_some());
     }
+
+    let escaping = Fixture::new();
+    write_mind(&escaping, &fixtures::escaping_mind());
+    assert!(
+        memory::mind(&escaping.data, escaping.person)
+            .expect("Mnem accepts it")
+            .is_some()
+    );
+    assert_eq!(
+        escaping.resolve(CommandId::new(), NEW),
+        (SessionContext::default(), 1),
+        "escaped past the bound, it is left out and reported"
+    );
 }
 
 #[test]
