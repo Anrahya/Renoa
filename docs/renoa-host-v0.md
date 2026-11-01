@@ -103,8 +103,8 @@ document through `agent_documents` when the evidence is strong enough. `USER.md`
 is the person's long-term profile, the facts unlikely to change soon; anything
 else worth knowing next time, such as habits and preferences that can shift,
 plans, and dated events, goes to their notebook through `memory_note` instead.
-Both tools are resident: they sit in the agent's tool list while their plugins
-are enabled, so the model needs no search to reach them. Startup
+Both tools are resident: they sit in the agent's tool list, so the model needs
+no search to reach them, and a call is refused while its plugin is off. Startup
 does not interrogate the user or invent durable user facts from environment
 data.
 
@@ -592,11 +592,14 @@ daily-assistant agent definition may be used from any compatible surface.
 Every agent receives `plugin_search`, `plugin_manage`, and one invocation tool:
 `code_mode` when the Host configures the pinned Monty worker, otherwise
 `tool_execute`. These are platform capabilities and cannot be removed through
-machine-tool selections. Beside them, each enabled compiled plugin binds its
-resident tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
-`renoa.memory`, and `agent_documents` from `renoa.documents` for an agent that
-keeps documents. They stay findable through `plugin_search`, and Code Mode
-leaves them direct. Targeted discovery comes before `*` browsing. Plugin
+machine-tool selections. Beside them, each compiled plugin binds its resident
+tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
+`renoa.memory` for a turn that talks to a person or comes from a guest, and
+`agent_documents` from `renoa.documents` for an agent that keeps documents.
+The list does not follow the plugin switches, so a recovered command rebuilds
+the manifest it was admitted with; a call to a plugin that is off is refused.
+They stay findable through `plugin_search`, and Code Mode leaves them direct.
+Targeted discovery comes before `*` browsing. Plugin
 cards and nested tools retain the 200-item limit; exact references return the
 full model-facing input schema.
 

@@ -15,8 +15,11 @@ const names=request.tools.map(tool=>tool.name).sort();
 const code=names.includes("code_mode");
 const lastUser=request.messages.findLastIndex(message=>message.role==="user");
 const prompt=request.messages[lastUser].content[0].text;
-// renoa.memory keeps its tools resident; only the profiled agent keeps documents.
-const resident=["memory_note","memory_recall","memory_zoom",...(prompt==="Which profile do you see?"?["agent_documents"]:[])];
+// Only the profiled agent keeps documents, and only its turns talk to a person
+// or a guest, which list the resident memory tools.
+const profiled=prompt==="Which profile do you see?";
+const memory=["memory_note","memory_recall","memory_zoom"];
+const resident=profiled?["agent_documents",...(names.includes("memory_note")?memory:[])]:[];
 if(JSON.stringify(names)!==JSON.stringify([code?"code_mode":"tool_execute","plugin_manage","plugin_search",...resident].sort())) throw Error(`Unexpected tools ${names}`);
 const results=request.messages.slice(lastUser+1).filter(message=>message.role==="tool").map(message=>message.result);
 const call=(id,name,args)=>finish([{type:"tool_call",id,name,arguments:args}],"tool_use");

@@ -207,9 +207,6 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
                 "plugin_search",
                 "plugin_manage",
                 "tool_execute",
-                "memory_note",
-                "memory_recall",
-                "memory_zoom",
             ]
         );
         let encoded_tools = serde_json::to_string(tools).expect("encode model-visible tools");

@@ -4,6 +4,7 @@
 use std::{fs, path::Path, sync::Arc};
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
+use renoa_kernel::EffectRecovery;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -13,6 +14,7 @@ use crate::{
     LocalHostError, LocalTurnOutcome, ModelProvider, Speaker, TurnObservation,
     host::{HostInitialization, LocalHost},
     plugins::host::{HostPluginId, memory::fixtures, settings, state},
+    speaker::ToolAccess,
 };
 
 /// `note: <text>`, `recall: <pattern>` and `zoom: <block>` call that memory
@@ -288,10 +290,10 @@ const RESIDENT_TOOLS: &str = "agent_documents,memory_note,memory_recall,memory_z
 
 /// An app agent sees the memory tools and `agent_documents` in its own tool
 /// list, so it notes what a person says without searching first; the note
-/// lands in the notebook search reaches, and a plugin turned off takes its
-/// resident tools out of the next turn's list.
+/// lands in the notebook search reaches. A plugin turned off keeps the list as
+/// it was and refuses the call.
 #[tokio::test]
-async fn an_app_agent_notes_without_searching_and_a_plugin_turned_off_leaves_its_list() {
+async fn an_app_agent_notes_without_searching_and_a_plugin_turned_off_refuses_the_call() {
     let directory = tempfile::tempdir().expect("directory");
     let root = directory.path();
     let host = host(root);
@@ -309,35 +311,146 @@ async fn an_app_agent_notes_without_searching_and_a_plugin_turned_off_leaves_its
     assert_eq!(found[0]["text"], "Only buys 400 ml Cokes");
     assert_eq!(found[0]["author"], "Renoa");
 
-    let database = &host.config.database;
-    state::change(database, id, HostPluginId::Memory, false, "memory-off").expect("off");
-    assert_eq!(
-        say(&renoa, person, "tools").await,
-        "agent_documents,plugin_manage,plugin_search,tool_execute"
-    );
     state::change(
-        database,
+        &host.config.database,
         id,
-        HostPluginId::Documents,
+        HostPluginId::Memory,
         false,
-        "documents-off",
+        "memory-off",
     )
     .expect("off");
     assert_eq!(
         say(&renoa, person, "tools").await,
-        "plugin_manage,plugin_search,tool_execute"
+        RESIDENT_TOOLS,
+        "the list does not follow the switch"
     );
-    state::change(database, id, HostPluginId::Memory, true, "memory-on").expect("on");
+    let refused = say(&renoa, person, "direct: Plans a day at a time").await;
+    assert!(
+        refused.starts_with("error: ")
+            && refused.contains("renoa.memory is turned off")
+            && refused.contains("plugin_manage enable_plugin"),
+        "the refusal says why and the correct call: {refused}"
+    );
+    state::change(
+        &host.config.database,
+        id,
+        HostPluginId::Memory,
+        true,
+        "memory-on",
+    )
+    .expect("on");
     assert_eq!(
-        say(&renoa, person, "tools").await,
-        "memory_note,memory_recall,memory_zoom,plugin_manage,plugin_search,tool_execute"
+        notes(&say(&renoa, person, "recall: .").await).len(),
+        1,
+        "the refused note was not written"
     );
 }
 
-/// The resident path grants nothing search did not: a guest's turn lists the
-/// tools and refuses every call, and a turn with no person has no notebook.
+/// What a command's manifest freezes of each tool: its name, revision and
+/// recovery class.
+fn frozen(
+    bindings: &[renoa_agent_loop::AgentToolBinding],
+) -> Vec<(String, String, EffectRecovery)> {
+    bindings
+        .iter()
+        .map(|binding| {
+            (
+                binding.tool_name().to_owned(),
+                binding.revision().to_owned(),
+                binding.recovery(),
+            )
+        })
+        .collect()
+}
+
+/// Resident bindings keep each tool's own recovery class, and turning their
+/// plugins off leaves every frozen tool as it was.
 #[tokio::test]
-async fn a_resident_memory_tool_refuses_a_guest_and_a_turn_with_no_person() {
+async fn resident_bindings_keep_their_recovery_and_ignore_the_plugin_switch() {
+    let directory = tempfile::tempdir().expect("directory");
+    let root = directory.path();
+    let host = host(root);
+    let id = agent(&host, crate::presets::APP_PRESET_ID, "Renoa").await;
+    let definition = host
+        .resolve_definition(id)
+        .await
+        .expect("definition")
+        .with_principal(Some(Uuid::new_v4()));
+    let bindings = || {
+        super::protocol_bindings(
+            &host.config,
+            &definition,
+            root,
+            renoa_kernel::SessionId::new(),
+            None,
+            ToolAccess::Granted,
+            Vec::new(),
+        )
+        .expect("bindings")
+    };
+    let before = frozen(&bindings());
+    let recovery: Vec<(&str, EffectRecovery)> = before
+        .iter()
+        .skip(3)
+        .map(|(name, _, recovery)| (name.as_str(), *recovery))
+        .collect();
+    assert_eq!(
+        recovery,
+        [
+            ("agent_documents", EffectRecovery::SafeToReplay),
+            ("memory_note", EffectRecovery::NeverReplay),
+            ("memory_recall", EffectRecovery::SafeToReplay),
+            ("memory_zoom", EffectRecovery::SafeToReplay),
+        ]
+    );
+    for plugin in [HostPluginId::Memory, HostPluginId::Documents] {
+        state::change(&host.config.database, id, plugin, false, plugin.id()).expect("off");
+    }
+    assert_eq!(frozen(&bindings()), before);
+}
+
+/// A command whose plugins are turned off between its crash and its recovery
+/// rebuilds the runtime the kernel froze, and completes.
+#[tokio::test]
+async fn a_command_recovered_after_its_plugins_are_turned_off_completes() {
+    let directory = tempfile::tempdir().expect("directory");
+    let root = directory.path();
+    let host = host(root);
+    let id = agent(&host, crate::presets::APP_PRESET_ID, "Renoa").await;
+    let renoa = session(&host, root, id).await;
+    let person = Speaker::Principal(Uuid::new_v4());
+
+    // The model call is in flight when the turn is dropped, as a crash leaves it.
+    let command = Uuid::new_v4();
+    let started = root.join("started");
+    fs::write(root.join("hang"), "").expect("hang");
+    tokio::select! {
+        outcome = turn(&renoa, command, person, "show") => panic!("the turn did not hang: {outcome:?}"),
+        () = appears(&started) => {}
+    }
+    fs::remove_file(root.join("hang")).expect("release");
+    for plugin in [HostPluginId::Memory, HostPluginId::Documents] {
+        state::change(&host.config.database, id, plugin, false, plugin.id()).expect("off");
+    }
+
+    let recovered = loop {
+        match turn(&renoa, command, person, "show").await {
+            Ok(LocalTurnOutcome::Completed { output, .. }) => break output,
+            // The dropped model call releases the session once it is cleaned up.
+            Err(error) if error.to_string().contains("active driver") => {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            other => panic!("the recovered command failed: {other:?}"),
+        }
+    };
+    assert_eq!(recovered, "none");
+}
+
+/// The resident path grants nothing search did not. A turn with no person
+/// lists no notebook tool. A guest's turn shares a person's conversation, so
+/// it lists them, as every tool it refuses, and refuses the call.
+#[tokio::test]
+async fn a_turn_with_no_person_lists_no_memory_tool_and_a_guest_is_refused() {
     let directory = tempfile::tempdir().expect("directory");
     let root = directory.path();
     let host = host(root);
@@ -347,95 +460,21 @@ async fn a_resident_memory_tool_refuses_a_guest_and_a_turn_with_no_person() {
         agent(&host, crate::presets::APP_PRESET_ID, "Renoa").await,
     )
     .await;
-    for (speaker, why) in [
-        (Speaker::Unidentified, "No person is identified"),
-        (Speaker::Guest, "from a guest"),
-    ] {
-        assert_eq!(say(&renoa, speaker, "tools").await, RESIDENT_TOOLS);
-        let refused = say(&renoa, speaker, "direct: Lives on Mars").await;
-        assert!(
-            refused.starts_with("error: ") && refused.contains(why),
-            "{speaker:?}: {refused}"
-        );
-    }
+    assert_eq!(
+        say(&renoa, Speaker::Unidentified, "tools").await,
+        "agent_documents,plugin_manage,plugin_search,tool_execute"
+    );
+    assert_eq!(say(&renoa, Speaker::Guest, "tools").await, RESIDENT_TOOLS);
+    let refused = say(&renoa, Speaker::Guest, "direct: Lives on Mars").await;
+    assert!(
+        refused.starts_with("error: ") && refused.contains("from a guest"),
+        "{refused}"
+    );
     let users = data(root).join("users");
     assert!(
         !users.exists() || fs::read_dir(&users).expect("users").next().is_none(),
         "no notebook was created"
     );
-}
-
-async fn note_directly(tool: &dyn renoa_agent::Tool, text: &str) -> renoa_agent::ToolResult {
-    let call = renoa_agent::ToolCall {
-        id: "note".to_owned(),
-        name: "memory_note".to_owned(),
-        arguments: json!({"text": text}),
-        namespace: None,
-        thought_signature: None,
-    };
-    renoa_agent::invoke_tool(Some(tool), call, CancellationToken::new(), None)
-        .await
-        .expect("known outcome")
-}
-
-/// A plugin turned off during a command refuses its resident tools from then
-/// on, as `tool_execute` refuses its references, though the command's tool
-/// list still names them.
-#[tokio::test]
-async fn a_resident_tool_refuses_once_its_plugin_is_turned_off_mid_command() {
-    let directory = tempfile::tempdir().expect("directory");
-    let root = directory.path();
-    let host = host(root);
-    let id = agent(&host, crate::presets::APP_PRESET_ID, "Renoa").await;
-    let owner = Uuid::new_v4();
-    let definition = host
-        .resolve_definition(id)
-        .await
-        .expect("definition")
-        .with_principal(Some(owner));
-    let bindings = super::protocol_bindings(
-        &host.config,
-        &definition,
-        root,
-        renoa_kernel::SessionId::new(),
-        None,
-        Vec::new(),
-    )
-    .expect("bindings");
-    let note = bindings
-        .iter()
-        .find(|binding| binding.tool_name() == "memory_note")
-        .expect("a resident memory_note")
-        .tool();
-    assert!(
-        !note_directly(note.as_ref(), "Likes cold weather")
-            .await
-            .is_error
-    );
-    state::change(
-        &host.config.database,
-        id,
-        HostPluginId::Memory,
-        false,
-        "off",
-    )
-    .expect("off");
-    let refused = note_directly(note.as_ref(), "Plans a day at a time").await;
-    assert!(refused.is_error);
-    let [ContentBlock::Text { text }] = refused.content.as_slice() else {
-        panic!("a text refusal: {refused:?}");
-    };
-    assert!(
-        text.contains("renoa.memory is turned off") && text.contains("plugin_manage enable_plugin"),
-        "the refusal says why and the correct call: {text}"
-    );
-    let kept = crate::plugins::host::memory::fixtures::notebook(&data(root), owner);
-    assert!(kept.is_dir(), "the first note made the notebook");
-    let lines = mnem::memory::Memory::open_read_only(&kept)
-        .expect("notebook")
-        .recall(".", 50)
-        .expect("recall");
-    assert_eq!(lines.len(), 1, "only the first note was written");
 }
 
 /// An agent keeping time in `zone`, with `renoa.time` off unless `clock`.

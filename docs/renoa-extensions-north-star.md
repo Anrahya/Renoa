@@ -536,8 +536,8 @@ operation, the model receives only:
    content;
 2. the durable context projection; and
 3. the selected machine tools, `plugin_search`, `plugin_manage`, either
-   `code_mode` or `tool_execute`, and the resident tools of its enabled
-   compiled Host plugins. Every other compiled Host capability and every MCP
+   `code_mode` or `tool_execute`, and the resident tools of its compiled Host
+   plugins. Every other compiled Host capability and every MCP
    schema is discovered through this protocol; none is injected up front.
 
 Package manifests, marketplace descriptions, setup instructions, connection
@@ -601,7 +601,7 @@ field on every plugin.
 | Point | State |
 |---|---|
 | `tools`, `skills`, `mcp_servers` | implemented |
-| `resident tools`: a compiled plugin's tools kept in the agent's own tool list while it is enabled | implemented, for `renoa.memory` and `renoa.documents` |
+| `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory` and `renoa.documents` |
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
 | `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
@@ -691,27 +691,26 @@ cache:
 
 A compiled plugin may name some of its tools resident. A model searches only
 when a request plainly needs a tool, and noting what a person says in passing
-never does, so while the plugin is enabled for an agent the Host binds each
-resident tool directly in that agent's tool list, beside `plugin_search`,
-`plugin_manage` and the executor. `renoa.memory` keeps `memory_note`,
-`memory_recall` and `memory_zoom` resident, and `renoa.documents` keeps
-`agent_documents`.
+never does, so the Host binds each resident tool directly in the agent's tool
+list, beside `plugin_search`, `plugin_manage` and the executor.
+`renoa.memory` keeps `memory_note`, `memory_recall` and `memory_zoom`
+resident, and `renoa.documents` keeps `agent_documents`.
 
 1. The plugin's declaration is the one list, and each name is a tool that
    plugin owns, which a test checks. The direct binding wraps the tool the
-   plugin registered: `plugin_search` still finds it under the same reference,
-   and `tool_execute` runs the same instance.
+   plugin registered and keeps its recovery class: `plugin_search` still finds
+   it under the same reference, and `tool_execute` runs the same instance.
 2. Code Mode hides only the executor; resident tools stay direct beside
    `code_mode`.
-3. A guest's turn lists them, as it lists every tool, and refuses every call.
-   A turn with no person keeps them, and the memory tools refuse its calls as
-   they do through search.
-4. Enablement is read when a command resolves its runtime, which decides the
-   list, and again on every call, so a plugin turned off during a command
-   refuses its resident tools from then on. The list is frozen into the
-   manifest but enablement is not pinned: a command recovered after its
-   agent's plugin was turned on or off resolves another list and fails with a
-   runtime mismatch.
+3. A turn with no person lists no memory tool. A guest's turn shares a
+   person's conversation, so it lists them, as it lists every tool, and
+   refuses every call. Each surface derives who speaks from the stored
+   command, so a retry lists the same tools.
+4. The list does not depend on whether a plugin is enabled. The kernel freezes
+   it into the command's manifest, and, as with session context (item 4
+   there), a retried or recovered command rebuilds the same list even after
+   the plugin was turned on or off. Each call checks the plugin's state
+   instead, and a call to a plugin that is off is refused with what to do.
 
 ### Settings
 
@@ -738,8 +737,9 @@ The first consumer of `session_context`. It wraps Mnem, the owner's memory
 library, pinned to one revision, and keeps one notebook per person at
 `users/<principal-id>/mnem/`, shared by every agent that talks to them. Its
 resident tools, `memory_note`, `memory_recall` and `memory_zoom`, act on the
-notebook of the person the turn talks to and refuse a turn with no person;
-`memory_note`'s description says what is worth noting. Its
+notebook of the person the turn talks to. A turn with no person does not list
+them, and refuses them when found through search; `memory_note`'s
+description says what is worth noting. Its
 `session_context` block is that person's `MIND.md`: the whole file for the
 Host's main agent, and the file without its Nudges section for every other
 agent, each keyed by Mnem's revision of that view. It is enabled by default

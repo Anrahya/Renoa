@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use super::protocol_bindings;
 use crate::plugins::host::HostPluginId;
+use crate::speaker::ToolAccess;
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
     LocalHost, LocalHostAdapters, LocalModelConfiguration, LocalTurnOutcome, ModelProvider,
@@ -113,6 +114,7 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         &workspace,
         SessionId::from_uuid(Uuid::new_v4()),
         None,
+        ToolAccess::Granted,
         Vec::new(),
     )
     .expect("protocol");
@@ -121,14 +123,7 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             .iter()
             .map(AgentToolBinding::tool_name)
             .collect::<Vec<_>>(),
-        [
-            "plugin_search",
-            "plugin_manage",
-            "tool_execute",
-            "memory_note",
-            "memory_recall",
-            "memory_zoom"
-        ]
+        ["plugin_search", "plugin_manage", "tool_execute"]
     );
     let browse = value(
         &invoke(&bindings, "plugin_search", "browse", json!({"query":"*"}))
@@ -220,12 +215,12 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             &workspace,
             SessionId::from_uuid(Uuid::new_v4()),
             None,
+            ToolAccess::Granted,
             Vec::new()
         )
         .unwrap()
         .len(),
-        6,
-        "the plugin protocol and the three resident memory tools"
+        3
     );
     assert!(
         invoke(

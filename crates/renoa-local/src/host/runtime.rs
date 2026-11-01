@@ -31,7 +31,7 @@ pub(crate) struct RuntimeRequest<'a> {
 ///
 /// Machine tools follow the exact stored grants. Every agent receives the plugin
 /// protocol; enabled Host and external plugins are discovered through it, and
-/// the resident tools of its enabled Host plugins are bound beside it.
+/// the resident tools of its Host plugins are bound beside it.
 pub(crate) async fn resolve_runtime(
     host: &Arc<HostConfig>,
     request: RuntimeRequest<'_>,
@@ -47,7 +47,7 @@ pub(crate) async fn resolve_runtime(
         tools,
     } = request;
     let offered = tools.apply(offered_tool_bindings(
-        host, definition, workspace, session_id, command_id,
+        host, definition, workspace, session_id, command_id, tools,
     )?);
     let (extension_tools, code_mode) = bind_code_mode(host, offered)?;
     let skills = host.skill_store.clone();
@@ -128,6 +128,7 @@ fn offered_tool_bindings(
     workspace: &LocalWorkspace,
     session_id: SessionId,
     command_id: Option<CommandId>,
+    access: ToolAccess,
 ) -> Result<Vec<AgentToolBinding>, LocalHostError> {
     protocol_bindings(
         host,
@@ -135,6 +136,7 @@ fn offered_tool_bindings(
         workspace.root(),
         session_id,
         command_id,
+        access,
         workspace
             .kernel_tool_bindings()
             .into_iter()
@@ -166,6 +168,7 @@ pub(crate) fn protocol_bindings(
     workspace: &std::path::Path,
     session_id: SessionId,
     command_id: Option<CommandId>,
+    access: ToolAccess,
     git: Vec<AgentToolBinding>,
 ) -> Result<Vec<AgentToolBinding>, LocalHostError> {
     let agent = definition.agent_id();
@@ -220,8 +223,11 @@ pub(crate) fn protocol_bindings(
     )
     .pop()
     .ok_or_else(|| LocalHostError::Configuration("MCP executor is unavailable".to_owned()))?;
-    let resident = crate::plugins::host::resident::bindings(&plugins)
-        .map_err(|error| LocalHostError::Configuration(error.to_string()))?;
+    // A turn with no person has no notebook to list tools for. A guest's turn
+    // shares a person's conversation, so it lists them like every tool it
+    // refuses, and the history's earlier calls keep their definitions.
+    let notebook = definition.principal().is_some() || access == ToolAccess::Refused;
+    let resident = crate::plugins::host::resident::bindings(&plugins, notebook);
     let mut bindings = vec![
         crate::plugins::search_binding_with_host(agent, host.plugins.clone(), Arc::clone(&plugins)),
         agent_plugin_binding(
@@ -304,14 +310,31 @@ mod tests {
             .await
             .expect("definition");
         let workspace = LocalWorkspace::open(root.join("workspace")).expect("open workspace");
-        let offered = offered_tool_bindings(
-            &host.config,
-            &resolved,
-            &workspace,
-            renoa_kernel::SessionId::from_uuid(Uuid::new_v4()),
-            None,
-        )
-        .expect("plugin runtime");
+        let offer = |resolved: &crate::host::definition::ResolvedAgentDefinition| {
+            offered_tool_bindings(
+                &host.config,
+                resolved,
+                &workspace,
+                renoa_kernel::SessionId::from_uuid(Uuid::new_v4()),
+                None,
+                crate::speaker::ToolAccess::Granted,
+            )
+            .expect("plugin runtime")
+        };
+        assert_eq!(
+            offer(&resolved)
+                .iter()
+                .map(AgentToolBinding::tool_name)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "agent_documents",
+                "plugin_manage",
+                "plugin_search",
+                "tool_execute"
+            ]),
+            "a turn with no person lists no notebook tool"
+        );
+        let offered = offer(&resolved.with_principal(Some(Uuid::new_v4())));
         let actual: BTreeSet<&str> = offered.iter().map(AgentToolBinding::tool_name).collect();
         assert_eq!(
             actual.len(),

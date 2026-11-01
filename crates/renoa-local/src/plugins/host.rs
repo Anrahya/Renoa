@@ -72,16 +72,24 @@ impl HostPluginId {
             Self::Memory => memory::DESCRIPTION,
         }
     }
-    /// The tools this plugin keeps in the agent's own tool list while it is
-    /// enabled, besides finding them through `plugin_search`. A model searches
-    /// only when a request plainly needs a tool, so a tool it should reach for
-    /// unasked, such as noting what a person tells it, is resident. Each name
-    /// is one this plugin owns; see [`Self::owner`].
-    pub(crate) const fn resident_tools(self) -> &'static [&'static str] {
+    /// The tools this plugin keeps in the agent's own tool list, besides
+    /// finding them through `plugin_search`. A model searches only when a
+    /// request plainly needs a tool, so a tool it should reach for unasked,
+    /// such as noting what a person tells it, is resident. Each name is one
+    /// this plugin owns; see [`Self::owner`].
+    ///
+    /// `notebook` is whether the turn lists a person's notebook tools: it
+    /// talks to a person, or it is a guest's turn in their conversation.
+    pub(crate) const fn resident_tools(self, notebook: bool) -> &'static [&'static str] {
         match self {
             Self::Documents => &[crate::capabilities::AGENT_DOCUMENTS],
-            Self::Memory => &[memory::NOTE, memory::RECALL, memory::ZOOM],
-            Self::Agents | Self::Automations | Self::Skills | Self::Git | Self::Time => &[],
+            Self::Memory if notebook => &[memory::NOTE, memory::RECALL, memory::ZOOM],
+            Self::Memory
+            | Self::Agents
+            | Self::Automations
+            | Self::Skills
+            | Self::Git
+            | Self::Time => &[],
         }
     }
     pub(crate) fn owner(tool: &str) -> Option<Self> {

@@ -557,7 +557,12 @@ async fn validation_rejects_untrusted_pairs_unknown_names_and_preset_mismatches(
     ));
     // A retired preset id is unknown too: an app still sending it is refused
     // until it updates.
-    for retired in ["renoa.app.v1", "renoa.personal.arcee.v3"] {
+    for retired in [
+        "renoa.app.v1",
+        "renoa.app.v2",
+        "renoa.personal.arcee.v3",
+        "renoa.personal.arcee.v4",
+    ] {
         let request = AgentCreateRequest::from_preset(
             Uuid::new_v4(),
             AgentPresetId::new(retired).expect("preset id"),

@@ -60,11 +60,18 @@ pub(crate) fn bindings(turn: MemoryTurn) -> [AgentToolBinding; 3] {
                 turn: Arc::clone(&turn),
                 spec: spec(kind),
             }),
-            // A replayed note is a second note. The resident binding keeps
-            // this class, and tool_execute never replays.
-            EffectRecovery::NeverReplay,
+            recovery(kind),
         )
     })
+}
+
+/// A replayed note is a second note; a recall or a zoom only reads. The
+/// resident binding keeps this class, and `tool_execute` never replays.
+const fn recovery(kind: Kind) -> EffectRecovery {
+    match kind {
+        Kind::Note => EffectRecovery::NeverReplay,
+        Kind::Recall | Kind::Zoom => EffectRecovery::SafeToReplay,
+    }
 }
 
 fn spec(kind: Kind) -> ToolSpec {

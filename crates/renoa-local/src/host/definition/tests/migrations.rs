@@ -273,17 +273,11 @@ async fn migrated_selections_remain_usable_through_host_consumers_and_replays() 
                 &workspace,
                 renoa_kernel::SessionId::new(),
                 None,
+                crate::speaker::ToolAccess::Granted,
                 Vec::new(),
             )
             .unwrap();
-            let mut expected = BTreeSet::from([
-                "plugin_manage",
-                "plugin_search",
-                "tool_execute",
-                "memory_note",
-                "memory_recall",
-                "memory_zoom",
-            ]);
+            let mut expected = BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"]);
             if resolved.document_binding().is_some() {
                 expected.insert("agent_documents");
             }
