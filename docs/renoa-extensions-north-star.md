@@ -535,9 +535,10 @@ operation, the model receives only:
 1. the profile's instructions and only deliberately activated full skill
    content;
 2. the durable context projection; and
-3. the selected machine tools, `plugin_search`, `plugin_manage`, and either
-   `code_mode` or `tool_execute`. Compiled Host capabilities and MCP schemas are
-   discovered through this protocol; they are not injected up front.
+3. the selected machine tools, `plugin_search`, `plugin_manage`, either
+   `code_mode` or `tool_execute`, and the resident tools of its compiled Host
+   plugins. Every other compiled Host capability and every MCP
+   schema is discovered through this protocol; none is injected up front.
 
 Package manifests, marketplace descriptions, setup instructions, connection
 state, OAuth scopes, environment variables, secret references, process
@@ -600,6 +601,7 @@ field on every plugin.
 | Point | State |
 |---|---|
 | `tools`, `skills`, `mcp_servers` | implemented |
+| `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory` and `renoa.documents` |
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
 | `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
@@ -626,9 +628,9 @@ with a declared replay class.
 
 Compiled plugins are one closed list in the Host, each with a `renoa.*` id and
 a description; packages are identified by content digest. Per-point storage
-keys on that id. The settings, message-context, and session-context points
-match every compiled plugin exhaustively, so the compiler checks each new
-plugin against all three.
+keys on that id. The settings, message-context, session-context, and
+resident-tools points match every compiled plugin exhaustively, so the compiler
+checks each new plugin against all four.
 
 ### Message context
 
@@ -685,6 +687,31 @@ cache:
    block, so the prompt and the pin agree, but a crash can still lose it, and
    the recovered command then fails with a runtime mismatch.
 
+### Resident tools
+
+A compiled plugin may name some of its tools resident. A model searches only
+when a request plainly needs a tool, and noting what a person says in passing
+never does, so the Host binds each resident tool directly in the agent's tool
+list, beside `plugin_search`, `plugin_manage` and the executor.
+`renoa.memory` keeps `memory_note`, `memory_recall` and `memory_zoom`
+resident, and `renoa.documents` keeps `agent_documents`.
+
+1. The plugin's declaration is the one list, and each name is a tool that
+   plugin owns, which a test checks. The direct binding wraps the tool the
+   plugin registered and keeps its recovery class: `plugin_search` still finds
+   it under the same reference, and `tool_execute` runs the same instance.
+2. Code Mode hides only the executor; resident tools stay direct beside
+   `code_mode`.
+3. A turn with no person lists no memory tool. A guest's turn shares a
+   person's conversation, so it lists them, as it lists every tool, and
+   refuses every call. Each surface derives who speaks from the stored
+   command, so a retry lists the same tools.
+4. The list does not depend on whether a plugin is enabled. The kernel freezes
+   it into the command's manifest, and, as with session context (item 4
+   there), a retried or recovered command rebuilds the same list even after
+   the plugin was turned on or off. Each call checks the plugin's state
+   instead, and a call to a plugin that is off is refused with what to do.
+
 ### Settings
 
 A compiled plugin validates its own settings before anything is stored; they
@@ -709,15 +736,19 @@ under the earlier behavior remain readable.
 The first consumer of `session_context`. It wraps Mnem, the owner's memory
 library, pinned to one revision, and keeps one notebook per person at
 `users/<principal-id>/mnem/`, shared by every agent that talks to them. Its
-tools, `memory_note`, `memory_recall` and `memory_zoom`, act on the notebook of
-the person the turn talks to and refuse a turn with no person. Its
+resident tools, `memory_note`, `memory_recall` and `memory_zoom`, act on the
+notebook of the person the turn talks to. A turn with no person does not list
+them, and refuses them when found through search; `memory_note`'s
+description says what is worth noting. Its
 `session_context` block is that person's `MIND.md`: the whole file for the
 Host's main agent, and the file without its Nudges section for every other
 agent, each keyed by Mnem's revision of that view. It is enabled by default
 for every agent and has no settings. The notebook keeps the person's wall time,
 the Host's main agent's `renoa.time` zone, and an agent whose own clock shows
 another zone gets a `message_context` entry naming it. `USER.md` keeps the
-person's lasting profile; time-bound and inferred facts go to the notebook.
+person's long-term profile, the facts unlikely to change soon; anything else
+worth knowing next time, such as habits and preferences that can shift, plans,
+and dated events, goes to the notebook.
 Surfaces that admit messages as an unidentified speaker, Telegram and Slack
 today, have no notebook. Mnem's compaction, Dream, agenda and heartbeat are
 later steps and do not run yet.

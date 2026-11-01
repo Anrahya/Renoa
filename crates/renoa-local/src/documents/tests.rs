@@ -537,7 +537,7 @@ async fn content_hash_cas_rejects_a_stale_soul_revision_and_accepts_the_current_
 }
 
 #[test]
-fn user_md_holds_lasting_facts_and_sends_time_bound_ones_to_memory() {
+fn user_md_holds_lasting_facts_and_sends_everything_else_to_memory() {
     let directory = tempdir().expect("temporary data directory");
     let binding = opened(directory.path(), AgentId::new())
         .with_principal(Some(Uuid::new_v4()))
@@ -546,16 +546,20 @@ fn user_md_holds_lasting_facts_and_sends_time_bound_ones_to_memory() {
     let tool = binding.tool();
     let description = &tool.spec().description;
     assert!(
-        description
-            .contains("durable facts and preferences that person states and that rarely change"),
+        description.contains("facts that person states that are unlikely to change soon"),
         "{description}"
     );
     assert!(
-        description
-            .contains("note commitments, plans, reminders, and dated events with memory_note"),
+        description.contains(
+            "note anything else worth knowing next time, such as preferences and habits that can change"
+        ),
         "{description}"
     );
-    for retired in ["commitments, or schedule", "schedule information"] {
+    for retired in [
+        "commitments, or schedule",
+        "schedule information",
+        "durable facts and preferences",
+    ] {
         assert!(
             !description.contains(retired),
             "USER.md no longer takes {retired:?}"

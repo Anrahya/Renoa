@@ -1,18 +1,20 @@
 //! Compiled Host capabilities use the same discovery and invocation boundary as MCP plugins.
 //! Imported manifests cannot register implementations or grant machine access.
 //! A compiled plugin contributes tools, per-message context, session context,
-//! or a mix of them.
+//! or a mix of them, and may keep some of its tools resident in the agent's own
+//! tool list; see [`resident`].
 
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use renoa_agent::{Tool, ToolError, ToolSpec};
 use renoa_agent_loop::AgentToolBinding;
-use renoa_kernel::AgentId;
+use renoa_kernel::{AgentId, EffectRecovery};
 use serde::Serialize;
 
 pub(crate) mod executor;
 pub(crate) mod memory;
 pub(crate) mod message_context;
+pub(crate) mod resident;
 pub(crate) mod session_context;
 pub(crate) mod settings;
 pub(crate) mod state;
@@ -70,6 +72,26 @@ impl HostPluginId {
             Self::Memory => memory::DESCRIPTION,
         }
     }
+    /// The tools this plugin keeps in the agent's own tool list, besides
+    /// finding them through `plugin_search`. A model searches only when a
+    /// request plainly needs a tool, so a tool it should reach for unasked,
+    /// such as noting what a person tells it, is resident. Each name is one
+    /// this plugin owns; see [`Self::owner`].
+    ///
+    /// `notebook` is whether the turn lists a person's notebook tools: it
+    /// talks to a person, or it is a guest's turn in their conversation.
+    pub(crate) const fn resident_tools(self, notebook: bool) -> &'static [&'static str] {
+        match self {
+            Self::Documents => &[crate::capabilities::AGENT_DOCUMENTS],
+            Self::Memory if notebook => &[memory::NOTE, memory::RECALL, memory::ZOOM],
+            Self::Memory
+            | Self::Agents
+            | Self::Automations
+            | Self::Skills
+            | Self::Git
+            | Self::Time => &[],
+        }
+    }
     pub(crate) fn owner(tool: &str) -> Option<Self> {
         match tool {
             "agent_manage" | "agent_roster" | "message_agent" => Some(Self::Agents),
@@ -94,6 +116,9 @@ pub(crate) struct Skipped {
 struct RegisteredTool {
     tool: Arc<dyn Tool>,
     revision: String,
+    /// The binding's own class, which a resident binding keeps; `tool_execute`
+    /// never replays.
+    recovery: EffectRecovery,
 }
 
 pub(crate) struct HostPlugins {
@@ -154,6 +179,7 @@ impl HostPlugins {
                     RegisteredTool {
                         tool: binding.tool(),
                         revision,
+                        recovery: binding.recovery(),
                     },
                 )
                 .is_some()

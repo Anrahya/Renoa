@@ -13,7 +13,7 @@ const automation: Automation = { id: "timer", agent_id: "rc", name: "Recap", ena
 const session: Session = { id: "session", agent_id: "rc", observation: "available", event_count: 2,
   queued_operations: 0, active_operation: null, latest_operation: null };
 const host: HostSnapshot = { host_id: "host", agents: [
-  { id: "rc", name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v4" },
+  { id: "rc", name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v5" },
   { id: "sound", name: "Soundwave", created_by: "rc", preset_id: "renoa.general.v1" },
 ], sessions: [session], automations: [automation], connections: [], plugins: [], skills: [] };
 afterEach(() => vi.unstubAllGlobals());

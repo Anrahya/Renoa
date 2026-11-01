@@ -10,7 +10,7 @@ const summary = (tone: DirectoryTone): DirectorySummary => ({
   next: { title: "No scheduled work", detail: "", href: "/host" },
 });
 
-const rc: Agent = { id: "20340f86-7f10-4c52-8757-c3124d9af0e1", name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v4" };
+const rc: Agent = { id: "20340f86-7f10-4c52-8757-c3124d9af0e1", name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v5" };
 const desk: Agent = { id: "42357f5e-ae1f-0802-5218-d7f65a043086", name: "X Desk", created_by: rc.id, preset_id: "renoa.coding.alpha.v3" };
 const sound: Agent = { id: "c8a63c3b-166d-45a0-9324-2b9db6f3d2df", name: "Soundwave", created_by: rc.id, preset_id: "renoa.general.v1" };
 const agents = [rc, desk, sound];
