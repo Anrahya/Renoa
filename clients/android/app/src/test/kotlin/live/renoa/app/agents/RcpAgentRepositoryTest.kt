@@ -1064,7 +1064,7 @@ class RcpAgentRepositoryTest {
         runCurrent()
         assertEquals(HostMethod.Post to "/v1/host/agents", surface.hostCalls.single().let { it.first to it.second })
         assertEquals(
-            mapOf("operation_id" to kcal, "preset_id" to "renoa.app.v1", "name" to "Kcal", "purpose" to "Count my calories."),
+            mapOf("operation_id" to kcal, "preset_id" to "renoa.app.v2", "name" to "Kcal", "purpose" to "Count my calories."),
             sent().mapValues { it.value.jsonPrimitive.content },
         )
         advanceTimeBy(3.seconds)

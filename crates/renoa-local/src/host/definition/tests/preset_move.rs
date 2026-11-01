@@ -15,7 +15,7 @@ fn app() -> AgentPresetId {
     AgentPresetId::new(APP_PRESET_ID).expect("preset id")
 }
 
-/// A general agent the way the app made it before `renoa.app.v1`.
+/// A general agent the way the app made it before it had a preset of its own.
 async fn general_agent(host: &LocalHost, operation: Uuid) -> AgentDefinition {
     let (creator, origin) = system("test");
     let request = AgentCreateRequest {
@@ -290,4 +290,76 @@ async fn an_unreadable_soul_fails_closed() {
         Some(agent.clone())
     );
     assert_eq!(fs::read(&soul).expect("SOUL.md"), [0xff, 0xfe, b'\n']);
+}
+
+/// An agent made from a preset id that a later version retired, whose row
+/// still names that id, moves onto the current version: it takes the new seed
+/// and keeps the SOUL.md it already has.
+#[tokio::test]
+async fn an_agent_on_a_retired_preset_id_moves_onto_its_successor() {
+    for (retired, current) in [
+        ("renoa.app.v1", APP_PRESET_ID),
+        ("renoa.personal.arcee.v3", ARCEE_PRESET_ID),
+    ] {
+        let (directory, host) = fixture();
+        let (creator, origin) = system("test");
+        let current = AgentPresetId::new(current).expect("preset id");
+        let made = host
+            .create_agent(
+                creator,
+                origin,
+                AgentCreateRequest::from_preset(Uuid::new_v4(), current.clone(), "Kcal"),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("create");
+        rusqlite::Connection::open(&host.config.database)
+            .expect("catalog")
+            .execute(
+                "UPDATE host_agents
+                 SET preset_id = ?2,
+                     operational_json = json_set(operational_json, '$.instructions', ?3)
+                 WHERE agent_id = ?1",
+                [
+                    made.id.to_string(),
+                    retired.to_owned(),
+                    format!("{retired} instructions"),
+                ],
+            )
+            .expect("the row an older Host wrote");
+        let old = host
+            .agent_definition(made.id)
+            .await
+            .expect("read")
+            .expect("agent");
+        assert_eq!(
+            old.preset_id.as_ref().map(AgentPresetId::as_str),
+            Some(retired)
+        );
+        assert_eq!(
+            old.operational.instructions,
+            format!("{retired} instructions")
+        );
+        let soul = soul_path(&directory, &made);
+        let written = fs::read_to_string(&soul).expect("soul");
+
+        let moved = host
+            .move_agent_to_preset(made.id, current.clone())
+            .await
+            .expect("move");
+        assert!(moved.changed, "{retired}");
+        assert_eq!(moved.definition.preset_id, Some(current.clone()));
+        assert_eq!(
+            moved.definition.operational.instructions,
+            presets::preset(&current)
+                .expect("preset")
+                .seed()
+                .instructions
+        );
+        assert_eq!(fs::read_to_string(&soul).expect("soul"), written);
+        assert_eq!(
+            host.agent_definition(made.id).await.expect("read"),
+            Some(moved.definition)
+        );
+    }
 }

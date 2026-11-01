@@ -34,9 +34,9 @@ The first concrete coding preset is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable creation preset identity is
 `renoa.coding.alpha.v3`. Alpha is one code-owned creation preset, not a special
 Host execution type. Arcee is the first personal-operator preset, with stable
-identity `renoa.personal.arcee.v3`; Telegram is only its first surface. A
+identity `renoa.personal.arcee.v4`; Telegram is only its first surface. A
 caller-defined agent uses the explicit creation schema; `renoa.general.v1` is an optional general template.
-`renoa.app.v1` seeds the everyday helpers people make in the Android app: plain-spoken
+`renoa.app.v2` seeds the everyday helpers people make in the Android app: plain-spoken
 instructions, its own `SOUL.md` from a neutral default, the person's `USER.md`, no
 workspace instructions, and no native file or shell tools; Host plugins such as Git,
 skills and agent management stay available, as for every agent. Every agent is
@@ -361,7 +361,7 @@ its stable operation receipt after restart without another provider lookup.
 uncertain requests in tab storage and retries their exact operation ID and fields.
 The Android app makes the same calls over its RCP connection
 ([`call_host`](rcp-json-ws-v0.md#call-the-host)). It creates from
-`renoa.app.v1` with a name and, when the owner wrote one, a purpose. It then
+`renoa.app.v2` with a name and, when the owner wrote one, a purpose. It then
 waits up to thirty seconds for a node to advertise the `agent:<id>` target, and
 succeeds once that agent's chat is open. Otherwise the owner reads that Renoa could
 not be reached, although the agent may exist; saving the same fields again repeats
@@ -540,7 +540,9 @@ the agent's own operational document, so a preset change requires a new preset i
 and never rewrites an existing agent. A test pins a digest of each preset's
 whole seed to its id, as a tripwire against editing a released preset in place;
 nothing enforces it at runtime. Only the owner's `move-to-preset` command moves an
-existing agent onto a newer preset. A session manifest persists the exact agent
+existing agent onto a newer preset. A new id replaces the old one in the
+catalog: an agent whose row still names a retired id keeps running from its own
+snapshot, and creation and moves accept only current ids. A session manifest persists the exact agent
 id; Host catalog storage holds the definition. Loading fails closed when the agent
 definition is absent or corrupt. Caller-defined agents store their own
 instructions, and every agent definition is stored in `host.sqlite3` and resolved

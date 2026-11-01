@@ -18,11 +18,11 @@ use crate::{
 /// Renoa's built-in coding agent seed.
 pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v3";
 /// Renoa's personal operator agent seed.
-pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v3";
+pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v4";
 /// The seed general purpose agents can use.
 pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 /// The seed for the everyday helpers people make in the app.
-pub(crate) const APP_PRESET_ID: &str = "renoa.app.v1";
+pub(crate) const APP_PRESET_ID: &str = "renoa.app.v2";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
@@ -258,11 +258,11 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "30e0141bd2ace813033b37426413d6ec3852593a6726c9d7560382f51f13a0f4",
+            "582f5205341d48cda19c066d113cbf678017e7ab187ec9420349840bd16329c4",
         ),
         (
             ARCEE_PRESET_ID,
-            "8f00d277ea0646784ad401f11bb89624fdf4b9ecd185cd4bc78d4c6bc531b804",
+            "9723236d71767a2bc28799d2009433403add63c6bb09550b67f8f3234eae76ca",
         ),
         (
             GENERAL_PRESET_ID,
@@ -341,6 +341,23 @@ mod tests {
             preset(&unregistered),
             Err(AgentDefinitionError::UnknownPreset { .. })
         ));
+    }
+
+    /// A preset that keeps USER.md says what it holds the way `agent_documents`
+    /// does: lasting facts there, time-bound things in the notebook.
+    #[test]
+    fn a_preset_with_user_md_sends_time_bound_things_to_memory_note() {
+        for preset in super::catalog() {
+            let seed = preset.seed();
+            if !seed.documents.is_some_and(|documents| documents.user) {
+                continue;
+            }
+            let id = preset.id().as_str();
+            assert!(seed.instructions.contains("memory_note"), "{id}");
+            for retired in ["goals, commitments", "schedule information"] {
+                assert!(!seed.instructions.contains(retired), "{id}: {retired}");
+            }
+        }
     }
 
     #[test]
