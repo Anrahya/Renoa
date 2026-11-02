@@ -89,11 +89,23 @@ pub(crate) fn first_followed(at: &SessionRef) -> Result<bool, PluginError> {
     Ok(driver(&db)? == Some(at.agent) && !store::follows(&db, at.session)?)
 }
 
-/// The person's message `command`, with `content`, admitted at `at_ms` in the
-/// main agent's conversation `at`: counts its characters toward the
-/// conversation's unreviewed text, once per command, and asks again when a
-/// pass is due. A conversation the pass begins to follow with turns
-/// `earlier` is reviewed from this message on. Nothing for any other agent.
+/// The characters of text in `content`, as the pass counts a message.
+pub(crate) fn chars(content: &[ContentBlock]) -> usize {
+    content
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text { text } => text.chars().count(),
+            ContentBlock::Image { .. } => 0,
+        })
+        .sum()
+}
+
+/// The person's message `command`, of `chars` characters received at
+/// `at_ms`, once the kernel admitted it in the main agent's conversation
+/// `at`: counts it toward the conversation's unreviewed text, once per
+/// command, and asks again when a pass is due. A conversation the pass begins
+/// to follow with turns `earlier` is reviewed from this message on. Nothing
+/// for any other agent.
 ///
 /// # Errors
 ///
@@ -103,21 +115,13 @@ pub(crate) fn message(
     at: &SessionRef,
     principal: Uuid,
     command: Uuid,
-    content: &[ContentBlock],
-    at_ms: i64,
+    (chars, at_ms): (usize, i64),
     earlier: bool,
 ) -> Result<(), PluginError> {
     let db = catalog::open_verified(&at.database)?;
     if driver(&db)? != Some(at.agent) {
         return Ok(());
     }
-    let chars = content
-        .iter()
-        .map(|block| match block {
-            ContentBlock::Text { text } => text.chars().count(),
-            ContentBlock::Image { .. } => 0,
-        })
-        .sum();
     store::message(
         &db,
         &store::Said {
@@ -213,6 +217,16 @@ fn event(level: &'static str, name: &'static str, fields: &serde_json::Value) {
     super::pass::event(level, name, fields);
 }
 
+/// Logs that the scheduler's run `request` waits again for a pass in
+/// `session` that has not let go.
+pub(crate) fn delays_run(session: Uuid, request: Uuid) {
+    event(
+        "warn",
+        "memory_pass_delays_run",
+        &serde_json::json!({ "session_id": session, "run_id": request }),
+    );
+}
+
 /// Logs that a message's or a turn's pass bookkeeping could not be recorded.
 pub(crate) fn unrecorded(session: Uuid, error: &PluginError) {
     event(
@@ -224,13 +238,13 @@ pub(crate) fn unrecorded(session: Uuid, error: &PluginError) {
 
 /// The Host's wall clock.
 #[cfg(not(test))]
-fn now_ms(_database: &Path) -> i64 {
+pub(crate) fn now_ms(_database: &Path) -> i64 {
     Timestamp::now().as_millisecond()
 }
 
 /// The Host's wall clock, unless the test set this Host's.
 #[cfg(test)]
-fn now_ms(database: &Path) -> i64 {
+pub(crate) fn now_ms(database: &Path) -> i64 {
     clock::get(database).unwrap_or_else(|| Timestamp::now().as_millisecond())
 }
 

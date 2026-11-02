@@ -84,55 +84,66 @@ impl AgentSession {
         }
     }
 
-    /// Counts the person's message toward this conversation's unreviewed
-    /// text and asks again when its pass is due.
-    pub(super) async fn note_message(
-        &self,
-        request_id: Uuid,
-        content: &[ContentBlock],
-        at_ms: i64,
-        principal: Uuid,
-    ) {
+    /// After the person's message `request_id` ran: once the kernel admitted
+    /// it, counts its characters, received at the time `said` carries,
+    /// toward this conversation's unreviewed text, asks again when its pass
+    /// is due, and restarts its quiet spell. A message the kernel refused
+    /// counts for nothing, so one sent again counts once.
+    pub(super) async fn note_message(&self, request_id: Uuid, said: (usize, i64), principal: Uuid) {
+        let command = CommandId::from_uuid(request_id);
+        match self.kernel.command_standing(command) {
+            Ok(standing) if standing.admitted => {}
+            Ok(_) => return,
+            Err(error) => {
+                note_pass::unrecorded(self.id, &PluginError::Invalid(error.to_string()));
+                return;
+            }
+        }
         let at = self.pass_ref();
         let first = tokio::task::spawn_blocking(move || note_pass::first_followed(&at)).await;
-        // Read only for the first message the pass follows; one that cannot be
-        // read counts as earlier turns, so nothing is noted twice.
+        // The journal is read only for the first message the pass follows;
+        // one that cannot be read counts as earlier turns, so nothing is
+        // noted twice.
         let earlier = match first {
-            Ok(Ok(first)) => first && !self.kernel.history().is_ok_and(|turns| turns.is_empty()),
+            Ok(Ok(true)) => {
+                let kernel = Arc::clone(&self.kernel);
+                tokio::task::spawn_blocking(move || kernel.history())
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .is_none_or(|turns| turns.iter().any(|turn| turn.command_id != command))
+            }
+            Ok(Ok(false)) => false,
             unread => {
                 self.log_unrecorded(unread.map(|first| first.map(drop)));
                 return;
             }
         };
         let at = self.pass_ref();
-        let content = content.to_vec();
         let recorded = tokio::task::spawn_blocking(move || {
-            note_pass::message(&at, principal, request_id, &content, at_ms, earlier)
+            note_pass::message(&at, principal, request_id, said, earlier)
         })
         .await;
         self.log_unrecorded(recorded);
-    }
-
-    /// Restarts this conversation's quiet spell at the end of a turn.
-    pub(super) async fn note_turn_ended(&self) {
         let at = self.pass_ref();
-        let recorded = tokio::task::spawn_blocking(move || note_pass::turn_ended(&at)).await;
-        self.log_unrecorded(recorded);
+        let ended = tokio::task::spawn_blocking(move || note_pass::turn_ended(&at)).await;
+        self.log_unrecorded(ended);
     }
 
-    /// The messages of `command`, a receipted pass's included.
+    /// The messages of `command`, a receipted pass's included, read off the
+    /// executor.
     ///
     /// # Errors
     ///
     /// Returns durable history corruption or storage failures.
-    pub(crate) fn command_messages(
+    pub(crate) async fn command_messages(
         &self,
         command: Uuid,
     ) -> Result<Vec<renoa_agent::Message>, LocalHostError> {
         let command = CommandId::from_uuid(command);
-        Ok(self
-            .kernel
-            .all_messages()?
+        let kernel = Arc::clone(&self.kernel);
+        let messages = tokio::task::spawn_blocking(move || kernel.all_messages()).await??;
+        Ok(messages
             .into_iter()
             .filter(|entry| entry.command_id == command)
             .map(|entry| entry.message)

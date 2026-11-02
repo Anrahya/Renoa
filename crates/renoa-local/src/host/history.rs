@@ -70,8 +70,8 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<AgentSessionHistory, LocalHostError> {
-        self.refuse_foreign(agent_id, session_uuid).await?;
-        let claim = self.config.claims.surface(session_uuid).await?;
+        self.refuse_before_claim(agent_id, session_uuid).await?;
+        let claim = self.config.claims.surface_uncancelled(session_uuid).await?;
         let OpenedSessionStorage {
             directory,
             manifest,

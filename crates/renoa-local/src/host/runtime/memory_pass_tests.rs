@@ -18,8 +18,9 @@ use uuid::Uuid;
 
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentSession,
-    AutomationScheduler, HostObserver, LocalTurnOutcome, ModelProvider, RunStatus, ScheduledRun,
-    Speaker, TurnObservation,
+    AutomationScheduler, HostObserver, LocalHostError, LocalTurnOutcome, ModelProvider, RunStatus,
+    ScheduledRun, Speaker, TurnObservation,
+    agent_session::claim::SURFACE_WAIT,
     host::{HostInitialization, LocalHost},
     plugins::host::{
         HostPluginId,
@@ -33,13 +34,16 @@ use crate::{
 /// order: `note:<text>` calls `memory_note`, `call:<name> <json>` calls that
 /// tool, `say:<text>` answers, and `hang` writes `started` and never answers;
 /// with no step left it answers `NONE`. Every call is logged to
-/// `calls.jsonl` with its system prompt, tools and messages.
+/// `calls.jsonl` with its system prompt, tools and messages. While a `broken`
+/// file is beside it, the model cannot be listed or loaded.
 const MODEL: &str = r#"
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const spec = JSON.stringify({id:"fixture"});
 const here = name => new URL("./" + name, import.meta.url);
-if (process.env.RENOA_MODEL_ACTION === "catalog") {
+if (process.env.RENOA_MODEL_ACTION !== "stream" && existsSync(here("broken"))) {
+  console.log(JSON.stringify({ok:false,error:"the model is gone"}));
+} else if (process.env.RENOA_MODEL_ACTION === "catalog") {
   console.log(JSON.stringify({ok:true,response:{models:[{id:"fixture",name:"Fixture",reasoning_levels:["high"],context_window_tokens:500000,model_spec:{id:"fixture"}}]}}));
 } else if (process.env.RENOA_MODEL_ACTION === "describe") {
   console.log(JSON.stringify({ok:true,response:{context_window_tokens:500000,max_output_tokens:32768,model_spec:spec,model_binding_id:createHash("sha256").update(spec).digest("hex"),reasoning_level:"high"}}));
@@ -574,7 +578,7 @@ async fn no_pass_runs_in_a_turn_within_the_gap_or_for_too_little_text() {
         .host
         .config
         .claims
-        .surface(session)
+        .surface_uncancelled(session)
         .await
         .expect("a turn's claim");
     assert_eq!(
@@ -1257,4 +1261,310 @@ async fn a_stopping_host_starts_no_job_of_a_nightly_run() {
         fixture.calls().is_empty(),
         "no compaction or Dream starts once the Host is stopping"
     );
+}
+
+/// The person's unreviewed characters the pass counts in `session`.
+fn unreviewed(fixture: &Fixture, session: Uuid) -> i64 {
+    rusqlite::Connection::open(fixture.database())
+        .expect("catalog")
+        .query_row(
+            "SELECT user_chars FROM host_memory_conversations WHERE session_id = ?1",
+            [session.to_string()],
+            |row| row.get(0),
+        )
+        .expect("the conversation")
+}
+
+/// `person`'s message `text` under `request` at `at`, as a surface sends it.
+async fn send(
+    opened: &AgentSession,
+    request: Uuid,
+    (person, at): (Uuid, i64),
+    text: &str,
+    cancellation: CancellationToken,
+) -> Result<LocalTurnOutcome, LocalHostError> {
+    opened
+        .execute_turn_observed_with_cancellation(
+            request,
+            vec![ContentBlock::text(text)],
+            TurnObservation::from_unix_milliseconds(at).expect("observation"),
+            Arc::new(Quiet),
+            cancellation,
+            Speaker::Principal(person),
+        )
+        .await
+}
+
+fn answered(outcome: &Result<LocalTurnOutcome, LocalHostError>) -> bool {
+    matches!(outcome, Ok(LocalTurnOutcome::Completed { output, .. }) if output == "ok")
+}
+
+#[tokio::test]
+async fn a_message_the_kernel_never_admitted_counts_for_nothing_and_its_resend_counts_once() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    let counted = unreviewed(&fixture, session);
+    let opened = fixture.open(fixture.main, session).await;
+    let (request, text) = (Uuid::new_v4(), "I'm back from the airport.");
+    let broken = fixture.root.join("broken");
+    fs::write(&broken, "").expect("break the model");
+    let refused = send(
+        &opened,
+        request,
+        (person, noon + MINUTE),
+        text,
+        CancellationToken::new(),
+    )
+    .await;
+    assert!(refused.is_err(), "no runtime, so no turn: {refused:?}");
+    assert_eq!(
+        unreviewed(&fixture, session),
+        counted,
+        "a message the kernel never admitted counts for nothing"
+    );
+    fs::remove_file(&broken).expect("mend the model");
+    for _ in 0..2 {
+        let sent = send(
+            &opened,
+            request,
+            (person, noon + MINUTE),
+            text,
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(answered(&sent), "{sent:?}");
+    }
+    assert_eq!(
+        unreviewed(&fixture, session),
+        counted + i64::try_from(text.chars().count()).expect("a count"),
+        "sent again, it counts once"
+    );
+}
+
+#[tokio::test]
+async fn a_pass_that_does_not_let_go_refuses_a_message_and_holds_an_automation_run_until_it_does() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    let call = once(
+        &fixture.host,
+        fixture.main,
+        "Call mom",
+        "2026-11-02T12:16:00+05:30",
+    )
+    .await;
+    let opened = fixture.open(fixture.main, session).await;
+    // A pass that does not stop when it is cancelled.
+    let held = fixture
+        .host
+        .config
+        .claims
+        .note_pass(session, &CancellationToken::new())
+        .expect("a free conversation");
+    let refused = send(
+        &opened,
+        Uuid::new_v4(),
+        (person, noon + MINUTE),
+        "I'm back.",
+        CancellationToken::new(),
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(LocalHostError::PassStillRunning)),
+        "{refused:?}"
+    );
+    let due = fixture
+        .scheduler
+        .next_run(noon + 16 * MINUTE, true)
+        .await
+        .expect("next run")
+        .expect("the call is due");
+    assert_eq!(due.run.automation_id, call);
+    // The node delivers the run as a command under the run's own id.
+    let deliver = opened.execute_turn_observed_with_cancellation(
+        due.run.id,
+        vec![ContentBlock::text(due.run.submission.clone())],
+        TurnObservation::from_unix_milliseconds(noon + 16 * MINUTE).expect("observation"),
+        Arc::new(Quiet),
+        CancellationToken::new(),
+        Speaker::Unidentified,
+    );
+    let release = async move {
+        tokio::time::sleep(SURFACE_WAIT * 5 / 2).await;
+        drop(held);
+    };
+    let (delivered, ()) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async { tokio::join!(deliver, release) }),
+    )
+    .await
+    .expect("the run is delivered once the pass lets go");
+    assert!(answered(&delivered), "{delivered:?}");
+    let delayed = pass::EVENTS
+        .lock()
+        .expect("events")
+        .iter()
+        .filter(|(_, event, fields)| {
+            *event == "memory_pass_delays_run" && fields["run_id"] == json!(due.run.id)
+        })
+        .count();
+    assert!(delayed >= 2, "it waited past the bound: {delayed}");
+    assert_eq!(
+        fixture.calls_of("turn").len(),
+        2,
+        "the first message and the reminder ran; the refused one did not"
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_turn_that_waits_for_a_pass_runs_nothing() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    let opened = fixture.open(fixture.main, session).await;
+    let first = Uuid::new_v4();
+    let said = send(
+        &opened,
+        first,
+        (person, noon),
+        ENOUGH,
+        CancellationToken::new(),
+    )
+    .await;
+    assert!(answered(&said), "{said:?}");
+    let held = fixture
+        .host
+        .config
+        .claims
+        .note_pass(session, &CancellationToken::new())
+        .expect("a free conversation");
+    // ACP's cancel reaches a turn waiting for its claim.
+    let waiting = send(
+        &opened,
+        Uuid::new_v4(),
+        (person, noon + MINUTE),
+        "Never mind.",
+        CancellationToken::new(),
+    );
+    let cancel = async {
+        tokio::time::sleep(SURFACE_WAIT / 4).await;
+        opened.cancel_active_turn().expect("cancel");
+    };
+    let (outcome, ()) = tokio::join!(waiting, cancel);
+    assert!(
+        matches!(outcome, Ok(LocalTurnOutcome::Cancelled)),
+        "{outcome:?}"
+    );
+    // So does the caller's own cancellation.
+    let token = CancellationToken::new();
+    let waiting = send(
+        &opened,
+        Uuid::new_v4(),
+        (person, noon + MINUTE),
+        "Never mind.",
+        token.clone(),
+    );
+    let cancel = async {
+        tokio::time::sleep(SURFACE_WAIT / 4).await;
+        token.cancel();
+    };
+    let (outcome, ()) = tokio::join!(waiting, cancel);
+    assert!(
+        matches!(outcome, Ok(LocalTurnOutcome::Cancelled)),
+        "{outcome:?}"
+    );
+    // A message the kernel already admitted is not reported cancelled: it
+    // settles only under the claim, so it is refused, to be sent again.
+    let token = CancellationToken::new();
+    let waiting = send(&opened, first, (person, noon), ENOUGH, token.clone());
+    let cancel = async {
+        tokio::time::sleep(SURFACE_WAIT / 4).await;
+        token.cancel();
+    };
+    let (outcome, ()) = tokio::join!(waiting, cancel);
+    assert!(
+        matches!(outcome, Err(LocalHostError::PassStillRunning)),
+        "{outcome:?}"
+    );
+    drop(held);
+    // With no pass holding it, a cancelled caller still takes the claim, and
+    // the kernel answers for a message it already settled.
+    let token = CancellationToken::new();
+    token.cancel();
+    let replayed = send(&opened, first, (person, noon), ENOUGH, token).await;
+    assert!(answered(&replayed), "{replayed:?}");
+    assert_eq!(fixture.calls_of("turn").len(), 1, "none of them ran");
+}
+
+#[tokio::test]
+async fn deleting_a_conversation_keeps_its_completed_pass_toward_the_persons_gap() {
+    let fixture = Fixture::new().await;
+    let (session, later, person) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    assert_eq!(
+        fixture.timer(noon + 15 * MINUTE).await,
+        Some(RunStatus::Succeeded)
+    );
+    assert_eq!(fixture.passes()[0].1.as_deref(), Some("completed"));
+    fixture
+        .host
+        .delete_session(fixture.main, session)
+        .await
+        .expect("deleted");
+    assert_eq!(rows(&fixture), (0, 1), "its completed pass stays");
+    fixture.say(later, person, noon + 20 * MINUTE, ENOUGH).await;
+    assert_eq!(
+        fixture.timer_due(noon + 20 * MINUTE).await,
+        Some(noon + 135 * MINUTE),
+        "two hours after the deleted conversation's pass"
+    );
+    // Once past the time a pass is kept, a deletion prunes it.
+    clock::set(fixture.database(), noon + 3 * 24 * 60 * MINUTE);
+    fixture
+        .host
+        .delete_session(fixture.main, later)
+        .await
+        .expect("deleted");
+    assert_eq!(rows(&fixture), (0, 0));
+}
+
+#[tokio::test]
+async fn deleting_a_conversation_a_surface_holds_open_is_refused_without_cancelling_its_pass() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    let opened = fixture.open(fixture.main, session).await;
+    fixture.script(&["hang"]);
+    let started = fixture.root.join("started");
+    let delete = async {
+        while !started.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let refused = fixture.host.delete_session(fixture.main, session).await;
+        let running = fixture.passes()[0].1.clone();
+        drop(opened);
+        let deleted = fixture.host.delete_session(fixture.main, session).await;
+        (refused, running, deleted)
+    };
+    let (status, (refused, running, deleted)) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async { tokio::join!(fixture.timer(noon + 15 * MINUTE), delete) }),
+    )
+    .await
+    .expect("the deletion ends");
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("close it first")),
+        "{refused:?}"
+    );
+    assert_eq!(running, None, "the refused deletion left the pass running");
+    deleted.expect("deleted once the surface let go");
+    assert_eq!(status, Some(RunStatus::Succeeded));
+    assert!(!fixture.host.has_session(session).expect("sessions"));
 }

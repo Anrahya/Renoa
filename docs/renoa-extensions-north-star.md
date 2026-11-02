@@ -876,7 +876,9 @@ plugin is on for it.
 
 `host_memory_conversations` keeps, per conversation, its last activity, the
 later of the person's last message and the agent's last output; the person's
-characters since its last completed pass, counted once per command; where
+characters since its last completed pass, counted once per command and only
+once the kernel admitted it, so a message refused before admission counts
+for nothing and the same message sent again counts once; where
 its range begins, a time and the notebook's length; and when to ask Mnem
 again. A conversation that already had turns when the pass began to follow
 it, such as one from before the upgrade, has its range begin at the person's
@@ -885,7 +887,8 @@ agent already noted. `host_memory_passes` keeps each pass: frozen with its messa
 derived command id before that command is admitted, and settled once as
 completed, cancelled or failed with the count of notes it wrote. A person's
 last pass and passes in `pass::day(now)` count completed passes only, in any
-of their conversations, so every pass counts toward the person's cap.
+of their conversations, a deleted one's included, so every pass counts
+toward the person's cap. A settled pass is pruned two days after it finished.
 
 Each message and each turn's end asks Mnem again and stores when: now for a
 pass to run, the time Mnem names for one to wait, and never, until new
@@ -929,13 +932,26 @@ a surface replays leaves the exchange out.
 The person's message cancels a pass: their surface's claim cancels the
 pass's command, which aborts an in-flight model call, and waits for the pass
 to settle, at most 20 seconds; past that the message is refused with nothing
-run, to be sent again. The pass's outcome is recorded before its claim is
-released, unless its command could not run or the record failed, and then
-the pass is closed before the person's message. Inspecting a conversation's
-history and deleting it claim it the same way, so a pass reviewing it is
-cancelled and waited for first; a deletion removes what the pass kept of the
-conversation in the catalog transaction that deletes its session, so a
-refused deletion removes neither. A draining node, as a deploy
+run, to be sent again. An agent's automation run the scheduler is
+delivering waits again instead, under the run's own command id, so a pass
+slow to stop never fails a reminder. Cancelling the turn while it waits, by
+ACP's cancel or the caller's own cancellation, ends it with nothing run; a
+command the kernel had already admitted is refused instead, to be sent
+again, since only the claim settles it. A command cancelled while its
+runtime resolves is not admitted. A surface
+that opens a session a pass is still loading cancels the pass first and
+waits for the load no longer than for the claim. The pass's outcome is
+recorded before its claim is released, unless its command could not run or
+the record failed, and then the pass is closed before the person's message.
+Inspecting a conversation's history and deleting it claim it the same way,
+so a pass reviewing it is cancelled and waited for first. Both are refused
+before the claim, leaving the pass running, for another agent's
+conversation or one an instance in this process holds for anything but the
+pass; another process's hold is found only after the claim, by the kernel.
+A deletion removes the session's storage first, outside any catalog
+transaction, then, in one short transaction, the conversation's row and its
+passes that do not count; a stop between the two leaves only those rows,
+which a retried deletion removes. A draining node, as a deploy
 stops it, stops the Host's memory runs: the running pass is cancelled and
 settles before the node stops, no pass and no further nightly job starts,
 and the run is left unrecorded for the next node to resume. Notes the pass wrote stay, and

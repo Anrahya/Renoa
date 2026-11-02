@@ -223,6 +223,20 @@ fn record(
     automation.ok_or(AutomationError::Conflict)
 }
 
+/// Whether `id` is an admitted run of an agent's automation with no result
+/// yet: one the scheduler is delivering, under `id`, and waits for.
+pub(crate) fn delivering(path: &Path, id: Uuid) -> Result<bool, AutomationError> {
+    let db = catalog::open_verified(path)?;
+    Ok(db.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM host_automation_runs
+             WHERE id = ?1 AND output IS NULL AND automation_id NOT IN ({PLUGIN_OWNED}))"
+        ),
+        [id.to_string()],
+        |row| row.get(0),
+    )?)
+}
+
 pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, AutomationError> {
     let db = catalog::open_verified(path)?;
     let mut q=db.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND automation_id NOT IN ({PLUGIN_OWNED}) AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL AND earlier.automation_id NOT IN ({PLUGIN_OWNED})) ORDER BY sequence LIMIT 20"))?;

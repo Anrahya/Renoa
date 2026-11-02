@@ -100,6 +100,7 @@ impl Ran<'_> {
     ) -> Result<Settled, PluginError> {
         let messages = session
             .command_messages(self.command)
+            .await
             .map_err(|error| unavailable(&error))?;
         let settled = Settled {
             outcome: match outcome {

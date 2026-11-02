@@ -3,6 +3,8 @@ use std::{path::Path, sync::Arc};
 use renoa_kernel::{AgentId, SessionId};
 use uuid::Uuid;
 
+mod deletion;
+
 use super::{
     LocalHost, LocalHostError, RuntimeRequest,
     definition::{ResolvedAgentDefinition, resolve_definition},
@@ -11,12 +13,11 @@ use super::{
 use crate::{
     AgentSession, LocalWorkspace,
     agent_session::{AgentSessionStorage, claim::Claim},
-    host::{catalog::HostCatalogError, models::validate_selection},
+    host::models::validate_selection,
     host_storage::{
-        OpenedSessionStorage, SessionPublication, create_session_storage, delete_session_storage,
-        open_session_storage,
+        OpenedSessionStorage, SessionPublication, create_session_storage, open_session_storage,
     },
-    plugins::host::{memory::note_pass, session_context},
+    plugins::host::session_context,
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
     speaker::ToolAccess,
     trace::{TRACE_DATABASE, TraceStore},
@@ -43,20 +44,24 @@ impl LocalHost {
         let opened = self
             .config
             .claims
-            .open(session_uuid, async {
-                if self
-                    .config
-                    .sessions
-                    .join(session_id.to_string())
-                    .try_exists()?
-                {
-                    return self.load_unshared(agent_id, session_uuid, cwd).await;
-                }
-                self.create_session_for_definition(&definition, cwd, session_uuid)
-                    .await
-            })
+            .open_for_surface(
+                session_uuid,
+                // Boxed: loading or creating a session is a large future.
+                Box::pin(async {
+                    if self
+                        .config
+                        .sessions
+                        .join(session_id.to_string())
+                        .try_exists()?
+                    {
+                        return self.load_unshared(agent_id, session_uuid, cwd).await;
+                    }
+                    self.create_session_for_definition(&definition, cwd, session_uuid)
+                        .await
+                }),
+            )
             .await?;
-        owned(opened, agent_id, cwd)
+        owned(opened, agent_id, cwd).await
     }
 
     /// Opens a stored conversation of `agent_id` for a note pass that
@@ -78,9 +83,15 @@ impl LocalHost {
         let Some(claim) = self.config.claims.note_pass(session_uuid, cancellation) else {
             return Ok(None);
         };
-        let session = self
-            .load_session_for_agent(agent_id, session_uuid, cwd)
+        let opened = self
+            .config
+            .claims
+            .open(
+                session_uuid,
+                self.load_unshared(agent_id, session_uuid, cwd),
+            )
             .await?;
+        let session = owned(opened, agent_id, cwd).await?;
         Ok(Some(ClaimedSession {
             session,
             _claim: claim,
@@ -213,12 +224,12 @@ impl LocalHost {
         let opened = self
             .config
             .claims
-            .open(
+            .open_for_surface(
                 session_uuid,
                 self.load_unshared(agent_id, session_uuid, cwd),
             )
             .await?;
-        owned(opened, agent_id, cwd)
+        owned(opened, agent_id, cwd).await
     }
 
     /// Opens a new instance of a stored session; only through
@@ -317,8 +328,8 @@ impl LocalHost {
         {
             return Ok(Some(crate::LocalTurnOutcome::Cancelled));
         }
-        self.refuse_foreign(agent_id, session_uuid).await?;
-        let _claim = self.config.claims.surface(session_uuid).await?;
+        self.refuse_before_claim(agent_id, session_uuid).await?;
+        let _claim = self.config.claims.surface_uncancelled(session_uuid).await?;
         let stored = self
             .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
@@ -354,78 +365,6 @@ impl LocalHost {
         })
         .await?
     }
-
-    /// Permanently removes one closed Agent session owned by `agent_id`.
-    ///
-    /// A session bound to a different agent is refused from the manifest its
-    /// deletion already reads, before any storage is removed. Deleting a
-    /// missing session succeeds so a retried ACP request is safe.
-    ///
-    /// # Errors
-    ///
-    /// Returns a foreign-agent rejection, or an ownership, identity, metadata,
-    /// or storage failure. A session still owned by any process cannot be
-    /// deleted; a note pass reviewing it is cancelled and waited for first,
-    /// as for a turn, and the session goes with what the pass kept of it in
-    /// one catalog transaction, so a refusal deletes neither.
-    pub async fn delete_session(
-        &self,
-        agent_id: AgentId,
-        session_uuid: Uuid,
-    ) -> Result<(), LocalHostError> {
-        self.refuse_foreign(agent_id, session_uuid).await?;
-        let _claim = self.config.claims.surface(session_uuid).await?;
-        let sessions = self.config.sessions.clone();
-        let database = self.config.database.clone();
-        let session_id = SessionId::from_uuid(session_uuid);
-        tokio::task::spawn_blocking(move || {
-            let mut catalog = crate::host::catalog::open_verified(&database)?;
-            let transaction = catalog.transaction().map_err(HostCatalogError::from)?;
-            note_pass::store::forget(&transaction, session_uuid)?;
-            delete_session_storage(&sessions, agent_id, session_id)?;
-            transaction.commit().map_err(HostCatalogError::from)?;
-            Ok::<_, LocalHostError>(())
-        })
-        .await??;
-        self.config.claims.forget(session_uuid);
-        let skills = self.config.skill_store.clone();
-        tokio::task::spawn_blocking(move || skills.remove_session(session_id)).await??;
-        Ok(())
-    }
-}
-
-impl LocalHost {
-    /// Refuses a stored session of another agent before a claim on it cancels
-    /// that agent's note pass; a missing session is left to the caller. The
-    /// opening that follows checks its manifest again.
-    ///
-    /// # Errors
-    ///
-    /// Returns a foreign-agent rejection or a metadata failure.
-    pub(super) async fn refuse_foreign(
-        &self,
-        agent_id: AgentId,
-        session_uuid: Uuid,
-    ) -> Result<(), LocalHostError> {
-        let manifest = self
-            .config
-            .sessions
-            .join(SessionId::from_uuid(session_uuid).to_string())
-            .join(crate::host_storage::MANIFEST_FILE);
-        let read = tokio::task::spawn_blocking(move || {
-            manifest
-                .try_exists()?
-                .then(|| crate::host_storage::read_manifest_file(&manifest))
-                .transpose()
-        })
-        .await??;
-        match read {
-            Some(manifest) if manifest.agent_id != agent_id => Err(LocalHostError::InvalidRequest(
-                "session belongs to a different agent".to_owned(),
-            )),
-            _ => Ok(()),
-        }
-    }
 }
 
 /// A session opened for a note pass, claimed for it until dropped; the
@@ -445,7 +384,7 @@ impl std::ops::Deref for ClaimedSession {
 
 /// `session` when `agent_id` owns it and it is bound to `cwd`: the checks
 /// opening its storage makes, again for an instance already open.
-fn owned(
+async fn owned(
     session: Arc<AgentSession>,
     agent_id: AgentId,
     cwd: &Path,
@@ -455,7 +394,7 @@ fn owned(
             "session belongs to a different agent".to_owned(),
         ));
     }
-    if session.workspace() != std::fs::canonicalize(cwd)? {
+    if session.workspace() != tokio::fs::canonicalize(cwd).await? {
         return Err(LocalHostError::InvalidRequest(
             "session workspace differs from its durable binding".to_owned(),
         ));

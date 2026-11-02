@@ -60,8 +60,9 @@ pub(crate) struct AutomationLink {
 
 /// Runs the schedule until shutdown or `drain`, reconnecting the surface link
 /// with bounded backoff, and writes the heartbeat throughout, since a lost
-/// coordinator link does not stop the scheduler. Only socket loss is retried.
-/// At `drain` it stops the Host's note passes and returns once the plugin run
+/// coordinator link does not stop the scheduler. Socket loss reconnects; a
+/// Host failure, such as a catalog busy past its timeout, is logged and asked
+/// again on the next tick. Any other failure ends the scheduler. At `drain` it stops the Host's note passes and returns once the plugin run
 /// in flight ended, or at shutdown, which drops it.
 pub(crate) async fn run(
     runtime: Arc<NodeRuntime>,
@@ -157,32 +158,37 @@ async fn serve(
 ) -> Result<(), NodeError> {
     let mut next_cleanup = Instant::now();
     loop {
-        plugin_run::reap(plugin).await?;
-        let Some(due) = scheduler
-            .next_run(now_ms()?, plugin.is_some())
-            .await
-            .map_err(|error| host_error(&error))?
-        else {
-            // Deleted automations' conversations go while nothing is due.
-            // Stopping part way is safe: every step converges on a retry and
-            // the Host's mark goes last.
-            if Instant::now() >= next_cleanup {
-                tokio::select! {
-                    () = shutdown.cancelled() => return Ok(()),
-                    deleted = automation_cleanup::delete_conversations(
-                        runtime, scheduler, connection,
-                    ) => deleted?,
+        // A plugin's run that failed stays admitted, and a later tick runs
+        // it again.
+        if let Err(error) = plugin_run::reap(plugin).await {
+            unavailable(&error);
+        }
+        let due = match scheduler.next_run(now_ms()?, plugin.is_some()).await {
+            Ok(Some(due)) => due,
+            Ok(None) => {
+                // Deleted automations' conversations go while nothing is due.
+                // Stopping part way is safe: every step converges on a retry
+                // and the Host's mark goes last.
+                if Instant::now() >= next_cleanup {
+                    tokio::select! {
+                        () = shutdown.cancelled() => return Ok(()),
+                        deleted = automation_cleanup::delete_conversations(
+                            runtime, scheduler, connection,
+                        ) => deleted?,
+                    }
+                    next_cleanup = Instant::now() + HEARTBEAT;
                 }
-                next_cleanup = Instant::now() + HEARTBEAT;
+                if !rest(connection, shutdown).await? {
+                    return Ok(());
+                }
+                continue;
             }
-            tokio::select! {
-                () = shutdown.cancelled() => return Ok(()),
-                () = connection.closed() => {
-                    return Err(ClientError::Transport(
-                        "the coordinator connection ended".to_owned(),
-                    ).into());
+            Err(error) => {
+                unavailable(&host_error(&error));
+                if !rest(connection, shutdown).await? {
+                    return Ok(());
                 }
-                () = tokio::time::sleep(PAUSE) => continue,
+                continue;
             }
         };
         if due.run.result.as_ref().map(|result| result.status) == Some(RunStatus::Skipped) {
@@ -211,12 +217,40 @@ async fn serve(
             "status": outcome.status(),
             "failed_tool_calls": outcome.failed_tool_calls(),
         });
-        scheduler
-            .finish_run(due.run.id, outcome, now_ms()?)
-            .await
-            .map_err(|error| host_error(&error))?;
+        // A result the Host could not record leaves the run admitted: the
+        // next tick submits the same command again, and the coordinator and
+        // the ledger hand back the outcome it already has.
+        if let Err(error) = scheduler.finish_run(due.run.id, outcome, now_ms()?).await {
+            unavailable(&host_error(&error));
+            if !rest(connection, shutdown).await? {
+                return Ok(());
+            }
+            continue;
+        }
         node_log::event("info", "automation_finished", &fields);
     }
+}
+
+/// Waits [`PAUSE`] before the schedule's next tick. Returns `false` at
+/// shutdown, and the transport failure when the coordinator link ended.
+async fn rest(connection: &Connection, shutdown: &CancellationToken) -> Result<bool, NodeError> {
+    tokio::select! {
+        () = shutdown.cancelled() => Ok(false),
+        () = connection.closed() => Err(ClientError::Transport(
+            "the coordinator connection ended".to_owned(),
+        ).into()),
+        () = tokio::time::sleep(PAUSE) => Ok(true),
+    }
+}
+
+/// Logs a Host failure the schedule outlives: a catalog another writer holds
+/// past its busy timeout is asked again on the next tick.
+fn unavailable(error: &NodeError) {
+    node_log::event(
+        "warn",
+        "automation_schedule_unavailable",
+        &serde_json::json!({ "error": error.to_string() }),
+    );
 }
 
 /// Submits one run and waits for its result. Returns `None` at shutdown; the
@@ -317,19 +351,15 @@ async fn task_for(
             },
             // This node advertises every Host agent soon after it connects, so
             // only an agent the Host no longer has stays unadvertised.
-            [] => {
-                let exists = runtime
-                    .host
-                    .agent_definition(agent_id)
-                    .await
-                    .map_err(|error| host_error(&error))?
-                    .is_some();
-                if !exists {
+            [] => match runtime.host.agent_definition(agent_id).await {
+                Ok(Some(_)) => {}
+                Ok(None) => {
                     return Ok(Resolution::Refused(format!(
                         "agent {agent_id} no longer exists"
                     )));
                 }
-            }
+                Err(error) => unavailable(&host_error(&error)),
+            },
             _ => {
                 return Ok(Resolution::Refused(format!(
                     "more than one node advertises `{}`",

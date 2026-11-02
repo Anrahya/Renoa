@@ -9,7 +9,9 @@
 //! turn, compaction or configuration change, and a pass for its review, so a
 //! surface that keeps a session open between turns leaves it passable. A
 //! surface that claims a session a pass holds cancels the pass and waits for
-//! it, at most [`SURFACE_WAIT`], then fails without running anything. A pass
+//! it, at most [`SURFACE_WAIT`] or until its own cancellation, then fails
+//! without running anything; an automation run the scheduler delivers waits
+//! again ([`waiting`](super::waiting)). A pass
 //! never takes a session a surface holds, and none once passes are stopped.
 //! Claims do not reach another process: there the kernel's own lock refuses
 //! the second opener.
@@ -30,7 +32,31 @@ use super::AgentSession;
 use crate::LocalHostError;
 
 /// How long a surface waits for a cancelled pass to let go before it gives up.
+#[cfg(not(test))]
 pub(crate) const SURFACE_WAIT: Duration = Duration::from_secs(20);
+/// Short in tests, which wait it out in real time.
+#[cfg(test)]
+pub(crate) const SURFACE_WAIT: Duration = Duration::from_secs(1);
+
+/// Why a surface did not get its claim; nothing is claimed either way.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Waited {
+    /// The pass had not let go within [`SURFACE_WAIT`].
+    TimedOut,
+    /// The surface's own cancellation came first.
+    Cancelled,
+}
+
+impl From<Waited> for LocalHostError {
+    fn from(waited: Waited) -> Self {
+        match waited {
+            Waited::TimedOut => Self::PassStillRunning,
+            Waited::Cancelled => {
+                Self::InvalidRequest("cancelled while a memory pass let go".to_owned())
+            }
+        }
+    }
+}
 
 /// The claims and open instances of one Host's sessions.
 #[derive(Default)]
@@ -73,16 +99,61 @@ impl Claims {
     /// # Errors
     ///
     /// Refuses, with nothing claimed, when the pass has not let go within
-    /// [`SURFACE_WAIT`].
-    pub(crate) async fn surface(&self, session: Uuid) -> Result<Claim, LocalHostError> {
-        tokio::time::timeout(SURFACE_WAIT, self.wait_for(session))
-            .await
-            .map_err(|_| {
-                LocalHostError::InvalidRequest(
-                    "a memory pass in this conversation did not stop in time; nothing was run, so send it again"
-                        .to_owned(),
-                )
-            })
+    /// [`SURFACE_WAIT`] or `cancellation` came first. A claim free at once is
+    /// taken even when `cancellation` already came, so the kernel settles a
+    /// cancelled command as it stands.
+    pub(crate) async fn surface(
+        &self,
+        session: Uuid,
+        cancellation: &CancellationToken,
+    ) -> Result<Claim, Waited> {
+        tokio::select! {
+            biased;
+            claimed = tokio::time::timeout(SURFACE_WAIT, self.wait_for(session)) => {
+                claimed.map_err(|_| Waited::TimedOut)
+            }
+            () = cancellation.cancelled() => Err(Waited::Cancelled),
+        }
+    }
+
+    /// [`Self::surface`] for an operation nothing cancels.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::surface`].
+    pub(crate) async fn surface_uncancelled(&self, session: Uuid) -> Result<Claim, LocalHostError> {
+        Ok(self.surface(session, &CancellationToken::new()).await?)
+    }
+
+    /// Cancels the pass holding `session`, if one does, without claiming it.
+    fn cancel_pass(&self, session: Uuid) {
+        if let Some(Holder::NotePass(cancellation)) = self.inner.held().holders.get(&session) {
+            cancellation.cancel();
+        }
+    }
+
+    /// Whether an instance of `session` is open here for anyone but a note
+    /// pass: a turn, a surface's cache, an inspection. The kernel refuses a
+    /// second handle while one is, so a caller that needs its own handle is
+    /// refused before its claim cancels a pass for nothing. A pass holds one
+    /// reference to the instance it opened.
+    pub(crate) fn open_elsewhere(&self, session: Uuid) -> bool {
+        let slot = self
+            .open
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&session)
+            .map(Arc::clone);
+        let Some(open) = slot.and_then(|slot| slot.try_lock().ok().and_then(|open| open.upgrade()))
+        else {
+            return false;
+        };
+        let pass = usize::from(matches!(
+            self.inner.held().holders.get(&session),
+            Some(Holder::NotePass(_))
+        ));
+        // Less this function's own reference.
+        Arc::strong_count(&open) - 1 > pass
     }
 
     async fn wait_for(&self, session: Uuid) -> Claim {
@@ -146,9 +217,10 @@ impl Claims {
     }
 
     /// The instance of `session` open in this process, or the one `load`
-    /// opens when none is. An instance that is closing is not handed out:
-    /// `load` opens the session again, which its storage refuses while the
-    /// closing instance still holds the kernel past a brief handoff.
+    /// opens when none is, for a note pass, which waits while another opener
+    /// loads it. An instance that is closing is not handed out: `load` opens
+    /// the session again, which its storage refuses while the closing instance
+    /// still holds the kernel past a brief handoff.
     ///
     /// # Errors
     ///
@@ -158,16 +230,42 @@ impl Claims {
         session: Uuid,
         load: impl Future<Output = Result<Arc<AgentSession>, LocalHostError>>,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
-        let slot = {
-            let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
-            // A slot only the map holds, whose instance is gone, is dropped.
-            open.retain(|_, slot| {
-                Arc::strong_count(slot) > 1
-                    || slot.try_lock().is_ok_and(|open| open.strong_count() > 0)
-            });
-            Arc::clone(open.entry(session).or_default())
-        };
-        let mut slot = slot.lock().await;
+        let slot = self.slot(session);
+        Self::open_in(slot.lock().await, load).await
+    }
+
+    /// [`Self::open`] for a surface: a pass loading the session is cancelled
+    /// first, and the wait for its load is bounded by [`SURFACE_WAIT`].
+    ///
+    /// # Errors
+    ///
+    /// Returns what `load` returns, or a timeout.
+    pub(crate) async fn open_for_surface(
+        &self,
+        session: Uuid,
+        load: impl Future<Output = Result<Arc<AgentSession>, LocalHostError>>,
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
+        self.cancel_pass(session);
+        let slot = self.slot(session);
+        let held = tokio::time::timeout(SURFACE_WAIT, slot.lock())
+            .await
+            .map_err(|_| LocalHostError::PassStillRunning)?;
+        Self::open_in(held, load).await
+    }
+
+    fn slot(&self, session: Uuid) -> Arc<tokio::sync::Mutex<Weak<AgentSession>>> {
+        let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
+        // A slot only the map holds, whose instance is gone, is dropped.
+        open.retain(|_, slot| {
+            Arc::strong_count(slot) > 1 || slot.try_lock().is_ok_and(|open| open.strong_count() > 0)
+        });
+        Arc::clone(open.entry(session).or_default())
+    }
+
+    async fn open_in(
+        mut slot: tokio::sync::MutexGuard<'_, Weak<AgentSession>>,
+        load: impl Future<Output = Result<Arc<AgentSession>, LocalHostError>>,
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
         if let Some(open) = slot.upgrade()
             && open.accepts_work()
         {
@@ -220,96 +318,4 @@ impl Drop for Claim {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use tokio_util::sync::CancellationToken;
-    use uuid::Uuid;
-
-    use super::{Claims, SURFACE_WAIT};
-
-    #[tokio::test]
-    async fn a_surface_cancels_the_pass_and_waits_for_it_and_a_pass_never_takes_a_held_session() {
-        let claims = Claims::default();
-        let session = Uuid::new_v4();
-        let pass = CancellationToken::new();
-        let held = claims.note_pass(session, &pass).expect("a free session");
-        assert!(
-            claims
-                .note_pass(session, &CancellationToken::new())
-                .is_none(),
-            "one pass at a time"
-        );
-        let surface = claims.surface(session);
-        tokio::pin!(surface);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(20), surface.as_mut())
-                .await
-                .is_err(),
-            "the surface waits while the pass holds the session"
-        );
-        assert!(pass.is_cancelled(), "and has cancelled it");
-        drop(held);
-        let first = surface.await.expect("the pass let go");
-        let second = claims.surface(session).await.expect("surfaces share");
-        assert!(
-            claims
-                .note_pass(session, &CancellationToken::new())
-                .is_none(),
-            "a pass never takes a session a surface holds"
-        );
-        drop(first);
-        assert!(
-            claims
-                .note_pass(session, &CancellationToken::new())
-                .is_none()
-        );
-        drop(second);
-        assert!(
-            claims
-                .note_pass(session, &CancellationToken::new())
-                .is_some(),
-            "free once every surface let go"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_surface_gives_up_on_a_pass_that_does_not_let_go_and_claims_nothing() {
-        let claims = Claims::default();
-        let session = Uuid::new_v4();
-        let pass = CancellationToken::new();
-        let held = claims.note_pass(session, &pass).expect("a free session");
-        let started = tokio::time::Instant::now();
-        let refused = tokio::time::timeout(SURFACE_WAIT * 2, claims.surface(session))
-            .await
-            .expect("the surface gives up by itself");
-        assert!(pass.is_cancelled());
-        let error = refused.err().expect("the surface gives up");
-        assert!(error.to_string().contains("send it again"), "{error}");
-        assert_eq!(started.elapsed(), SURFACE_WAIT);
-        drop(held);
-        assert!(
-            claims
-                .note_pass(session, &CancellationToken::new())
-                .is_some(),
-            "the refused surface holds nothing"
-        );
-    }
-
-    #[tokio::test]
-    async fn stopping_passes_cancels_the_running_one_and_refuses_the_next() {
-        let claims = Claims::default();
-        let (running, idle) = (Uuid::new_v4(), Uuid::new_v4());
-        let pass = CancellationToken::new();
-        let held = claims.note_pass(running, &pass).expect("a free session");
-        claims.stop_passes();
-        assert!(pass.is_cancelled());
-        assert!(claims.passes_stopped());
-        assert!(
-            claims.note_pass(idle, &CancellationToken::new()).is_none(),
-            "no pass starts once stopped"
-        );
-        drop(held);
-        assert!(claims.surface(running).await.is_ok(), "surfaces go on");
-    }
-}
+mod tests;

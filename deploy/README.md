@@ -379,7 +379,9 @@ person's next message after the upgrade: once one has been quiet for 15
 minutes with enough new text, a pass reviews it, two hours apart and at most four times a pass day
 plus the nightly sweep, which runs before compaction. Its timer shows in
 inventory as `renoa.memory note pass`, each pass logs a `memory_pass` line
-(`memory_pass_decision` and `memory_pass_cancelled` too), and inspection's
+(`memory_pass_decision` and `memory_pass_cancelled` too, and
+`memory_pass_delays_run` while an automation run waits for a pass slow to
+stop), and inspection's
 `memory_passes` shows each person's passes today. A pass is an operation of
 the conversation it reviews: a draining node cancels the running pass, which
 settles as not run with its notes kept, starts no other pass and no further
@@ -604,8 +606,10 @@ and the Control Room, with a status: succeeded, failed, or skipped. A recurring
 run more than half its period late is skipped without executing, and the node
 logs `automation_skipped`. A run stays admitted until its result is recorded,
 so a restart submits the same command again and the coordinator keeps one
-copy. While the node owns the schedule it writes a heartbeat every 30 seconds,
-which Host observation reports.
+copy. A busy or failing Host catalog does not stop the schedule: the node logs
+`automation_schedule_unavailable` and asks again a second later. While the
+node owns the schedule it writes a heartbeat every 30 seconds, which Host
+observation reports.
 
 On the coordinator host, create the node identity for its owning principal, the
 only principal that may open new tasks on the node, and exchange the

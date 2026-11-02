@@ -15,7 +15,9 @@ use crate::host::catalog::HostCatalogError;
 /// counts the person's text since the range began, once per command;
 /// `check_at_ms` is when to ask `pass::due` again, `NULL` until new activity.
 /// One row per pass; a pass without an outcome keeps its frozen message,
-/// which the outcome clears, and a conversation has at most one.
+/// which the outcome clears, and a conversation has at most one. A completed
+/// pass outlives its conversation, so deleting one never resets the person's
+/// cap or gap.
 pub(crate) const TABLES: &str = "CREATE TABLE IF NOT EXISTS host_memory_conversations (
         session_id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
@@ -30,7 +32,7 @@ pub(crate) const TABLES: &str = "CREATE TABLE IF NOT EXISTS host_memory_conversa
     ) STRICT;
     CREATE TABLE IF NOT EXISTS host_memory_passes (
         command_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES host_memory_conversations(session_id),
+        session_id TEXT NOT NULL,
         principal_id TEXT NOT NULL,
         run_id TEXT NOT NULL,
         kind TEXT NOT NULL CHECK (kind IN ('daytime', 'sweep')),
@@ -139,20 +141,32 @@ pub(super) fn message(db: &Connection, said: &Said<'_>) -> Result<(), HostCatalo
     Ok(())
 }
 
-/// Removes what the pass keeps of `session`, in the transaction that
-/// deletes it.
+/// Removes what the pass keeps of `session` at `now_ms`: its conversation
+/// and every pass of it that does not count. Its completed passes stay toward
+/// the person's cap and gap until they are past [`KEEP_MS`], and go then
+/// with everyone's.
 pub(crate) fn forget(
     transaction: &rusqlite::Transaction<'_>,
     session: Uuid,
+    now_ms: i64,
 ) -> Result<(), HostCatalogError> {
     let session = session.to_string();
     transaction.execute(
-        "DELETE FROM host_memory_passes WHERE session_id = ?1",
+        &format!("DELETE FROM host_memory_passes WHERE session_id = ?1 AND NOT ({COUNTS})"),
         [&session],
     )?;
     transaction.execute(
         "DELETE FROM host_memory_conversations WHERE session_id = ?1",
         [&session],
+    )?;
+    prune(transaction, now_ms)
+}
+
+/// Deletes the settled passes past [`KEEP_MS`] at `now_ms`.
+fn prune(db: &Connection, now_ms: i64) -> Result<(), HostCatalogError> {
+    db.execute(
+        "DELETE FROM host_memory_passes WHERE outcome IS NOT NULL AND finished_at_ms < ?1",
+        [now_ms.saturating_sub(KEEP_MS)],
     )?;
     Ok(())
 }
@@ -380,10 +394,7 @@ pub(super) fn settle(
             params![session, frozen_at_ms, count(length)?, reviewed],
         )?;
     }
-    transaction.execute(
-        "DELETE FROM host_memory_passes WHERE outcome IS NOT NULL AND finished_at_ms < ?1",
-        [now_ms.saturating_sub(KEEP_MS)],
-    )?;
+    prune(&transaction, now_ms)?;
     transaction.commit()?;
     Ok(true)
 }

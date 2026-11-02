@@ -380,6 +380,10 @@ impl<'a> Review<'a> {
                 return Ok(Visit::Unsettled);
             }
         };
+        // A surface that claimed it while it opened goes first.
+        if claim.is_cancelled() {
+            return Ok(Visit::Busy);
+        }
         // A pass left unfinished is closed first: the kernel admits nothing
         // else in the session until it is. One that cannot close stays with
         // its conversation, and the run goes on to the next.

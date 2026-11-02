@@ -492,6 +492,47 @@ async fn a_run_too_late_for_its_schedule_is_skipped_without_executing() {
     .expect("skipped automation test timed out");
 }
 
+#[tokio::test]
+async fn a_catalog_busy_past_its_timeout_delays_the_schedule_without_ending_it() {
+    timeout(Duration::from_secs(40), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let automation = create(&host, fixture.agent_id, "Write the digest.").await;
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        // Another writer holds the catalog past the scheduler's five second
+        // busy timeout.
+        let catalog = fixture.data.join("state/host.sqlite3");
+        tokio::task::spawn_blocking(move || {
+            let db = rusqlite::Connection::open(catalog).expect("open Host catalog");
+            db.execute_batch("BEGIN EXCLUSIVE")
+                .expect("hold the catalog");
+            std::thread::sleep(Duration::from_secs(7));
+            db.execute_batch("COMMIT").expect("let the catalog go");
+        })
+        .await
+        .expect("the other writer");
+        assert!(
+            !node_task.is_finished(),
+            "the scheduler outlives a busy catalog"
+        );
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+        assert_eq!(
+            result_of(&host, fixture.agent_id, run).await,
+            "Digest written."
+        );
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("busy catalog test timed out");
+}
+
 /// Starts a node that owns the automation schedule.
 fn deletion_marks(fixture: &HostFixture) -> i64 {
     rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))

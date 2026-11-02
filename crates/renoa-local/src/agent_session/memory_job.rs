@@ -48,7 +48,7 @@ impl AgentSession {
         prompt: &str,
         frozen_at_ms: i64,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let _claim = self.host.claims.surface(self.id).await?;
+        let _claim = self.host.claims.surface_uncancelled(self.id).await?;
         self.execute(
             request_id,
             SessionCommand::MemoryJob(MemoryJob {
