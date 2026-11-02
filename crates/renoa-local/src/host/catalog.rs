@@ -11,6 +11,7 @@ mod cron_schedules;
 mod cutover;
 mod main_agent;
 mod memory_dream;
+mod memory_note_pass;
 mod memory_plugin;
 mod migrations;
 mod registry_sync;
@@ -34,6 +35,8 @@ pub(crate) use main_agent::restore_schema_41;
 #[cfg(test)]
 pub(crate) use memory_dream::restore_schema_43;
 #[cfg(test)]
+pub(crate) use memory_note_pass::restore_schema_44;
+#[cfg(test)]
 pub(crate) use memory_plugin::restore_schema_42;
 #[cfg(test)]
 pub(crate) use registry_sync::restore_schema_35;
@@ -42,7 +45,7 @@ pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 #[cfg(test)]
 pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 44;
+const SCHEMA_VERSION: u32 = 45;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -283,7 +286,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=43 => {
+        28..=44 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -333,6 +336,9 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             if version < 44 {
                 memory_dream::add_triggers_and_memory_jobs(&transaction)?;
             }
+            if version < 45 {
+                memory_note_pass::add_note_passes(&transaction)?;
+            }
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -351,6 +357,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             super::definition::schema::initialize(&transaction)?;
             super::automations::initialize(&transaction)?;
             memory_dream::add_triggers_and_memory_jobs(&transaction)?;
+            memory_note_pass::add_note_passes(&transaction)?;
             registry_sync::record_sync_failures(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",

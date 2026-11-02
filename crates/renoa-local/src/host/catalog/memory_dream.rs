@@ -25,6 +25,7 @@ pub(super) fn add_triggers_and_memory_jobs(
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_43(connection: &rusqlite::Connection) {
+    super::restore_schema_44(connection);
     connection
         .execute_batch(
             "DROP TABLE host_memory_sessions;

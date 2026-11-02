@@ -32,7 +32,8 @@ impl AgentSessionHistory {
         self.diagnostic_error.as_deref()
     }
 
-    /// Projects the complete durable transcript with its original event identities.
+    /// Projects the durable transcript with its original event identities, a
+    /// note pass's exchange left out.
     ///
     /// # Errors
     ///

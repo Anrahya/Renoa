@@ -20,9 +20,11 @@ use crate::{
     trace::TraceStore,
 };
 
+pub(crate) mod claim;
 mod context;
 mod execution;
 mod memory_job;
+mod note_pass;
 
 /// One durable Agent session assembled from one canonical agent definition.
 pub struct AgentSession {
@@ -36,6 +38,9 @@ pub struct AgentSession {
     trace: TraceStore,
     state: Mutex<SessionState>,
     idle: tokio::sync::Notify,
+    /// Released after every field above, the kernel handle included, so the
+    /// next holder opens a closed session.
+    _claim: claim::Claim,
 }
 
 /// Durable resources belonging to one assembled Agent session.
@@ -46,6 +51,8 @@ pub(crate) struct AgentSessionStorage {
     /// Where the session context of its latest pinned command is kept.
     pub(crate) session_context_pin: PathBuf,
     pub(crate) trace: TraceStore,
+    /// The claim it was opened under; see [`claim`].
+    pub(crate) claim: claim::Claim,
 }
 
 struct SessionState {
@@ -101,6 +108,7 @@ impl AgentSession {
                 activity: Activity::Idle,
             }),
             idle: tokio::sync::Notify::new(),
+            _claim: storage.claim,
         }
     }
 
@@ -114,7 +122,8 @@ impl AgentSession {
         self.agent
     }
 
-    /// Returns the complete kernel-backed transcript for a loading surface.
+    /// Returns the kernel-backed transcript for a loading surface, a note
+    /// pass's exchange left out.
     ///
     /// # Errors
     ///

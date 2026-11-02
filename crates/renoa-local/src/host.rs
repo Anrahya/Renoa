@@ -126,6 +126,7 @@ pub(crate) struct HostConfig {
     /// How this Host's agents reach other agents; set by the node serving this
     /// Host, and replaced by the next node that opens on it.
     pub(crate) peers: std::sync::Mutex<Option<Arc<dyn AgentPeers>>>,
+    pub(crate) claims: crate::agent_session::claim::Claims,
 }
 
 struct HostInitialization {
@@ -387,6 +388,7 @@ impl LocalHost {
                 plugins,
                 code_mode,
                 peers: std::sync::Mutex::new(None),
+                claims: crate::agent_session::claim::Claims::default(),
             }),
         })
     }

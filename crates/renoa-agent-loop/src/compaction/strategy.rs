@@ -239,4 +239,8 @@ impl ContextStrategy for CompactingContextStrategy {
             self.sizer.as_ref(),
         )
     }
+
+    fn receipt(&self, messages: &[Message]) -> Result<String, ContextStrategyError> {
+        self.projector.receipt(messages)
+    }
 }

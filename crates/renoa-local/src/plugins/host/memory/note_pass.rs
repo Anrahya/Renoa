@@ -1,0 +1,250 @@
+//! `renoa.memory`'s note pass: Mnem's backup note-taker, run as a turn of the
+//! main agent in its own conversation with a person once it has gone quiet.
+//!
+//! Mnem decides when (`mnem::pass::due`), writes the one message the pass
+//! sends (`Memory::note_pass`), and owns its wording; the Host keeps the
+//! counts it decides from ([`store`]), asks it again when it said to wait
+//! ([`schedule`]'s timer, a trigger of this plugin), and runs the pass:
+//!
+//! 1. A pass claims its conversation, so it never runs while a turn does, and
+//!    Mnem decides again under the claim. The pass is frozen, with its
+//!    message, under a derived command id before that command is admitted,
+//!    and settled before the claim is released ([`runner`], [`settle`]).
+//! 2. The command is a receipted prompt in the conversation's own session,
+//!    with the turn's system prompt and tools byte for byte, so the cached
+//!    prefix holds. Only the four calls the pass needs run ([`guard`]).
+//! 3. Its text is discarded: every later request shows one receipt in place
+//!    of its exchange ([`receipt`]).
+//! 4. The person's next message cancels it: their surface's claim cancels the
+//!    pass's command, which aborts an in-flight model call, and opens the
+//!    conversation once the pass has settled. Notes it wrote stay, and a
+//!    cancelled pass does not count toward the person's passes.
+//! 5. A pass a stopped process left is closed, never resumed: its command is
+//!    cancelled, so a note in flight then is never written twice, and it
+//!    counts only if its command had completed. The next pass lists what was
+//!    noted.
+//!
+//! The nightly run sweeps every main-agent conversation with unreviewed text
+//! before it compacts and dreams ([`sweep`]).
+
+use std::path::{Path, PathBuf};
+
+use jiff::Timestamp;
+use renoa_agent::ContentBlock;
+use renoa_kernel::AgentId;
+use serde_json::json;
+use uuid::Uuid;
+
+use super::nightly::driver;
+use crate::{host::catalog, plugins::PluginError};
+
+mod guard;
+mod input;
+mod receipt;
+mod report;
+mod runner;
+mod schedule;
+mod settle;
+pub(crate) mod store;
+
+pub(crate) use guard::guard;
+pub(crate) use receipt::{REVISION as RECEIPT_REVISION, ReceiptProjector};
+pub(crate) use runner::{run, sweep};
+pub(crate) use schedule::{timer_id, wanted};
+pub(crate) use settle::close_stale;
+
+/// Which pass: one after a quiet spell, or the nightly sweep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Daytime,
+    Sweep,
+}
+
+impl Kind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Daytime => "daytime",
+            Self::Sweep => "sweep",
+        }
+    }
+}
+
+/// One Agent session, as the pass's bookkeeping needs it.
+pub(crate) struct SessionRef {
+    pub(crate) database: PathBuf,
+    pub(crate) data_directory: PathBuf,
+    pub(crate) agent: AgentId,
+    pub(crate) session: Uuid,
+    pub(crate) workspace: PathBuf,
+}
+
+/// The person's message `command`, with `content`, admitted at `at_ms` in the
+/// main agent's conversation `at`: counts its characters toward the
+/// conversation's unreviewed text, once per command, and asks again when a
+/// pass is due. Nothing for any other agent.
+///
+/// # Errors
+///
+/// Returns catalog, notebook and time failures; the caller logs them, since a
+/// message is never refused for the pass's bookkeeping.
+pub(crate) fn message(
+    at: &SessionRef,
+    principal: Uuid,
+    command: Uuid,
+    content: &[ContentBlock],
+    at_ms: i64,
+) -> Result<(), PluginError> {
+    let db = catalog::open_verified(&at.database)?;
+    if driver(&db)? != Some(at.agent) {
+        return Ok(());
+    }
+    let chars = content
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text { text } => text.chars().count(),
+            ContentBlock::Image { .. } => 0,
+        })
+        .sum();
+    store::message(
+        &db,
+        &store::Said {
+            agent: at.agent,
+            session: at.session,
+            workspace: &at.workspace,
+            principal,
+            command,
+            chars,
+            at_ms,
+            notes: input::notes(&at.data_directory, principal)?,
+        },
+    )?;
+    schedule::reschedule(&db, at.session, at_ms)?;
+    Ok(())
+}
+
+/// The main agent's output in the conversation `at` as of now: its quiet
+/// spell starts again.
+///
+/// # Errors
+///
+/// As [`message`].
+pub(crate) fn turn_ended(at: &SessionRef) -> Result<(), PluginError> {
+    let db = catalog::open_verified(&at.database)?;
+    if driver(&db)? != Some(at.agent) {
+        return Ok(());
+    }
+    let now_ms = now_ms(&at.database);
+    if store::ended(&db, at.session, now_ms)? {
+        schedule::reschedule(&db, at.session, now_ms)?;
+    }
+    Ok(())
+}
+
+/// For inspection: each person the main agent's followed conversations are
+/// with, their counted passes in today's pass day, and when one of their
+/// conversations is asked again. Nothing while `renoa.memory` drives no
+/// notebook. A catalog or notebook zone that cannot be read shows nothing
+/// and is logged, so the pass never fails inspection.
+pub(crate) fn observed(
+    db: &rusqlite::Connection,
+    database: &Path,
+) -> Vec<crate::ObservedMemoryPasses> {
+    people_today(db, database).unwrap_or_else(|error| {
+        event(
+            "warn",
+            "memory_passes_unobserved",
+            &json!({"error": error.to_string()}),
+        );
+        Vec::new()
+    })
+}
+
+fn people_today(
+    db: &rusqlite::Connection,
+    database: &Path,
+) -> Result<Vec<crate::ObservedMemoryPasses>, PluginError> {
+    let Some(agent) = driver(db)? else {
+        return Ok(Vec::new());
+    };
+    let (_, now) = schedule::zone_and_time(db, now_ms(database))?;
+    let day = mnem::pass::day(now).to_string();
+    Ok(store::people(db, agent, &day)?
+        .into_iter()
+        .map(
+            |(principal_id, passes_today, next_check_ms)| crate::ObservedMemoryPasses {
+                principal_id,
+                pass_day: day.clone(),
+                passes_today,
+                next_check_ms,
+            },
+        )
+        .collect())
+}
+
+/// Runs `work` on the catalog off the async executor.
+async fn catalog_call<T: Send + 'static>(
+    database: &Path,
+    work: impl FnOnce(&mut rusqlite::Connection) -> Result<T, PluginError> + Send + 'static,
+) -> Result<T, PluginError> {
+    let database = database.to_path_buf();
+    tokio::task::spawn_blocking(move || work(&mut catalog::open_verified(&database)?)).await?
+}
+
+fn unavailable(error: &crate::LocalHostError) -> PluginError {
+    PluginError::Unavailable(error.to_string())
+}
+
+/// Logs one note pass event; tests read them back with the memory jobs'.
+fn event(level: &'static str, name: &'static str, fields: &serde_json::Value) {
+    super::pass::event(level, name, fields);
+}
+
+/// Logs that a message's or a turn's pass bookkeeping could not be recorded.
+pub(crate) fn unrecorded(session: Uuid, error: &PluginError) {
+    event(
+        "warn",
+        "memory_pass_activity_unrecorded",
+        &json!({"session_id": session, "error": error.to_string()}),
+    );
+}
+
+/// The Host's wall clock.
+#[cfg(not(test))]
+fn now_ms(_database: &Path) -> i64 {
+    Timestamp::now().as_millisecond()
+}
+
+/// The Host's wall clock, unless the test set this Host's.
+#[cfg(test)]
+fn now_ms(database: &Path) -> i64 {
+    clock::get(database).unwrap_or_else(|| Timestamp::now().as_millisecond())
+}
+
+#[cfg(test)]
+pub(crate) mod clock {
+    //! The time a test Host's turns end at, keyed by its catalog.
+
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+        sync::Mutex,
+    };
+
+    static CLOCKS: Mutex<Option<HashMap<PathBuf, i64>>> = Mutex::new(None);
+
+    pub(crate) fn set(database: &Path, at_ms: i64) {
+        CLOCKS
+            .lock()
+            .expect("clock lock")
+            .get_or_insert_with(HashMap::new)
+            .insert(database.to_path_buf(), at_ms);
+    }
+
+    pub(super) fn get(database: &Path) -> Option<i64> {
+        CLOCKS
+            .lock()
+            .expect("clock lock")
+            .as_ref()
+            .and_then(|clocks| clocks.get(database).copied())
+    }
+}

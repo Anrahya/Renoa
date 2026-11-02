@@ -362,7 +362,7 @@ pub(crate) fn context_binding(
     .with_automatic_compaction_input_tokens(settings.automatic_compaction)?;
     let skill_revision = skill_context.map_or("none", |context| context.revision.as_str());
     let revision = format!(
-        "renoa.context.compaction.v1/context-{}/reserved-{}/automatic-{}/target-{}/summary-{}/attempts-{}/skills-{}",
+        "renoa.context.compaction.v1/context-{}/reserved-{}/automatic-{}/target-{}/summary-{}/attempts-{}/skills-{}/receipts-{}",
         settings.context,
         settings.reserved,
         settings.automatic_compaction,
@@ -370,18 +370,20 @@ pub(crate) fn context_binding(
         settings.max_summary,
         COMPACTION_ATTEMPT_LIMIT,
         skill_revision,
+        crate::plugins::host::memory::note_pass::RECEIPT_REVISION,
     );
     let concrete_sizer = Arc::clone(model);
     let sizer: Arc<dyn ContextSizer> = concrete_sizer;
-    let strategy = match skill_context {
-        Some(context) => CompactingContextStrategy::with_projector(
-            limits,
-            COMPACTION_ATTEMPT_LIMIT,
-            sizer,
-            Arc::clone(&context.projector),
-        ),
-        None => CompactingContextStrategy::new(limits, COMPACTION_ATTEMPT_LIMIT, sizer),
-    };
+    // Every request shows a note pass as its receipt.
+    let projector = crate::plugins::host::memory::note_pass::ReceiptProjector::new(
+        skill_context.map(|context| Arc::clone(&context.projector)),
+    );
+    let strategy = CompactingContextStrategy::with_projector(
+        limits,
+        COMPACTION_ATTEMPT_LIMIT,
+        sizer,
+        Arc::new(projector),
+    );
     Ok(ContextBinding::new(revision, Arc::new(strategy)))
 }
 

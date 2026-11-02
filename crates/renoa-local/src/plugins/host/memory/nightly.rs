@@ -1,6 +1,7 @@
 //! `renoa.memory`'s nightly run: at Mnem's pass day start (11:00) in the
-//! notebook zone, while the person is asleep, the Host's main agent compacts
-//! every person's notebook, then dreams over it.
+//! notebook zone, while the person is asleep, the Host's main agent sweeps its
+//! conversations with a note pass (see `note_pass`), compacts every person's
+//! notebook, then dreams over it.
 //!
 //! The run is this plugin's trigger (see `triggers`), for the one agent that
 //! drives every notebook: the main agent, while `renoa.memory` is on for it
@@ -20,7 +21,7 @@ use super::{
     for_jobs,
     jobs::{self, JobId, JobKind, Receipt},
     local_time, notebook_zone,
-    pass::{Halt, Pass, summary, unopened},
+    pass::{Halt, Pass, notebook, summary, unopened},
 };
 use crate::{
     AgentSession, AutomationRun, LocalHost, LocalHostError, RunStatus,
@@ -49,6 +50,8 @@ pub(crate) async fn run(
     run: &AutomationRun,
     now_ms: i64,
 ) -> Result<Ended, LocalHostError> {
+    // Before compaction, so the notes the sweep writes are compacted tonight.
+    let swept = super::note_pass::sweep(host, run, now_ms).await;
     let night = Night {
         pass: Pass::new(host, run.agent_id, run.id, now_ms),
         bounded: AtomicUsize::new(0),
@@ -79,11 +82,17 @@ pub(crate) async fn run(
         #[cfg(test)]
         Some(Halt::Crashed) => RunStatus::Failed,
     };
+    let mut output = summary(&done, night.bounded.load(Ordering::Relaxed), halt.as_ref());
+    // A memory job has no tools, so only the sweep's passes can fail one.
+    let mut failed_tool_calls = 0;
+    if let Some((swept, failed)) = swept {
+        output = format!("{swept} {output}");
+        failed_tool_calls = failed;
+    }
     Ok(Ended {
         status,
-        output: summary(&done, night.bounded.load(Ordering::Relaxed), halt.as_ref()),
-        // A memory turn has no tools, so none can fail.
-        failed_tool_calls: (status != RunStatus::Skipped).then_some(0),
+        output,
+        failed_tool_calls: (status != RunStatus::Skipped).then_some(failed_tool_calls),
     })
 }
 
@@ -98,22 +107,7 @@ impl Night<'_> {
         let pass = &self.pass;
         pass.gate().await?;
         let mut failed = Vec::new();
-        let mut pending = pass.unsettled().await?;
-        // A Dream answer whose apply began needs no session to be closed.
-        if let Some(interrupted) = pending.take_if(|pending| pending.applying) {
-            notebook(
-                pass.close_interrupted(interrupted).await.map(drop),
-                &mut failed,
-            )?;
-        }
-        let session = pass
-            .session(pending.as_ref().map(|job| job.command))
-            .await?;
-        // The kernel admits nothing else in the session while this job's
-        // command is unfinished, whichever run froze it.
-        if let Some(pending) = pending {
-            notebook(pass.settle(&session, pending).await.map(drop), &mut failed)?;
-        }
+        let session = pass.open(&mut failed).await?;
         let local_time = self.local_time().await?;
         let data_directory = pass.data_directory.clone();
         for principal in tokio::task::spawn_blocking(move || people(&data_directory)).await?? {
@@ -207,38 +201,5 @@ impl Night<'_> {
                 .map_err(super::pass::refusal)
         })
         .await?
-    }
-}
-
-/// Records a failure of one person's notebook, once when its compaction and
-/// its Dream fail for the same cause, and lets the run go on; any other halt
-/// ends the run.
-fn notebook(result: Result<(), Halt>, failed: &mut Vec<String>) -> Result<(), Halt> {
-    match result {
-        Err(Halt::Notebook(reason) | Halt::Unopened(reason)) => {
-            if !failed.contains(&reason) {
-                failed.push(reason);
-            }
-            Ok(())
-        }
-        other => other,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Halt, notebook};
-
-    #[test]
-    fn one_cause_is_reported_once() {
-        let mut failed = Vec::new();
-        for reason in [
-            "notes.log cannot be read",
-            "notes.log cannot be read",
-            "busy",
-        ] {
-            notebook(Err(Halt::Notebook(reason.to_owned())), &mut failed).expect("goes on");
-        }
-        assert_eq!(failed, ["notes.log cannot be read", "busy"]);
     }
 }

@@ -15,7 +15,7 @@ use crate::{
 
 pub(crate) const CHECKPOINT_SCHEMA_VERSION: u32 = 4;
 pub(crate) const LOOP_BINDING: &str = "renoa.agent.model-tool-loop";
-pub(crate) const LOOP_REVISION: &str = "14";
+pub(crate) const LOOP_REVISION: &str = "15";
 pub(crate) const MODEL_EFFECT_BINDING: &str = "renoa.agent.model";
 /// The model effect that writes a context summary. It runs the same model as
 /// [`MODEL_EFFECT_BINDING`] but its adapter never reports an assistant message.

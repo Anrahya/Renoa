@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use renoa_agent::{Message, StopReason};
-use renoa_agent_loop::MESSAGE_EVENT_KIND;
+use renoa_agent_loop::{MESSAGE_EVENT_KIND, RECEIPTED_EVENT_KIND};
 use renoa_kernel::{
     AgentId, CommandId, CommandStanding, EventCursor, Kernel, KernelError, OperationId, SessionId,
 };
@@ -185,17 +185,47 @@ impl LocalSession {
         Ok(self.kernel.command_standing(self.session_id, command_id)?)
     }
 
-    /// Projects the complete gapless durable conversation for surface replay.
+    /// Projects the durable conversation for surface replay: every message but
+    /// a receipted operation's, a note pass, which no surface shows.
     ///
     /// # Errors
     ///
     /// Returns kernel corruption or an invalid persisted message payload.
     pub fn history(&self) -> Result<Vec<LocalHistoryEntry>, LocalSessionError> {
-        self.kernel
+        self.messages(false)
+    }
+
+    /// Every message, a receipted operation's included: what a note pass
+    /// reads back of its own exchange.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::history`].
+    pub(crate) fn all_messages(&self) -> Result<Vec<LocalHistoryEntry>, LocalSessionError> {
+        self.messages(true)
+    }
+
+    /// The message events, leaving out a receipted operation's exchange, which
+    /// no surface shows, unless `receipted`.
+    fn messages(&self, receipted: bool) -> Result<Vec<LocalHistoryEntry>, LocalSessionError> {
+        let events = self
+            .kernel
             .events_after(self.session_id, EventCursor::START)?
-            .events
+            .events;
+        let hidden: std::collections::HashSet<OperationId> = if receipted {
+            std::collections::HashSet::new()
+        } else {
+            events
+                .iter()
+                .filter(|event| event.kind == RECEIPTED_EVENT_KIND)
+                .map(|event| event.operation_id)
+                .collect()
+        };
+        events
             .into_iter()
-            .filter(|event| event.kind == MESSAGE_EVENT_KIND)
+            .filter(|event| {
+                event.kind == MESSAGE_EVENT_KIND && !hidden.contains(&event.operation_id)
+            })
             .map(|event| {
                 let message =
                     serde_json::from_value::<Message>(event.payload).map_err(|source| {

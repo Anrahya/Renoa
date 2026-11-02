@@ -31,7 +31,7 @@ pub use context::{
 };
 pub use format::{
     AgentCommand, COMPACTION_RESULT_EVENT_KIND, CONTEXT_CHECKPOINT_EVENT_KIND, CompactionResult,
-    MESSAGE_EVENT_KIND, TURN_CONTEXT_EVENT_KIND, TURN_TIMING_EVENT_KIND,
+    MESSAGE_EVENT_KIND, RECEIPTED_EVENT_KIND, TURN_CONTEXT_EVENT_KIND, TURN_TIMING_EVENT_KIND,
 };
 pub use turn_context::{ContextContribution, TurnContext, TurnContextError};
 mod usage;

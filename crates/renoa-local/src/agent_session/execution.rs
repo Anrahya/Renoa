@@ -10,6 +10,7 @@ use super::{
     AgentSession,
     context::{MESSAGE_CONTEXT_TRACE, SESSION_CONTEXT_TRACE, record_skipped},
     memory_job::MemoryJob,
+    note_pass::NotePass,
 };
 use crate::{
     LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, Speaker, TurnObservation,
@@ -25,6 +26,7 @@ pub(super) enum SessionCommand {
     Prompt(Prompt),
     Compact,
     MemoryJob(MemoryJob),
+    NotePass(NotePass),
 }
 
 /// One user message, with when and where it was received and who sent it.
@@ -44,6 +46,7 @@ impl SessionCommand {
                 Some((prompt.speaker.principal(), prompt.speaker.tool_access()))
             }
             Self::Compact => Some((None, ToolAccess::Granted)),
+            Self::NotePass(pass) => Some((Some(pass.principal), ToolAccess::NotePass)),
             Self::MemoryJob(_) => None,
         }
     }
@@ -52,6 +55,7 @@ impl SessionCommand {
         match self {
             Self::Prompt(prompt) => Some(&prompt.content),
             Self::MemoryJob(job) => Some(&job.content),
+            Self::NotePass(pass) => Some(&pass.content),
             Self::Compact => None,
         }
     }
@@ -61,6 +65,7 @@ impl SessionCommand {
             Self::Prompt(_) => "prompt",
             Self::Compact => "compact",
             Self::MemoryJob(_) => "memory_job",
+            Self::NotePass(_) => "note_pass",
         }
     }
 }
@@ -139,17 +144,33 @@ impl AgentSession {
         cancellation: CancellationToken,
         speaker: Speaker,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        self.execute(
-            request_id,
-            SessionCommand::Prompt(Prompt {
-                content,
-                observation,
-                speaker,
-            }),
-            events,
-            cancellation,
-        )
-        .await
+        self.close_stale_note_pass().await;
+        let person = speaker.principal();
+        if let Some(principal) = person {
+            self.note_message(
+                request_id,
+                &content,
+                observation.unix_milliseconds(),
+                principal,
+            )
+            .await;
+        }
+        let outcome = self
+            .execute(
+                request_id,
+                SessionCommand::Prompt(Prompt {
+                    content,
+                    observation,
+                    speaker,
+                }),
+                events,
+                cancellation,
+            )
+            .await;
+        if person.is_some() {
+            self.note_turn_ended().await;
+        }
+        outcome
     }
 
     /// Runs one caller-identified explicit compaction operation.
@@ -180,6 +201,7 @@ impl AgentSession {
         events: Arc<dyn AgentEventSink>,
         cancellation: CancellationToken,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
+        self.close_stale_note_pass().await;
         self.execute(request_id, SessionCommand::Compact, events, cancellation)
             .await
     }
@@ -372,6 +394,10 @@ impl AgentSession {
                 .await?),
             SessionCommand::MemoryJob(job) => {
                 self.admit_memory_job(command_id, job, &runtime, cancellation)
+                    .await
+            }
+            SessionCommand::NotePass(pass) => {
+                self.admit_note_pass(command_id, pass, &runtime, cancellation)
                     .await
             }
         }

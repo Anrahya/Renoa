@@ -30,52 +30,42 @@ pub(super) fn converge(tx: &Transaction<'_>, now_ms: i64) -> Result<(), Automati
     Ok(())
 }
 
-/// Converges every plugin's trigger automations as of `now_ms`: the one it
+/// Converges every plugin's trigger automations as of `now_ms`: each one it
 /// wants is created, or updated to its wanted spec, and every other one it
 /// owns is disabled. A schedule or switch that changes is due again from
-/// `now_ms`, as an edit by its agent would be.
+/// `now_ms`, as an edit by its agent would be; a one-time schedule at or
+/// before `now_ms` is due at once.
 fn reconcile(tx: &Transaction<'_>, now_ms: i64) -> Result<(), AutomationError> {
     let owned = triggers::owned(tx).map_err(|error| plugin_error(&error))?;
     for plugin in HostPluginId::ALL {
         let wanted = triggers::wanted(plugin, tx, now_ms).map_err(|error| plugin_error(&error))?;
-        let target = wanted
-            .as_ref()
-            .map(|spec| triggers::automation_id(plugin, spec.agent_id));
-        for (id, _) in owned
-            .iter()
-            .filter(|(id, owner)| *owner == plugin && Some(*id) != target)
-        {
+        for (id, _) in owned.iter().filter(|(id, owner)| {
+            *owner == plugin && !wanted.iter().any(|(target, _)| target == id)
+        }) {
             let old = store::stored(tx, *id)?.ok_or(AutomationError::NotFound)?;
             if old.spec.enabled {
                 let mut spec = old.spec.clone();
                 spec.enabled = false;
-                store::save(
-                    tx,
-                    &store::updated_record(&old, old.revision, spec, now_ms)?,
-                    false,
-                )?;
+                store::save(tx, &store::updated_trigger(&old, spec, now_ms)?, false)?;
             }
         }
-        let (Some(spec), Some(id)) = (wanted, target) else {
-            continue;
-        };
-        match store::stored(tx, id)? {
-            Some(old) if old.spec == spec => {}
-            Some(old) => store::save(
-                tx,
-                &store::updated_record(&old, old.revision, spec, now_ms)?,
-                false,
-            )?,
-            None => {
-                spec.validate(now_ms)?;
-                let record = AutomationRecord {
-                    id,
-                    revision: 1,
-                    next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
-                    spec,
-                };
-                store::save(tx, &record, true)?;
-                triggers::own(tx, id, plugin)?;
+        for (id, spec) in wanted {
+            match store::stored(tx, id)? {
+                Some(old) if old.spec == spec => {}
+                Some(old) => {
+                    store::save(tx, &store::updated_trigger(&old, spec, now_ms)?, false)?;
+                }
+                None => {
+                    spec.validate(now_ms)?;
+                    let record = AutomationRecord {
+                        id,
+                        revision: 1,
+                        next_due_ms: spec.schedule.next_after(now_ms)?,
+                        spec,
+                    };
+                    store::save(tx, &record, true)?;
+                    triggers::own(tx, id, plugin)?;
+                }
             }
         }
     }

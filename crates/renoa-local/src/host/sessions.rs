@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     AgentSession, LocalWorkspace,
-    agent_session::AgentSessionStorage,
+    agent_session::{AgentSessionStorage, claim::Claim},
     host::models::validate_selection,
     host_storage::{
         OpenedSessionStorage, SessionPublication, create_session_storage, delete_session_storage,
@@ -40,18 +40,40 @@ impl LocalHost {
         require_absolute(cwd)?;
         let definition = resolve_definition(&self.config, agent_id).await?;
         let session_id = SessionId::from_uuid(session_uuid);
+        let claim = self.config.claims.surface(session_uuid).await;
         if self
             .config
             .sessions
             .join(session_id.to_string())
             .try_exists()?
         {
-            return self
-                .load_session_for_agent(agent_id, session_uuid, cwd)
-                .await;
+            return self.load_claimed(agent_id, session_uuid, cwd, claim).await;
         }
-        self.create_session_for_definition(&definition, cwd, session_uuid)
+        self.create_session_for_definition(&definition, cwd, session_uuid, claim)
             .await
+    }
+
+    /// Opens a stored conversation of `agent_id` for a note pass that
+    /// `cancellation` stops; `None` while a surface holds it. A surface that
+    /// opens it meanwhile cancels the pass and waits for it (see
+    /// [`claim`](crate::agent_session::claim)).
+    ///
+    /// # Errors
+    /// Returns a foreign-agent rejection, or identity, workspace, provider,
+    /// runtime, or storage incompatibility.
+    pub(crate) async fn open_for_note_pass(
+        &self,
+        agent_id: AgentId,
+        session_uuid: Uuid,
+        cwd: &Path,
+        cancellation: &tokio_util::sync::CancellationToken,
+    ) -> Result<Option<Arc<AgentSession>>, LocalHostError> {
+        let Some(claim) = self.config.claims.note_pass(session_uuid, cancellation) else {
+            return Ok(None);
+        };
+        self.load_claimed(agent_id, session_uuid, cwd, claim)
+            .await
+            .map(Some)
     }
 
     /// Whether a session with this id is stored.
@@ -67,6 +89,7 @@ impl LocalHost {
         definition: &ResolvedAgentDefinition,
         cwd: &Path,
         session_uuid: Uuid,
+        claim: Claim,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
         let agent_id = definition.agent_id();
         let session_id = SessionId::from_uuid(session_uuid);
@@ -121,7 +144,7 @@ impl LocalHost {
         let stored = match publication {
             SessionPublication::Created(stored) => stored,
             SessionPublication::Existing(stored) => {
-                return self.assemble_session(session_uuid, stored).await;
+                return self.assemble_session(session_uuid, stored, claim).await;
             }
         };
         let OpenedSessionStorage {
@@ -138,6 +161,7 @@ impl LocalHost {
                 selection_path: directory.join(SELECTION_FILE),
                 session_context_pin: directory.join(session_context::PIN_FILE),
                 trace,
+                claim,
             },
             models,
             selection,
@@ -161,16 +185,28 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
+        let claim = self.config.claims.surface(session_uuid).await;
+        self.load_claimed(agent_id, session_uuid, cwd, claim).await
+    }
+
+    async fn load_claimed(
+        &self,
+        agent_id: AgentId,
+        session_uuid: Uuid,
+        cwd: &Path,
+        claim: Claim,
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
         let stored = self
             .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
-        self.assemble_session(session_uuid, stored).await
+        self.assemble_session(session_uuid, stored, claim).await
     }
 
     async fn assemble_session(
         &self,
         session_uuid: Uuid,
         stored: OpenedSessionStorage,
+        claim: Claim,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
         let OpenedSessionStorage {
             directory,
@@ -212,6 +248,7 @@ impl LocalHost {
                 selection_path,
                 session_context_pin: directory.join(session_context::PIN_FILE),
                 trace,
+                claim,
             },
             models,
             selection,
@@ -248,6 +285,7 @@ impl LocalHost {
         {
             return Ok(Some(crate::LocalTurnOutcome::Cancelled));
         }
+        let _claim = self.config.claims.surface(session_uuid).await;
         let stored = self
             .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
