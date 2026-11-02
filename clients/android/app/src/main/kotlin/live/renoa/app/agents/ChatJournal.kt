@@ -16,6 +16,15 @@ import kotlin.uuid.Uuid
 internal fun chatTaskId(nodeId: Uuid, target: String): Uuid =
     Uuid.parse(UUID.nameUUIDFromBytes("renoa app chat v1\n$nodeId\n$target".toByteArray(Charsets.UTF_8)).toString())
 
+/** How the app names an agent: the node that offers it and its target there. */
+internal fun agentId(nodeId: Uuid, target: String): String = "$nodeId/$target"
+
+/** The node and target an [agentId] names, or null for an id it did not make. */
+internal fun agentAddress(agentId: String): Pair<Uuid, String>? {
+    val node = Uuid.parseOrNull(agentId.substringBefore('/')) ?: return null
+    return agentId.substringAfter('/', "").takeIf { it.isNotEmpty() }?.let { node to it }
+}
+
 /**
  * One agent's chat, rebuilt from its task's journal and the live text of the turn that is running.
  * Not thread-safe: the caller serializes [apply], [live] and [markSeen].

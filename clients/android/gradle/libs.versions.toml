@@ -13,6 +13,8 @@ lifecycle = "2.10.0"
 robolectric = "4.17"
 credentials = "1.6.0"
 markdownRenderer = "0.46.0"
+firebaseMessaging = "26.0.1"
+work = "2.12.0"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -40,6 +42,8 @@ robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectr
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3-android", version.ref = "markdownRenderer" }
 androidx-credentials-play-services = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
+firebase-messaging = { module = "com.google.firebase:firebase-messaging", version.ref = "firebaseMessaging" }
+androidx-work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

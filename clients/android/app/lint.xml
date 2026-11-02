@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Firebase reads project_id by name as the app starts; firebaseResources in build.gradle.kts writes it. -->
+    <issue id="UnusedResources">
+        <ignore regexp="R\.string\.project_id\b" />
+    </issue>
+</lint>

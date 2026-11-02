@@ -51,6 +51,9 @@ import kotlin.uuid.Uuid
  *
  * Until Renoa first answers, the screens show what [home] kept from the last launch, and each
  * answer is kept there in turn; a call that needs Renoa before then is [Problem.Unavailable].
+ *
+ * [onConnected] runs once for every connection Renoa accepts, beside following the chats; whatever
+ * it throws is dropped.
  */
 class RcpAgentRepository(
     private val surface: RcpSurface,
@@ -61,6 +64,7 @@ class RcpAgentRepository(
     private val here: () -> ZoneId = { ZoneId.systemDefault() },
     private val clock: TimeSource = TimeSource.Monotonic,
     private val home: SavedHome? = null,
+    private val onConnected: suspend () -> Unit = {},
 ) : AgentRepository {
     private class Room(val target: TargetSummary, val taskId: Uuid) {
         val journal = ChatJournal()
@@ -128,6 +132,8 @@ class RcpAgentRepository(
             while (true) {
                 try {
                     surface.connect()
+                    // Beside the chats, not before them: it may wait on another service, and its failure is its own.
+                    scope.launch { runCatching { onConnected() } }
                     unsent.send()
                     follow(surface.listTargets())
                     shown.heard.value = true
@@ -445,7 +451,7 @@ class RcpAgentRepository(
 
     private fun notYet(): Nothing = throw RepositoryException(Problem.NotYet, "the Host cannot change this from the app yet")
 
-    private fun agentId(target: TargetSummary) = "${target.nodeId}/${target.target}"
+    private fun agentId(target: TargetSummary) = agentId(target.nodeId, target.target)
 
     private companion object {
         /** How a node names the target of a Host agent. */
@@ -455,7 +461,7 @@ class RcpAgentRepository(
 
         /** The Host's id for the agent behind [agentId], or null when it names no Host agent. */
         fun hostAgentId(agentId: String): Uuid? {
-            val target = agentId.substringAfter('/', "")
+            val target = agentAddress(agentId)?.second ?: return null
             if (!target.startsWith(AGENT_TARGET)) return null
             return Uuid.parseOrNull(target.removePrefix(AGENT_TARGET))
         }
