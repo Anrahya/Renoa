@@ -28,6 +28,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- A notice's tap: not exported, so only this app's notices can open a chat. -->
+        <activity
+            android:name=".push.NoticeTap"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
         <!-- Renoa's wake-ups and new push tokens, from Firebase Cloud Messaging. -->
         <service
             android:name=".push.PushMessages"

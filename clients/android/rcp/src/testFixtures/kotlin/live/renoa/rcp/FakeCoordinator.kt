@@ -90,6 +90,9 @@ class FakeCoordinator : AutoCloseable {
     /** When set, an attach replays at most this many events and the rest never come. */
     @Volatile var replayOnly: Int? = null
 
+    /** Tasks whose attach drops the connection at once, as a fault that ends it. */
+    val dropOnAttach: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
+
     /** Milliseconds between the events of a replay, as over a slow link. */
     @Volatile var replayEvery = 0L
 
@@ -374,6 +377,10 @@ class FakeCoordinator : AutoCloseable {
 
         private fun attach(requestId: Long, frame: JsonObject) {
             val taskId = Uuid.parse(frame.getValue("task_id").jsonPrimitive.content)
+            if (taskId in dropOnAttach) {
+                socket.cancel()
+                return
+            }
             val record = tasks[taskId] ?: run {
                 socket.send(error(requestId, "not_found", "no such task"))
                 return

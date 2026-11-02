@@ -9,7 +9,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import live.renoa.app.agents.replaceAtomically
 import live.renoa.app.agents.replacement
-import live.renoa.rcp.RcpState
 import live.renoa.rcp.TaskSummary
 import java.io.File
 import kotlin.uuid.Uuid
@@ -84,9 +83,10 @@ internal class WakeCursors(private val file: File, val owner: String) {
 }
 
 /**
- * The owner had the chat [taskId] on screen: everything the app applied of it, as [applied] holds,
- * counts as read, so a later wake-up does not show it again.
+ * The owner had the chat [taskId] on screen: everything the app had applied of it, through [applied]
+ * as read the moment the chat came on screen or left it, counts as read, so a later wake-up does not
+ * show it again.
  */
-internal suspend fun markRead(taskId: Uuid, applied: RcpState, cursors: WakeCursors) {
-    applied.cursor(taskId)?.let { cursors.advance(taskId, it) }
+internal suspend fun markRead(taskId: Uuid, applied: Long?, cursors: WakeCursors) {
+    applied?.let { cursors.advance(taskId, it) }
 }

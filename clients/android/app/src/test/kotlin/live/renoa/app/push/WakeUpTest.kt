@@ -12,6 +12,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.putJsonObject
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
@@ -109,7 +110,7 @@ class WakeUpTest {
 
         coordinator.append(chat, reply("  Dinner is at seven.  "))
         assertTrue(wake.run())
-        assertEquals(listOf(Notice(chat, "Arcee", arcee.id, News.Replied("Dinner is at seven."))), posted, "a tap opens Arcee's chat")
+        assertEquals(listOf(Notice(chat, "Arcee", arcee.id, News.Replied("Dinner is at seven.", 1))), posted, "a tap opens Arcee's chat")
 
         assertTrue(wake.run())
         assertEquals(1, posted.size, "read once, shown once")
@@ -143,10 +144,45 @@ class WakeUpTest {
         app.connect()
         app.attach(chat) {}
         app.close()
-        markRead(chat, applied, cursors)
+        markRead(chat, applied.cursor(chat), cursors)
 
         assertTrue(wake.run())
         assertTrue(posted.isEmpty(), "a wake that arrives late shows nothing the owner has read")
+    }
+
+    @Test
+    fun aReplyReadWhileItWasBeingReplayedIsNotShown() = wakes {
+        val chat = coordinator.seedTask()
+        wake.run()
+        coordinator.append(chat, reply("Read in the app as the wake-up replayed it."))
+        coordinator.append(chat, reply("And this one too."))
+        coordinator.replayEvery = 300
+        coroutineScope {
+            launch {
+                // The wake-up has asked for the chat, and its records are on their way.
+                while (coordinator.framesOfType("attach").isEmpty()) delay(5)
+                markRead(chat, 1, cursors)
+            }
+            assertTrue(wake.run())
+        }
+        assertTrue(posted.isEmpty())
+    }
+
+    @Test
+    fun aTaskThatEndsTheConnectionIsTriedOnceMoreAndTheRestStillCatchUp() = wakes {
+        val dropping = coordinator.seedTask(Uuid.parse("00000000-0000-0000-0000-000000000001"))
+        val after = coordinator.seedTask(Uuid.parse("00000000-0000-0000-0000-000000000002"))
+        wake.run()
+        coordinator.append(dropping, reply("Never read."))
+        coordinator.append(after, reply("Read on a new connection."))
+        coordinator.dropOnAttach += dropping
+        val connected = coordinator.connectionsAccepted.get()
+
+        assertFalse(wake.run(), "the task left behind asks for the wake-up again")
+        assertEquals(listOf(after), posted.map { it.taskId })
+        val attempts = coordinator.framesOfType("attach").count { it.getValue("task_id").jsonPrimitive.content == dropping.toString() }
+        assertEquals(2, attempts, "tried once more, then left for the next run")
+        assertEquals(3, coordinator.connectionsAccepted.get() - connected, "one connection, and one after each drop")
     }
 
     @Test
@@ -158,7 +194,7 @@ class WakeUpTest {
         coordinator.append(newer, reply("Started on it."))
         coordinator.append(newer, failed())
         wake.run()
-        assertEquals(listOf(Notice(newer, null, null, News.Stuck)), posted, "an agent the app has not kept goes unnamed, and a tap opens the app")
+        assertEquals(listOf(Notice(newer, null, null, News.Stuck(1))), posted, "an agent the app has not kept goes unnamed, and a tap opens the app")
     }
 
     @Test
@@ -273,9 +309,9 @@ class WakeUpTest {
 
         val replied = execution(ExecutionEventKind.AssistantMessage("Done."))
         val failed = execution(ExecutionEventKind.ExecutionTerminated(ExecutionTerminal.Failed("boom")))
-        assertEquals(News.Replied("Done."), news(quiet + replied))
-        assertEquals(News.Stuck, news(listOf(replied, failed)))
-        assertEquals(News.Replied("Done."), news(listOf(failed, replied)))
+        assertEquals(News.Replied("Done.", replied.sequence), news(quiet + replied), "the news names the record that says it")
+        assertEquals(News.Stuck(failed.sequence), news(listOf(replied, failed)))
+        assertEquals(News.Replied("Done.", replied.sequence), news(listOf(failed, replied)))
     }
 
     @Test

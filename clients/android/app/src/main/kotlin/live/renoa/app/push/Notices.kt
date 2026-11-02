@@ -1,37 +1,59 @@
 package live.renoa.app.push
 
 import android.Manifest
+import android.app.Activity
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import live.renoa.app.MainActivity
 import live.renoa.app.R
+import live.renoa.app.RenoaApplication
 import kotlin.uuid.Uuid
 
 /** The words a notice shows when the agent's run failed. */
 internal const val STUCK_WORDS = "It got stuck. Open the chat to try again."
 
-/** What a tap on a notice asks [MainActivity] to do, and the agent whose chat it opens. */
-internal const val OPEN_CHAT = "live.renoa.app.OPEN_CHAT"
+/** The agent whose chat a tapped notice opens, as [NoticeTap] receives it. */
 internal const val CHAT = "chat"
 
-/** What a tap on [notice] opens: the agent's chat when the notice came from it, else the app as it was. */
+/**
+ * What a tap on [notice] starts: [NoticeTap], which only this app can start, with the agent whose
+ * chat to open when the notice came from it.
+ */
 internal fun noticeTap(context: Context, notice: Notice): Intent =
-    Intent(context, MainActivity::class.java)
-        .setAction(OPEN_CHAT)
+    Intent(context, NoticeTap::class.java)
         // One per task, so each notice keeps its own tap.
         .setData(Uri.fromParts("renoa", notice.taskId.toString(), null))
         .apply { notice.chat?.let { putExtra(CHAT, it) } }
-        // MainActivity is singleTop: a running app gets the tap in onNewIntent, with its screens kept.
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+/** The record a posted notice shows, kept on it so the same record posted again stays silent. */
+private const val SEQUENCE = "live.renoa.app.sequence"
+
+/**
+ * The tap of a notice, not exported, so no other app can open a chat through it. It hands the chat
+ * to the app in this process and brings [MainActivity] forward, which never reads a chat from an
+ * intent, so an intent from outside opens nothing.
+ */
+class NoticeTap : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        intent.getStringExtra(CHAT)?.let { (application as RenoaApplication).openChatNext(it) }
+        // MainActivity is singleTop: a running app gets this in onNewIntent, with its screens kept.
+        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+        finish()
+    }
+}
 
 /**
  * The app's notifications: one per task, replaced by the next notice from the same task, on the
@@ -68,7 +90,13 @@ internal object Notices {
         val text =
             when (val news = notice.news) {
                 is News.Replied -> plainText(news.text)
-                News.Stuck -> STUCK_WORDS
+                is News.Stuck -> STUCK_WORDS
+            }
+        val tag = notice.taskId.toString()
+        // The same record again, as on a retry, replaces its notice silently; a newer one rings.
+        val shownAlready =
+            context.getSystemService(NotificationManager::class.java).activeNotifications.any {
+                it.tag == tag && it.id == NOTICE && it.notification.extras.getLong(SEQUENCE, -1) == notice.news.sequence
             }
         val open = PendingIntent.getActivity(context, 0, noticeTap(context, notice), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification =
@@ -80,10 +108,10 @@ internal object Notices {
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setContentIntent(open)
                 .setAutoCancel(true)
-                // A notice replaced by the next from the same chat, or shown again by a retry, does not ring twice.
-                .setOnlyAlertOnce(true)
+                .setOnlyAlertOnce(shownAlready)
+                .addExtras(Bundle().apply { putLong(SEQUENCE, notice.news.sequence) })
                 .build()
-        NotificationManagerCompat.from(context).notify(notice.taskId.toString(), NOTICE, notification)
+        NotificationManagerCompat.from(context).notify(tag, NOTICE, notification)
     }
 
     /** Takes back the notice from [taskId], as when its chat comes on screen. */

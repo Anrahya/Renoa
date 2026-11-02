@@ -27,8 +27,6 @@ import live.renoa.app.push.PushRegistration
 import live.renoa.app.push.ShownChats
 import live.renoa.app.push.WakeCursors
 import live.renoa.app.push.WakeUp
-import live.renoa.app.push.CHAT
-import live.renoa.app.push.OPEN_CHAT
 import live.renoa.app.push.markRead
 import live.renoa.app.push.sender
 import live.renoa.app.push.firebaseToken
@@ -113,11 +111,24 @@ class RenoaApplication : Application() {
         } else {
             shownChats.hide(taskId)
         }
-        val applied = outbox ?: return
+        // Read now, as the chat moves, so nothing applied after it left the screen counts as read.
+        val applied = outbox?.applied(taskId) ?: return
         val cursors = pushing?.cursors ?: return
         // Not kept, read again: the next wake-up may show it once more.
         scope?.launch { runCatching { markRead(taskId, applied, cursors) } }
     }
+
+    /** The chat a tapped notice asks for, set only by [live.renoa.app.push.NoticeTap] in this process. */
+    private var chatToOpen: String? = null
+
+    @Synchronized
+    fun openChatNext(agentId: String) {
+        chatToOpen = agentId
+    }
+
+    /** Takes the chat a tapped notice asked for, once. */
+    @Synchronized
+    fun takeChatToOpen(): String? = chatToOpen.also { chatToOpen = null }
 
     /**
      * What a wake-up does on its own connection as this phone, or null while the phone is not signed
@@ -134,7 +145,8 @@ class RenoaApplication : Application() {
             register = kept.registration::register,
             sender = { task -> sender(task, agents) },
             onScreen = { it in shownChats },
-            post = { Notices.post(this, it) },
+            // Not after a sign-out: the check and the post share the lock signOut drops the sign-in under.
+            post = { synchronized(this) { if (pushing === kept) Notices.post(this, it) } },
         )
     }
 
@@ -160,7 +172,11 @@ class RenoaApplication : Application() {
                     home = null
                 }
             }
-        val told = synchronized(this) { pushing?.cursors.also { pushing = null } }
+        val told =
+            synchronized(this) {
+                Notices.cancelAll(this)
+                pushing?.cursors.also { pushing = null }
+            }
         DeviceKeys.forget()
         SignInStore(this).clear()
         SavedSignUp(this).operationId = null
@@ -168,7 +184,6 @@ class RenoaApplication : Application() {
         // Forgetting drops whatever is kept, whoever it was kept for.
         (kept ?: SavedHome(homeFile(), owner = "")).forget()
         (told ?: WakeCursors(wakeFile(), owner = "")).forget()
-        Notices.cancelAll(this)
     }
 
     private fun signedIn(): SavedSignIn? = SignInStore(this).load()?.takeIf { it.origin == RENOA_ORIGIN }
@@ -207,8 +222,7 @@ class MainActivity : ComponentActivity() {
         val store = SignInStore(applicationContext)
         // A credential from another Renoa, as after a build that signs in elsewhere, does not count.
         val signedIn = store.load()?.origin == RENOA_ORIGIN
-        // A recreated activity has opened its notice already; the stack it saved holds the chat.
-        if (savedInstanceState == null) opening = chatToOpen(intent)
+        opening = application.takeChatToOpen()
         setContent {
             RenoaApp(
                 application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
@@ -218,13 +232,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** A tap on a notice while the app runs. */
+    /** A tap on a notice while the app runs. No chat is read from [intent]: only the app's own notices name one. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        chatToOpen(intent)?.let { opening = it }
+        (application as RenoaApplication).takeChatToOpen()?.let { opening = it }
     }
-
-    private fun chatToOpen(intent: Intent?): String? = intent?.takeIf { it.action == OPEN_CHAT }?.getStringExtra(CHAT)
 
     override fun onStart() {
         super.onStart()

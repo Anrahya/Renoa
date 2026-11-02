@@ -4,9 +4,11 @@ import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.agentAddress
 import live.renoa.app.agents.chatTaskId
 import kotlinx.coroutines.CancellationException
+import live.renoa.rcp.Disconnected
 import live.renoa.rcp.ExecutionEventKind
 import live.renoa.rcp.ExecutionTerminal
 import live.renoa.rcp.PendingTextCommand
+import live.renoa.rcp.ProtocolViolation
 import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
@@ -17,13 +19,15 @@ import live.renoa.rcp.TaskSummary
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.uuid.Uuid
 
-/** What a task's newly read records have for the owner. */
+/** What a task's newly read records have for the owner; [sequence] is the record that says it. */
 internal sealed interface News {
+    val sequence: Long
+
     /** The agent's latest reply with words in it. */
-    data class Replied(val text: String) : News
+    data class Replied(val text: String, override val sequence: Long) : News
 
     /** The latest run failed. */
-    data object Stuck : News
+    data class Stuck(override val sequence: Long) : News
 }
 
 /**
@@ -38,10 +42,10 @@ internal fun news(read: List<TaskEvent>): News? {
             is TaskEventKind.CommandSubmitted -> {}
             is TaskEventKind.ExecutionRecorded ->
                 when (val activity = kind.event.kind) {
-                    is ExecutionEventKind.AssistantMessage -> if (activity.text.isNotBlank()) latest = News.Replied(activity.text.trim())
+                    is ExecutionEventKind.AssistantMessage -> if (activity.text.isNotBlank()) latest = News.Replied(activity.text.trim(), event.sequence)
                     is ExecutionEventKind.ExecutionTerminated ->
                         when (activity.terminal) {
-                            is ExecutionTerminal.Failed -> latest = News.Stuck
+                            is ExecutionTerminal.Failed -> latest = News.Stuck(event.sequence)
                             ExecutionTerminal.Completed, is ExecutionTerminal.Cancelled -> {}
                         }
                     ExecutionEventKind.ExecutionStarted, ExecutionEventKind.TurnStarted, is ExecutionEventKind.ToolStarted, is ExecutionEventKind.ToolFinished -> {}
@@ -97,9 +101,10 @@ private class WakeState(private val saved: WakeCursors) : RcpState {
  * passed over, so a wake-up cut short shows those records on the next one.
  *
  * A failure in one task, or in registering, does not stop the others; [run] then returns false, for
- * the caller to run it again. Without a baseline there is nothing to read from, so it returns false
- * too. A failure to connect or to list the tasks throws. [connect] makes the client over the state it
- * is given; [run] connects it and closes it.
+ * the caller to run it again. A failure that ends the connection is followed by a new one, and the
+ * task is tried once more; one that ends it twice is left for the next run. Without a baseline there
+ * is nothing to read from, so it returns false too. A failure to connect or to list the tasks throws.
+ * [connect] makes a client over the state it is given; [run] connects and closes each one it makes.
  */
 internal class WakeUp(
     private val cursors: WakeCursors,
@@ -112,14 +117,23 @@ internal class WakeUp(
     /** Returns whether every step and every task went through. */
     suspend fun run(): Boolean {
         val state = WakeState(cursors)
-        val surface = connect(state)
+        var surface = connect(state)
         try {
             surface.connect()
-            var complete = attempt { register(surface) }
+            var complete = attempt { register(surface) } == null
             if (!cursors.baselined()) return false
             for (task in surface.listTasks()) {
                 val through = task.throughSequence ?: continue
-                complete = attempt { if ((cursors.cursor(task.taskId) ?: -1) < through) catchUp(surface, task) } && complete
+                var ended = 0
+                while (true) {
+                    val failure = attempt { if ((cursors.cursor(task.taskId) ?: -1) < through) catchUp(surface, task) } ?: break
+                    complete = false
+                    if (!failure.endsTheConnection) break
+                    surface.close()
+                    surface = connect(state)
+                    surface.connect()
+                    if (++ended == CONNECTIONS_PER_TASK) break
+                }
             }
             return complete
         } finally {
@@ -138,20 +152,31 @@ internal class WakeUp(
         }
         // A record arriving live from here on is left to the next wake-up, which Renoa sends for it.
         val replayed = synchronized(read) { read.toList() }
-        news(replayed)?.let {
-            if (!onScreen(task.taskId)) sender(task).let { from -> post(Notice(task.taskId, from.name, from.chat, it)) }
+        news(replayed)?.let { said ->
+            // Checked last, so a chat the owner opened, or read, while it was replayed is not shown.
+            val alreadyRead = (cursors.cursor(task.taskId) ?: -1) >= said.sequence
+            if (!alreadyRead && !onScreen(task.taskId)) sender(task).let { from -> post(Notice(task.taskId, from.name, from.chat, said)) }
         }
         replayed.lastOrNull()?.let { cursors.advance(task.taskId, it.sequence) }
     }
 
-    /** Runs [step]; returns whether it went through. */
-    private suspend fun attempt(step: suspend () -> Unit): Boolean =
+    /** Runs [step]; returns what it failed with, or null. */
+    private suspend fun attempt(step: suspend () -> Unit): Exception? =
         try {
             step()
-            true
+            null
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
-            false
+        } catch (failure: Exception) {
+            failure
         }
+
+    private companion object {
+        /** Connections one task may end in a run before it is left for the next. */
+        const val CONNECTIONS_PER_TASK = 2
+
+        /** Whether the connection is gone after this, so later requests on it would fail too. */
+        val Exception.endsTheConnection: Boolean
+            get() = this is Disconnected || this is ProtocolViolation || (this is RcpException && requestId == null)
+    }
 }

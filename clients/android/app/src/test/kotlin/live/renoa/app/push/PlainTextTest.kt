@@ -3,6 +3,8 @@ package live.renoa.app.push
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.measureTime
 
 class PlainTextTest {
     @Test
@@ -55,6 +57,19 @@ class PlainTextTest {
         val faces = "😀".repeat(60)
         val cut = plainText(faces, limit = 100)
         assertEquals("😀".repeat(49) + "…", cut, "no face is cut in half")
+    }
+
+    @Test
+    fun aReplyWithNoWordsLeftStillSaysSomething() {
+        assertEquals(WORDLESS_REPLY, plainText("---"))
+        assertEquals(WORDLESS_REPLY, plainText("```\n```"))
+    }
+
+    @Test
+    fun aReplyMadeToBeSlowIsReadQuickly() {
+        val slow = "**a ".repeat(20_000)
+        val took = measureTime { plainText(slow) }
+        assertTrue(took < 1.seconds, "80 KB of unclosed marks took $took")
     }
 
     @Test

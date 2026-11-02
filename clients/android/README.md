@@ -34,13 +34,19 @@ without connecting.
 The job (`WakeUp`) connects with the device credential and key, registers the push token, lists the
 tasks, attaches from its own cursor (`WakeCursors`, kept per sign-in in the app's storage) to each
 task whose `throughSequence` passed it, closes the connection, and posts one notification per task:
-the agent's latest reply as plain words (markdown marks removed, at most 1,000 characters), or that
-it got stuck, under the name Home keeps for it. A task's cursor moves only once its notice is up. A
-notice from an agent's chat opens that chat when tapped; one from another task, such as a routine's,
-opens the app. A chat on screen gets no notice, opening a chat takes its notice back, and what the
-app showed of a chat while it was on screen counts as read, so a later wake does not show it again.
-A task, the token or the baseline that failed does not stop the rest; the job then runs again, a few
-times at most. A sign-in Renoa refused ends it; one the Keystore could not read just now is retried.
+the agent's latest reply as plain words (markdown marks removed, at most 1,000 characters, "New
+reply" when no words are left), or that it got stuck, under the name Home keeps for it. A new reply
+rings even over an unopened notice from the same chat; the same reply posted again, as on a retry,
+does not. A task's cursor moves only once its notice is up. A notice from an agent's chat opens that
+chat when tapped, through `NoticeTap`, which is not exported and hands the chat to the app in its
+own process, so no other app can open a chat; one from another task, such as a routine's, opens the
+app. A chat on screen gets no notice, opening a chat takes its notice back, and what the app had
+applied of a chat when it came on screen or left it counts as read, so a later wake does not show
+it again; the job checks that, and the screen, right before it posts. Nothing posts after sign-out.
+A task, the token or the baseline that failed does not stop the rest; a task that ends the
+connection is tried once more on a new one, and left for the next run if it ends that one too. The
+job then runs again, a few times at most. A sign-in Renoa refused ends it; one the Keystore could
+not read just now is retried.
 
 The first registration of a sign-in records where every task stands, so a new phone is not told its
 whole history. If a wake-up has to take it, because the app never could, what was there counts as
