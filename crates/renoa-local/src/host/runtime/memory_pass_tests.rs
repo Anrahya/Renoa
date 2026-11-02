@@ -84,19 +84,19 @@ if (process.env.RENOA_MODEL_ACTION !== "stream" && existsSync(here("broken"))) {
 "#;
 
 /// 12:00 on 2026-11-02 in Asia/Kolkata, the notebook zone.
-const NOON: &str = "2026-11-02T06:30:00Z";
+pub(super) const NOON: &str = "2026-11-02T06:30:00Z";
 /// 11:00 on 2026-11-03 in Asia/Kolkata, Mnem's pass day start: the nightly
 /// run, and the end of the pass day 2026-11-02.
 const NIGHT: &str = "2026-11-03T05:30:00Z";
-const MINUTE: i64 = 60_000;
+pub(super) const MINUTE: i64 = 60_000;
 /// More than Mnem's least unreviewed text for a pass.
-const ENOUGH: &str =
+pub(super) const ENOUGH: &str =
     "My sister lands on Friday at ten and I promised to pick her up from the airport.";
 const TIMER: &str = "renoa.memory note pass";
 /// A message whose turn the model never answers.
 const HANG: &str = "Hang on forever, please.";
 
-fn ms(at: &str) -> i64 {
+pub(super) fn ms(at: &str) -> i64 {
     at.parse::<Timestamp>()
         .expect("a test instant")
         .as_millisecond()
@@ -110,16 +110,16 @@ impl AgentEventSink for Quiet {
     }
 }
 
-struct Fixture {
+pub(super) struct Fixture {
     _directory: tempfile::TempDir,
-    root: PathBuf,
-    host: LocalHost,
-    scheduler: AutomationScheduler,
-    main: AgentId,
+    pub(super) root: PathBuf,
+    pub(super) host: LocalHost,
+    pub(super) scheduler: AutomationScheduler,
+    pub(super) main: AgentId,
 }
 
 impl Fixture {
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         let directory = tempfile::tempdir().expect("directory");
         let root = directory.path().to_path_buf();
         fs::write(root.join("model.mjs"), MODEL).expect("model");
@@ -175,7 +175,7 @@ impl Fixture {
         }
     }
 
-    fn database(&self) -> &Path {
+    pub(super) fn database(&self) -> &Path {
         &self.host.config.database
     }
 
@@ -208,7 +208,7 @@ impl Fixture {
         );
     }
 
-    async fn say(&self, session: Uuid, person: Uuid, at: i64, text: &str) {
+    pub(super) async fn say(&self, session: Uuid, person: Uuid, at: i64, text: &str) {
         self.say_to(self.main, session, person, at, text).await;
     }
 
@@ -299,7 +299,7 @@ impl Fixture {
             .map(|automation| automation.next_due_ms)
     }
 
-    async fn snapshot(&self) -> crate::HostObservation {
+    pub(super) async fn snapshot(&self) -> crate::HostObservation {
         HostObserver::open(&self.root.join("data"))
             .expect("observer")
             .snapshot()

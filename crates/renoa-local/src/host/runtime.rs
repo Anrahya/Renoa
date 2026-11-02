@@ -253,6 +253,8 @@ mod memory_pass_tests;
 #[cfg(test)]
 mod memory_plugin_tests;
 #[cfg(test)]
+mod memory_reminder_tests;
+#[cfg(test)]
 mod time_plugin_tests;
 
 #[cfg(test)]

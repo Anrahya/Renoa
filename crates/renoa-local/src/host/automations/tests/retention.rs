@@ -82,7 +82,7 @@ async fn an_automation_keeps_its_newest_fifty_finished_runs() {
     .await;
     let mut now = automation.next_due_ms;
     for _ in 0..52 {
-        let run = runs::next(&h.config.database, now, false)
+        let run = next_run(&h.config.database, now, false)
             .expect("admission")
             .expect("run");
         runs::finish(&h.config.database, run.id, &succeeded("done"), now).expect("finish");
@@ -101,7 +101,7 @@ async fn an_automation_keeps_its_newest_fifty_finished_runs() {
 async fn finished_runs_expire_after_thirty_days_and_unfinished_ones_stay() {
     let (_d, h, parent, child) = fixture().await;
     let (_, automation) = create(&h, parent, spec(child)).await;
-    let first = runs::next(&h.config.database, automation.next_due_ms, false)
+    let first = next_run(&h.config.database, automation.next_due_ms, false)
         .expect("admission")
         .expect("run");
     runs::finish(
@@ -111,7 +111,7 @@ async fn finished_runs_expire_after_thirty_days_and_unfinished_ones_stay() {
         first.due_ms,
     )
     .expect("finish");
-    let second = runs::next(
+    let second = next_run(
         &h.config.database,
         automation.next_due_ms + 12 * 3_600_000,
         false,
@@ -155,7 +155,7 @@ async fn a_deleted_automation_leaves_no_trace_of_its_content() {
         },
     )
     .await;
-    let run = runs::next(&h.config.database, automation.next_due_ms, false)
+    let run = next_run(&h.config.database, automation.next_due_ms, false)
         .expect("admission")
         .expect("run");
     let delete_op = Uuid::new_v4();
@@ -239,7 +239,7 @@ async fn a_deleted_automation_leaves_no_trace_of_its_content() {
 async fn deleting_an_idle_automation_removes_its_data_at_once() {
     let (_d, h, parent, child) = fixture().await;
     let (_, automation) = create(&h, parent, spec(child)).await;
-    let run = runs::next(&h.config.database, automation.next_due_ms, false)
+    let run = next_run(&h.config.database, automation.next_due_ms, false)
         .expect("admission")
         .expect("run");
     runs::finish(&h.config.database, run.id, &succeeded("done"), 1).expect("finish");

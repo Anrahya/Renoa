@@ -121,7 +121,8 @@ pub enum RunStatus {
     Succeeded,
     /// The run could not be sent, or its execution failed or was stopped.
     Failed,
-    /// The run was too late to be worth running and never executed.
+    /// The run never executed: it was too late to be worth running, or its
+    /// plugin said it was no longer due.
     Skipped,
 }
 

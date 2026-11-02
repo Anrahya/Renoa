@@ -7,16 +7,27 @@
 
 use rusqlite::Transaction;
 
-use super::{AutomationError, AutomationRecord, store};
-use crate::plugins::host::{HostPluginId, triggers};
+use super::{AutomationError, AutomationRecord, retention, store};
+use crate::plugins::host::{
+    HostPluginId,
+    triggers::{self, TriggerContext},
+};
 
 /// Converges the triggers as [`reconcile`] does, inside a savepoint: a
 /// trigger that cannot be converged keeps every stored trigger as it was and
 /// is logged, and never stops an agent's due run from being admitted.
-pub(super) fn converge(tx: &Transaction<'_>, now_ms: i64) -> Result<(), AutomationError> {
+/// Returns what retention removed, to report once committed.
+pub(super) fn converge(
+    tx: &Transaction<'_>,
+    context: &TriggerContext,
+    now_ms: i64,
+) -> Result<Vec<retention::Removed>, AutomationError> {
     tx.execute_batch("SAVEPOINT plugin_triggers")?;
-    match reconcile(tx, now_ms) {
-        Ok(()) => tx.execute_batch("RELEASE plugin_triggers")?,
+    match reconcile(tx, context, now_ms) {
+        Ok(removed) => {
+            tx.execute_batch("RELEASE plugin_triggers")?;
+            Ok(removed)
+        }
         Err(error) => {
             tx.execute_batch("ROLLBACK TO plugin_triggers; RELEASE plugin_triggers")?;
             renoa_telemetry::event(
@@ -25,31 +36,42 @@ pub(super) fn converge(tx: &Transaction<'_>, now_ms: i64) -> Result<(), Automati
                 "plugin_triggers_unconverged",
                 &serde_json::json!({ "error": error.to_string() }),
             );
+            Ok(Vec::new())
         }
     }
-    Ok(())
 }
 
 /// Converges every plugin's trigger automations as of `now_ms`: each one it
 /// wants is created, or updated to its wanted spec, and every other one it
 /// owns is disabled. A schedule or switch that changes is due again from
 /// `now_ms`, as an edit by its agent would be; a one-time schedule at or
-/// before `now_ms` is due at once.
-fn reconcile(tx: &Transaction<'_>, now_ms: i64) -> Result<(), AutomationError> {
+/// before `now_ms` is due at once. A trigger whose runs go to its agent is
+/// retired once it is not wanted (see [`retention::retire_trigger`]).
+fn reconcile(
+    tx: &Transaction<'_>,
+    context: &TriggerContext,
+    now_ms: i64,
+) -> Result<Vec<retention::Removed>, AutomationError> {
     let owned = triggers::owned(tx).map_err(|error| plugin_error(&error))?;
+    let mut removed = Vec::new();
     for plugin in HostPluginId::ALL {
-        let wanted = triggers::wanted(plugin, tx, now_ms).map_err(|error| plugin_error(&error))?;
-        for (id, _) in owned.iter().filter(|(id, owner)| {
-            *owner == plugin && !wanted.iter().any(|(target, _)| target == id)
-        }) {
+        let wanted =
+            triggers::wanted(plugin, tx, context, now_ms).map_err(|error| plugin_error(&error))?;
+        for (id, _) in owned
+            .iter()
+            .filter(|(id, owner)| *owner == plugin && !wanted.iter().any(|target| target.id == *id))
+        {
             let old = store::stored(tx, *id)?.ok_or(AutomationError::NotFound)?;
             if old.spec.enabled {
                 let mut spec = old.spec.clone();
                 spec.enabled = false;
                 store::save(tx, &store::updated_trigger(&old, spec, now_ms)?, false)?;
             }
+            if triggers::delivers(tx, *id)? {
+                removed.extend(retention::retire_trigger(tx, *id)?);
+            }
         }
-        for (id, spec) in wanted {
+        for triggers::Wanted { id, spec, reminder } in wanted {
             match store::stored(tx, id)? {
                 Some(old) if old.spec == spec => {}
                 Some(old) => {
@@ -64,12 +86,12 @@ fn reconcile(tx: &Transaction<'_>, now_ms: i64) -> Result<(), AutomationError> {
                         spec,
                     };
                     store::save(tx, &record, true)?;
-                    triggers::own(tx, id, plugin)?;
+                    triggers::own(tx, id, plugin, reminder.as_ref())?;
                 }
             }
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
 fn plugin_error(error: &crate::plugins::PluginError) -> AutomationError {

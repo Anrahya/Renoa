@@ -198,6 +198,49 @@ pub(super) fn purge_deleted(
     }))
 }
 
+/// One step of retiring a plugin's trigger whose runs went to its agent, once
+/// its plugin no longer wants it: nothing while a run of it is kept, which
+/// lasts at most [`KEEP_RUNS_MS`]; then it is deleted and purged, which marks
+/// the conversation of its own for deletion; once that conversation is gone,
+/// its rows are removed, so retired triggers do not pile up. The plugin no
+/// longer wants it, so nothing brings it back while it goes.
+pub(super) fn retire_trigger(
+    tx: &Transaction<'_>,
+    automation: Uuid,
+) -> Result<Option<Removed>, AutomationError> {
+    let id = automation.to_string();
+    let (runs, deleted, conversation): (bool, bool, bool) = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM host_automation_runs WHERE automation_id=?1),
+            EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=?1),
+            EXISTS(SELECT 1 FROM host_automation_conversation_deletions WHERE automation_id=?1)",
+        [&id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    if runs || (deleted && conversation) {
+        return Ok(None);
+    }
+    if !deleted {
+        tx.execute(
+            "INSERT INTO host_automation_deletions(automation_id) VALUES(?1)",
+            [&id],
+        )?;
+        return purge_deleted(tx, automation);
+    }
+    tx.execute(
+        "DELETE FROM host_plugin_triggers WHERE automation_id=?1",
+        [&id],
+    )?;
+    tx.execute(
+        "DELETE FROM host_automation_deletions WHERE automation_id=?1",
+        [&id],
+    )?;
+    tx.execute("DELETE FROM host_automations WHERE id=?1", [&id])?;
+    Ok(Some(Removed {
+        name: "automation_trigger_removed",
+        fields: json!({ "automation_id": automation }),
+    }))
+}
+
 /// Purges every deleted automation with no run in flight. Schema 39 uses it
 /// for automations deleted before deletion removed their data.
 pub(in crate::host) fn purge_all_deleted(

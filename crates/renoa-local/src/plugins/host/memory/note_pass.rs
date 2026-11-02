@@ -89,6 +89,38 @@ pub(crate) fn first_followed(at: &SessionRef) -> Result<bool, PluginError> {
     Ok(driver(&db)? == Some(at.agent) && !store::follows(&db, at.session)?)
 }
 
+/// Each person the main agent `agent` has a conversation with that the pass
+/// follows, and the one of them last active, the earliest id on a tie.
+///
+/// # Errors
+///
+/// Returns catalog failures and stored ids that do not parse.
+pub(crate) fn latest_conversations(
+    db: &rusqlite::Connection,
+    agent: AgentId,
+) -> Result<Vec<(Uuid, Uuid)>, PluginError> {
+    db.prepare(
+        "SELECT c.principal_id, c.session_id FROM host_memory_conversations c
+         WHERE c.agent_id = ?1 AND c.session_id = (
+             SELECT x.session_id FROM host_memory_conversations x
+             WHERE x.agent_id = ?1 AND x.principal_id = c.principal_id
+             ORDER BY x.last_activity_ms DESC, x.session_id LIMIT 1)
+         ORDER BY c.principal_id",
+    )?
+    .query_map([agent.to_string()], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?
+    .map(|row| {
+        let (principal, session) = row?;
+        let parse = |value: &str| {
+            Uuid::parse_str(value)
+                .map_err(|error| PluginError::Invalid(format!("a stored conversation id: {error}")))
+        };
+        Ok((parse(&principal)?, parse(&session)?))
+    })
+    .collect()
+}
+
 /// The characters of text in `content`, as the pass counts a message.
 pub(crate) fn chars(content: &[ContentBlock]) -> usize {
     content

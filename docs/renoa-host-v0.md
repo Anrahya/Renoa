@@ -1192,9 +1192,9 @@ written and to recall before noting it again. Recall, zoom and
 `MIND.md` open the notebook read-only: with no notebook they return nothing and
 create nothing. A recall pattern holds at most 256 bytes; Mnem bounds the
 compiled regex too. Mnem's compaction and Dream run in `renoa.memory`'s nightly
-run, and its note pass reviews the main agent's quiet conversations, both
-described in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md);
-its agenda and heartbeat do not run.
+run, its note pass reviews the main agent's quiet conversations, and the
+timed items of each person's agenda run as the main agent's reminders, all
+described in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md).
 
 The session-context point adds attributed blocks to the system prompt of a turn
 that talks to a person, asking each compiled plugin enabled for the agent for at
@@ -1342,7 +1342,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 46
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 47
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1363,7 +1363,9 @@ schema 45 gains the note pass's conversations and passes, both empty: a
 conversation is followed from the person's next message in it. Every catalog
 below schema 46 gains the feed's items, the owner's `seen_through` and the
 Today sentence, all empty, before its other steps, since the schema 40 purge
-removes a deleted automation's items. Live selections
+removes a deleted automation's items. Every catalog below schema 47 gains
+`renoa.memory`'s reminders, empty: the scheduler creates them when it next
+converges the triggers. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1737,7 +1739,10 @@ execution succeeded even when some of its tool calls failed; the count shows
 them. A failed or cancelled execution failed. A run of a compiled plugin's
 trigger runs on the node beside the schedule, one at a time, so an agent's run
 due meanwhile is submitted on time, and its result reaches surfaces while the
-plugin run is unfinished. A draining node stops the Host's memory runs and
+plugin run is unfinished. A `renoa.memory` reminder, though its plugin owns
+it, runs as an agent's run: its submission is Mnem's message for the item,
+chosen when the run is admitted, and it goes to the conversation the plugin
+chose then. A draining node stops the Host's memory runs and
 waits for the plugin run in flight, leaving one stopped part way unrecorded;
 shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its

@@ -91,7 +91,7 @@ async fn a_failed_a_skipped_and_a_refused_run_each_open_one_problem() {
     let (_d, h, _parent, child) = fixture().await;
     // The only automation due when the scheduler next looks, hours late.
     let late = create(&h, child, "Late").await;
-    let skipped = runs::next(
+    let skipped = next_run(
         &h.config.database,
         late.next_due_ms + 3 * HOUR + 60_000,
         false,
@@ -284,7 +284,7 @@ async fn an_item_commits_with_the_run_it_reports_or_neither_does() {
     .expect("storage failure boundary");
     let outcome = failed("Scheduled run failed: down");
     assert!(runs::finish(&h.config.database, run, &outcome, 1).is_err());
-    let pending = runs::next(&h.config.database, 1, false)
+    let pending = next_run(&h.config.database, 1, false)
         .expect("pending")
         .expect("the run stays admitted");
     assert_eq!((pending.id, pending.result), (run, None));
@@ -517,7 +517,7 @@ async fn the_owner_retries_a_problem_by_running_the_automation_now() {
             .await,
         Err(LocalHostError::Automation(AutomationError::Forbidden))
     ));
-    let run = runs::next(&h.config.database, 4, false)
+    let run = next_run(&h.config.database, 4, false)
         .expect("pending")
         .expect("the owner's run is admitted");
     assert_eq!(run.id, request.operation_id);
