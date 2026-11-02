@@ -303,8 +303,15 @@ async fn deliver(
     let command_id = CommandId::from_uuid(run.id);
     // A run delivered again, after its result could not be recorded or the
     // node restarted, stays in the task it already executes in, whatever the
-    // task resolution would pick now.
-    let task_id = match runtime.state.task_of_command(command_id).await? {
+    // task resolution would pick now. One that already ended is not sent
+    // again: the ledger's outcome stands, whatever the coordinator would say.
+    let recorded = runtime.state.task_of_command(command_id).await?;
+    if let Some(task_id) = recorded
+        && let Some(outcome) = runtime.state.outcome(command_id).await?
+    {
+        return Ok(Some(finished(outcome, run, task_id)));
+    }
+    let task_id = match recorded {
         Some(task_id) => task_id,
         None => match task_for(runtime, connection, due, shutdown, failures).await? {
             Resolution::Task(task_id) => task_id,

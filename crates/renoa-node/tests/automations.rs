@@ -421,6 +421,64 @@ async fn a_run_delivered_again_stays_in_the_conversation_it_executes_in() {
 }
 
 #[tokio::test]
+async fn a_run_that_ended_on_the_node_keeps_its_outcome_when_delivered_again() {
+    timeout(Duration::from_secs(30), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let automation = create(&host, fixture.agent_id, "Write the digest.").await;
+        let db = rusqlite::Connection::open(host.home().host_database()).expect("catalog");
+        // The Host cannot record the run's result, so the run stays admitted
+        // and the schedule delivers it again.
+        db.execute_batch(
+            "CREATE TRIGGER keep_run_open BEFORE UPDATE OF output ON host_automation_runs
+             BEGIN SELECT RAISE(ABORT, 'injected catalog failure'); END;",
+        )
+        .expect("storage failure boundary");
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        let ledger = rusqlite::Connection::open(fixture.data.join("state/node.sqlite3"))
+            .expect("node ledger");
+        loop {
+            let ended: Option<bool> = ledger
+                .query_row(
+                    "SELECT terminal FROM host_node_executions WHERE command_id = ?1",
+                    [run.to_string()],
+                    |row| row.get(0),
+                )
+                .ok();
+            if ended == Some(true) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // The coordinator would now refuse the command if it were sent again.
+        db.execute(
+            "UPDATE host_automation_runs SET submission = 'Changed.' WHERE id = ?1",
+            [run.to_string()],
+        )
+        .expect("a different command under the same identity");
+        db.execute_batch("DROP TRIGGER keep_run_open;")
+            .expect("storage recovers");
+        let finished = finished_run(&host, fixture.agent_id, run).await;
+        assert_eq!(
+            (finished.status, finished.output.as_str()),
+            (RunStatus::Succeeded, "Digest written.")
+        );
+        assert_eq!(feed(&host).await, [(FeedKind::Result, run.to_string())]);
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("redelivered ended run test timed out");
+}
+
+#[tokio::test]
 async fn one_node_owns_a_host_schedule_at_a_time() {
     timeout(Duration::from_secs(10), async {
         let mut system = TestSystem::start().await;

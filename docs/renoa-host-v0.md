@@ -1727,8 +1727,9 @@ like any other on the node, with the agent's stored definition, workspace, and
 selected Host connections; its execution time enters the durable user-turn time
 context. A run keeps its occurrence ID until its result is recorded, so after a
 restart the scheduler submits the same command again, to the task the node
-ledger already records it in rather than one resolved afresh, the coordinator
-keeps one copy, and the node re-drives an interrupted execution through the kernel. Once
+ledger already records it in rather than one resolved afresh, unless the ledger
+already holds its end, which is then the result without a second submission;
+the coordinator keeps one copy, and the node re-drives an interrupted execution through the kernel. Once
 the node ledger holds the command's terminal event, the node records the result
 on the run: the final answer, or the failure or cancellation reason, with a
 status and the number of tool calls that returned an error. A completed
