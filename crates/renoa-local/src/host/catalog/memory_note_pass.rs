@@ -19,6 +19,7 @@ pub(super) fn add_note_passes(transaction: &Transaction<'_>) -> Result<(), HostC
 /// no note pass timer, so its trigger goes too.
 #[cfg(test)]
 pub(crate) fn restore_schema_44(connection: &rusqlite::Connection) {
+    super::restore_schema_45(connection);
     connection
         .execute_batch(
             "DROP TABLE host_memory_passes;

@@ -17,6 +17,7 @@ fn succeeded(answer: &str) -> RunOutcome {
     RunOutcome::Succeeded {
         answer: answer.to_owned(),
         failed_tool_calls: 0,
+        landing: RunLanding::OwnTask,
     }
 }
 
@@ -608,4 +609,5 @@ mod retention;
 mod control;
 mod cron;
 mod deletion;
+mod feed;
 mod outcomes;

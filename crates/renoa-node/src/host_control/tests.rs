@@ -19,7 +19,12 @@ fn name(operation: &Operation) -> &'static str {
         Operation::DiscordChannels => "discord_channels",
         Operation::DiscordBind => "discord_bind",
         Operation::AutomationEnabled(_) => "automation_enabled",
+        Operation::AutomationRun(_) => "automation_run",
         Operation::MainAgentSet => "main_agent_set",
+        Operation::FeedList(None) => "feed_list",
+        Operation::FeedList(Some(_)) => "feed_list_before",
+        Operation::FeedSee => "feed_see",
+        Operation::FeedDismiss(_) => "feed_dismiss",
     }
 }
 
@@ -59,7 +64,24 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
             format!("/v1/host/automations/{id}/enabled"),
             "automation_enabled",
         ),
+        (
+            Post,
+            format!("/v1/host/automations/{id}/run"),
+            "automation_run",
+        ),
         (Post, "/v1/host/main-agent".to_owned(), "main_agent_set"),
+        (Get, "/v1/host/feed".to_owned(), "feed_list"),
+        (
+            Get,
+            "/v1/host/feed/before/120".to_owned(),
+            "feed_list_before",
+        ),
+        (Post, "/v1/host/feed/seen".to_owned(), "feed_see"),
+        (
+            Post,
+            format!("/v1/host/feed/items/{id}/dismissal"),
+            "feed_dismiss",
+        ),
     ];
     let mut reached = BTreeSet::new();
     for (method, path, expected) in &routes {
@@ -80,7 +102,12 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
         "discord_channels",
         "discord_bind",
         "automation_enabled",
+        "automation_run",
         "main_agent_set",
+        "feed_list",
+        "feed_list_before",
+        "feed_see",
+        "feed_dismiss",
     ]
     .into_iter()
     .collect();
@@ -94,6 +121,9 @@ fn a_known_path_with_another_method_is_refused_and_an_unknown_path_is_not_found(
     assert_eq!(status(Put, "/v1/host/agents/options"), 405);
     assert_eq!(status(Get, "/v1/host/discord/inspection"), 405);
     assert_eq!(status(Get, "/v1/host/main-agent"), 405);
+    assert_eq!(status(Post, "/v1/host/feed"), 405);
+    assert_eq!(status(Get, "/v1/host/feed/seen"), 405);
+    assert_eq!(status(Get, "/v1/host/automations/a/run"), 405);
     for path in [
         "/v1/hostile",
         "/v1/host/",

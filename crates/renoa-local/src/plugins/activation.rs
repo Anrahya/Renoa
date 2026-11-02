@@ -66,7 +66,7 @@ impl PluginManager {
         tokio::task::spawn_blocking(move || {
             let mut connection = store.connection()?;
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            admit_connection_selection(&tx, &agent, &account)?;
+            admit_connection_selection(&tx, &agent, &account, SelectedBy::TheAgent)?;
             tx.rollback()?;
             Ok(())
         })
@@ -130,9 +130,13 @@ impl PluginManager {
             if occupied.is_some() {
                 return Err(PluginError::Conflict("that revision already has a different activation identity for this agent".to_owned()));
             }
-            tx.execute("INSERT INTO host_agent_plugins(agent_id,plugin_id,package_digest,enabled) VALUES (?1,?2,?3,?4)
-                ON CONFLICT(agent_id,plugin_id) DO UPDATE SET package_digest=excluded.package_digest,enabled=excluded.enabled",params![agent,plugin_id,digest,enabled])?;
-            tx.execute("INSERT OR IGNORE INTO host_agent_plugin_revisions(agent_id,plugin_id,package_digest) VALUES (?1,?2,?3)",params![agent,plugin_id,digest])?;
+            // `plugin_manage` changes the calling agent's own activations, so
+            // any change that leaves a disabled or absent plugin enabled is the
+            // agent turning it on, a replacement included.
+            let turns_on = enabled && !current.as_ref().is_some_and(|current| current.enabled);
+            let source = format!("package:{operation_id}");
+            let act = if turns_on { ActivationAct::AgentTurnedOn { source: &source } } else { ActivationAct::Other };
+            write_activation(&tx, &agent, &plugin_id, &digest, enabled, act)?;
             if enabled { super::store::record_admission(&tx, &digest)?; }
             let imported = prepared.as_ref().map(|prepared|skills.commit_plugin(&tx,&agent,prepared)).transpose()?;
             let (report, publications) = imported.map_or((None,None), |(report,publications)|(Some(report),Some(publications)));
@@ -208,13 +212,67 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PluginActivation> {
     })
 }
 
+/// Who selected an account for an agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SelectedBy {
+    /// The agent itself, through `plugin_manage`.
+    TheAgent,
+    /// The owner, or the agent that created it, editing its connections.
+    OwnerOrCreator,
+}
+
+/// What one write of an activation is.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ActivationAct<'a> {
+    /// The agent turned the plugin on for itself, by the act `source` names
+    /// once; the feed reports it.
+    AgentTurnedOn { source: &'a str },
+    /// A replacement, a deactivation, a write that changes nothing, or one
+    /// the owner or a creating agent made.
+    Other,
+}
+
+/// Writes `agent`'s activation of `plugin` at `digest`. Every write to
+/// `host_agent_plugins` goes through here, and its `act` says whether the
+/// feed reports it, in the same transaction; a test fails on a statement
+/// that writes the table anywhere else.
+fn write_activation(
+    tx: &Connection,
+    agent: &str,
+    plugin: &str,
+    digest: &str,
+    enabled: bool,
+    act: ActivationAct<'_>,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO host_agent_plugins(agent_id,plugin_id,package_digest,enabled) VALUES (?1,?2,?3,?4)
+         ON CONFLICT(agent_id,plugin_id) DO UPDATE SET package_digest=excluded.package_digest,enabled=excluded.enabled",
+        params![agent, plugin, digest, enabled],
+    )?;
+    tx.execute("INSERT OR IGNORE INTO host_agent_plugin_revisions(agent_id,plugin_id,package_digest) VALUES (?1,?2,?3)",params![agent,plugin,digest])?;
+    match act {
+        ActivationAct::AgentTurnedOn { source } => crate::host::feed::ability_turned_on(
+            tx,
+            agent,
+            crate::host::feed::Ability::Package {
+                plugin_id: plugin,
+                digest,
+            },
+            source,
+        ),
+        ActivationAct::Other => Ok(()),
+    }
+}
+
 /// Selecting an MCP account establishes its revision's activation when none
 /// exists. An explicit deactivation or replacement cannot be bypassed by a
-/// later connection selection. This does not import skill instructions.
+/// later connection selection. This does not import skill instructions. An
+/// activation the agent's own selection creates is reported in the feed.
 pub(crate) fn admit_connection_selection(
     tx: &rusqlite::Transaction<'_>,
     agent: &str,
     connection: &str,
+    by: SelectedBy,
 ) -> Result<(), crate::mcp::McpHostError> {
     let digest = tx.query_row("SELECT server.plugin_digest FROM plugin_mcp_servers AS server JOIN mcp_connections AS connection ON connection.integration_id=server.integration_id WHERE connection.connection_id=?1",[connection],|r|r.get::<_,String>(0)).optional()?;
     let Some(digest) = digest else {
@@ -232,8 +290,12 @@ pub(crate) fn admit_connection_selection(
             if occupied {
                 return Err(crate::mcp::McpHostError::Conflict("this plugin identity now selects a replacement revision; use explicit replace_plugin to select the old revision".to_owned()));
             }
-            tx.execute("INSERT INTO host_agent_plugins(agent_id,plugin_id,package_digest,enabled) VALUES (?1,?2,?2,1)",params![agent,digest])?;
-            tx.execute("INSERT INTO host_agent_plugin_revisions(agent_id,plugin_id,package_digest) VALUES (?1,?2,?2)",params![agent,digest])?;
+            let source = format!("selection:{digest}");
+            let act = match by {
+                SelectedBy::TheAgent => ActivationAct::AgentTurnedOn { source: &source },
+                SelectedBy::OwnerOrCreator => ActivationAct::Other,
+            };
+            write_activation(tx, agent, &digest, &digest, true, act)?;
             Ok(())
         }
     }

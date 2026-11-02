@@ -1091,6 +1091,138 @@ async fn the_owner_names_the_main_agent_from_the_revision_it_read() {
     .await;
 }
 
+/// Runs `automation` now through the relay, as the feed's `retry` does, and
+/// records the run's failure: the node here runs no schedule.
+async fn retried_and_failed(f: &Fixture, automation: &AutomationRecord) {
+    let run = format!("/v1/host/automations/{}/run", automation.id);
+    let operation = json!({"operation_id": Uuid::new_v4()});
+    let admitted = f.browser.post(&run, &operation).await;
+    assert_eq!(admitted.status(), StatusCode::OK);
+    let receipt: Value = admitted.json().await.expect("receipt");
+    assert_eq!(receipt["id"], json!(automation.id));
+    let replayed = f.browser.post(&run, &operation).await;
+    assert_eq!(replayed.json::<Value>().await.expect("replay"), receipt);
+    let busy = f
+        .browser
+        .post(&run, &json!({"operation_id": Uuid::new_v4()}))
+        .await;
+    assert_eq!(busy.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        busy.json::<Value>().await.expect("busy")["code"],
+        "run_in_progress"
+    );
+
+    let scheduler = f.host.automation_scheduler().expect("the schedule");
+    let reason = "Scheduled run failed: https://api.example.com refused web_fetch";
+    scheduler
+        .finish_run(
+            Uuid::parse_str(operation["operation_id"].as_str().expect("id")).expect("uuid"),
+            renoa_local::RunOutcome::Failed {
+                reason: reason.to_owned(),
+                failed_tool_calls: 1,
+            },
+            1,
+        )
+        .await
+        .expect("the run failed");
+}
+
+#[tokio::test]
+async fn the_owner_retries_reads_sees_and_dismisses_the_feed_through_the_relay() {
+    within(Box::pin(async {
+        let mut f = Fixture::new().await;
+        let automation = seed_automation(&f.host).await;
+        f.start_node().await;
+        retried_and_failed(&f, &automation).await;
+
+        let page = f.browser.json_of("/v1/host/feed").await;
+        assert_eq!(page["today"], "1 thing needs you.");
+        assert_eq!(
+            (page["unread"].clone(), page["seen_through"].clone()),
+            (json!(1), json!(0))
+        );
+        let item = &page["items"][0];
+        assert_eq!(item["kind"], "problem");
+        assert_eq!(item["action"], "retry");
+        assert_eq!(item["subject_id"], json!(automation.id));
+        assert_eq!(item["agent"]["name"], "News");
+        assert_eq!(item["title"], "\u{201c}Brief\u{201d} didn\u{2019}t finish");
+        assert!(!item.to_string().contains("example.com"));
+        assert_eq!(page["next_before"], Value::Null);
+        let sequence = item["sequence"].as_i64().expect("sequence");
+
+        let ahead = f
+            .browser
+            .post("/v1/host/feed/seen", &json!({"through": sequence + 5}))
+            .await;
+        assert_eq!(ahead.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let refusal: Value = ahead.json().await.expect("refusal");
+        assert_eq!(refusal["code"], "ahead_of_feed");
+        assert!(
+            refusal["message"]
+                .as_str()
+                .expect("message")
+                .contains(&format!("{}", sequence + 5))
+        );
+        let seen = f
+            .browser
+            .post("/v1/host/feed/seen", &json!({"through": sequence}))
+            .await;
+        assert_eq!(
+            seen.json::<Value>().await.expect("seen"),
+            json!({"seen_through": sequence, "unread": 0})
+        );
+
+        let dismissal = format!(
+            "/v1/host/feed/items/{}/dismissal",
+            item["id"].as_str().expect("id")
+        );
+        let dismissed: Value = f
+            .browser
+            .post(&dismissal, &json!({}))
+            .await
+            .json()
+            .await
+            .expect("item");
+        assert_eq!(dismissed["done"], true);
+        let again = f.browser.post(&dismissal, &json!({})).await;
+        assert_eq!(again.status(), StatusCode::OK);
+        let unknown = Uuid::new_v4();
+        let missing = f
+            .browser
+            .post(
+                &format!("/v1/host/feed/items/{unknown}/dismissal"),
+                &json!({}),
+            )
+            .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert!(
+            missing.json::<Value>().await.expect("refusal")["message"]
+                .as_str()
+                .expect("message")
+                .contains(&unknown.to_string())
+        );
+        assert_eq!(
+            f.browser.json_of("/v1/host/feed").await["today"],
+            "All quiet."
+        );
+        let older = f
+            .browser
+            .json_of(&format!("/v1/host/feed/before/{sequence}"))
+            .await;
+        assert_eq!(older["items"], json!([]));
+        let malformed = f
+            .browser
+            .get("/v1/host/feed/before/latest")
+            .send()
+            .await
+            .expect("GET");
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        f.close().await;
+    }))
+    .await;
+}
+
 const MODEL: &str = r"
 import {createHash} from 'node:crypto'; import fs from 'node:fs';
 let input=''; for await (const part of process.stdin) input+=part;

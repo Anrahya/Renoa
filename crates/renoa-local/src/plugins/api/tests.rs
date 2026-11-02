@@ -12,6 +12,7 @@ use std::{fs, path::Path};
 
 mod activation;
 mod coherence;
+mod feed;
 mod github;
 mod lifecycle;
 

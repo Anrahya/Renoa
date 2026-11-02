@@ -24,6 +24,20 @@ pub(in crate::host) struct Removed {
     fields: serde_json::Value,
 }
 
+impl Removed {
+    /// A removal named `name`, whose `fields` hold counts and identities,
+    /// never text.
+    pub(in crate::host) const fn new(name: &'static str, fields: serde_json::Value) -> Self {
+        Self { name, fields }
+    }
+
+    /// The event's name and fields, as [`report`] writes them.
+    #[cfg(test)]
+    pub(in crate::host) fn parts(&self) -> (&'static str, &serde_json::Value) {
+        (self.name, &self.fields)
+    }
+}
+
 /// Reports committed removals.
 pub(in crate::host) fn report(removed: impl IntoIterator<Item = Removed>) {
     for removed in removed {
@@ -31,39 +45,87 @@ pub(in crate::host) fn report(removed: impl IntoIterator<Item = Removed>) {
     }
 }
 
-/// Removes an automation's finished runs beyond its newest [`KEEP_RUNS`].
+/// Removes an automation's finished runs beyond its newest [`KEEP_RUNS`],
+/// with the feed results about them.
 pub(super) fn keep_newest(
     tx: &Connection,
     automation: Uuid,
 ) -> Result<Option<Removed>, AutomationError> {
-    let runs = tx.execute(
-        "DELETE FROM host_automation_runs WHERE automation_id=?1 AND output IS NOT NULL
+    let (runs, results) = remove_runs(
+        tx,
+        "automation_id=?1 AND output IS NOT NULL
          AND sequence < (SELECT min(sequence) FROM (SELECT sequence FROM host_automation_runs
              WHERE automation_id=?1 AND output IS NOT NULL ORDER BY sequence DESC LIMIT ?2))",
         rusqlite::params![automation.to_string(), KEEP_RUNS],
     )?;
     Ok((runs > 0).then(|| Removed {
         name: "automation_runs_pruned",
-        fields: json!({ "automation_id": automation, "runs": runs, "reason": "count" }),
+        fields: json!({
+            "automation_id": automation, "runs": runs, "feed_items": results, "reason": "count"
+        }),
     }))
 }
 
-/// Removes every finished run older than [`KEEP_RUNS_MS`]. A run recorded
-/// before schema 37 has no finishing time and ages from its admission.
+/// Removes every finished run older than [`KEEP_RUNS_MS`], with the feed
+/// results about them. A run recorded before schema 37 has no finishing time
+/// and ages from its admission.
 pub(super) fn expire(db: &Connection, now_ms: i64) -> Result<Option<Removed>, AutomationError> {
-    let runs = db.execute(
-        "DELETE FROM host_automation_runs WHERE output IS NOT NULL
-         AND coalesce(finished_at_ms, admitted_at_ms) < ?1",
+    let (runs, results) = remove_runs(
+        db,
+        "output IS NOT NULL AND coalesce(finished_at_ms, admitted_at_ms) < ?1",
         [now_ms.saturating_sub(KEEP_RUNS_MS)],
     )?;
     Ok((runs > 0).then(|| Removed {
         name: "automation_runs_pruned",
-        fields: json!({ "runs": runs, "reason": "age" }),
+        fields: json!({ "runs": runs, "feed_items": results, "reason": "age" }),
     }))
 }
 
+/// Expires runs and feed items as of `now_ms` and reports the removals. A
+/// failure removes nothing and is logged: the beat that called it already
+/// counts.
+pub(super) fn expire_on_beat(db: &mut Connection, now_ms: i64) {
+    match expire_together(db, now_ms) {
+        Ok(removed) => report(removed),
+        Err(error) => renoa_telemetry::event(
+            LOG_COMPONENT,
+            "warn",
+            "retention_failed",
+            &json!({ "error": error.to_string() }),
+        ),
+    }
+}
+
+/// Runs and feed items past their age or count, removed in one transaction
+/// so a run and the result about it go together.
+fn expire_together(db: &mut Connection, now_ms: i64) -> Result<Vec<Removed>, AutomationError> {
+    let tx = db.transaction()?;
+    let mut removed: Vec<Removed> = expire(&tx, now_ms)?.into_iter().collect();
+    removed.extend(crate::host::feed::retention::expire(&tx, now_ms)?);
+    tx.commit()?;
+    Ok(removed)
+}
+
+/// Removes the runs `filter` selects and the feed results about them, so a
+/// result never points at a run that is gone, and counts both.
+fn remove_runs(
+    db: &Connection,
+    filter: &str,
+    params: impl rusqlite::Params,
+) -> Result<(usize, usize), AutomationError> {
+    let runs = db
+        .prepare(&format!(
+            "DELETE FROM host_automation_runs WHERE {filter} RETURNING id"
+        ))?
+        .query_map(params, |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let results = crate::host::feed::retention::forget_results(db, &runs)?;
+    Ok((runs.len(), results))
+}
+
 /// Removes what a deleted automation still holds once no run of it is in
-/// flight: its runs, and its name and standing task wherever they are kept.
+/// flight: its runs and its feed items, and its name and standing task
+/// wherever they are kept.
 /// Its row, deletion mark and receipts stay without them, so a retried
 /// operation still gets its original answer and cannot bring it back: a
 /// receipt keeps its request only as a digest (see [`request_matches`]) and
@@ -85,6 +147,7 @@ pub(super) fn purge_deleted(
     if !ready {
         return Ok(None);
     }
+    let feed_items = crate::host::feed::retention::forget_automation(tx, automation)?;
     let runs = tx.execute(
         "DELETE FROM host_automation_runs WHERE automation_id=?1",
         [&id],
@@ -123,12 +186,15 @@ pub(super) fn purge_deleted(
             )?;
         }
     }
-    if runs == 0 && receipts == 0 && marked == 0 {
+    if runs == 0 && receipts == 0 && marked == 0 && feed_items == 0 {
         return Ok(None);
     }
     Ok(Some(Removed {
         name: "automation_purged",
-        fields: json!({ "automation_id": automation, "runs": runs, "receipts": receipts }),
+        fields: json!({
+            "automation_id": automation, "runs": runs, "receipts": receipts,
+            "feed_items": feed_items
+        }),
     }))
 }
 

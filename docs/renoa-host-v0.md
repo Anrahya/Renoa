@@ -328,6 +328,84 @@ Host identity is checked inside the mutation transaction, including on replay.
 Owner receipts remain distinct from agent receipts and cannot grant agent tools
 owner authority. Definition editing and delegation remain separate from this operation.
 
+`HostAutomationControl::run_now` is the owner's `run_now`, and
+`POST /v1/host/automations/{automation_id}/run` adapts it with
+`{operation_id}`: the operation ID becomes the run's identity, so an identical
+retry returns the original receipt and admits nothing more. It runs a paused
+automation too. A second run while one is admitted and unfinished returns 409
+`run_in_progress`; a deleted automation returns 404. The receipt has the same
+shape as a pause's.
+
+### While you were away
+
+The Host keeps a feed of what happened for its owner, so an app's Home can show
+it in one call: `host_feed_items`, newest first by an `AUTOINCREMENT` sequence
+that is never reused. An item has a `kind` (`ask`, `update`, `result`,
+`problem` or `ability`), the agent it is about, a `title` of at most 120
+characters and a `body` of at most 240, an `action` (`reply`, `open`, `retry`
+or `turn_off`) on a `subject_id`, its creation time, and the time it was done.
+Every item commits in the transaction that records the fact it reports, so a
+crash leaves both or neither and a rejected change leaves no item. Its identity
+derives from its kind and source, and producers insert once, so a replay
+converges on one item and takes no sequence. RCP carries none of it.
+
+The Host writes three kinds from fixed templates holding only an automation's
+name or a plugin's display name. A run's error text, a tool name and a digest
+never reach an item, but the names are written by agents and plugin authors,
+so a name can hold anything a name may; the agent's name is read when
+listing, so a rename shows. A failed, skipped or coordinator-refused run of an
+agent's automation opens a `problem` (`retry`, on the automation) unless the
+automation already has an open one, so a failure streak is reported once and
+a failure after the owner dismissed its problem is reported again; a succeeded
+run marks the automation's open problem done. A succeeded run that
+landed in the automation's own task writes a `result` (`open`, on the run) and
+removes the automation's previous one, so each automation has one result, unread
+again on each run; a result in a conversation is already there and writes
+none. The node, which chose the task, reports where the run landed. A plugin's
+trigger runs write nothing. An agent turning a plugin on for itself writes an
+`ability` (`turn_off`, on the plugin): `plugin_manage` activating or enabling
+a package plugin, enabling a compiled one it had turned off, or selecting an
+account whose selection creates the plugin's activation. A replacement writes
+one only when the plugin it replaces was turned off. A selection the owner or
+the agent's creator made, at creation or later, writes none, and neither do a
+replacement of a plugin that was on, deactivation and disconnection. Every write of an agent's package
+activations goes through one function, and a test fails on a write anywhere
+else. Nothing writes `ask` or `update` items yet; their tools will, and a
+producer marks its own item done by id as a dismissal does. Nothing is backfilled: runs and activations recorded
+before schema 46 make no items.
+
+Three relayed owner operations read it. `GET /v1/host/feed`, and
+`GET /v1/host/feed/before/{sequence}` for older pages, return
+`{today, unread, seen_through, items, next_before}`: at most 50 items, each
+`{id, sequence, kind, agent {id, name}, title, body, at_ms, done, action,
+subject_id}`, and `next_before` null on the oldest page. The page size is fixed
+because the relay carries no query. `POST /v1/host/feed/seen` with `{through}`
+raises the owner's one `seen_through` to the larger of the two and returns
+`{seen_through, unread}`; a value above the newest sequence the feed has handed
+out, pruned or not, returns 422 `ahead_of_feed` naming both. `seen_through`
+only rises, so devices and retries converge; `unread` counts the open items
+above it, and seeing an item does not resolve it.
+`POST /v1/host/feed/items/{id}/dismissal` marks an item done once and returns
+it; repeating it changes nothing, and an unknown id returns 404 naming it. An
+app runs an item's action through the operation that owns it and then dismisses
+it; a crash between leaves an open item.
+
+`today` is the sentence in `host_today`, which the catalog holds only as one
+line of 1 to 140 characters with the sequence it was written through, while no
+open `ask` or `problem` is newer than that sequence; otherwise it is the Host's
+line from the count of open items that need the owner ("2 things need you.",
+or "All quiet."). Nothing writes a sentence yet: its writer and who may call it
+come with the heartbeat, so today only the Host's line exists.
+
+An item is kept 30 days from its creation, and the feed keeps its newest 200;
+an open item that needs the owner, an `ask` or a `problem`, is exempt from
+both. Both rules run on the scheduler heartbeat, after it records the beat,
+in one transaction with run retention; each removal logs `feed_items_pruned`
+with a count and a reason, and a failure removes nothing, logs
+`retention_failed` and leaves the beat recorded. A run's
+removal removes the result about it, and purging a deleted automation removes
+its items, counted in `automation_runs_pruned` and `automation_purged`.
+
 ### The main agent
 
 Each Host has one main agent, not one per person: the agent its owner talks to
@@ -1264,7 +1342,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 45
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 46
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1282,7 +1360,10 @@ catalog below schema 44 gains the plugin-trigger owner table,
 empty; the scheduler creates
 `renoa.memory`'s nightly trigger at its first pass. Every catalog below
 schema 45 gains the note pass's conversations and passes, both empty: a
-conversation is followed from the person's next message in it. Live selections
+conversation is followed from the person's next message in it. Every catalog
+below schema 46 gains the feed's items, the owner's `seen_through` and the
+Today sentence, all empty, before its other steps, since the schema 40 purge
+removes a deleted automation's items. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1645,8 +1726,10 @@ in a task of its own whose identity is the automation's. The command executes
 like any other on the node, with the agent's stored definition, workspace, and
 selected Host connections; its execution time enters the durable user-turn time
 context. A run keeps its occurrence ID until its result is recorded, so after a
-restart the scheduler submits the same command again, the coordinator keeps one
-copy, and the node re-drives an interrupted execution through the kernel. Once
+restart the scheduler submits the same command again, to the task the node
+ledger already records it in rather than one resolved afresh, unless the ledger
+already holds its end, which is then the result without a second submission;
+the coordinator keeps one copy, and the node re-drives an interrupted execution through the kernel. Once
 the node ledger holds the command's terminal event, the node records the result
 on the run: the final answer, or the failure or cancellation reason, with a
 status and the number of tool calls that returned an error. A completed
@@ -1659,9 +1742,10 @@ waits for the plugin run in flight, leaving one stopped part way unrecorded;
 shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its
 result. An execution that fails in a conversation's task appears in that
-conversation; a refused or skipped run, and any failure of an automation with a
-task of its own, is visible through `automation_results`, the Control Room, and the node's
-`automation_finished` and `automation_skipped` log events. A Host failure the
+conversation; a failed, refused or skipped run of an automation with no open
+`problem` also opens one in the owner's feed (see "While you were away"), and
+every run is visible through `automation_results`, the Control Room, and the
+node's `automation_finished` and `automation_skipped` log events. A Host failure the
 schedule meets is logged as `automation_schedule_unavailable` and asked again
 a second later; a run whose result could not be recorded stays admitted and
 is submitted again under its own identity. A catalog another writer holds
@@ -1776,7 +1860,8 @@ Schema 39 bounds run history. Each automation keeps its newest 50 finished runs,
 none finished more than 30 days ago (a run recorded before schema 37 ages from
 its admission); unfinished runs are never removed. The count limit applies when
 a run of that automation finishes and the age limit on the scheduler's
-heartbeat, and each removal logs `automation_runs_pruned`. Run history gains
+heartbeat, and each removal logs `automation_runs_pruned`, counting the feed
+results removed with their runs (schema 46). Run history gains
 indexes on `(automation_id, sequence)` and `(agent_id, sequence)`. The upgrade
 purges automations deleted before deletion removed their data.
 Schema 40 records the deleted automations whose own conversation is still to be

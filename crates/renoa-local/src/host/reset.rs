@@ -22,6 +22,9 @@ use super::{LocalHostError, catalog};
 /// parent, so completeness is enforced by
 /// `every_catalog_table_is_classified_agent_owned_or_shared`, not by the commit.
 const AGENT_OWNED_TABLES: &[&str] = &[
+    "host_feed_items",
+    "host_feed_state",
+    "host_today",
     "host_memory_passes",
     "host_memory_conversations",
     "host_memory_sessions",

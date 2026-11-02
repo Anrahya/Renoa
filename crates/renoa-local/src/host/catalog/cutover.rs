@@ -86,6 +86,7 @@ fn migrate(
             crate::host::automations::initialize(&transaction)?;
             super::memory_dream::add_triggers_and_memory_jobs(&transaction)?;
             super::memory_note_pass::add_note_passes(&transaction)?;
+            super::feed::add_feed(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(

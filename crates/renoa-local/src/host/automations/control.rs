@@ -19,6 +19,14 @@ pub struct AutomationEnablement {
     pub enabled: bool,
 }
 
+/// One owner request to run an automation now. Retry with this same identity
+/// after an uncertain response; it becomes the run's identity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationRunRequest {
+    pub operation_id: Uuid,
+}
+
 /// Owner controls for existing automations, without constructing an execution Host.
 /// The trusted adapter authenticates the principal; request bodies cannot supply
 /// caller identity. Agent tools use `LocalHost`'s restricted agent API instead.
@@ -63,6 +71,48 @@ impl HostAutomationControl {
         request: AutomationEnablement,
         now_ms: i64,
     ) -> Result<AutomationRecord, LocalHostError> {
+        self.mutate(
+            authenticated_principal,
+            request.operation_id,
+            AutomationMutation::SetEnabled {
+                id: automation,
+                expected_revision: request.expected_revision,
+                enabled: request.enabled,
+            },
+            now_ms,
+        )
+        .await
+    }
+
+    /// Admits a run of `automation` now, under the request's operation ID,
+    /// as an agent's `run_now` does, whether or not the automation is paused.
+    /// The returned record is the committed receipt.
+    /// # Errors
+    /// Rejects other owners, replaced Hosts, deleted automations, an
+    /// automation with a run already admitted, and storage failures.
+    pub async fn run_now(
+        &self,
+        authenticated_principal: Uuid,
+        automation: Uuid,
+        request: AutomationRunRequest,
+        now_ms: i64,
+    ) -> Result<AutomationRecord, LocalHostError> {
+        self.mutate(
+            authenticated_principal,
+            request.operation_id,
+            AutomationMutation::RunNow { id: automation },
+            now_ms,
+        )
+        .await
+    }
+
+    async fn mutate(
+        &self,
+        authenticated_principal: Uuid,
+        operation: Uuid,
+        mutation: AutomationMutation,
+        now_ms: i64,
+    ) -> Result<AutomationRecord, LocalHostError> {
         if authenticated_principal != self.owner {
             return Err(AutomationError::Forbidden.into());
         }
@@ -75,12 +125,8 @@ impl HostAutomationControl {
             store::mutate(
                 &database,
                 actor,
-                request.operation_id,
-                AutomationMutation::SetEnabled {
-                    id: automation,
-                    expected_revision: request.expected_revision,
-                    enabled: request.enabled,
-                },
+                operation,
+                mutation,
                 now_ms,
                 &CancellationToken::new(),
             )

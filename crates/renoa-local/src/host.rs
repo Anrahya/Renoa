@@ -11,6 +11,7 @@ pub(crate) mod automations;
 pub(crate) mod catalog;
 pub(crate) mod definition;
 mod extensions;
+pub(crate) mod feed;
 pub(crate) mod history;
 mod lease;
 mod mcp;

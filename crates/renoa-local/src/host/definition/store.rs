@@ -349,6 +349,7 @@ pub(super) fn set_connections(
                 transaction,
                 &agent.to_string(),
                 connection_id,
+                crate::plugins::activation::SelectedBy::OwnerOrCreator,
             )
             .map_err(|error| HostCatalogError::Invalid(error.to_string()))?;
         }
