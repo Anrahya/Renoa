@@ -11,7 +11,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlin.uuid.Uuid
 
 /**
- * The records inside RCP frames, as binding 14 shapes them. Frame fields are snake_case and
+ * The records inside RCP frames, as binding 15 shapes them. Frame fields are snake_case and
  * live in [ClientMessage] and [ServerMessage]; the records below use the camelCase names the
  * binding gives them.
  */
@@ -38,8 +38,12 @@ enum class TaskStatus {
     Failed,
 }
 
+/**
+ * One task of the directory. [throughSequence] is the task's last committed sequence, the value
+ * `attached` reports, or `null` for an empty task; the field is required, and `null` is sent.
+ */
 @Serializable
-data class TaskSummary(val taskId: Uuid, val target: String, val status: TaskStatus)
+data class TaskSummary(val taskId: Uuid, val target: String, val status: TaskStatus, val throughSequence: Long?)
 
 /** An agent a node offers. [name] is what the owner calls it; [target] is its identity. */
 @Serializable
@@ -196,7 +200,7 @@ data class TaskEvent(
     val kind: TaskEventKind,
 )
 
-/** Every error code binding 14 defines. */
+/** Every error code binding 15 defines. */
 @Serializable
 enum class RcpErrorCode {
     @SerialName("authentication_failed")

@@ -194,6 +194,7 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
                 task_id: TaskId::from_uuid(Uuid::from_u128(3)),
                 target: TargetRef::new("workspace:service-test"),
                 status: TaskStatus::Idle,
+                through_sequence: None,
             }],
         }
     );
@@ -249,6 +250,69 @@ fn coordinator_executable_stops_cleanly_on_termination() {
     let mut process = CoordinatorProcess::start(&database);
     process.read_ready();
     assert!(process.terminate().success());
+}
+
+/// A push service account the executable cannot use stops `serve` before it
+/// reports readiness; a usable one serves.
+#[cfg(unix)]
+#[test]
+fn an_unusable_push_service_account_stops_serve_at_startup() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let home = directory.path().join("home");
+    let key_file = directory.path().join("fcm-service-account.json");
+    let serve = |mode: Option<u32>| {
+        let _ = std::fs::remove_file(&key_file);
+        if let Some(mode) = mode {
+            let account = serde_json::json!({
+                "type": "service_account",
+                "project_id": "renoa-test",
+                "private_key_id": "test-key-1",
+                "private_key": include_str!("support/push-test-key.pem"),
+                "client_email": "push@renoa-test.iam.gserviceaccount.com",
+            });
+            std::fs::write(&key_file, account.to_string()).expect("write the key file");
+            std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(mode))
+                .expect("set the key file's mode");
+        }
+        let mut child = coordinator_command()
+            .arg("serve")
+            .arg(&home)
+            .arg("0")
+            .arg("localhost")
+            .arg("http://localhost")
+            .env("RENOA_FCM_SERVICE_ACCOUNT_FILE", &key_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start coordinator process");
+        let mut ready = String::new();
+        BufReader::new(child.stdout.take().expect("stdout"))
+            .read_line(&mut ready)
+            .expect("read readiness");
+        let _ = child.kill();
+        let output = child.wait_with_output().expect("coordinator exits");
+        (ready, String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+
+    for (case, mode) in [("missing", None), ("group-readable", Some(0o640))] {
+        let (ready, stderr) = serve(mode);
+        assert!(
+            ready.is_empty(),
+            "a {case} key file must not serve: {ready}"
+        );
+        assert!(
+            stderr.contains("RENOA_FCM_SERVICE_ACCOUNT_FILE"),
+            "a {case} key file names the variable: {stderr}"
+        );
+        assert!(!stderr.contains("PRIVATE KEY"), "{stderr}");
+    }
+    let (ready, stderr) = serve(Some(0o600));
+    assert!(
+        ready.contains("ws://"),
+        "a private key file serves: {stderr}"
+    );
 }
 
 async fn enroll(endpoint: &str, token: EnrollmentToken) -> DeviceCredentials {

@@ -169,7 +169,9 @@ test("task summaries carry a status and reject one the client does not know", ()
       JSON.stringify({
         type: "task_list",
         request_id: 4,
-        tasks: [{ taskId: TASK_ID, target: "workspace:renoa", status }],
+        tasks: [
+          { taskId: TASK_ID, target: "workspace:renoa", status, throughSequence: null },
+        ],
       }),
     );
   for (const status of ["working", "idle", "failed"] as const) {
@@ -179,6 +181,30 @@ test("task summaries carry a status and reject one the client does not know", ()
   }
   assert.throws(() => list("waiting"), /unsupported task status waiting/);
   assert.throws(() => list(undefined), /task status must be a string/);
+});
+
+test("task summaries carry the sequence attached reports, or null for an empty task", () => {
+  const list = (throughSequence: unknown) =>
+    parseServerMessage(
+      JSON.stringify({
+        type: "task_list",
+        request_id: 6,
+        tasks: [
+          { taskId: TASK_ID, target: "workspace:renoa", status: "idle", throughSequence },
+        ],
+      }),
+    );
+  for (const throughSequence of [0, 18, null]) {
+    const message = list(throughSequence);
+    assert.equal(message.type, "task_list");
+    assert.equal(message.tasks[0]?.throughSequence, throughSequence);
+  }
+  for (const throughSequence of [undefined, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(
+      () => list(throughSequence),
+      /throughSequence must be a safe unsigned integer/,
+    );
+  }
 });
 
 test("a stop answer names the command and one of two outcomes", () => {

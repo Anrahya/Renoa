@@ -52,11 +52,13 @@ mod discovery {
                 task_id: system.task_id,
                 target: system.target.clone(),
                 status: TaskStatus::Idle,
+                through_sequence: None,
             },
             TaskSummary {
                 task_id: second_task_id,
                 target: second_target,
                 status: TaskStatus::Idle,
+                through_sequence: None,
             },
         ];
         expected.sort_by_key(|task| task.task_id.to_string());
@@ -1280,6 +1282,7 @@ mod task_opening {
             task_id,
             target: TargetRef::new(ALPHA),
             status: TaskStatus::Idle,
+            through_sequence: None,
         }));
 
         attach_initial(&mut surface, task_id).await;
@@ -2262,6 +2265,24 @@ mod status {
                 .query_row("PRAGMA data_version", [], |row| row.get(0))
                 .expect("read data version")
         };
+        // The reply owes a push wake, and the dispatcher settling its marker
+        // is a write of its own: wait for it before the baseline.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while observer
+            .query_row(
+                "SELECT count(*) FROM push_wakes WHERE generation > settled",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count owed wakes")
+            > 0
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the owed wake is settled"
+            );
+            sleep(Duration::from_millis(20)).await;
+        }
         let before = version(&observer);
 
         assert_eq!(statuses(&mut mac).await, vec![TaskStatus::Idle]);
@@ -2345,7 +2366,7 @@ mod status {
             })
             .await;
 
-        assert_eq!(stop_schema(&system), (2, 13));
+        assert_eq!(stop_schema(&system), (2, 14));
         assert_eq!(row_counts(&system), before, "opening keeps every row");
 
         let mut node = system.connect(&node_device).await;

@@ -100,7 +100,7 @@ class FakeCoordinator : AutoCloseable {
     @Volatile var redirectTo: String? = null
 
     /** The version the coordinator claims in `authenticated`, and whether it refuses the client's version instead. */
-    @Volatile var authenticatedVersion = 14
+    @Volatile var authenticatedVersion = RCP_BINDING_VERSION
     @Volatile var refuseVersion = false
 
     private val sockets = CopyOnWriteArrayList<Session>()
@@ -257,8 +257,8 @@ class FakeCoordinator : AutoCloseable {
 
         private fun authenticate(frame: JsonObject, type: String) {
             val version = frame.getValue("version").jsonPrimitive.long
-            if (version != 14L || refuseVersion) {
-                socket.send(error(null, "version_mismatch", "expected binding 14, received $version"))
+            if (version != RCP_BINDING_VERSION.toLong() || refuseVersion) {
+                socket.send(error(null, "version_mismatch", "expected binding $RCP_BINDING_VERSION, received $version"))
                 socket.close(1008, null)
                 return
             }
@@ -340,6 +340,7 @@ class FakeCoordinator : AutoCloseable {
                 put("taskId", id.toString())
                 put("target", record.target)
                 put("status", record.status)
+                put("throughSequence", if (record.journal.isEmpty()) JsonNull else JsonPrimitive(record.journal.size - 1L))
             }
 
         private fun openTask(requestId: Long, frame: JsonObject) {
@@ -371,7 +372,7 @@ class FakeCoordinator : AutoCloseable {
                 return
             }
             val live = frame["live"]?.jsonPrimitive?.booleanOrNull ?: run {
-                socket.send(error(requestId, "invalid_message", "a version 14 attach carries live"))
+                socket.send(error(requestId, "invalid_message", "a version $RCP_BINDING_VERSION attach carries live"))
                 return
             }
             val after = frame.getValue("after_sequence").let { if (it is JsonNull) -1L else it.jsonPrimitive.long }

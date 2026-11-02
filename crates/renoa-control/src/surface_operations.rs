@@ -44,12 +44,11 @@ pub(crate) async fn handle_surface_operation(
             )
             .await;
         }
+        SurfaceOperation::Push(operation) => {
+            crate::push_tokens::handle(&state, outgoing, request_id, &session, operation).await;
+        }
         SurfaceOperation::ListTasks => {
-            let result = state
-                .store
-                .list_tasks(principal_id)
-                .await
-                .map(|tasks| ServerMessage::TaskList { request_id, tasks });
+            let result = list_tasks(&state, principal_id, request_id).await;
             send_reply(outgoing, request_id, result).await;
         }
         SurfaceOperation::OpenTask {
@@ -211,6 +210,18 @@ pub(crate) async fn attach_surface(
         }
     });
     Ok(())
+}
+
+async fn list_tasks(
+    state: &CoordinatorState,
+    principal_id: PrincipalId,
+    request_id: u64,
+) -> Result<ServerMessage, ControlError> {
+    state
+        .store
+        .list_tasks(principal_id)
+        .await
+        .map(|tasks| ServerMessage::TaskList { request_id, tasks })
 }
 
 async fn open_task(

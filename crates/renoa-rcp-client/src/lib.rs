@@ -371,7 +371,9 @@ async fn dispatch(
         | ServerMessage::Attached { request_id, .. }
         | ServerMessage::CommandAccepted { request_id, .. }
         | ServerMessage::StopAccepted { request_id, .. }
-        | ServerMessage::HostAnswer { request_id, .. } => *request_id,
+        | ServerMessage::HostAnswer { request_id, .. }
+        | ServerMessage::PushTokenSet { request_id }
+        | ServerMessage::PushTokenCleared { request_id } => *request_id,
         ServerMessage::Enrolled { .. }
         | ServerMessage::DeviceChallenge { .. }
         | ServerMessage::Authenticated { .. }

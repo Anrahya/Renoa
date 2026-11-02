@@ -298,7 +298,7 @@ fn read_credentials(path: &Path) -> Result<RelayCredentials, McpHostError> {
 #[cfg(unix)]
 fn require_private(path: &Path, metadata: &std::fs::Metadata) -> Result<(), McpHostError> {
     let directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(std::path::PathBuf::from);
-    if crate::credential_file_is_private(path, metadata, directory.as_deref()) {
+    if renoa_home::credential_file_is_private(path, metadata, directory.as_deref()) {
         return Ok(());
     }
     Err(unavailable(

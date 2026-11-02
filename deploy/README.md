@@ -796,6 +796,73 @@ device-key sign-in and device operations described above, so the
 coordinator, node, Pi node, and every surface must be upgraded together; a
 peer still on version 13 is refused at authentication.
 
+### Push wakes
+
+Coordinator schema 14 adds the `push_tokens` and `push_wakes` tables; opening
+an older database creates them and leaves its rows alone, and a pre-upgrade
+binary cannot open schema 14. RCP binding version 15 adds push-token
+registration and each task's `throughSequence` in the task directory, so the
+coordinator, node, Pi node, Android app and every surface must be upgraded
+together; a peer still on version 14 is refused at authentication.
+
+Without a service account push is off: apps still register tokens, owed wakes
+are dropped, and the coordinator logs `push_disabled` once. Turning it on later
+needs no app change. Provisioning is manual and outside the repository:
+
+1. In the Firebase console, create a project (or add Firebase to a Google Cloud
+   project) and check that the Firebase Cloud Messaging API is enabled under
+   Project settings, Cloud Messaging.
+2. Register the Android app with its package name and the SHA-1 and SHA-256 of
+   every certificate it is signed with (`keytool -list -v -keystore
+   <keystore>`; a debug and a release certificate differ, and the same
+   certificate's hash forms the passkey origin `android:apk-key-hash:...`).
+   Download its `google-services.json` and keep it out of the public
+   repository; the app build reads it from outside the checkout.
+3. Under Project settings, Service accounts, generate a private key for a
+   service account that may send FCM messages (the Firebase Admin SDK account
+   does). Install the downloaded JSON file root-only on the VPS:
+
+   ```sh
+   install -m 0600 -o root -g root <downloaded-key>.json /etc/renoa/fcm-service-account.json
+   ```
+
+4. Hand it to the coordinator with a drop-in, so the packaged unit, which must
+   start before any key exists, stays unchanged:
+
+   ```sh
+   systemctl edit renoa-coordinator.service
+   # [Service]
+   # LoadCredential=fcm-service-account:/etc/renoa/fcm-service-account.json
+   # Environment=RENOA_FCM_SERVICE_ACCOUNT_FILE=%d/fcm-service-account
+   systemctl restart renoa-coordinator.service
+   ```
+
+The unit already allows `AF_INET` and `AF_INET6`, which the requests to
+`oauth2.googleapis.com` and `fcm.googleapis.com` need. The key file must be a
+regular file of at most 16 KiB that neither group nor other users can read,
+unless systemd supplied it in `CREDENTIALS_DIRECTORY`; a missing, readable or
+malformed file stops `serve` at startup with the reason, never the key. The
+key never enters the database, the journal, the logs or any `Debug` output, and
+no request to Google carries a task, principal, agent or text. Check the
+journal after a reply for `push_wake_sent`, and for `push_wake_failed` with
+`SENDER_ID_MISMATCH` (a token from another project) or a rejected service
+account (a revoked or wrong key; after a rejection the token endpoint is asked
+again at most once a minute, and after it fails on its side at most once a
+second). A `push_wake_failed` with a `retry_after_ms`, such as a rejected
+service account or an FCM outage that outlasted a send's retries, says nothing
+about the device: it stays owed and is sent again after that delay, which
+doubles from two seconds up to ten minutes until a send is delivered or the
+device registers another token; a lasting fault is logged with each retry,
+every ten minutes per device once the delay reaches its cap. A
+`push_token_dropped` warning names a device whose token FCM called dead, which
+it does only with `UNREGISTERED` or a `BadRequest` violation on
+`message.token`; its `deleted` field is false when the device had already
+registered another token, and null when the deletion failed. That device is not
+woken until it registers a new one. A `push_dispatcher_failed` error means the
+dispatcher stopped and is started again after `restart_after_ms`: a second
+after the first failure, doubling with each of its `consecutive_failures` up to
+a minute.
+
 ### Public RCP route
 
 Install `cloudflared` from Cloudflare's signed package repository. Create a
@@ -880,7 +947,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 14; the recorded version-8 proof establishes only the deployment
+binding version 15; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

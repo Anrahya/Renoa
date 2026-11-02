@@ -153,7 +153,7 @@ fn require_private_token_file_in(
     metadata: &std::fs::Metadata,
     credentials_directory: Option<&std::path::Path>,
 ) -> Result<(), TelegramServiceError> {
-    if renoa_local::credential_file_is_private(path, metadata, credentials_directory) {
+    if renoa_home::credential_file_is_private(path, metadata, credentials_directory) {
         Ok(())
     } else {
         Err(private_token_error())

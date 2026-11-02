@@ -1,4 +1,4 @@
-export const RCP_VERSION = 14;
+export const RCP_VERSION = 15;
 
 export interface DeviceCredentials {
   readonly deviceId: string;

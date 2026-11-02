@@ -270,6 +270,11 @@ A service link that presented only its bearer credential may not, so a chat
 surface cannot cut off the owner's apps. Revocation commits before it is
 acknowledged and then ends the device's sessions; a device may revoke itself, and
 its acknowledgement is sent before its socket closes. A retry succeeds again.
+Every revocation, the owner's and the operator's, deletes the device's push
+token in the transaction that marks it revoked, and the push dispatcher starts
+sends only to devices that are not revoked, so no send starts to a revoked
+device. A send already started or handed to FCM when the revocation lands cannot
+be recalled; it carries no content.
 
 A connection by a proven device key, and no other, may call the owner's Host
 over RCP (`call_host`). That is how an app controls the Host: its credential
@@ -340,7 +345,8 @@ or SQLite details.
    never creates a durable device row.
 7. Task discovery, attachment, and submission enforce principal ownership after
    authentication.
-8. Device revocation ends current device sessions and rejects future ones.
+8. Device revocation ends current device sessions, rejects future ones, and
+   deletes the device's push token.
 9. Identity credentials, task cursors, command outboxes, provider credentials,
    and tool credentials remain separate state with separate owners.
 10. A database predating task ownership is rejected; a migration cannot invent
@@ -349,7 +355,7 @@ or SQLite details.
     enrolled server-side role and grants no implicit RCP task authority.
 12. A key-bound device reaches no operation on its bearer credential alone: its
     connection must sign a fresh, per-connection challenge with the registered
-    key. The coordinator holds no private key.
+    key. The coordinator holds no device's private key.
 13. A sign-in records the passkey change and creates or adopts the device in one
     transaction, and a key that was revoked is never revived by a later sign-in.
 14. Only a browser ticket or a proven device key may list or revoke devices. A

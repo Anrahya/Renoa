@@ -2,12 +2,14 @@
 
 The Kotlin app shell. Two modules:
 
-- `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 14)
-  behind the `RcpSurface` interface: discovery with task status and agent names, a task's
-  journal with optional live text, submitting and stopping a command, and the device-key proof;
-  `PasskeySignIn` signs a device in over the coordinator's identity HTTP API (`docs/identity-v0.md`).
-  The app passes the signing function; the key itself stays in the platform keystore. Listing
-  and revoking signed-in devices are not offered yet. It has no Android dependency and is tested
+- `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 15)
+  behind the `RcpSurface` interface: discovery with task status, each task's last sequence and
+  agent names, a task's journal with optional live text, submitting and stopping a command, and
+  the device-key proof; `PasskeySignIn` signs a device in over the coordinator's identity HTTP
+  API (`docs/identity-v0.md`). The app passes the signing function; the key itself stays in the
+  platform keystore. Listing and revoking signed-in devices are not offered yet, and the
+  push-token frames are encoded and decoded but nothing sends them until the app registers for
+  push. It has no Android dependency and is tested
   against a fake coordinator that speaks the raw wire. Tests cross-check the pinned version and
   every frame shape against the worked examples in that document.
 - `:app` is the screens: theme (Graphite and Paper), the agent badge and its five state

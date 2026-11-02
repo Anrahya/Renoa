@@ -6,8 +6,8 @@ stable public SDK and not an agent harness.
 
 It currently owns the surface-side continuity mechanics:
 
-- version 14 device or one-use browser-ticket authentication and task discovery,
-  with each task's status;
+- version 15 device or one-use browser-ticket authentication and task discovery,
+  with each task's status and last committed sequence;
 - replay followed by live task events;
 - a caller-owned durable cursor committed only after the surface callback succeeds;
 - a caller-owned durable command outbox written before transmission;
@@ -93,7 +93,9 @@ accepted while the node is offline. Repeating it after an uncertain reply is
 safe and answers `requested` again. The result is the command's terminal task
 event, `cancelled` when the stop reached the execution first; the client keeps
 no state for it. Each `TaskSummary` from `listTasks()` carries a `status`
-(`working`, `idle`, or `failed`) derived from the task's latest command.
+(`working`, `idle`, or `failed`) derived from the task's latest command, and
+a `throughSequence`: the task's last committed sequence, as `attach` reports
+it, or `null` for an empty task.
 
 `submission.commandId` exists after the local outbox commit.
 `submission.accepted` resolves only after coordinator admission. If it rejects

@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 14 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 15 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -441,6 +441,48 @@ dropped, and no frame arrives after a record that the node committed after
 publishing it. A frame published just after a record may reach the surface
 before the record too.
 
+### Push wakes
+
+An app that is not in the foreground holds no socket. A push wake tells it that
+something changed and nothing else: it is a hint outside the journal, and the
+app reads what changed over RCP from its own cursors (`ListTasks` reports each
+task's last committed sequence, so it attaches only where that passed its
+cursor). Locked decision 10 holds, because every fact the app shows comes from
+the journal and none from the wake; a wake that is lost, coalesced or never
+sent loses nothing a reconnection does not recover.
+
+A device registers its push token with `SetPushToken`, device state that is not
+a task operation. The token is opaque to RCP and its provider is a closed set,
+today only `fcm`. The coordinator decides from the record kind alone whether a
+record wakes: an assistant message with text other than whitespace and a failed
+execution do, every other record does not. It marks the wake owed to the
+record's principal in the transaction that appends the record, so the mark is
+durable before the node's events are acknowledged and a retried batch that
+appends nothing marks nothing. A dispatcher started only while serving drains
+the marks, holding no database lock across a network call, and settles a mark
+only at the generation its sends covered, each send counted for the token it
+went to, so a wake is sent at least once while owed: a restart mid-send sends it
+again, and a token registered mid-send gets its own. A settled mark keeps its
+row, so a principal's generation never restarts and a send for an older wake
+cannot cover a newer one. A send counts once FCM delivers it, calls its token
+dead, or gives a permanent answer that is not about the token (another
+project's token, a second refused access token, an `INVALID_ARGUMENT` without a
+violation on the token, or any other answer it does not expect), and when its
+send task panics. FCM calls a token dead only with `UNREGISTERED` or a
+`BadRequest` violation on `message.token`, and only then is the token deleted.
+A send does not count when it gives up on a transient failure after its
+retries or obtains no access token, whatever the token endpoint answered: the
+device stays owed and is sent again after a backoff that doubles from two
+seconds up to ten minutes, resets once a send is delivered, and starts afresh
+when the device registers another token. A device waits out its backoff even
+when a newer wake arrives. Delivery is at least once: coverage lives in the
+dispatcher's memory, so a dispatcher or coordinator restart before a marker
+settles may send its wake again to devices already woken. FCM is a
+coordinator-side adapter: its request carries no task, principal, agent or
+text, so RCP semantics stay independent of the cloud vendor (locked decision
+12), and another platform adds a provider rather than changing the operations.
+Revoking a device deletes its token in the same transaction.
+
 ## Executor link
 
 ### Availability and dispatch
@@ -838,7 +880,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 14 JSON/WebSocket shape with binding-level conformance
+- a documented version 15 JSON/WebSocket shape with binding-level conformance
   assertions;
 - a command-scoped stop that is durable before it is answered, delivered to the
   node until acknowledged across reconnects and coordinator restart, accepted
@@ -848,7 +890,19 @@ The current implementation demonstrates:
   from the task's own node only, never stored, with reasoning kept on the node,
   frames that never wait behind a surface that stopped reading, and a frame
   reaching the surface before a record published after it;
-- a per-task status in the directory derived from the latest command;
+- a per-task status in the directory derived from the latest command, and the
+  task's last committed sequence beside it;
+- content-free push wakes: a device registers an opaque token, the transaction
+  that commits a waking record marks the wake owed, and a dispatcher sends a
+  constant FCM message at least once while owed, across a coordinator restart
+  and an FCM outage longer than a send's retries, coalesces per principal and
+  per device, sends a wake recorded during a send again, deletes a token only
+  when FCM names it dead, keeps one device's outage from delaying another's up
+  to the 8-send bound (a hung send holds its slot until its attempts end, at
+  most four requests and their token fetches of ten seconds each and two
+  retry delays of a minute, under three and a half minutes), and starts no
+  send to a device revoked before it (one already handed to FCM cannot be
+  recalled);
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
   tickets that bind a principal and surface without creating a device;
@@ -999,8 +1053,9 @@ Work proceeds in this order unless evidence changes the dependency:
    follow-up consumer exists; RCP transports the interaction while the harness
    retains permission policy.
 
-Workspace replication, executor migration, mobile UI, push notifications, and
-additional surface adapters follow only after the continuity path is reliable.
+Workspace replication, executor migration, mobile UI, and additional surface
+adapters follow only after the continuity path is reliable. Content-free push
+wakes are implemented on the coordinator (see Push wakes); the app side is not.
 
 ## Required conformance scenarios
 
@@ -1141,6 +1196,11 @@ assumption after context compaction:
 - Cross-node secret provisioning and credential-reference grants; secret
   material remains outside RCP task continuity
 - Workspace checkpoint and executor migration design
+- Whether FCM HTTP v1 `message.token` takes a legacy registration token or a
+  Firebase installation ID; the push token stays opaque until a real project
+  answers it
+- Push urgency (how loud a wake is) and skipping wakes for records an agent's
+  own command caused; every wake is one high-priority constant today
 
 An open decision becomes locked only when a real execution path consumes it, a
 test proves its invariant, and this document is updated with the reasoning.

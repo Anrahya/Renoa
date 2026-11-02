@@ -15,6 +15,7 @@ renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol",
 renoa-oauth-relay-protocol = { path = "../renoa-oauth-relay-protocol", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 renoa-telemetry = { path = "../renoa-telemetry", version = "0.1.0" }
+reqwest.workspace = true
 ring.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
@@ -29,6 +30,7 @@ uuid.workspace = true
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
+# Only the tests read JSON bodies with reqwest.
 reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

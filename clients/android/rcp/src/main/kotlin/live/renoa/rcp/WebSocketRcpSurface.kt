@@ -50,7 +50,7 @@ private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val app
 }
 
 /**
- * The binding 14 surface client over a WebSocket.
+ * The binding 15 surface client over a WebSocket.
  *
  * Frames are handled one at a time, in arrival order, on [context]; [attach] callbacks run
  * there, and so are [ApplyLiveActivity] callbacks. Retry timing after a disconnect is the caller's policy: this client never reconnects
@@ -401,6 +401,8 @@ class WebSocketRcpSurface(
             is ServerMessage.StopAccepted -> complete(connection, message.requestId, message)
             is ServerMessage.TaskDeleted -> complete(connection, message.requestId, message)
             is ServerMessage.HostAnswer -> complete(connection, message.requestId, message)
+            is ServerMessage.PushTokenSet -> complete(connection, message.requestId, message)
+            is ServerMessage.PushTokenCleared -> complete(connection, message.requestId, message)
         }
     }
 

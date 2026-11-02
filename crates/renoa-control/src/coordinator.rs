@@ -10,7 +10,7 @@ use renoa_protocol::{PrincipalId, TargetCard, TargetRef};
 use thiserror::Error;
 use tokio::{
     net::TcpListener,
-    sync::{Mutex, Semaphore, broadcast, mpsc},
+    sync::{Mutex, Notify, Semaphore, broadcast, mpsc},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     DeviceId, ErrorCode, NodeId, PasskeyBootstrapToken, PeerIdentity, ServerMessage, TaskEvent,
     TaskId, android_apps::AndroidApps, browser_identity::BrowserIdentity, browser_identity_http,
-    connection::upgrade_connection, oauth_relay_http, store::ControlStore,
+    connection::upgrade_connection, fcm::PushSettings, oauth_relay_http, store::ControlStore,
 };
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 128;
@@ -116,6 +116,8 @@ impl ControlError {
 pub struct Coordinator {
     state: Arc<CoordinatorState>,
     control_room: Option<PathBuf>,
+    /// Shared, so a clone of the coordinator stays small to move.
+    push: Option<Arc<PushSettings>>,
 }
 
 pub(crate) struct CoordinatorState {
@@ -131,6 +133,9 @@ pub(crate) struct CoordinatorState {
     pub(crate) sessions: Mutex<HashMap<DeviceId, HashMap<Uuid, CancellationToken>>>,
     pub(crate) task_senders: Mutex<HashMap<TaskId, broadcast::Sender<TaskEvent>>>,
     pub(crate) live_channels: Mutex<HashMap<TaskId, crate::live_activity::LiveChannel>>,
+    /// Told after a record that owes a wake commits; the push dispatcher
+    /// waits on it.
+    pub(crate) push_wakes: Notify,
 }
 
 #[derive(Clone)]
@@ -203,6 +208,7 @@ impl Coordinator {
         let browser_sessions = crate::BrowserSessions::open(store.path.as_ref())?;
         Ok(Self {
             control_room: None,
+            push: None,
             state: Arc::new(CoordinatorState {
                 browser_identity,
                 android_apps,
@@ -216,6 +222,7 @@ impl Coordinator {
                 sessions: Mutex::new(HashMap::new()),
                 task_senders: Mutex::new(HashMap::new()),
                 live_channels: Mutex::new(HashMap::new()),
+                push_wakes: Notify::new(),
             }),
         })
     }
@@ -229,6 +236,21 @@ impl Coordinator {
     pub fn with_control_room(mut self, directory: impl AsRef<Path>) -> Result<Self, ControlError> {
         self.control_room = Some(crate::control_room::check(directory.as_ref())?);
         Ok(self)
+    }
+
+    /// The shared state, for unit tests that run a part of `serve` alone.
+    #[cfg(test)]
+    pub(crate) fn state(&self) -> Arc<CoordinatorState> {
+        Arc::clone(&self.state)
+    }
+
+    /// Sends content-free push wakes with these settings once serving.
+    /// Without them, push tokens are still registered and owed wakes are
+    /// dropped.
+    #[must_use]
+    pub fn with_push(mut self, settings: PushSettings) -> Self {
+        self.push = Some(Arc::new(settings));
+        self
     }
 
     /// Creates one durable task and its execution binding.
@@ -332,11 +354,47 @@ impl Coordinator {
         if !self.state.android_apps.is_empty() {
             app = app.merge(crate::android_apps::routes());
         }
+        let delivery = match &self.push {
+            Some(settings) => crate::push_dispatch::Delivery::Fcm {
+                sender: Arc::new(crate::fcm::FcmSender::new(settings)?),
+                gap: settings.device_gap(),
+            },
+            None => crate::push_dispatch::Delivery::Disabled,
+        };
         let app = app.with_state(Arc::clone(&self.state));
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown.cancelled_owned())
-            .await
-            .map_err(|error| ControlError::store(format!("coordinator server failed: {error}")))
+        // Its own token, cancelled once the server has stopped, so the
+        // dispatcher keeps draining while a graceful shutdown finishes its
+        // requests; a wake still owed when it stops is sent by the next
+        // `serve`. It is awaited inside this future, so dropping `serve`
+        // aborts it too.
+        let dispatcher_stop = CancellationToken::new();
+        let dispatcher = crate::push_supervisor::supervise(
+            {
+                let state = Arc::clone(&self.state);
+                let stop = dispatcher_stop.clone();
+                move |pacing| {
+                    crate::push_dispatch::spawn(
+                        Arc::clone(&state),
+                        delivery.clone(),
+                        pacing,
+                        stop.clone(),
+                    )
+                }
+            },
+            dispatcher_stop.clone(),
+        );
+        let http = async {
+            let served = axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown.cancelled_owned())
+                .await
+                .map_err(|error| {
+                    ControlError::store(format!("coordinator server failed: {error}"))
+                });
+            dispatcher_stop.cancel();
+            served
+        };
+        let (served, ()) = tokio::join!(http, dispatcher);
+        served
     }
 }
 

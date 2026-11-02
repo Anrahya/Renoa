@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `14`.
+first implemented transport binding. The current binding version is `15`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -55,14 +55,19 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `14` with `version_mismatch` and ends the session.
+rejects any value other than `15` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `14` supersedes version `13` by adding four things. The device-key
+Version `15` supersedes version `14` by adding push-token registration
+(`set_push_token` answered by `push_token_set`, `clear_push_token` answered by
+`push_token_cleared`) and a `throughSequence` in every `task_list` summary. A
+version `14` peer is rejected at authentication.
+
+Version `14` superseded version `13` by adding four things. The device-key
 handshake (`device_challenge`, `device_proof`) and the owner's device operations
 (`list_devices`, `revoke_device`, with `device_list` and `device_revoked`). The
 chat essentials: a task summary carries a `status`, `attach` carries a required
@@ -114,7 +119,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 14,
+  "version": 15,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -124,7 +129,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 14,
+  "version": 15,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -137,7 +142,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 14,
+  "version": 15,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -150,7 +155,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 14,
+  "version": 15,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -166,7 +171,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 14
+  "version": 15
 }
 ```
 
@@ -230,14 +235,18 @@ by `taskId`:
     {
       "taskId": "00000000-0000-0000-0000-000000000010",
       "target": "workspace:renoa",
-      "status": "working"
+      "status": "working",
+      "throughSequence": 18
     }
   ]
 }
 ```
 
 `status` is `working`, `idle`, or `failed`, derived from the task's latest
-command as the operation contract defines. An authorized principal with no
+command as the operation contract defines. `throughSequence` is the task's
+last committed sequence, the value `attached` reports as `through_sequence`,
+and `null` for an empty task; an app woken by a push attaches only to the tasks
+whose `throughSequence` passed its cursor. An authorized principal with no
 tasks receives an empty `tasks` array. The binding defines no pagination or
 live directory update frame.
 
@@ -422,6 +431,58 @@ change took effect is then unknown, so the caller repeats the same request under
 the same `operation_id`. An answer the coordinator cannot relay receives
 `internal`; that outcome is unknown too.
 
+### Register a push token
+
+A connection authenticated with a device credential registers the device's
+push token, so the coordinator can wake the app when it holds no socket:
+
+```json
+{
+  "type": "set_push_token",
+  "request_id": 50,
+  "provider": "fcm",
+  "token": "fcm-registration-token"
+}
+```
+
+```json
+{
+  "type": "push_token_set",
+  "request_id": 50
+}
+```
+
+`provider` is `fcm`; any other value receives `invalid_message` naming it, such
+as `provider "gcm" is not supported; expected "fcm"`. `token` is opaque: 1 to
+4,096 bytes of printable ASCII without spaces, or `invalid_message` stating the
+length received. No error repeats the token. A device holds one token, so a new
+one replaces the old, and an exact retry returns `push_token_set` again. A token
+another device of the same principal held moves to this device; one another
+principal's device holds receives `conflict`
+(`token is registered to another principal; sign that device out first`). A
+browser ticket connection receives `invalid_role`
+(`push tokens belong to an enrolled device; this connection was opened with a
+browser ticket`), and so does a node.
+
+```json
+{
+  "type": "clear_push_token",
+  "request_id": 51
+}
+```
+
+```json
+{
+  "type": "push_token_cleared",
+  "request_id": 51
+}
+```
+
+Clearing succeeds whether or not the device held a token. Revoking the device
+deletes its token too. The wake itself is not an RCP frame: the coordinator
+sends the push service a constant message with no task, principal, agent or
+text in it, and the app learns what changed with `list_tasks` and `attach`.
+
 ### Attach
 
 ```json
@@ -436,8 +497,8 @@ the same `operation_id`. An answer the coordinator cannot relay receives
 
 Use `null` for `after_sequence` to request the full journal. `live` is
 required: `true` asks for `live_activity` frames while the task's turns run,
-and `false` receives only the journal. A frame without `live` is not a version
-`14` attach.
+and `false` receives only the journal. A frame without `live`, as versions
+before `14` sent it, is refused.
 
 The first successful response identifies the replay high-water mark:
 

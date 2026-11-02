@@ -9,8 +9,8 @@ use std::{
 };
 
 use renoa_control::{
-    AndroidApps, Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity, TaskId,
-    TaskSpec,
+    AndroidApps, Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity,
+    PushSettings, TaskId, TaskSpec,
 };
 use renoa_protocol::{PrincipalId, SurfaceRef, TargetRef};
 use serde::Serialize;
@@ -30,6 +30,9 @@ const USAGE: &str = "usage:
 /// coordinator accepts and whose asset links it serves.
 const ANDROID_APPS_FILE_VARIABLE: &str = "RENOA_ANDROID_APPS_FILE";
 const MAX_ANDROID_APPS_FILE_BYTES: u64 = 16 * 1024;
+/// Optional Google service-account key that sends push wakes. Unset means
+/// push is off; a set but unusable file stops `serve` at startup.
+const FCM_SERVICE_ACCOUNT_FILE_VARIABLE: &str = "RENOA_FCM_SERVICE_ACCOUNT_FILE";
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
 const BROWSER_SETUP_LIFETIME: Duration = Duration::from_mins(30);
 
@@ -346,6 +349,11 @@ async fn serve(
     let mut coordinator =
         Coordinator::open_with_android_apps(database, passkey_rp_id, passkey_origin, android_apps)
             .map_err(|error| error.to_string())?;
+    if let Some(path) = env::var_os(FCM_SERVICE_ACCOUNT_FILE_VARIABLE) {
+        let settings = PushSettings::from_service_account_file(PathBuf::from(path))
+            .map_err(|error| format!("{FCM_SERVICE_ACCOUNT_FILE_VARIABLE} {error}"))?;
+        coordinator = coordinator.with_push(settings);
+    }
     if let Some(directory) = control_room {
         coordinator = coordinator
             .with_control_room(directory)

@@ -2610,6 +2610,7 @@ dependencies = [
  "axum",
  "futures-util",
  "renoa-agent",
+ "renoa-home",
  "renoa-kernel",
  "renoa-local",
  "reqwest",
@@ -2643,6 +2644,7 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "renoa-agent",
+ "renoa-home",
  "renoa-kernel",
  "renoa-local",
  "renoa-telemetry",

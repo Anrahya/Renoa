@@ -30,6 +30,17 @@ class LiveAndStopTest : CoordinatorTest() {
     }
 
     @Test
+    fun aTasksSequenceIsTheOneAttachmentReports() = eventually {
+        val taskId = coordinator.seedTask()
+        val surface = client()
+        surface.connect()
+        assertEquals(null, surface.listTasks().single().throughSequence)
+
+        coordinator.publish(taskId, coordinator.assistantMessage(Uuid.random(), "Hi"))
+        assertEquals(0L, surface.listTasks().single().throughSequence)
+    }
+
+    @Test
     fun aLiveAttachmentGetsFramesInOrderWithTheTasksEvents() = eventually {
         val taskId = coordinator.seedTask()
         val commandId = Uuid.random()

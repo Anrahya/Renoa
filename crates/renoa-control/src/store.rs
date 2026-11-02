@@ -65,23 +65,28 @@ impl ControlStore {
             let transaction = connection.transaction().map_err(sqlite_error)?;
             let mut statement = transaction
                 .prepare(
-                    "SELECT task_id, target_json FROM tasks
+                    "SELECT task_id, target_json, next_sequence FROM tasks
                      WHERE principal_id = ?1 ORDER BY task_id",
                 )
                 .map_err(sqlite_error)?;
             let rows = statement
                 .query_map([principal_id.to_string()], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
                 })
                 .map_err(sqlite_error)?;
             let mut tasks = Vec::new();
             for row in rows {
-                let (task_id, target_json) = row.map_err(sqlite_error)?;
+                let (task_id, target_json, next_sequence) = row.map_err(sqlite_error)?;
                 let task_id = TaskId::from_uuid(task_id.parse().map_err(id_error)?);
                 tasks.push(TaskSummary {
                     task_id,
                     target: serde_json::from_str(&target_json).map_err(json_error)?,
                     status: crate::task_status::derive(&transaction, task_id)?,
+                    through_sequence: crate::event_store::through_sequence(next_sequence)?,
                 });
             }
             Ok(tasks)
