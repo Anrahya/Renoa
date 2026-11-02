@@ -23,14 +23,15 @@ use crate::{
 /// Every variant is decided here with no wildcard, so a new record kind cannot
 /// reach the owner's phone, or fail to, without a decision. A record wakes
 /// when it is something the app would show unless that chat is on screen: an
-/// agent's reply with text, or a failed run. A submitted command does not (the
+/// agent's reply with text other than whitespace, or a failed run. A submitted
+/// command does not (the
 /// owner or another agent wrote it), nor does a run's progress, a completed
 /// run (its reply already woke), or a cancelled one (the owner pressed stop).
 pub(crate) fn wake_reason(kind: &TaskEventKind) -> Option<&'static str> {
     match kind {
         TaskEventKind::CommandSubmitted { .. } => None,
         TaskEventKind::ExecutionEvent { event, .. } => match &event.kind {
-            ExecutionEventKind::AssistantMessage { text } if !text.is_empty() => {
+            ExecutionEventKind::AssistantMessage { text } if !text.trim().is_empty() => {
                 Some("assistant_message")
             }
             ExecutionEventKind::ExecutionTerminated {
@@ -97,9 +98,9 @@ impl ControlStore {
         .await
     }
 
-    /// Deletes the marker only at the generation that was read, so a wake
-    /// recorded while this one was being sent stays owed.
-    pub(crate) async fn settle_wake(&self, wake: OwedWake) -> Result<(), ControlError> {
+    /// Deletes the marker only at `wake.generation`, so a wake recorded since
+    /// that generation was sent stays owed. Returns whether it deleted one.
+    pub(crate) async fn settle_wake(&self, wake: OwedWake) -> Result<bool, ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
             open_connection(&path)?
@@ -107,8 +108,8 @@ impl ControlStore {
                     "DELETE FROM push_wakes WHERE principal_id = ?1 AND generation = ?2",
                     params![wake.principal_id.to_string(), wake.generation],
                 )
-                .map_err(sqlite_error)?;
-            Ok(())
+                .map(|deleted| deleted > 0)
+                .map_err(sqlite_error)
         })
         .await
     }

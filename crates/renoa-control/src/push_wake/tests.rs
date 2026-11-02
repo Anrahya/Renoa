@@ -18,7 +18,7 @@ fn shape(kind: &TaskEventKind) -> usize {
         TaskEventKind::ExecutionEvent { event, .. } => match &event.kind {
             ExecutionEventKind::ExecutionStarted => 1,
             ExecutionEventKind::TurnStarted => 2,
-            ExecutionEventKind::AssistantMessage { text } if text.is_empty() => 3,
+            ExecutionEventKind::AssistantMessage { text } if text.trim().is_empty() => 3,
             ExecutionEventKind::AssistantMessage { .. } => 4,
             ExecutionEventKind::ToolStarted { .. } => 5,
             ExecutionEventKind::ToolFinished { .. } => 6,
@@ -69,6 +69,12 @@ fn only_a_reply_with_text_and_a_failed_run_wake_the_owner() {
         (
             execution(ExecutionEventKind::AssistantMessage {
                 text: String::new(),
+            }),
+            None,
+        ),
+        (
+            execution(ExecutionEventKind::AssistantMessage {
+                text: " \n\t".to_owned(),
             }),
             None,
         ),

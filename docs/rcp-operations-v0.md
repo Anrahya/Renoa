@@ -345,12 +345,15 @@ that registration intact. Only then does it return `PushTokenSet`. A malformed
 registration is `InvalidMessage`, and no error repeats the token.
 
 A wake is a hint outside the journal. When a record that the owner would be
-shown commits (an assistant message with text, or a failed execution), the same
-transaction marks a wake as owed to its principal; the coordinator later sends
-each of the principal's registered devices a message that carries no task,
-principal, agent or text, and the app reads what changed with `ListTasks` and
-`Attach`. Wakes coalesce, and a wake lost to the push service is not sent again:
-the journal stays the only record of what happened.
+shown commits (an assistant message with text other than whitespace, or a
+failed execution), the same transaction marks a wake as owed to its principal;
+the coordinator later sends each of the principal's registered devices a
+message that carries no task, principal, agent or text, and the app reads what
+changed with `ListTasks` and `Attach`. Wakes coalesce. A wake is sent at least
+once while it is owed, so a coordinator restart mid-send sends it again, and a
+wake recorded while one is being sent is sent too. One the push service refuses,
+or one that outlasts its retries, is not sent again: the journal stays the only
+record of what happened.
 
 ### `ClearPushToken`
 

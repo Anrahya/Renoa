@@ -60,7 +60,10 @@ impl PushSettings {
     }
 
     /// Sends token requests to `token_endpoint` and FCM requests to
-    /// `fcm_origin` instead of Google's, as a test's local stand-ins.
+    /// `fcm_origin` instead of Google's, as a test's local stand-ins. Hidden
+    /// from the documentation: the coordinator binary never calls it, so a
+    /// deployment signs its assertion for Google's token endpoint only.
+    #[doc(hidden)]
     #[must_use]
     pub fn with_google_endpoints(mut self, token_endpoint: Url, fcm_origin: Url) -> Self {
         self.credentials = self.credentials.with_token_endpoint(token_endpoint);
@@ -85,7 +88,7 @@ impl PushSettings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WakeOutcome {
     Delivered,
-    /// FCM says the token is dead; its row is deleted.
+    /// FCM named the token dead; its row is deleted.
     DeadToken(&'static str),
     /// A configuration fault, such as another project's token or rejected
     /// credentials. Nothing is deleted and nothing is retried.
@@ -98,6 +101,7 @@ pub(crate) enum WakeOutcome {
     Cancelled,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum Attempt {
     Done(WakeOutcome),
     Retry {
@@ -223,54 +227,100 @@ fn wake_body(token: &PushToken) -> String {
     .to_string()
 }
 
-/// Classifies an FCM error answer by its `FcmError` code, then its canonical
-/// status, then its HTTP status. A token is called dead only when FCM names it
-/// so; the payload is constant and valid, so `INVALID_ARGUMENT` means the token.
+/// Classifies an FCM error answer by its `FcmError` code, then its details,
+/// canonical status and HTTP status. A token is called dead only when a detail
+/// names it: an `FcmError` of `UNREGISTERED` or `INVALID_ARGUMENT` (the payload
+/// is constant and valid, so that means the token), or a `BadRequest`
+/// violation on `message.token`. A bare 400 deletes nothing.
 fn classify(status: StatusCode, body: &[u8], after: Option<Duration>) -> Attempt {
     let retry = |reason| Attempt::Retry { reason, after };
-    match error_code(body).as_deref() {
-        Some("UNREGISTERED") => Attempt::Done(WakeOutcome::DeadToken("UNREGISTERED")),
-        Some("INVALID_ARGUMENT") => Attempt::Done(WakeOutcome::DeadToken("INVALID_ARGUMENT")),
-        Some("SENDER_ID_MISMATCH") => Attempt::Done(WakeOutcome::Refused("SENDER_ID_MISMATCH")),
-        Some("THIRD_PARTY_AUTH_ERROR") => {
-            Attempt::Done(WakeOutcome::Refused("THIRD_PARTY_AUTH_ERROR"))
+    let refused = |reason| Attempt::Done(WakeOutcome::Refused(reason));
+    let error = ErrorBody::parse(body);
+    match error.fcm_code.as_deref() {
+        Some("UNREGISTERED") => return Attempt::Done(WakeOutcome::DeadToken("UNREGISTERED")),
+        Some("INVALID_ARGUMENT") => {
+            return Attempt::Done(WakeOutcome::DeadToken("INVALID_ARGUMENT"));
         }
-        Some("QUOTA_EXCEEDED" | "RESOURCE_EXHAUSTED") => retry("QUOTA_EXCEEDED"),
-        Some("UNAVAILABLE") => retry("UNAVAILABLE"),
-        Some("INTERNAL") => retry("INTERNAL"),
-        _ => match status {
-            StatusCode::TOO_MANY_REQUESTS => retry("QUOTA_EXCEEDED"),
-            StatusCode::SERVICE_UNAVAILABLE => retry("UNAVAILABLE"),
-            StatusCode::INTERNAL_SERVER_ERROR => retry("INTERNAL"),
-            StatusCode::UNAUTHORIZED => {
-                Attempt::Done(WakeOutcome::Refused("FCM refused the access token"))
-            }
-            _ => Attempt::Done(WakeOutcome::Refused("FCM gave an unexpected answer")),
-        },
+        Some("SENDER_ID_MISMATCH") => return refused("SENDER_ID_MISMATCH"),
+        Some("THIRD_PARTY_AUTH_ERROR") => return refused("THIRD_PARTY_AUTH_ERROR"),
+        Some("QUOTA_EXCEEDED") => return retry("QUOTA_EXCEEDED"),
+        Some("UNAVAILABLE") => return retry("UNAVAILABLE"),
+        Some("INTERNAL") => return retry("INTERNAL"),
+        _ => {}
+    }
+    if error.token_violation {
+        return Attempt::Done(WakeOutcome::DeadToken("INVALID_ARGUMENT"));
+    }
+    match error.status.as_deref() {
+        Some("RESOURCE_EXHAUSTED") => return retry("QUOTA_EXCEEDED"),
+        Some("UNAVAILABLE") => return retry("UNAVAILABLE"),
+        Some("INTERNAL") => return retry("INTERNAL"),
+        _ => {}
+    }
+    match status {
+        StatusCode::TOO_MANY_REQUESTS => retry("QUOTA_EXCEEDED"),
+        StatusCode::INTERNAL_SERVER_ERROR => retry("INTERNAL"),
+        StatusCode::BAD_GATEWAY => retry("BAD_GATEWAY"),
+        StatusCode::SERVICE_UNAVAILABLE => retry("UNAVAILABLE"),
+        StatusCode::GATEWAY_TIMEOUT => retry("GATEWAY_TIMEOUT"),
+        StatusCode::UNAUTHORIZED => refused("FCM refused the access token"),
+        _ => refused("FCM gave an unexpected answer"),
     }
 }
 
-/// The `errorCode` of an `FcmError` detail, or else the error's canonical
-/// `status`.
-fn error_code(body: &[u8]) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let error = value.get("error")?;
-    let detail = error
-        .get("details")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|detail| {
-            detail
-                .get("@type")
+/// What an FCM error body says, as far as classifying it needs.
+#[derive(Default)]
+struct ErrorBody {
+    /// The `errorCode` of an `FcmError` detail.
+    fcm_code: Option<String>,
+    /// Whether a `BadRequest` detail has a violation on `message.token`.
+    token_violation: bool,
+    /// The error's canonical `status`.
+    status: Option<String>,
+}
+
+impl ErrorBody {
+    fn parse(body: &[u8]) -> Self {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+            return Self::default();
+        };
+        let Some(error) = value.get("error") else {
+            return Self::default();
+        };
+        let details = error
+            .get("details")
+            .and_then(serde_json::Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        let of_type = |suffix: &'static str| {
+            details.iter().filter(move |detail| {
+                detail
+                    .get("@type")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|kind| kind.ends_with(suffix))
+            })
+        };
+        let text = |value: Option<&serde_json::Value>| {
+            value
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|kind| kind.ends_with("google.firebase.fcm.v1.FcmError"))
-        })
-        .and_then(|detail| detail.get("errorCode"));
-    detail
-        .or_else(|| error.get("status"))
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
+                .map(ToOwned::to_owned)
+        };
+        Self {
+            fcm_code: of_type("google.firebase.fcm.v1.FcmError")
+                .find_map(|detail| text(detail.get("errorCode"))),
+            token_violation: of_type("google.rpc.BadRequest").any(|detail| {
+                detail
+                    .get("fieldViolations")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|violation| {
+                        violation.get("field").and_then(serde_json::Value::as_str)
+                            == Some("message.token")
+                    })
+            }),
+            status: text(error.get("status")),
+        }
+    }
 }
 
 /// A `Retry-After` given in seconds.
@@ -297,3 +347,6 @@ pub(crate) async fn read_bounded(mut response: reqwest::Response, limit: usize) 
     }
     Some(body)
 }
+
+#[cfg(test)]
+mod tests;

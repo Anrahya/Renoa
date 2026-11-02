@@ -846,7 +846,12 @@ key never enters the database, the journal, the logs or any `Debug` output, and
 no request to Google carries a task, principal, agent or text. Check the
 journal after a reply for `push_wake_sent`, and for `push_wake_failed` with
 `SENDER_ID_MISMATCH` (a token from another project) or a rejected service
-account (a revoked or wrong key).
+account (a revoked or wrong key; after a rejection the token endpoint is asked
+again at most once a minute). A `push_token_dropped` warning names a device
+whose token FCM called dead; that device is not woken until it registers a new
+one. A
+`push_dispatcher_failed` error means the dispatcher stopped and was started
+again a second later.
 
 ### Public RCP route
 

@@ -87,6 +87,20 @@ impl Recorded {
             .find(|(header, _)| header == name)
             .map(|(_, value)| value.as_str())
     }
+
+    /// The device token a wake was sent to.
+    fn token(&self) -> Option<String> {
+        let body: Value = serde_json::from_str(&self.body).ok()?;
+        body["message"]["token"].as_str().map(ToOwned::to_owned)
+    }
+}
+
+/// How many wakes `requests` sent to `token`.
+fn wakes_to(requests: &[Recorded], token: &str) -> usize {
+    requests
+        .iter()
+        .filter(|request| request.is_fcm() && request.token().as_deref() == Some(token))
+        .count()
 }
 
 #[derive(Clone)]
@@ -114,6 +128,37 @@ impl Answer {
             retry_after: None,
         }
     }
+
+    /// A 400 whose only detail is a `BadRequest` violation on the token.
+    fn token_violation() -> Self {
+        Self {
+            status: 400,
+            body: json!({
+                "error": {
+                    "code": 400,
+                    "message": "stub error",
+                    "status": "INVALID_ARGUMENT",
+                    "details": [{
+                        "@type": "type.googleapis.com/google.rpc.BadRequest",
+                        "fieldViolations": [{
+                            "field": "message.token",
+                            "description": "Invalid registration token",
+                        }],
+                    }],
+                }
+            }),
+            retry_after: None,
+        }
+    }
+
+    /// An answer with an empty JSON body.
+    fn status(status: u16) -> Self {
+        Self {
+            status,
+            body: json!({}),
+            retry_after: None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -122,6 +167,10 @@ struct StubState {
     token_answers: Mutex<VecDeque<Answer>>,
     fcm_answers: Mutex<VecDeque<Answer>>,
     count: Option<watch::Sender<usize>>,
+    /// Wakes to this token are recorded, then answered only once `gate` is
+    /// free, so a test can act while a send is in flight.
+    held_token: Mutex<Option<String>>,
+    gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 struct Google {
@@ -203,27 +252,39 @@ impl Google {
 
     /// Waits until `total` FCM requests have arrived.
     async fn wait_for_fcm(&self, total: usize) -> Vec<Recorded> {
+        self.wait_until(&format!("{total} FCM requests arrive"), |requests| {
+            requests.iter().filter(|request| request.is_fcm()).count() >= total
+        })
+        .await;
+        self.fcm_requests()
+    }
+
+    /// Waits until the requests so far satisfy `done`.
+    async fn wait_until(&self, what: &str, done: impl Fn(&[Recorded]) -> bool) -> Vec<Recorded> {
         let deadline = Instant::now() + WAIT;
         loop {
             // Read the count before the requests: a request is recorded
             // before the count moves, so none can slip between the two.
             let mut count = self.count.clone();
             let seen = *count.borrow_and_update();
-            let fcm = self.fcm_requests();
-            if fcm.len() >= total {
-                return fcm;
+            let requests = self.requests();
+            if done(&requests) {
+                return requests;
             }
-            assert!(
-                Instant::now() < deadline,
-                "{total} FCM requests arrive; saw {:?}",
-                self.requests()
-            );
+            assert!(Instant::now() < deadline, "{what}; saw {requests:?}");
             let _ = timeout(
                 deadline - Instant::now(),
                 count.wait_for(|arrived| *arrived > seen),
             )
             .await;
         }
+    }
+
+    /// Holds every later wake to `token` unanswered until the guard drops.
+    async fn hold(&self, token: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let guard = Arc::clone(&self.state.gate).lock_owned().await;
+        *self.state.held_token.lock().expect("held token") = Some(token.to_owned());
+        guard
     }
 
     /// The requests once nothing more has arrived for a quiet moment.
@@ -260,6 +321,7 @@ async fn answer(
         body: String::from_utf8_lossy(&body).into_owned(),
         at: Instant::now(),
     };
+    let token = recorded.token();
     let total = {
         let mut requests = state.requests.lock().expect("requests");
         requests.push(recorded);
@@ -294,6 +356,10 @@ async fn answer(
     };
     if let Some(count) = &state.count {
         count.send_replace(total);
+    }
+    let held = state.held_token.lock().expect("held token").clone();
+    if held.is_some() && token == held {
+        drop(state.gate.lock().await);
     }
     let mut response = (
         StatusCode::from_u16(answer.status).expect("stub status"),
@@ -1060,6 +1126,9 @@ async fn a_failed_run_wakes_the_phone_and_a_quiet_or_cancelled_run_does_not() {
             ExecutionEventKind::AssistantMessage {
                 text: String::new(),
             },
+            ExecutionEventKind::AssistantMessage {
+                text: " \n\t".to_owned(),
+            },
             ExecutionEventKind::ExecutionTerminated {
                 terminal: ExecutionTerminal::Completed,
             },
@@ -1188,6 +1257,245 @@ async fn an_owed_wake_survives_a_restart_and_is_sent_once() {
     google.stop();
 }
 
+#[tokio::test]
+async fn a_wake_recorded_during_its_send_is_sent_again() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    let held = google.hold("fcm:phone-token").await;
+    node.reply(&mut phone, 2, "first").await;
+    google.wait_for_fcm(1).await;
+    // Recorded after the first send started, so that send does not cover it.
+    node.reply(&mut phone, 3, "second").await;
+    drop(held);
+    google.wait_for_fcm(2).await;
+    f.drained().await;
+    assert_eq!(
+        google.settled().await.iter().filter(|r| r.is_fcm()).count(),
+        2
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_device_marked_revoked_is_not_woken_though_its_token_row_remains() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (phone, mut phone_socket) = f.phone().await;
+    set_token(&mut phone_socket, 1, "fcm:phone-token").await;
+    let (_, mut laptop) = f.phone().await;
+    let mut node = f.node().await;
+    f.database()
+        .execute(
+            "UPDATE devices SET revoked = 1 WHERE device_id = ?1",
+            [phone.device_id.to_string()],
+        )
+        .expect("mark the phone revoked");
+
+    node.reply(&mut laptop, 2, "news").await;
+    f.drained().await;
+    assert!(
+        google.settled().await.is_empty(),
+        "a revoked device is not woken"
+    );
+    assert_eq!(f.tokens().len(), 1, "the token row is still there");
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_token_rotated_during_a_send_survives_a_late_unregistered() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (phone, mut socket) = f.phone().await;
+    set_token(&mut socket, 1, "fcm:old").await;
+    let mut node = f.node().await;
+    google.answer_fcm(Answer::fcm_error(404, "UNREGISTERED", "NOT_FOUND"));
+    let held = google.hold("fcm:old").await;
+    node.reply(&mut socket, 2, "news").await;
+    google.wait_for_fcm(1).await;
+    assert_eq!(
+        set_token(&mut socket, 3, "fcm:new").await,
+        ServerMessage::PushTokenSet { request_id: 3 }
+    );
+    drop(held);
+    f.drained().await;
+    assert_eq!(
+        f.tokens(),
+        vec![(
+            phone.device_id.to_string(),
+            f.owner.to_string(),
+            "fcm:new".to_owned()
+        )],
+        "only the token FCM called dead is deleted"
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_device_that_had_the_wake_is_not_woken_again_while_another_waits_out_its_gap() {
+    let gap = Duration::from_millis(1500);
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(gap)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone").await;
+    let mut node = f.node().await;
+    node.reply(&mut phone, 2, "first").await;
+    google.wait_for_fcm(1).await;
+    let (_, mut tablet) = f.phone().await;
+    set_token(&mut tablet, 1, "fcm:tablet").await;
+
+    node.reply(&mut phone, 3, "second").await;
+    google
+        .wait_until("the tablet, outside any gap, is woken now", |requests| {
+            wakes_to(requests, "fcm:tablet") == 1
+        })
+        .await;
+    // The phone's trailing wake goes out after its gap and is held past the
+    // tablet's gap too: nothing may wake the tablet for this wake again.
+    let held = google.hold("fcm:phone").await;
+    google
+        .wait_until("the phone's trailing wake", |requests| {
+            wakes_to(requests, "fcm:phone") == 2
+        })
+        .await;
+    tokio::time::sleep(gap + QUIET).await;
+    drop(held);
+    f.drained().await;
+    let requests = google.settled().await;
+    assert_eq!(wakes_to(&requests, "fcm:tablet"), 1, "{requests:?}");
+    assert_eq!(wakes_to(&requests, "fcm:phone"), 2, "{requests:?}");
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_device_whose_send_hangs_holds_up_no_other_device() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:stuck").await;
+    let (_, mut tablet) = f.phone().await;
+    set_token(&mut tablet, 1, "fcm:free").await;
+    let mut node = f.node().await;
+    let held = google.hold("fcm:stuck").await;
+
+    node.reply(&mut phone, 2, "first").await;
+    google
+        .wait_until("both devices are sent the first wake", |requests| {
+            wakes_to(requests, "fcm:stuck") == 1 && wakes_to(requests, "fcm:free") == 1
+        })
+        .await;
+    node.reply(&mut phone, 3, "second").await;
+    google
+        .wait_until(
+            "the free device gets the second wake while the other hangs",
+            |requests| wakes_to(requests, "fcm:free") == 2,
+        )
+        .await;
+    drop(held);
+    google
+        .wait_until("the hung device gets the second wake after", |requests| {
+            wakes_to(requests, "fcm:stuck") == 2
+        })
+        .await;
+    f.drained().await;
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_storage_failure_is_retried_and_the_owed_wake_still_goes_out() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    node.reply(&mut phone, 2, "first").await;
+    google.wait_for_fcm(1).await;
+    f.drained().await;
+
+    let database = f.database();
+    database
+        .execute(
+            "INSERT INTO push_wakes (principal_id, generation) VALUES ('not-a-principal', 1)",
+            [],
+        )
+        .expect("plant a marker the dispatcher cannot read");
+    node.reply(&mut phone, 3, "second").await;
+    // Its pass fails on the planted marker. Removing it tells nobody: only
+    // the dispatcher's retry finds the owed wake.
+    tokio::time::sleep(QUIET).await;
+    database
+        .execute(
+            "DELETE FROM push_wakes WHERE principal_id = 'not-a-principal'",
+            [],
+        )
+        .expect("remove the planted marker");
+    google.wait_for_fcm(2).await;
+    f.drained().await;
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_shutdown_mid_send_keeps_the_wake_owed_and_the_next_serve_sends_it() {
+    let push = Push::Fcm(Duration::ZERO);
+    let google = Google::start().await;
+    let mut f = Fixture::start(&google, push).await;
+    let (_, mut socket) = f.phone().await;
+    set_token(&mut socket, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    let held = google.hold("fcm:phone-token").await;
+    node.reply(&mut socket, 2, "news").await;
+    google.wait_for_fcm(1).await;
+    drop((socket, node));
+
+    f.restart_after(&google, push, |database| {
+        let owed: i64 = database
+            .query_row("SELECT count(*) FROM push_wakes", [], |row| row.get(0))
+            .expect("count owed wakes");
+        assert_eq!(owed, 1, "a send cut short by shutdown leaves the wake owed");
+    })
+    .await;
+    google.wait_for_fcm(2).await;
+    drop(held);
+    f.drained().await;
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn dropping_serve_stops_its_dispatcher() {
+    let gap = Duration::from_millis(1500);
+    let google = Google::start().await;
+    let mut f = Fixture::start(&google, Push::Fcm(gap)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    node.reply(&mut phone, 2, "first").await;
+    google.wait_for_fcm(1).await;
+    // Inside the gap: owed, and due once the gap has passed.
+    node.reply(&mut phone, 3, "second").await;
+    assert_eq!(f.owed_wakes(), 1);
+
+    let serving = f.task.take().expect("serving");
+    serving.abort();
+    let _ = serving.await;
+    tokio::time::sleep(gap + QUIET).await;
+    assert_eq!(
+        google.requests().iter().filter(|r| r.is_fcm()).count(),
+        1,
+        "no dispatcher outlives serve"
+    );
+    assert_eq!(f.owed_wakes(), 1);
+    google.stop();
+}
+
 // --- FCM's answers ---
 
 #[tokio::test]
@@ -1199,6 +1507,7 @@ async fn a_dead_token_deletes_its_row() {
     for (index, answer) in [
         Answer::fcm_error(404, "UNREGISTERED", "NOT_FOUND"),
         Answer::fcm_error(400, "INVALID_ARGUMENT", "INVALID_ARGUMENT"),
+        Answer::token_violation(),
     ]
     .into_iter()
     .enumerate()
@@ -1214,7 +1523,7 @@ async fn a_dead_token_deletes_its_row() {
     }
     assert_eq!(
         google.settled().await.iter().filter(|r| r.is_fcm()).count(),
-        2,
+        3,
         "a dead token is not retried"
     );
     f.stop().await;
@@ -1278,13 +1587,21 @@ async fn a_configuration_fault_deletes_nothing_and_is_not_retried() {
     let requests = google.settled().await;
     assert_eq!(requests.len(), 1, "a rejected sign-in starts no retries");
     assert_eq!(requests[0].path, "/token");
+    assert_eq!(f.tokens().len(), 1, "a rejected sign-in deletes nothing");
+    drop((phone, node));
+    f.stop().await;
 
+    // A fresh coordinator, whose credentials were never rejected.
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
     google.answer_fcm(Answer::fcm_error(
         403,
         "SENDER_ID_MISMATCH",
         "PERMISSION_DENIED",
     ));
-    node.reply(&mut phone, 3, "more news").await;
+    node.reply(&mut phone, 2, "more news").await;
     google.wait_for_fcm(1).await;
     f.drained().await;
     let requests = google.settled().await;
@@ -1294,6 +1611,133 @@ async fn a_configuration_fault_deletes_nothing_and_is_not_retried() {
         "a sender mismatch is not retried"
     );
     assert_eq!(f.tokens().len(), 1, "a configuration fault deletes nothing");
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_rejected_service_account_is_asked_once_for_every_device_and_wake() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone").await;
+    let (_, mut tablet) = f.phone().await;
+    set_token(&mut tablet, 1, "fcm:tablet").await;
+    let mut node = f.node().await;
+    google.answer_token(Answer {
+        status: 401,
+        body: json!({"error": "invalid_client"}),
+        retry_after: None,
+    });
+    node.reply(&mut phone, 2, "news").await;
+    f.drained().await;
+    node.reply(&mut phone, 3, "more news").await;
+    f.drained().await;
+    let requests = google.settled().await;
+    assert_eq!(
+        requests.len(),
+        1,
+        "one rejection answers both devices and the next wake: {requests:?}"
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_bare_bad_request_deletes_nothing_and_is_not_retried() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    google.answer_fcm(Answer {
+        status: 400,
+        body: json!({"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "stub"}}),
+        retry_after: None,
+    });
+    node.reply(&mut phone, 2, "news").await;
+    google.wait_for_fcm(1).await;
+    f.drained().await;
+    assert_eq!(
+        google.settled().await.iter().filter(|r| r.is_fcm()).count(),
+        1
+    );
+    assert_eq!(f.tokens().len(), 1, "no detail named the token");
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_gateway_failure_or_a_throttle_is_retried() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    google.answer_fcm(Answer::status(502));
+    google.answer_fcm(Answer::status(429));
+    node.reply(&mut phone, 2, "news").await;
+    google.wait_for_fcm(3).await;
+    f.drained().await;
+    assert_eq!(
+        google.settled().await.iter().filter(|r| r.is_fcm()).count(),
+        3,
+        "two retries, then the default answer delivers"
+    );
+    assert_eq!(f.tokens().len(), 1);
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_busy_token_endpoint_is_retried() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    google.answer_token(Answer::status(429));
+    google.answer_token(Answer::status(408));
+    node.reply(&mut phone, 2, "news").await;
+    google.wait_for_fcm(1).await;
+    f.drained().await;
+    let requests = google.settled().await;
+    let paths: Vec<&str> = requests.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/token",
+            "/token",
+            "/token",
+            "/v1/projects/renoa-test/messages:send"
+        ]
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn an_absurd_token_lifetime_is_held_to_an_hour() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    google.answer_token(Answer {
+        status: 200,
+        body: json!({"access_token": ACCESS_TOKEN, "expires_in": u64::MAX, "token_type": "Bearer"}),
+        retry_after: None,
+    });
+    node.reply(&mut phone, 2, "news").await;
+    google.wait_for_fcm(1).await;
+    node.reply(&mut phone, 3, "more news").await;
+    google.wait_for_fcm(2).await;
+    let requests = google.settled().await;
+    assert_eq!(
+        requests.iter().filter(|r| r.path == "/token").count(),
+        1,
+        "the token is cached and reused"
+    );
     f.stop().await;
     google.stop();
 }
@@ -1468,21 +1912,29 @@ fn key_lines() -> Vec<&'static str> {
 #[ignore = "run by every_push_log_line_names_no_secret, which reads its log"]
 async fn push_log_scenario() {
     let google = Google::start().await;
+    // A rejected sign-in is remembered for a minute, so it has a
+    // coordinator of its own.
+    let rejected = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = rejected.phone().await;
+    let mut node = rejected.node().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    google.answer_token(Answer {
+        status: 401,
+        body: json!({"error": "invalid_client"}),
+        retry_after: None,
+    });
+    node.reply(&mut phone, 2, "rejected sign-in").await;
+    google.wait_for(1).await;
+    rejected.drained().await;
+    drop((phone, node));
+    let rejected_files = rejected.stop().await;
+
     let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
     let (_, mut phone) = f.phone().await;
     let (_, mut stranger) = f.phone_of(PrincipalId::new()).await;
     let mut node = f.node().await;
     set_token(&mut phone, 1, "fcm:phone-token").await;
     set_token(&mut stranger, 2, "fcm:phone-token").await;
-
-    google.answer_token(Answer {
-        status: 401,
-        body: json!({"error": "invalid_client"}),
-        retry_after: None,
-    });
-    node.reply(&mut phone, 3, "rejected sign-in").await;
-    google.wait_for(1).await;
-    f.drained().await;
 
     google.answer_fcm(Answer::fcm_error(
         403,
@@ -1515,7 +1967,7 @@ async fn push_log_scenario() {
     drop((phone, node));
     let disabled_files = disabled.stop().await;
 
-    for directory in [files, disabled_files] {
+    for directory in [rejected_files, files, disabled_files] {
         for entry in std::fs::read_dir(directory.path()).expect("read the coordinator's files") {
             let path = entry.expect("entry").path();
             if !path.to_string_lossy().contains("control.sqlite") {
@@ -1589,6 +2041,15 @@ fn every_push_log_line_names_no_secret() {
         reasons.contains(&"the token endpoint rejected the service account"),
         "{reasons:?}"
     );
+    for record in records
+        .iter()
+        .filter(|record| record["event"] == "push_token_dropped")
+    {
+        assert_eq!(
+            record["level"], "warn",
+            "a dropped token is a warning: {record}"
+        );
+    }
     for record in records.iter().filter(|record| {
         record["event"]
             .as_str()

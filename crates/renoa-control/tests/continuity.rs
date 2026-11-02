@@ -2265,6 +2265,22 @@ mod status {
                 .query_row("PRAGMA data_version", [], |row| row.get(0))
                 .expect("read data version")
         };
+        // The reply owes a push wake, and the dispatcher deleting its marker
+        // is a write of its own: wait for it before the baseline.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while observer
+            .query_row("SELECT count(*) FROM push_wakes", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count owed wakes")
+            > 0
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the owed wake is settled"
+            );
+            sleep(Duration::from_millis(20)).await;
+        }
         let before = version(&observer);
 
         assert_eq!(statuses(&mut mac).await, vec![TaskStatus::Idle]);

@@ -41,6 +41,11 @@ const MAX_SERVICE_ACCOUNT_FILE_BYTES: u64 = 16 * 1024;
 const ASSERTION_LIFETIME: Duration = Duration::from_hours(1);
 /// A cached token is replaced this long before Google says it expires.
 const REFRESH_MARGIN: Duration = Duration::from_mins(5);
+/// Google issues tokens for an hour; a longer `expires_in` is not believed.
+const MAX_TOKEN_LIFETIME: Duration = Duration::from_hours(1);
+/// After the token endpoint rejects the credentials, requests are refused
+/// this long without asking it again, rather than once per device per wake.
+const REJECTION_HOLD: Duration = Duration::from_mins(1);
 const MAX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// Credentials that obtain Google access tokens, without exposing them.
@@ -205,7 +210,9 @@ impl CredentialSource {
             "scope": FIREBASE_MESSAGING_SCOPE,
             "aud": audience,
             "iat": issued_at,
-            "exp": issued_at + ASSERTION_LIFETIME.as_secs(),
+            "exp": issued_at
+                .checked_add(ASSERTION_LIFETIME.as_secs())
+                .ok_or(AccessError::Signing)?,
         });
         let signed = format!(
             "{}.{}",
@@ -271,13 +278,21 @@ struct CachedToken {
     refresh_at: Instant,
 }
 
+#[derive(Default)]
+struct Cache {
+    token: Option<CachedToken>,
+    /// Until when a rejection of the credentials is repeated without asking.
+    rejected_until: Option<Instant>,
+}
+
 /// Access tokens from one credential source, cached until shortly before they
 /// expire. The cache lock is held across a refresh, so at most one refresh is
-/// in flight and every caller waiting on it uses its result.
+/// in flight and every caller waiting on it uses its result. A rejection is
+/// cached for [`REJECTION_HOLD`] too.
 pub(crate) struct AccessTokens {
     credentials: GoogleCredentials,
     http: reqwest::Client,
-    cached: Mutex<Option<CachedToken>>,
+    cache: Mutex<Cache>,
 }
 
 impl fmt::Debug for AccessTokens {
@@ -300,26 +315,41 @@ impl AccessTokens {
         Self {
             credentials,
             http,
-            cached: Mutex::new(None),
+            cache: Mutex::new(Cache::default()),
         }
     }
 
     pub(crate) async fn bearer(&self) -> Result<AccessToken, AccessError> {
-        let mut cached = self.cached.lock().await;
-        if let Some(current) = cached.as_ref()
-            && Instant::now() < current.refresh_at
+        let mut cache = self.cache.lock().await;
+        let now = Instant::now();
+        if let Some(current) = &cache.token
+            && now < current.refresh_at
         {
             return Ok(current.token.clone());
         }
-        let fetched = self.fetch().await?;
-        let token = fetched.token.clone();
-        *cached = Some(fetched);
-        Ok(token)
+        if cache.rejected_until.is_some_and(|until| now < until) {
+            return Err(AccessError::Rejected);
+        }
+        match self.fetch().await {
+            Ok(fetched) => {
+                let token = fetched.token.clone();
+                *cache = Cache {
+                    token: Some(fetched),
+                    rejected_until: None,
+                };
+                Ok(token)
+            }
+            Err(AccessError::Rejected) => {
+                cache.rejected_until = Instant::now().checked_add(REJECTION_HOLD);
+                Err(AccessError::Rejected)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Drops the cached token, after FCM refused it.
     pub(crate) async fn forget(&self) {
-        *self.cached.lock().await = None;
+        self.cache.lock().await.token = None;
     }
 
     async fn fetch(&self) -> Result<CachedToken, AccessError> {
@@ -346,7 +376,11 @@ impl AccessTokens {
             .await
             .map_err(|_| AccessError::Unavailable)?;
         let status = response.status();
-        if status.is_server_error() {
+        // A busy or slow endpoint is not a verdict on the credentials.
+        if status.is_server_error()
+            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || status == reqwest::StatusCode::REQUEST_TIMEOUT
+        {
             return Err(AccessError::Unavailable);
         }
         if !status.is_success() {
@@ -366,11 +400,13 @@ impl AccessTokens {
         {
             return Err(AccessError::Malformed);
         }
-        let lifetime = Duration::from_secs(answer.expires_in);
+        let lifetime = Duration::from_secs(answer.expires_in).min(MAX_TOKEN_LIFETIME);
         let usable = lifetime.checked_sub(REFRESH_MARGIN).unwrap_or(lifetime / 2);
         Ok(CachedToken {
             token: AccessToken(answer.access_token),
-            refresh_at: Instant::now() + usable,
+            refresh_at: Instant::now()
+                .checked_add(usable)
+                .ok_or(AccessError::Malformed)?,
         })
     }
 }

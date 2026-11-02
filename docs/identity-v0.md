@@ -271,10 +271,10 @@ surface cannot cut off the owner's apps. Revocation commits before it is
 acknowledged and then ends the device's sessions; a device may revoke itself, and
 its acknowledgement is sent before its socket closes. A retry succeeds again.
 Every revocation, the owner's and the operator's, deletes the device's push
-token in the transaction that marks it revoked, and the push dispatcher sends
-only to devices that are not revoked, so a revoked device is not woken again. A
-wake already handed to FCM when the revocation lands cannot be recalled; it
-carries no content.
+token in the transaction that marks it revoked, and the push dispatcher starts
+sends only to devices that are not revoked, so no send starts to a revoked
+device. A send already started or handed to FCM when the revocation lands cannot
+be recalled; it carries no content.
 
 A connection by a proven device key, and no other, may call the owner's Host
 over RCP (`call_host`). That is how an app controls the Host: its credential

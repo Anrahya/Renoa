@@ -454,12 +454,14 @@ sent loses nothing a reconnection does not recover.
 A device registers its push token with `SetPushToken`, device state that is not
 a task operation. The token is opaque to RCP and its provider is a closed set,
 today only `fcm`. The coordinator decides from the record kind alone whether a
-record wakes: an assistant message with text and a failed execution do, every
-other record does not. It marks the wake owed to the record's principal in the
+record wakes: an assistant message with text other than whitespace and a failed
+execution do, every other record does not. It marks the wake owed to the record's principal in the
 transaction that appends the record, so the mark is durable before the node's
 events are acknowledged and a retried batch that appends nothing marks nothing.
 A dispatcher started only while serving drains the marks, holding no database
-lock across a network call. FCM is a coordinator-side adapter: its request
+lock across a network call, and deletes a mark only at the generation its sends
+covered, so a wake is sent at least once while owed: a restart mid-send sends
+it again. FCM is a coordinator-side adapter: its request
 carries no task, principal, agent or text, so RCP semantics stay independent of
 the cloud vendor (locked decision 12), and another platform adds a provider
 rather than changing the operations. Revoking a device deletes its token in the
@@ -876,9 +878,11 @@ The current implementation demonstrates:
   task's last committed sequence beside it;
 - content-free push wakes: a device registers an opaque token, the transaction
   that commits a waking record marks the wake owed, and a dispatcher sends a
-  constant FCM message that survives a coordinator restart while owed,
-  coalesces per principal and per device, deletes dead tokens, and never wakes
-  a revoked device;
+  constant FCM message at least once while owed, across a coordinator restart,
+  coalesces per principal and per device, sends a wake recorded during a send
+  again, deletes only tokens FCM names dead, keeps one device's outage from
+  delaying another's, and starts no send to a device revoked before it (one
+  already handed to FCM cannot be recalled);
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
   tickets that bind a principal and surface without creating a device;

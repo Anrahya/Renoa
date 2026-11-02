@@ -350,24 +350,37 @@ impl Coordinator {
         }
         let delivery = match &self.push {
             Some(settings) => crate::push_dispatch::Delivery::Fcm {
-                sender: Box::new(crate::fcm::FcmSender::new(settings)?),
+                sender: Arc::new(crate::fcm::FcmSender::new(settings)?),
                 gap: settings.device_gap(),
             },
             None => crate::push_dispatch::Delivery::Disabled,
         };
         let app = app.with_state(Arc::clone(&self.state));
+        // The dispatcher stops after the server, and is awaited inside this
+        // future, so dropping `serve` aborts it too.
         let dispatcher_stop = shutdown.child_token();
-        let dispatcher =
-            crate::push_dispatch::spawn(Arc::clone(&self.state), delivery, dispatcher_stop.clone());
-        let served = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown.cancelled_owned())
-            .await
-            .map_err(|error| ControlError::store(format!("coordinator server failed: {error}")));
-        dispatcher_stop.cancel();
-        let stopped = dispatcher
-            .await
-            .map_err(|error| ControlError::store(format!("push dispatcher failed: {error}")));
-        served.and(stopped)
+        let dispatcher = crate::push_dispatch::supervise(
+            {
+                let state = Arc::clone(&self.state);
+                let stop = dispatcher_stop.clone();
+                move || {
+                    crate::push_dispatch::spawn(Arc::clone(&state), delivery.clone(), stop.clone())
+                }
+            },
+            dispatcher_stop.clone(),
+        );
+        let http = async {
+            let served = axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown.cancelled_owned())
+                .await
+                .map_err(|error| {
+                    ControlError::store(format!("coordinator server failed: {error}"))
+                });
+            dispatcher_stop.cancel();
+            served
+        };
+        let (served, ()) = tokio::join!(http, dispatcher);
+        served
     }
 }
 
