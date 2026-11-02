@@ -362,7 +362,9 @@ landed in the automation's own task writes a `result` (`open`, on the run) and
 removes the automation's previous one, so each automation has one result, unread
 again on each run; a result in a conversation is already there and writes
 none. The node, which chose the task, reports where the run landed. A plugin's
-trigger runs write nothing. An agent turning a plugin on for itself writes an
+trigger runs write nothing, a `renoa.memory` reminder's included: a failed
+reminder is retried once and then left for the Dream, not handed to the
+owner. An agent turning a plugin on for itself writes an
 `ability` (`turn_off`, on the plugin): `plugin_manage` activating or enabling
 a package plugin, enabling a compiled one it had turned off, or selecting an
 account whose selection creates the plugin's activation. A replacement writes

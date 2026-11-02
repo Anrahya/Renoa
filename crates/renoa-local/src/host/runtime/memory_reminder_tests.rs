@@ -598,6 +598,18 @@ async fn a_reminder_that_fails_twice_stays_unfired_and_is_given_up() {
         [settled("r0", 0, "failed"), settled("r0", 1, "failed")]
     );
     assert_eq!(logged("memory_reminder_given_up", person), 1);
+    let problems: i64 = catalog(&fixture)
+        .query_row(
+            "SELECT count(*) FROM host_feed_items
+             WHERE subject_id IN (SELECT automation_id FROM host_memory_reminders)",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the feed");
+    assert_eq!(
+        problems, 0,
+        "a failed reminder is retried, not a feed problem"
+    );
     for later in [
         retry_at + 16 * MINUTE,
         retry_at + 2 * 60 * MINUTE,
