@@ -15,7 +15,7 @@ async fn model_deletes_an_automation_and_its_results_go_with_it() {
     let record = change(&h, parent, AutomationMutation::Create { spec: spec(child) })
         .await
         .expect("create");
-    let run = runs::next(&h.config.database, record.next_due_ms, false)
+    let run = next_run(&h.config.database, record.next_due_ms, false)
         .expect("admit")
         .expect("run");
     runs::finish(
@@ -52,7 +52,7 @@ async fn model_deletes_an_automation_and_its_results_go_with_it() {
     );
     assert!(h.automation(parent, record.id).await.is_err());
     assert!(
-        runs::next(&h.config.database, record.next_due_ms + 100_000_000, false)
+        next_run(&h.config.database, record.next_due_ms + 100_000_000, false)
             .expect("no future occurrence")
             .is_none()
     );
@@ -87,7 +87,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         id: record.id,
         expected_revision: record.revision,
     };
-    let run = runs::next(&h.config.database, record.next_due_ms, false)
+    let run = next_run(&h.config.database, record.next_due_ms, false)
         .expect("admit")
         .expect("pending");
     let operation = Uuid::new_v4();
@@ -138,7 +138,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         .await
         .is_err()
     );
-    let pending = runs::next(&h.config.database, record.next_due_ms + 1, false)
+    let pending = next_run(&h.config.database, record.next_due_ms + 1, false)
         .expect("restart")
         .expect("retained run");
     assert_eq!(pending.id, run.id);
@@ -150,7 +150,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
     )
     .expect("an already admitted run still finishes");
     assert!(
-        runs::next(&h.config.database, record.next_due_ms + 100_000_000, false)
+        next_run(&h.config.database, record.next_due_ms + 100_000_000, false)
             .expect("deleted schedule")
             .is_none()
     );

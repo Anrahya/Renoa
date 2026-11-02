@@ -15,6 +15,7 @@ use renoa_local::{
 };
 use renoa_node::RenoaNode;
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef};
+use rusqlite::OptionalExtension as _;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -721,7 +722,93 @@ async fn a_catalog_busy_past_its_timeout_delays_the_schedule_without_ending_it()
     .expect("busy catalog test timed out");
 }
 
-/// Starts a node that owns the automation schedule.
+#[tokio::test]
+async fn a_reminder_whose_conversation_is_not_on_this_node_fails_rather_than_run_elsewhere() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        // The main agent's latest conversation with the person, which no
+        // task on this node executes.
+        let (person, session) = (Uuid::new_v4(), Uuid::new_v4());
+        let catalog = rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
+            .expect("open Host catalog");
+        catalog
+            .execute(
+                "INSERT INTO host_memory_conversations(session_id, agent_id, principal_id,
+                     workspace, last_activity_ms, user_chars, range_since_note)
+                 VALUES (?1, ?2, ?3, '', ?4, 0, 0)",
+                rusqlite::params![
+                    session.to_string(),
+                    fixture.agent_id.to_string(),
+                    person.to_string(),
+                    now_ms()
+                ],
+            )
+            .expect("a conversation of the main agent");
+        // A note of theirs with a reminder due this minute, in the Host's
+        // zone, which defaults to the system's.
+        let zone = jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC);
+        let minute = jiff::Timestamp::now()
+            .to_zoned(zone)
+            .datetime()
+            .round(
+                jiff::civil::DateTimeRound::new()
+                    .smallest(jiff::Unit::Minute)
+                    .mode(jiff::RoundMode::Trunc),
+            )
+            .expect("this minute");
+        let notebook = fixture
+            .data
+            .join("users")
+            .join(person.to_string())
+            .join("mnem");
+        mnem::memory::Memory::create(&notebook)
+            .expect("a notebook")
+            .note(
+                "Alpha",
+                &format!(
+                    "[at {}] Call the bank about the card",
+                    minute.strftime("%Y-%m-%dT%H:%M")
+                ),
+                minute - jiff::SignedDuration::from_mins(1),
+            )
+            .expect("a reminder note");
+
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        let (status, output) = loop {
+            let ended = catalog
+                .query_row(
+                    "SELECT r.status, r.output FROM host_automation_runs r
+                     JOIN host_memory_reminders m ON m.automation_id = r.automation_id
+                     WHERE r.output IS NOT NULL",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+                .expect("read the reminder's run");
+            if let Some(ended) = ended {
+                break ended;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(status, "failed", "{output}");
+        assert!(
+            output.contains("its conversation is not open here"),
+            "never sent to a conversation of its own: {output}"
+        );
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("reminder delivery test timed out");
+}
+
 fn deletion_marks(fixture: &HostFixture) -> i64 {
     rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
         .expect("open Host catalog")
@@ -733,6 +820,7 @@ fn deletion_marks(fixture: &HostFixture) -> i64 {
         .expect("read deletion marks")
 }
 
+/// Starts a node that owns the automation schedule.
 async fn start_node(
     host: Arc<LocalHost>,
     system: &TestSystem,

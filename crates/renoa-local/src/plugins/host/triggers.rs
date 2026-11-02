@@ -5,9 +5,15 @@
 //! and on what schedule ([`wanted`]); the Host's scheduler converges the
 //! automations to that before it admits due runs, and hands each run of one
 //! back to the plugin ([`run`]) instead of sending it to the agent as a
-//! message. The scheduler's coalescing and lateness rules hold for it as for
-//! any automation, except that a trigger's one-time schedule may already be
-//! due when it is converged: its plugin, not an agent, set the time.
+//! message. The exception is a `renoa.memory` reminder: its run is delivered
+//! to its agent in the person's conversation, with the submission the
+//! plugin decides when it is admitted ([`delivery`]), and fails rather than
+//! run anywhere else. What a plugin reads or writes outside the catalog for
+//! this it does first, before the scheduler's write transaction opens
+//! ([`prepare`]). The
+//! scheduler's coalescing and lateness rules hold for it as for any
+//! automation, except that a trigger's one-time schedule may already be due
+//! when it is converged: its plugin, not an agent, set the time.
 //!
 //! No agent lists, reads, changes, or runs a plugin's automation, and its
 //! runs are not the agent's results: every agent-facing query leaves out
@@ -16,14 +22,25 @@
 //! Compiled contributors only: a trigger's run is first-party code driving
 //! the agent's own journaled turns.
 
+use std::path::{Path, PathBuf};
+
 use renoa_kernel::AgentId;
 use rusqlite::{Connection, OptionalExtension as _};
 use uuid::Uuid;
 
-use super::{HostPluginId, memory};
-use crate::{
-    AutomationRun, AutomationSpec, LocalHost, LocalHostError, RunStatus, plugins::PluginError,
+use super::{
+    HostPluginId,
+    memory::{
+        self,
+        reminders::{self, Agendas},
+    },
 };
+
+use crate::{
+    AutomationRun, AutomationSpec, LocalHost, LocalHostError, RunStatus, host::catalog,
+    plugins::PluginError,
+};
+pub(crate) use reminders::{Delivery, Reminder};
 
 /// The automations plugins own, each for one agent. A row is kept, disabled,
 /// when its plugin no longer wants it, so its runs stay with it.
@@ -36,26 +53,95 @@ pub(crate) const TRIGGERS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_plugin_
 /// serves an agent.
 pub(crate) const PLUGIN_OWNED: &str = "SELECT automation_id FROM host_plugin_triggers";
 
+/// The ids of the automations plugins own whose runs the Host runs itself:
+/// every one but a reminder, whose runs go to its agent.
+pub(crate) const HOST_RUN: &str = "SELECT automation_id FROM host_plugin_triggers
+    WHERE automation_id NOT IN (SELECT automation_id FROM host_memory_reminders)";
+
+/// What plugins read for their triggers beyond the catalog: the data
+/// directory the notebooks are in, and the agendas `renoa.memory` keeps
+/// between convergences. The schedule's owner holds it.
+pub(crate) struct TriggerContext {
+    data_directory: PathBuf,
+    agendas: Agendas,
+}
+
+impl TriggerContext {
+    pub(crate) fn new(data_directory: PathBuf) -> Self {
+        Self {
+            data_directory,
+            agendas: Agendas::default(),
+        }
+    }
+}
+
+/// What plugins read and wrote outside the catalog for one convergence and
+/// the admission after it, before the scheduler's write transaction opened,
+/// so no plugin's file I/O holds the catalog.
+pub(crate) struct Prepared(Result<reminders::Prepared, PluginError>);
+
+impl Prepared {
+    fn reminders(&self) -> Result<&reminders::Prepared, PluginError> {
+        self.0.as_ref().map_err(|error| {
+            PluginError::Unavailable(format!("the reminders could not be prepared: {error}"))
+        })
+    }
+}
+
+/// Prepares, from the catalog at `path` as of `now_ms`, what the next
+/// convergence and admission read outside it. A failure is kept: the
+/// reminders are not converged and no reminder is admitted with it.
+pub(crate) fn prepare(path: &Path, context: &TriggerContext, now_ms: i64) -> Prepared {
+    let read = || {
+        let db = catalog::open_verified(path)?;
+        reminders::prepare(&db, &context.data_directory, &context.agendas, now_ms)
+    };
+    Prepared(read())
+}
+
+/// One trigger a plugin keeps: the automation it is, what it should be, and,
+/// for a reminder, whose agenda item it hands over.
+pub(crate) struct Wanted {
+    pub(crate) id: Uuid,
+    pub(crate) spec: AutomationSpec,
+    pub(crate) reminder: Option<Reminder>,
+}
+
 pub(crate) fn initialize(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(TRIGGERS_TABLE)
 }
 
-/// The triggers `plugin` keeps as of `now_ms`, each the automation it is and
-/// what it should be; every other one it owns is disabled.
+/// The triggers `plugin` keeps as of `now_ms`, from the catalog and what
+/// was `prepared`; every other one it owns is disabled.
 pub(crate) fn wanted(
     plugin: HostPluginId,
     db: &Connection,
+    prepared: &Prepared,
     now_ms: i64,
-) -> Result<Vec<(Uuid, AutomationSpec)>, PluginError> {
+) -> Result<Vec<Wanted>, PluginError> {
     match plugin {
-        HostPluginId::Memory => Ok([
-            memory::nightly::wanted(db, now_ms)?
-                .map(|spec| (automation_id(plugin, spec.agent_id), spec)),
-            memory::note_pass::wanted(db)?,
-        ]
-        .into_iter()
-        .flatten()
-        .collect()),
+        HostPluginId::Memory => {
+            let timers = [
+                memory::nightly::wanted(db, now_ms)?
+                    .map(|spec| (automation_id(plugin, spec.agent_id), spec)),
+                memory::note_pass::wanted(db)?,
+            ];
+            let reminders = reminders::wanted(db, prepared.reminders()?, now_ms)?;
+            Ok(timers
+                .into_iter()
+                .flatten()
+                .map(|(id, spec)| Wanted {
+                    id,
+                    spec,
+                    reminder: None,
+                })
+                .chain(reminders.into_iter().map(|(id, spec, reminder)| Wanted {
+                    id,
+                    spec,
+                    reminder: Some(reminder),
+                }))
+                .collect())
+        }
         HostPluginId::Agents
         | HostPluginId::Automations
         | HostPluginId::Documents
@@ -78,19 +164,49 @@ pub(crate) fn automation_id_named(plugin: HostPluginId, agent: AgentId, name: &s
     ))
 }
 
-/// Records that `plugin` owns `automation`, inside the transaction that
-/// creates it.
+/// Records that `plugin` owns `automation`, and, for a reminder, whose item
+/// it hands over, inside the transaction that creates it.
 pub(crate) fn own(
     transaction: &rusqlite::Transaction<'_>,
     automation: Uuid,
     plugin: HostPluginId,
+    reminder: Option<&Reminder>,
 ) -> rusqlite::Result<()> {
-    transaction
-        .execute(
-            "INSERT INTO host_plugin_triggers(automation_id, plugin_id) VALUES (?1, ?2)",
-            [automation.to_string(), plugin.id().to_owned()],
-        )
-        .map(drop)
+    transaction.execute(
+        "INSERT INTO host_plugin_triggers(automation_id, plugin_id) VALUES (?1, ?2)",
+        [automation.to_string(), plugin.id().to_owned()],
+    )?;
+    reminder.map_or(Ok(()), |reminder| {
+        reminders::own(transaction, automation, reminder)
+    })
+}
+
+/// Whether the runs of `automation`, a plugin's trigger, are delivered to its
+/// agent rather than run by its plugin.
+pub(crate) fn delivers(db: &Connection, automation: Uuid) -> rusqlite::Result<bool> {
+    db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM host_memory_reminders WHERE automation_id = ?1)",
+        [automation.to_string()],
+        |row| row.get(0),
+    )
+}
+
+/// How the run of `automation` for `agent` is delivered to the agent, from
+/// what was `prepared`; `None` for an automation whose submission is its
+/// standing task. A reminder whose preparation failed waits.
+///
+/// # Errors
+///
+/// Returns the plugin's failure to decide; the run is not admitted.
+pub(crate) fn delivery(
+    db: &Connection,
+    prepared: &Prepared,
+    automation: Uuid,
+    agent: AgentId,
+) -> Result<Option<Delivery>, PluginError> {
+    let unprepared = reminders::Prepared::default();
+    let reminders = prepared.reminders().unwrap_or(&unprepared);
+    reminders::delivery(db, reminders, automation, agent)
 }
 
 /// Every automation a plugin owns, with its owner.
@@ -106,13 +222,14 @@ pub(crate) fn owned(db: &Connection) -> Result<Vec<(Uuid, HostPluginId)>, Plugin
         .collect()
 }
 
-/// The plugin that owns `automation`, if one does.
-pub(crate) fn owner(
+/// The plugin that runs `automation`'s runs itself, if one does: its owner,
+/// unless they are delivered to its agent.
+pub(crate) fn runner(
     db: &Connection,
     automation: Uuid,
 ) -> Result<Option<HostPluginId>, PluginError> {
     db.query_row(
-        "SELECT plugin_id FROM host_plugin_triggers WHERE automation_id = ?1",
+        &format!("SELECT plugin_id FROM host_plugin_triggers WHERE automation_id = ?1 AND automation_id IN ({HOST_RUN})"),
         [automation.to_string()],
         |row| row.get::<_, String>(0),
     )

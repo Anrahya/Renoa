@@ -61,6 +61,20 @@ pub(crate) fn dream(directory: &Path, active: &str) -> String {
 /// cites the first note, so two dreams with the same `active` differ only in
 /// their Nudges.
 pub(crate) fn dream_with_nudge(directory: &Path, active: &str, nudge: Option<&str>) -> String {
+    dream_with_nudges(directory, active, |last| {
+        nudge.map_or_else(String::new, |action| {
+            format!("- check-in | next session | - | {action} | Seen again (#{last}) | notify\n")
+        })
+    })
+}
+
+/// [`dream`], with the Nudges lines `nudges` writes given the id of the last
+/// note, each citing it.
+pub(crate) fn dream_with_nudges(
+    directory: &Path,
+    active: &str,
+    nudges: impl FnOnce(u64) -> String,
+) -> String {
     let memory = Memory::create(directory).expect("a notebook");
     let mut last = 0;
     for n in 0..5 {
@@ -78,9 +92,7 @@ pub(crate) fn dream_with_nudge(directory: &Path, active: &str, nudge: Option<&st
         .dream_job(Trigger::Nightly, None, now)
         .expect("a dream job")
         .expect("five new notes make a dream due");
-    let nudges = nudge.map_or_else(String::new, |action| {
-        format!("- check-in | next session | - | {action} | Seen again (#{last}) | notify\n")
-    });
+    let nudges = nudges(last);
     let draft = format!(
         "<mind>\n## Durable\n## Active\n- {active} (#0)\n## Hunches\n## Nudges\n{nudges}</mind>\n"
     );

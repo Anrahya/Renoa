@@ -12,6 +12,21 @@ use uuid::Uuid;
 
 struct Quiet;
 
+/// [`runs::next`] with the context a scheduler of the Host at `database`
+/// starts with.
+fn next_run(
+    database: &Path,
+    now_ms: i64,
+    plugin_running: bool,
+) -> Result<Option<AutomationRun>, AutomationError> {
+    let data_directory = database
+        .parent()
+        .and_then(Path::parent)
+        .expect("the catalog is in the data directory's state/");
+    let context = crate::plugins::host::triggers::TriggerContext::new(data_directory.to_path_buf());
+    runs::next(database, &context, now_ms, plugin_running)
+}
+
 /// An executed run's successful outcome with no failed tool calls.
 fn succeeded(answer: &str) -> RunOutcome {
     RunOutcome::Succeeded {
@@ -222,7 +237,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
             .await
             .expect("replay ignores new clock")
     );
-    let run = runs::next(&h.config.database, first.next_due_ms + 60_000, false)
+    let run = next_run(&h.config.database, first.next_due_ms + 60_000, false)
         .expect("admit on time")
         .expect("run");
     assert_eq!(run.due_ms, first.next_due_ms);
@@ -269,7 +284,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
         .await
         .is_err()
     );
-    let resumed = runs::next(&h.config.database, run.due_ms + 200_000_000, false)
+    let resumed = next_run(&h.config.database, run.due_ms + 200_000_000, false)
         .expect("resume")
         .expect("same occurrence");
     assert_eq!(run, resumed);
@@ -469,7 +484,7 @@ async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_t
         .await
         .expect("paused automation");
     assert!(
-        runs::next(&h.config.database, 100_000_000, false)
+        next_run(&h.config.database, 100_000_000, false)
             .expect("paused")
             .is_none()
     );
@@ -487,14 +502,14 @@ async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_t
     h.manage_automation(child, op, manual, 200_000_000, CancellationToken::new())
         .await
         .expect("manual replay");
-    let admitted = runs::next(&h.config.database, 200_000_000, false)
+    let admitted = next_run(&h.config.database, 200_000_000, false)
         .expect("queue")
         .expect("manual");
     assert_eq!(admitted.id, op);
     assert_eq!(admitted.admitted_at_ms, 100_000_000);
     runs::finish(&h.config.database, op, &succeeded("done"), 0).expect("complete");
     assert!(
-        runs::next(&h.config.database, 300_000_000, false)
+        next_run(&h.config.database, 300_000_000, false)
             .expect("no recurring run")
             .is_none()
     );

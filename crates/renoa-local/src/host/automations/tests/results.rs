@@ -13,7 +13,7 @@ async fn another_session_reads_the_exact_completed_result_through_model_tools() 
         )
         .await
         .expect("schedule");
-    let run = runs::next(&h.config.database, automation.next_due_ms, false)
+    let run = next_run(&h.config.database, automation.next_due_ms, false)
         .expect("admit")
         .expect("run");
     runs::finish(

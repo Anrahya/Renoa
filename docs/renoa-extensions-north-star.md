@@ -581,8 +581,9 @@ management. Every created agent receives the plugin protocol regardless of its
 machine selection. Schema 32 owns these activation records alongside external
 plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings, and
 schema 43 adds `renoa.memory`, schema 44 adds plugin-owned triggers and
-`renoa.memory`'s job receipts and memory session generations, and schema 45
-adds the conversations and passes of its note pass.
+`renoa.memory`'s job receipts and memory session generations, schema 45
+adds the conversations and passes of its note pass, and schema 47 adds its
+reminders.
 
 ## Contribution model
 
@@ -756,8 +757,9 @@ person's long-term profile, the facts unlikely to change soon; anything else
 worth knowing next time, such as habits and preferences that can shift, plans,
 and dated events, goes to the notebook.
 Surfaces that admit messages as an unidentified speaker, Telegram and Slack
-today, have no notebook. Mnem's agenda and heartbeat are later steps and do
-not run yet.
+today, have no notebook. The timed items to be told to each person run as
+reminders (see below); quiet, next-session and event items are not handed
+over yet.
 
 ### Triggers
 
@@ -772,14 +774,22 @@ its plugin set the time; it runs at once, however late. `host_plugin_triggers` r
 lists, reads, changes or runs a plugin-owned automation through
 `automation_manage` or `automation_results`, and its runs are not agent
 work: the node hands a due run to its plugin instead of submitting a turn.
+The exception is a `renoa.memory` reminder, whose run the node submits to
+the agent in the person's conversation, and nowhere else, with the submission
+the plugin chose when the run was admitted; a plugin's run in flight holds up
+neither it nor an agent's run. What a plugin reads or writes outside the
+catalog for its triggers it does before the scheduler's write transaction
+opens. One wanted trigger that cannot be stored or scheduled is logged and
+left as it is, and holds up no other.
 Inventory shows each automation's owning plugin, its next due time, and the
 last run's summary, which names job kinds and outcomes and never note text.
 
 ### `renoa.memory`'s nightly run
 
-`renoa.memory` wants two triggers, both for the Host's main agent while the
+`renoa.memory` wants two timers, both for the Host's main agent while the
 plugin is on for it: the nightly run, at Mnem's pass day start, 11:00, every
-day in the notebook zone, and the note pass timer (see below). When the main agent
+day in the notebook zone, and the note pass timer (see below); and a trigger
+per reminder (see below). When the main agent
 changes, the next convergence disables the old agent's trigger and creates
 the new one's; when the plugin is turned off, the trigger is disabled, and a
 run already started stops before its next job. A cron schedule names an IANA
@@ -984,6 +994,81 @@ failed tool calls and duration, and each cancelled pass a
 `memory_pass_cancelled` event; none carries note text. Inspection lists, per
 person, the completed passes in today's pass day and when one of their
 conversations is next asked.
+
+### `renoa.memory`'s reminders
+
+Each timed item on a person's agenda that is to be told to them, a nudge in
+`MIND.md` or an `[at …]` in a note, is a one-time trigger of the Host's main
+agent at its due time, for each person the main agent has a conversation with
+that the note pass follows. Mnem decides what is on the agenda
+(`Memory::agenda`), whether an item is still to fire when its run is admitted
+and the message it sends (`Memory::nudge_run`), and what fired
+(`Memory::record_fired`); the Host decides when and where each runs.
+
+- **Notebooks first, catalog second.** Each scheduler tick reads and writes
+  the notebooks before it opens the catalog's write transaction: each
+  person's timed items, read again only when their notebook's `AgendaStamp`
+  changes (the scheduler keeps them in memory, so a restart reads each agenda
+  once more); the fired record of each reminder whose run succeeded; and
+  Mnem's message for each reminder due, and for each item that came due in
+  the last 15 minutes and is no reminder yet. No Mnem file lock or read holds
+  the catalog.
+- **Converged with the triggers.** A reminder's trigger id is derived from the
+  main agent, the person, the item's id, its due minute and its attempt, and
+  `host_memory_reminders` records which item and attempt it hands over and how
+  its run settled. Only items due within 48 hours become triggers, decided
+  from the cached agenda each tick. An item that leaves the agenda, or moves
+  to another time, leaves its trigger unwanted, and the moved item gets a new
+  one. A notebook that cannot be read or written is logged
+  (`memory_reminders_unread`, once per error and then at most every ten
+  minutes) and keeps the reminders it has, so it holds up no one else's. An
+  item whose due time has no instant in the notebook zone is logged
+  (`memory_reminder_unschedulable`) and left out, and a trigger whose stored
+  row cannot be read is left as it is (`automation_unschedulable`), so neither
+  holds up another reminder.
+- **Quiet items stay on the agenda.** An item not to be told to the person is
+  never a trigger: no run path yet keeps an agent run's reply from every
+  surface, and the memory jobs' sessions have no tools to note with. It
+  stays unfired for the nightly Dream to reconsider.
+- **At most three overdue.** An item is overdue once it is more than 15
+  minutes past due, as after the Host was down. At most three overdue
+  reminders of one person run in any 12 hours, the latest due first; the rest
+  wait for a later window, or for a Dream to drop them as stale.
+- **Run by the agent, in the person's conversation.** When a reminder is
+  admitted, Mnem's message is its whole submission, which Renoa adds nothing
+  to; an item Mnem says is no longer due (fired, stale, or dropped or moved
+  by a later dream or note) is recorded as skipped and never sent. It goes to
+  the main agent's conversation with the person that was last active, where
+  every surface attached to it shows the reply; a node that cannot reach that
+  conversation fails the run rather than send it to a conversation of the
+  automation's own. The submission is the Host's, so the note pass does not
+  count it as the person's text. The node waits for each run it submits to
+  end before it submits the next, so no two reminders of one person overlap,
+  and a restart submits the same run under the same command id. The run is
+  the speaker its automation link is, as every delivered run is; the Host
+  does not yet know which person a link speaks for, so on a Host with more
+  than one person a reminder from another person's notebook runs as the
+  link's speaker in that person's conversation.
+- **Fired only after it succeeded.** Once a reminder's run succeeded, the next
+  tick records the item fired in the person's notebook, then marks the
+  reminder so; Mnem records an item and due time once, so a crash between the
+  two repeats nothing, and a record that cannot be written is tried again each
+  tick. A run that failed records nothing: the item is tried once more 15
+  minutes after the run ended, as a trigger of its own. If that fails too the
+  item stays unfired (`memory_reminder_given_up`) for the Dream. A trigger
+  that ran is never wanted again.
+- **Retired, then removed.** A trigger its plugin no longer wants is disabled.
+  While a run of it is kept, at most 30 days, it stays; then it is deleted and
+  purged, which marks its own conversation for the node to delete, and once
+  that is gone its rows are removed, so reminders do not pile up.
+- **Inspected without their text.** Inspection lists each reminder with its
+  owner and schedule; its run's result is the agent's reply, which stays out of
+  inspection as an agent's run's does. The Android app's routines leave out
+  every plugin's triggers.
+
+Next-session items are not handed over yet: they belong in the first turn's
+context of the person's next conversation, recorded fired once that turn
+succeeds.
 
 ### What stays closed
 

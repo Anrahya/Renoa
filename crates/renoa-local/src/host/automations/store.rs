@@ -355,8 +355,25 @@ fn pending_for(db: &Connection, id: Uuid) -> Result<bool, AutomationError> {
         |row| row.get(0),
     )?)
 }
-/// The Host session an automation was created in, when its own agent created
-/// it from one. Deleted automations keep theirs, so an admitted run still
+/// Sets the conversation `automation`'s admitted run goes to: `origin`, or
+/// else one of the automation's own.
+pub(super) fn set_origin(
+    tx: &Connection,
+    automation: Uuid,
+    origin: Option<Uuid>,
+) -> Result<(), AutomationError> {
+    tx.execute(
+        "UPDATE host_automations SET origin_session_id=?2 WHERE id=?1",
+        params![
+            automation.to_string(),
+            origin.map(|session| session.to_string())
+        ],
+    )?;
+    Ok(())
+}
+/// The Host session an automation's runs go to: the one it was created in,
+/// when its own agent created it from one, or the one a reminder's admitted
+/// run was set to. Deleted automations keep theirs, so an admitted run still
 /// returns to its conversation.
 pub(super) fn origin(db: &Connection, automation: Uuid) -> Result<Option<Uuid>, AutomationError> {
     let value: Option<String> = db.query_row(

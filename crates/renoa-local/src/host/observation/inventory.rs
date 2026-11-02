@@ -3,7 +3,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::{HostCatalogError, parse_id};
-use crate::{AutomationSchedule, RunStatus, plugins::host::triggers::PLUGIN_OWNED};
+use crate::{AutomationSchedule, RunStatus, plugins::host::triggers::HOST_RUN};
 
 #[derive(Debug, Serialize)]
 pub struct ObservedAgent {
@@ -45,8 +45,9 @@ pub struct ObservedRun {
     /// `None` for a skipped run and for runs recorded before schema 37.
     pub failed_tool_calls: Option<u32>,
     /// How a plugin's run went, in the words of the Host, which never quote
-    /// a note or an answer; null for an agent's run, whose result is the
-    /// agent's own text and stays out of inspection.
+    /// a note or an answer; null for a run sent to an agent, a reminder's
+    /// included, whose result is the agent's own text and stays out of
+    /// inspection.
     pub summary: Option<String>,
 }
 
@@ -161,7 +162,7 @@ fn last_run(db: &Connection, automation: Uuid) -> Result<Option<ObservedRun>, Ho
     db.query_row(
         &format!(
             "SELECT id,status,due_ms,finished_at_ms,failed_tool_calls,
-                CASE WHEN automation_id IN ({PLUGIN_OWNED}) THEN output END
+                CASE WHEN automation_id IN ({HOST_RUN}) THEN output END
              FROM host_automation_runs
              WHERE automation_id=?1 AND output IS NOT NULL ORDER BY sequence DESC LIMIT 1"
         ),

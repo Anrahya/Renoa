@@ -3,7 +3,7 @@
 //! hands each one to an execution node and records the result the node
 //! reports. A run of a plugin's trigger is the plugin's, and the Host runs it.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use uuid::Uuid;
 
@@ -12,19 +12,28 @@ use super::{
 };
 use crate::{
     host::{catalog, lease::ExecutionLease},
-    plugins::host::{HostPluginId, triggers},
+    plugins::host::{
+        HostPluginId,
+        triggers::{self, TriggerContext},
+    },
 };
 
 /// One admitted run and where it goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScheduledRun {
     pub run: AutomationRun,
-    /// The Host session the automation was created in, when its own agent
-    /// created it from one. `None` runs in a conversation of the automation's
-    /// own.
+    /// The Host session the run goes to: the one the automation was created
+    /// in, when its own agent created it from one, or a reminder's
+    /// conversation with its person. `None` runs in a conversation of the
+    /// automation's own.
     pub origin_session_id: Option<Uuid>,
-    /// The compiled plugin whose trigger this is. Its run is not sent to the
-    /// agent: [`AutomationScheduler::run_for_plugin`] runs it on the Host.
+    /// Whether the run goes only to `origin_session_id`: a reminder's, told
+    /// to its person there. One whose conversation cannot be reached fails,
+    /// and is never sent to a conversation of the automation's own.
+    pub origin_required: bool,
+    /// The compiled plugin that runs this run of its trigger. Its run is not
+    /// sent to the agent: [`AutomationScheduler::run_for_plugin`] runs it on
+    /// the Host. `None` for a run sent to the agent, a reminder's included.
     pub plugin: Option<&'static str>,
 }
 
@@ -48,6 +57,7 @@ impl PluginRun {
 /// the schedule to the next owner.
 pub struct AutomationScheduler {
     database: PathBuf,
+    triggers: Arc<TriggerContext>,
     _lease: ExecutionLease,
 }
 
@@ -67,6 +77,7 @@ impl LocalHost {
                 })?;
         Ok(AutomationScheduler {
             database: self.config.database.clone(),
+            triggers: Arc::new(TriggerContext::new(self.config.home.path().to_path_buf())),
             _lease: lease,
         })
     }
@@ -76,11 +87,12 @@ impl AutomationScheduler {
     /// Returns the oldest run without a result, or admits the next due
     /// occurrence. A run keeps its identity until its result is recorded, so a
     /// scheduler that restarts hands the same run on again instead of a new one.
-    /// An occurrence too late for its schedule comes back already skipped:
+    /// An occurrence too late for its schedule, or one its plugin says is no
+    /// longer due, comes back already skipped:
     /// its status is set, it is not to be executed, and the next call moves on.
     /// While `plugin_running`, the caller is running a plugin's run beside
-    /// the schedule, and only an agent's run comes back, so an agent's due
-    /// run fires on time during a long plugin run.
+    /// the schedule, and only a run sent to an agent comes back, a reminder's
+    /// included, so it fires on time during a long plugin run.
     ///
     /// # Errors
     /// Returns catalog and stored-data failures.
@@ -90,17 +102,21 @@ impl AutomationScheduler {
         plugin_running: bool,
     ) -> Result<Option<ScheduledRun>, LocalHostError> {
         let database = self.database.clone();
+        let context = Arc::clone(&self.triggers);
         tokio::task::spawn_blocking(move || {
-            let Some(run) = runs::next(&database, now_ms, plugin_running)? else {
+            let Some(run) = runs::next(&database, &context, now_ms, plugin_running)? else {
                 return Ok(None);
             };
             let db = catalog::open_verified(&database)?;
             let origin_session_id = store::origin(&db, run.automation_id)?;
             // The plugin's error keeps its source, so a busy catalog shows.
-            let plugin = triggers::owner(&db, run.automation_id)?.map(HostPluginId::id);
+            let plugin = triggers::runner(&db, run.automation_id)?.map(HostPluginId::id);
+            let origin_required =
+                triggers::delivers(&db, run.automation_id).map_err(super::AutomationError::from)?;
             Ok::<_, LocalHostError>(Some(ScheduledRun {
                 run,
                 origin_session_id,
+                origin_required,
                 plugin,
             }))
         })

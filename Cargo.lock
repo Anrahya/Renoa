@@ -1780,7 +1780,7 @@ dependencies = [
 [[package]]
 name = "mnem"
 version = "0.1.0"
-source = "git+https://github.com/Anrahya/mnem?rev=0d1b6effb84ce79d6e71609fc910feb185832da5#0d1b6effb84ce79d6e71609fc910feb185832da5"
+source = "git+https://github.com/Anrahya/mnem?rev=b0dde791190db111ee76346beb2e8a95c33e150f#b0dde791190db111ee76346beb2e8a95c33e150f"
 dependencies = [
  "jiff",
  "regex",
@@ -2506,6 +2506,8 @@ name = "renoa-node"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "jiff",
+ "mnem",
  "nix",
  "renoa-agent",
  "renoa-control",

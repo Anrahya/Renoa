@@ -16,10 +16,13 @@ use crate::{
         catalog,
         feed::{self, RunEnded},
     },
-    plugins::host::triggers::PLUGIN_OWNED,
+    plugins::host::triggers::{self, Delivery, HOST_RUN, PLUGIN_OWNED, Prepared, TriggerContext},
 };
 
 mod unschedulable;
+
+pub(crate) use unschedulable::Throttle;
+pub(super) use unschedulable::report as report_unschedulable;
 
 /// Every read of a run selects these columns, in the order [`run`] maps them.
 pub(super) const RUN_COLUMNS: &str = "sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,submission,output,status,failed_tool_calls,finished_at_ms";
@@ -45,7 +48,24 @@ pub(super) fn insert_run(
     due: Option<i64>,
     admitted_at: i64,
 ) -> Result<(), AutomationError> {
-    let submission = submission(r, due, admitted_at)?;
+    insert(
+        tx,
+        r,
+        id,
+        due,
+        admitted_at,
+        &submission(r, due, admitted_at)?,
+    )
+}
+
+fn insert(
+    tx: &Connection,
+    r: &AutomationRecord,
+    id: Uuid,
+    due: Option<i64>,
+    admitted_at: i64,
+    submission: &str,
+) -> Result<(), AutomationError> {
     tx.execute("INSERT INTO host_automation_runs(id,automation_id,agent_id,due_ms,admitted_at_ms,submission) VALUES(?1,?2,?3,?4,?5,?6)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),due.unwrap_or(admitted_at),admitted_at,submission])?;
     Ok(())
 }
@@ -106,43 +126,51 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
 
 /// Called only while holding the Host scheduler process lease. Returns the
 /// oldest unfinished run, or converges every plugin's trigger and admits the
-/// next due occurrence. Admission and
+/// next due occurrence. What plugins read and write outside the catalog for
+/// this is done first, before the write transaction opens (see
+/// [`triggers::prepare`]). Admission and
 /// advancing the clock commit together; unfinished runs retain their command
-/// ID. An occurrence admitted later than its schedule allows is recorded as
-/// skipped in the same transaction and returned finished, so the scheduler
-/// reports it and asks again. While `plugin_running`, a plugin's run is in
-/// flight beside the scheduler, so no plugin's run is handed on or admitted:
-/// one plugin run at a time, and an agent's due run is not held up by it. A
+/// ID. An occurrence admitted later than its schedule allows, or one its
+/// plugin says is no longer due, is recorded as skipped in the same
+/// transaction and returned finished, so the scheduler reports it and asks
+/// again; one its plugin is not ready to send stays due for the next call.
+/// While `plugin_running`, a plugin's run is in flight beside the
+/// scheduler, so no run the Host runs for a plugin is handed on or admitted:
+/// one plugin run at a time, and a run delivered to an agent is not held up
+/// by it. A
 /// pending run whose row does not decode, or a due automation whose row does
 /// not decode or whose schedule cannot be computed, is left unchanged and
 /// logged as `automation_unschedulable`, at most every ten minutes, and the
 /// next one is taken, so one bad row does not stop the others.
 pub(super) fn next(
     path: &Path,
+    context: &TriggerContext,
     now_ms: i64,
     plugin_running: bool,
 ) -> Result<Option<AutomationRun>, AutomationError> {
+    let prepared = triggers::prepare(path, context, now_ms);
     let mut db = catalog::open_verified(path)?;
     let mut tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if let Some(pending) = pending(&tx, plugin_running)? {
         return Ok(Some(pending));
     }
-    super::owned::converge(&tx, now_ms)?;
+    let retired = super::owned::converge(&tx, &prepared, now_ms)?;
     let due = tx
-        .prepare(&format!("SELECT id FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND NOT (?2 AND id IN ({PLUGIN_OWNED})) ORDER BY next_due_ms,id"))?
+        .prepare(&format!("SELECT id FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND NOT (?2 AND id IN ({HOST_RUN})) ORDER BY next_due_ms,id"))?
         .query_map(params![now_ms, plugin_running], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     // One automation whose row cannot be read or scheduled is left as it is
     // and logged, so it does not hold up the others.
     for automation in due {
         let mut attempt = tx.savepoint()?;
-        match admit(&attempt, &automation, now_ms) {
-            Ok((admitted, pruned)) => {
+        match admit(&attempt, &prepared, &automation, now_ms) {
+            Ok(Some((admitted, pruned))) => {
                 attempt.commit()?;
                 tx.commit()?;
-                retention::report(pruned);
+                retention::report(retired.into_iter().chain(pruned));
                 return Ok(Some(admitted));
             }
+            Ok(None) => attempt.rollback()?,
             Err(error) if of_its_row(&error) => {
                 attempt.rollback()?;
                 unschedulable::report("automation_id", &automation, &error.to_string());
@@ -152,6 +180,7 @@ pub(super) fn next(
     }
     // The converged triggers stand whether or not a run is due.
     tx.commit()?;
+    retention::report(retired);
     Ok(None)
 }
 
@@ -160,7 +189,7 @@ fn pending(
     tx: &Connection,
     plugin_running: bool,
 ) -> Result<Option<AutomationRun>, AutomationError> {
-    let mut pending = tx.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE output IS NULL AND NOT (?1 AND automation_id IN ({PLUGIN_OWNED})) ORDER BY sequence"))?;
+    let mut pending = tx.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE output IS NULL AND NOT (?1 AND automation_id IN ({HOST_RUN})) ORDER BY sequence"))?;
     let mut rows = pending.query([plugin_running])?;
     while let Some(row) = rows.next()? {
         match run(row) {
@@ -176,12 +205,15 @@ fn pending(
 }
 
 /// Admits the due occurrence of `automation`, as [`next`] describes, and
-/// returns the run with the runs retention removed.
+/// returns the run with the runs retention removed. A plugin's trigger whose
+/// run goes to its agent is sent as its plugin decides from what was
+/// `prepared` (see [`triggers::delivery`]), or not admitted yet.
 fn admit(
     tx: &Connection,
+    prepared: &Prepared,
     automation: &str,
     now_ms: i64,
-) -> Result<(AutomationRun, Option<retention::Removed>), AutomationError> {
+) -> Result<Option<(AutomationRun, Option<retention::Removed>)>, AutomationError> {
     let mut r = tx.query_row(
         "SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE id=?1",
         [automation],
@@ -191,16 +223,29 @@ fn admit(
         "renoa.automation.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
     ));
-    insert_run(tx, &r, id, Some(r.next_due_ms), now_ms)?;
-    let late = now_ms.saturating_sub(r.next_due_ms);
-    if let Some(limit) = r.spec.schedule.skip_after_ms(r.next_due_ms)?
-        && late > limit
-    {
-        let reason = format!(
-            "Scheduled run skipped: it reached the scheduler {} after its due time, and a run of this schedule is skipped once it is more than {} late.",
-            duration(late),
-            duration(limit)
-        );
+    let delivery = triggers::delivery(tx, prepared, r.id, r.spec.agent_id).map_err(|error| {
+        AutomationError::Invalid(format!(
+            "a plugin trigger's run could not be prepared: {error}"
+        ))
+    })?;
+    let due = Some(r.next_due_ms);
+    let skipped = match delivery {
+        Some(Delivery::Later) => return Ok(None),
+        Some(Delivery::Send { message, origin }) => {
+            insert(tx, &r, id, due, now_ms, &message)?;
+            store::set_origin(tx, r.id, Some(origin))?;
+            None
+        }
+        Some(Delivery::Skip(reason)) => {
+            insert_run(tx, &r, id, due, now_ms)?;
+            Some(format!("Scheduled run skipped: {reason}"))
+        }
+        None => {
+            insert_run(tx, &r, id, due, now_ms)?;
+            late(&r, now_ms)?
+        }
+    };
+    if let Some(reason) = skipped {
         record(tx, id, RunStatus::Skipped, &reason, None, now_ms)?;
         feed::run_ended(tx, id, r.id, RunEnded::Skipped, now_ms)?;
     }
@@ -215,12 +260,26 @@ fn admit(
         [id.to_string()],
         run,
     )?;
-    Ok((admitted, pruned))
+    Ok(Some((admitted, pruned)))
+}
+
+/// Why the occurrence of `r` due now is skipped when admitted at `now_ms`,
+/// if it is too late for its schedule.
+fn late(r: &AutomationRecord, now_ms: i64) -> Result<Option<String>, AutomationError> {
+    let late = now_ms.saturating_sub(r.next_due_ms);
+    Ok(match r.spec.schedule.skip_after_ms(r.next_due_ms)? {
+        Some(limit) if late > limit => Some(format!(
+            "Scheduled run skipped: it reached the scheduler {} after its due time, and a run of this schedule is skipped once it is more than {} late.",
+            duration(late),
+            duration(limit)
+        )),
+        Some(_) | None => None,
+    })
 }
 
 /// Whether `error` is about one automation's stored row rather than the
 /// catalog: its row does not decode, or its schedule cannot be computed.
-fn of_its_row(error: &AutomationError) -> bool {
+pub(super) fn of_its_row(error: &AutomationError) -> bool {
     match error {
         AutomationError::Database(error) => decodes_its_row(error),
         AutomationError::Invalid(_) | AutomationError::Json(_) | AutomationError::Time(_) => true,
@@ -329,14 +388,15 @@ fn record(
     automation.ok_or(AutomationError::Conflict)
 }
 
-/// Whether `id` is an admitted run of an agent's automation with no result
-/// yet: one the scheduler is delivering, under `id`, and waits for.
+/// Whether `id` is an admitted run with no result yet that goes to its
+/// agent, its own automation's or a reminder's: one the scheduler is
+/// delivering, under `id`, and waits for.
 pub(crate) fn delivering(path: &Path, id: Uuid) -> Result<bool, AutomationError> {
     let db = catalog::open_verified(path)?;
     Ok(db.query_row(
         &format!(
             "SELECT EXISTS(SELECT 1 FROM host_automation_runs
-             WHERE id = ?1 AND output IS NULL AND automation_id NOT IN ({PLUGIN_OWNED}))"
+             WHERE id = ?1 AND output IS NULL AND automation_id NOT IN ({HOST_RUN}))"
         ),
         [id.to_string()],
         |row| row.get(0),

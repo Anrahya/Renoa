@@ -29,6 +29,7 @@ const AGENT_OWNED_TABLES: &[&str] = &[
     "host_memory_conversations",
     "host_memory_sessions",
     "host_memory_jobs",
+    "host_memory_reminders",
     "host_plugin_triggers",
     "host_automation_conversation_deletions",
     "host_automation_deletions",

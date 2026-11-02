@@ -1273,9 +1273,10 @@ class RcpAgentRepositoryTest {
         assertTrue(surface.hostAgents.isEmpty())
     }
 
-    private fun automation(id: String, agent: Uuid, expression: String, enabled: Boolean = true, revision: Long = 1, lastRun: JsonObject? = null) =
+    private fun automation(id: String, agent: Uuid, expression: String, enabled: Boolean = true, revision: Long = 1, lastRun: JsonObject? = null, plugin: String? = null) =
         buildJsonObject {
             put("id", id)
+            put("plugin", plugin)
             put("agent_id", agent.toString())
             put("name", "Dinner plan")
             put("schedule", buildJsonObject { put("kind", "cron"); put("expression", expression); put("timezone", "Asia/Kolkata") })
@@ -1302,6 +1303,18 @@ class RcpAgentRepositoryTest {
         assertFalse(brief.on)
         assertNull(brief.next, "a routine that is off runs at no time")
         assertEquals(LastRun(Instant.ofEpochMilli(NEXT - 3_600_000), RunOutcome.Skipped), brief.lastRun, "without a finish time, it is when the run was due")
+    }
+
+    @Test
+    fun aHostPluginsOwnTriggersAreNotRoutines() = runTest {
+        surface.automations =
+            mutableListOf(
+                automation("reminder", Uuid.random(), "0 9 * * *", plugin = "renoa.memory"),
+                automation("dinner", Uuid.random(), "30 19 * * *"),
+            )
+        val repo = started()
+
+        assertEquals(listOf("dinner"), repo.routines.value.map { it.id }, "a reminder is the Host's, not a routine to switch")
     }
 
     @Test

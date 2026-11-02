@@ -16,6 +16,7 @@ pub(super) fn add_feed(transaction: &Transaction<'_>) -> Result<(), HostCatalogE
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_45(connection: &rusqlite::Connection) {
+    super::restore_schema_46(connection);
     connection
         .execute_batch(
             "DROP TABLE host_today;

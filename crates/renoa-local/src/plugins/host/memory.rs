@@ -33,6 +33,7 @@ pub(crate) mod jobs;
 pub(crate) mod nightly;
 pub(crate) mod note_pass;
 pub(crate) mod pass;
+pub(crate) mod reminders;
 pub(crate) mod sessions;
 mod tools;
 

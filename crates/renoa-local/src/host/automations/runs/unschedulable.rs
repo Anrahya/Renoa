@@ -14,7 +14,7 @@ static LOGGED: LazyLock<Mutex<Throttle>> = LazyLock::new(Mutex::default);
 
 /// Logs `automation_unschedulable` for the row whose `field` is `id`, unless
 /// the same row and error were logged less than [`REPEAT_AFTER`] ago.
-pub(super) fn report(field: &'static str, id: &str, error: &str) {
+pub(in crate::host::automations) fn report(field: &'static str, id: &str, error: &str) {
     let met = LOGGED
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -29,10 +29,11 @@ pub(super) fn report(field: &'static str, id: &str, error: &str) {
     }
 }
 
-/// When each row and error was last logged, and how often each was met
-/// since.
+/// When each key and error was last logged, and how often each was met
+/// since: once per key and error in a process, then at most every
+/// [`REPEAT_AFTER`]. Other logs that repeat each tick share it.
 #[derive(Default)]
-struct Throttle(HashMap<(String, String), Seen>);
+pub(crate) struct Throttle(HashMap<(String, String), Seen>);
 
 struct Seen {
     logged_at: Instant,
@@ -42,7 +43,7 @@ struct Seen {
 impl Throttle {
     /// Counts `id` and `error` met at `now`. Returns how often they were met
     /// since last logged, this time included, when they are to be logged.
-    fn met(&mut self, id: &str, error: &str, now: Instant) -> Option<u64> {
+    pub(crate) fn met(&mut self, id: &str, error: &str, now: Instant) -> Option<u64> {
         let fresh = Seen {
             logged_at: now,
             unlogged: 0,
