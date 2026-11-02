@@ -42,6 +42,7 @@ mod oauth_relay_http;
 mod oauth_relay_store;
 mod operations;
 mod push_dispatch;
+mod push_supervisor;
 mod push_tokens;
 mod push_wake;
 mod session_registry;

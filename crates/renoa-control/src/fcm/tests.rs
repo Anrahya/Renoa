@@ -5,6 +5,51 @@ use serde_json::{Value, json};
 
 use super::{Attempt, WakeOutcome, classify};
 
+/// An `FcmError` of `INVALID_ARGUMENT` beside `BadRequest` violations on
+/// `fields`.
+fn invalid_argument_with_violations(fields: &[&str]) -> Value {
+    let violations: Vec<Value> = fields
+        .iter()
+        .map(|field| json!({ "field": field, "description": "stub" }))
+        .collect();
+    json!({
+        "error": {
+            "status": "INVALID_ARGUMENT",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.firebase.fcm.v1.FcmError",
+                    "errorCode": "INVALID_ARGUMENT",
+                },
+                {
+                    "@type": "type.googleapis.com/google.rpc.BadRequest",
+                    "fieldViolations": violations,
+                },
+            ],
+        }
+    })
+}
+
+#[test]
+fn an_invalid_argument_on_another_field_is_refused_and_keeps_the_token() {
+    let other = "FCM rejected a field other than the token";
+    for (fields, expected) in [
+        (&["message.android.ttl"][..], refused(other)),
+        (&["message.data", "message.android"][..], refused(other)),
+        (&["message.token"][..], dead("INVALID_ARGUMENT")),
+        (
+            &["message.data", "message.token"][..],
+            dead("INVALID_ARGUMENT"),
+        ),
+        (&[][..], dead("INVALID_ARGUMENT")),
+    ] {
+        assert_eq!(
+            classified(400, &invalid_argument_with_violations(fields)),
+            expected,
+            "{fields:?}"
+        );
+    }
+}
+
 fn fcm_error(code: &str, canonical: &str) -> Value {
     json!({
         "error": {
@@ -94,7 +139,7 @@ fn a_configuration_fault_is_refused_and_an_overload_or_gateway_failure_is_retrie
             fcm_error("THIRD_PARTY_AUTH_ERROR", "UNAUTHENTICATED"),
             refused("THIRD_PARTY_AUTH_ERROR"),
         ),
-        (401, empty.clone(), refused("FCM refused the access token")),
+        (401, empty.clone(), Attempt::Unauthorized),
         (403, empty.clone(), refused("FCM gave an unexpected answer")),
         (
             429,

@@ -24,9 +24,9 @@ use crate::{
 /// reach the owner's phone, or fail to, without a decision. A record wakes
 /// when it is something the app would show unless that chat is on screen: an
 /// agent's reply with text other than whitespace, or a failed run. A submitted
-/// command does not (the
-/// owner or another agent wrote it), nor does a run's progress, a completed
-/// run (its reply already woke), or a cancelled one (the owner pressed stop).
+/// command does not (the owner or another agent wrote it), nor does a run's
+/// progress, a completed run (its reply already woke), or a cancelled one (the
+/// owner pressed stop).
 pub(crate) fn wake_reason(kind: &TaskEventKind) -> Option<&'static str> {
     match kind {
         TaskEventKind::CommandSubmitted { .. } => None,

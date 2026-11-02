@@ -455,17 +455,18 @@ A device registers its push token with `SetPushToken`, device state that is not
 a task operation. The token is opaque to RCP and its provider is a closed set,
 today only `fcm`. The coordinator decides from the record kind alone whether a
 record wakes: an assistant message with text other than whitespace and a failed
-execution do, every other record does not. It marks the wake owed to the record's principal in the
-transaction that appends the record, so the mark is durable before the node's
-events are acknowledged and a retried batch that appends nothing marks nothing.
-A dispatcher started only while serving drains the marks, holding no database
-lock across a network call, and deletes a mark only at the generation its sends
-covered, so a wake is sent at least once while owed: a restart mid-send sends
-it again. FCM is a coordinator-side adapter: its request
-carries no task, principal, agent or text, so RCP semantics stay independent of
-the cloud vendor (locked decision 12), and another platform adds a provider
-rather than changing the operations. Revoking a device deletes its token in the
-same transaction.
+execution do, every other record does not. It marks the wake owed to the
+record's principal in the transaction that appends the record, so the mark is
+durable before the node's events are acknowledged and a retried batch that
+appends nothing marks nothing. A dispatcher started only while serving drains
+the marks, holding no database lock across a network call, and deletes a mark
+only at the generation its sends covered, each send counted for the token it
+went to, so a wake is sent at least once while owed: a restart mid-send sends it
+again, and a token registered mid-send gets its own. FCM is a coordinator-side
+adapter: its request carries no task, principal, agent or text, so RCP
+semantics stay independent of the cloud vendor (locked decision 12), and
+another platform adds a provider rather than changing the operations. Revoking
+a device deletes its token in the same transaction.
 
 ## Executor link
 

@@ -238,6 +238,12 @@ impl Coordinator {
         Ok(self)
     }
 
+    /// The shared state, for unit tests that run a part of `serve` alone.
+    #[cfg(test)]
+    pub(crate) fn state(&self) -> Arc<CoordinatorState> {
+        Arc::clone(&self.state)
+    }
+
     /// Sends content-free push wakes with these settings once serving.
     /// Without them, push tokens are still registered and owed wakes are
     /// dropped.
@@ -356,15 +362,23 @@ impl Coordinator {
             None => crate::push_dispatch::Delivery::Disabled,
         };
         let app = app.with_state(Arc::clone(&self.state));
-        // The dispatcher stops after the server, and is awaited inside this
-        // future, so dropping `serve` aborts it too.
-        let dispatcher_stop = shutdown.child_token();
-        let dispatcher = crate::push_dispatch::supervise(
+        // Its own token, cancelled once the server has stopped, so the
+        // dispatcher keeps draining while a graceful shutdown finishes its
+        // requests; a wake still owed when it stops is sent by the next
+        // `serve`. It is awaited inside this future, so dropping `serve`
+        // aborts it too.
+        let dispatcher_stop = CancellationToken::new();
+        let dispatcher = crate::push_supervisor::supervise(
             {
                 let state = Arc::clone(&self.state);
                 let stop = dispatcher_stop.clone();
-                move || {
-                    crate::push_dispatch::spawn(Arc::clone(&state), delivery.clone(), stop.clone())
+                move |last_sent| {
+                    crate::push_dispatch::spawn(
+                        Arc::clone(&state),
+                        delivery.clone(),
+                        last_sent,
+                        stop.clone(),
+                    )
                 }
             },
             dispatcher_stop.clone(),

@@ -848,10 +848,11 @@ journal after a reply for `push_wake_sent`, and for `push_wake_failed` with
 `SENDER_ID_MISMATCH` (a token from another project) or a rejected service
 account (a revoked or wrong key; after a rejection the token endpoint is asked
 again at most once a minute). A `push_token_dropped` warning names a device
-whose token FCM called dead; that device is not woken until it registers a new
-one. A
-`push_dispatcher_failed` error means the dispatcher stopped and was started
-again a second later.
+whose token FCM called dead; its `deleted` field is false when the device had
+already registered another token, and null when the deletion failed. That device is not woken until it registers a new one. A
+`push_dispatcher_failed` error means the dispatcher stopped and is started again
+after `restart_after_ms`: a second after the first failure, doubling with each
+of its `consecutive_failures` up to a minute.
 
 ### Public RCP route
 

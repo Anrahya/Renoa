@@ -20,6 +20,9 @@ const FCM_ORIGIN: &str = "https://fcm.googleapis.com";
 /// The least time between two wakes to one device. The wake that arrives
 /// inside it still goes out once it has passed.
 const DEFAULT_DEVICE_GAP: Duration = Duration::from_secs(10);
+/// The longest gap a deployment may set, so adding a gap to an instant
+/// cannot overflow.
+const MAX_DEVICE_GAP: Duration = Duration::from_hours(24);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// One send and at most two retries of a transient failure.
 const MAX_ATTEMPTS: u32 = 3;
@@ -72,10 +75,10 @@ impl PushSettings {
     }
 
     /// Changes the least time between two wakes to one device from its
-    /// ten-second default.
+    /// ten-second default. A gap longer than a day is held to a day.
     #[must_use]
     pub fn with_device_gap(mut self, gap: Duration) -> Self {
-        self.device_gap = gap;
+        self.device_gap = gap.min(MAX_DEVICE_GAP);
         self
     }
 
@@ -108,7 +111,12 @@ enum Attempt {
         reason: &'static str,
         after: Option<Duration>,
     },
+    /// FCM refused the access token. The first refusal in a wake is retried
+    /// at once with a fresh token; a second is a configuration fault.
+    Unauthorized,
 }
+
+const UNAUTHORIZED: &str = "FCM refused the access token";
 
 /// Sends wakes to FCM for one Firebase project.
 #[derive(Debug)]
@@ -150,6 +158,7 @@ impl FcmSender {
         cancelled: &CancellationToken,
     ) -> WakeOutcome {
         let mut attempt = 1;
+        let mut refreshed = false;
         loop {
             let result = tokio::select! {
                 () = cancelled.cancelled() => return WakeOutcome::Cancelled,
@@ -158,6 +167,11 @@ impl FcmSender {
             let (reason, after) = match result {
                 Attempt::Done(outcome) => return outcome,
                 Attempt::Retry { reason, after } => (reason, after),
+                Attempt::Unauthorized if !refreshed => {
+                    refreshed = true;
+                    (UNAUTHORIZED, Some(Duration::ZERO))
+                }
+                Attempt::Unauthorized => return WakeOutcome::Refused(UNAUTHORIZED),
             };
             if attempt >= MAX_ATTEMPTS {
                 return WakeOutcome::GaveUp(reason);
@@ -207,7 +221,7 @@ impl FcmSender {
             .await
             .unwrap_or_default();
         if status == StatusCode::UNAUTHORIZED {
-            self.tokens.forget().await;
+            self.tokens.forget(&bearer).await;
         }
         classify(status, &body, after)
     }
@@ -229,15 +243,19 @@ fn wake_body(token: &PushToken) -> String {
 
 /// Classifies an FCM error answer by its `FcmError` code, then its details,
 /// canonical status and HTTP status. A token is called dead only when a detail
-/// names it: an `FcmError` of `UNREGISTERED` or `INVALID_ARGUMENT` (the payload
-/// is constant and valid, so that means the token), or a `BadRequest`
-/// violation on `message.token`. A bare 400 deletes nothing.
+/// names it: an `FcmError` of `UNREGISTERED`, an `FcmError` of
+/// `INVALID_ARGUMENT` unless `BadRequest` violations name only other fields
+/// (the payload is constant and valid, so otherwise it means the token), or a
+/// `BadRequest` violation on `message.token`. A bare 400 deletes nothing.
 fn classify(status: StatusCode, body: &[u8], after: Option<Duration>) -> Attempt {
     let retry = |reason| Attempt::Retry { reason, after };
     let refused = |reason| Attempt::Done(WakeOutcome::Refused(reason));
     let error = ErrorBody::parse(body);
     match error.fcm_code.as_deref() {
         Some("UNREGISTERED") => return Attempt::Done(WakeOutcome::DeadToken("UNREGISTERED")),
+        Some("INVALID_ARGUMENT") if error.names_only_other_fields() => {
+            return refused("FCM rejected a field other than the token");
+        }
         Some("INVALID_ARGUMENT") => {
             return Attempt::Done(WakeOutcome::DeadToken("INVALID_ARGUMENT"));
         }
@@ -248,7 +266,7 @@ fn classify(status: StatusCode, body: &[u8], after: Option<Duration>) -> Attempt
         Some("INTERNAL") => return retry("INTERNAL"),
         _ => {}
     }
-    if error.token_violation {
+    if error.names_the_token() {
         return Attempt::Done(WakeOutcome::DeadToken("INVALID_ARGUMENT"));
     }
     match error.status.as_deref() {
@@ -263,7 +281,7 @@ fn classify(status: StatusCode, body: &[u8], after: Option<Duration>) -> Attempt
         StatusCode::BAD_GATEWAY => retry("BAD_GATEWAY"),
         StatusCode::SERVICE_UNAVAILABLE => retry("UNAVAILABLE"),
         StatusCode::GATEWAY_TIMEOUT => retry("GATEWAY_TIMEOUT"),
-        StatusCode::UNAUTHORIZED => refused("FCM refused the access token"),
+        StatusCode::UNAUTHORIZED => Attempt::Unauthorized,
         _ => refused("FCM gave an unexpected answer"),
     }
 }
@@ -273,8 +291,8 @@ fn classify(status: StatusCode, body: &[u8], after: Option<Duration>) -> Attempt
 struct ErrorBody {
     /// The `errorCode` of an `FcmError` detail.
     fcm_code: Option<String>,
-    /// Whether a `BadRequest` detail has a violation on `message.token`.
-    token_violation: bool,
+    /// The fields of every `BadRequest` violation.
+    violated_fields: Vec<String>,
     /// The error's canonical `status`.
     status: Option<String>,
 }
@@ -307,19 +325,26 @@ impl ErrorBody {
         Self {
             fcm_code: of_type("google.firebase.fcm.v1.FcmError")
                 .find_map(|detail| text(detail.get("errorCode"))),
-            token_violation: of_type("google.rpc.BadRequest").any(|detail| {
-                detail
-                    .get("fieldViolations")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .any(|violation| {
-                        violation.get("field").and_then(serde_json::Value::as_str)
-                            == Some("message.token")
-                    })
-            }),
+            violated_fields: of_type("google.rpc.BadRequest")
+                .filter_map(|detail| detail.get("fieldViolations"))
+                .filter_map(serde_json::Value::as_array)
+                .flatten()
+                .map(|violation| text(violation.get("field")).unwrap_or_default())
+                .collect(),
             status: text(error.get("status")),
         }
+    }
+
+    /// Whether a `BadRequest` violation is on `message.token`.
+    fn names_the_token(&self) -> bool {
+        self.violated_fields
+            .iter()
+            .any(|field| field == "message.token")
+    }
+
+    /// Whether `BadRequest` violations name fields, none of them the token.
+    fn names_only_other_fields(&self) -> bool {
+        !self.violated_fields.is_empty() && !self.names_the_token()
     }
 }
 

@@ -283,12 +283,15 @@ struct Cache {
     token: Option<CachedToken>,
     /// Until when a rejection of the credentials is repeated without asking.
     rejected_until: Option<Instant>,
+    /// The last failed refresh and when it ended.
+    failed: Option<(Instant, AccessError)>,
 }
 
 /// Access tokens from one credential source, cached until shortly before they
 /// expire. The cache lock is held across a refresh, so at most one refresh is
-/// in flight and every caller waiting on it uses its result. A rejection is
-/// cached for [`REJECTION_HOLD`] too.
+/// in flight and every caller waiting on it shares its result, a failure too:
+/// a stalled token endpoint costs one timeout, not one per waiting send. A
+/// rejection is cached for [`REJECTION_HOLD`].
 pub(crate) struct AccessTokens {
     credentials: GoogleCredentials,
     http: reqwest::Client,
@@ -320,6 +323,7 @@ impl AccessTokens {
     }
 
     pub(crate) async fn bearer(&self) -> Result<AccessToken, AccessError> {
+        let asked = Instant::now();
         let mut cache = self.cache.lock().await;
         let now = Instant::now();
         if let Some(current) = &cache.token
@@ -330,26 +334,43 @@ impl AccessTokens {
         if cache.rejected_until.is_some_and(|until| now < until) {
             return Err(AccessError::Rejected);
         }
+        // A refresh that failed while this caller waited for the lock.
+        if let Some((ended, error)) = cache.failed
+            && ended >= asked
+        {
+            return Err(error);
+        }
         match self.fetch().await {
             Ok(fetched) => {
                 let token = fetched.token.clone();
                 *cache = Cache {
                     token: Some(fetched),
-                    rejected_until: None,
+                    ..Cache::default()
                 };
                 Ok(token)
             }
-            Err(AccessError::Rejected) => {
-                cache.rejected_until = Instant::now().checked_add(REJECTION_HOLD);
-                Err(AccessError::Rejected)
+            Err(error) => {
+                let ended = Instant::now();
+                cache.failed = Some((ended, error));
+                if error == AccessError::Rejected {
+                    cache.rejected_until = ended.checked_add(REJECTION_HOLD);
+                }
+                Err(error)
             }
-            Err(error) => Err(error),
         }
     }
 
-    /// Drops the cached token, after FCM refused it.
-    pub(crate) async fn forget(&self) {
-        self.cache.lock().await.token = None;
+    /// Drops the cached token after FCM refused `failed`, unless a newer
+    /// token has replaced it since.
+    pub(crate) async fn forget(&self, failed: &AccessToken) {
+        let mut cache = self.cache.lock().await;
+        if cache
+            .token
+            .as_ref()
+            .is_some_and(|cached| cached.token.0 == failed.0)
+        {
+            cache.token = None;
+        }
     }
 
     async fn fetch(&self) -> Result<CachedToken, AccessError> {
@@ -412,4 +433,4 @@ impl AccessTokens {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

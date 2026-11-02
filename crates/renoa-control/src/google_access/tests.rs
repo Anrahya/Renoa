@@ -1,4 +1,7 @@
-use std::{path::Path, time::SystemTime};
+use std::{
+    path::Path,
+    time::{Duration, SystemTime},
+};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{RSA_PKCS1_2048_8192_SHA256, RsaKeyPair, UnparsedPublicKey};
@@ -108,6 +111,37 @@ fn a_damaged_key_is_refused_without_repeating_it() {
             assert!(!message.contains(line), "{message}");
         }
     }
+}
+
+/// Push settings loaded from a private key file of the test key in
+/// `directory`. Only this module may write key material, so other modules'
+/// tests get their settings here.
+pub(crate) fn push_settings(directory: &Path) -> crate::PushSettings {
+    let path = directory.join("fcm-service-account.json");
+    std::fs::write(&path, service_account_json(TEST_KEY)).expect("write the key file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("make the key file private");
+    }
+    crate::PushSettings::from_service_account_file(&path).expect("load the key file")
+}
+
+#[test]
+fn a_device_gap_longer_than_a_day_is_held_to_a_day() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let settings = push_settings(directory.path());
+    assert_eq!(
+        settings.clone().with_device_gap(Duration::MAX).device_gap(),
+        Duration::from_hours(24)
+    );
+    assert_eq!(
+        settings
+            .with_device_gap(Duration::from_secs(3))
+            .device_gap(),
+        Duration::from_secs(3)
+    );
 }
 
 /// Key material is named only in this module, so no other module can parse,
