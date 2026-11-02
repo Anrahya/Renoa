@@ -48,6 +48,7 @@ pub(super) fn message(
                 since_note: conversation.range_since_note.min(notes),
                 armed: &armed,
                 ended: &ended,
+                day,
                 now,
                 tools: PassTools {
                     note: NOTE,

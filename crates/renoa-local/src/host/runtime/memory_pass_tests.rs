@@ -696,7 +696,7 @@ async fn the_daytime_cap_leaves_the_last_pass_of_the_day_to_the_sweep_before_dre
         .expect("prompt")
         .to_owned();
     let (_, ended) = swept
-        .split_once("Finished or deleted since ")
+        .split_once("Finished or deleted since 2026-11-02T11:00:")
         .expect("the ended automations");
     assert!(
         ended.contains("· Call mom ·"),
