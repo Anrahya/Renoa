@@ -367,8 +367,8 @@ account whose selection creates the plugin's activation. A selection the owner
 or the agent's creator made, at creation or later, writes none, and neither do
 replacement, deactivation and disconnection. Every write of an agent's package
 activations goes through one function, and a test fails on a write anywhere
-else. `ask` and `update` items are written by their own tools; a producer marks
-its item done by id. Nothing is backfilled: runs and activations recorded
+else. Nothing writes `ask` or `update` items yet; their tools will, and a
+producer marks its own item done by id as a dismissal does. Nothing is backfilled: runs and activations recorded
 before schema 46 make no items.
 
 Three relayed owner operations read it. `GET /v1/host/feed`, and
@@ -387,11 +387,12 @@ it; repeating it changes nothing, and an unknown id returns 404 naming it. An
 app runs an item's action through the operation that owns it and then dismisses
 it; a crash between leaves an open item.
 
-`today` is the sentence in `host_today`, one line of 1 to 140 characters with
-the newest sequence at its writing, while no open `ask` or `problem` is newer
-than that; otherwise the Host's line from the count of open items that need the
-owner ("2 things need you.", or "All quiet."). Until the heartbeat writes a
-sentence, only the Host's line exists.
+`today` is the sentence in `host_today`, which the catalog holds only as one
+line of 1 to 140 characters with the sequence it was written through, while no
+open `ask` or `problem` is newer than that sequence; otherwise it is the Host's
+line from the count of open items that need the owner ("2 things need you.",
+or "All quiet."). Nothing writes a sentence yet: its writer and who may call it
+come with the heartbeat, so today only the Host's line exists.
 
 An item is kept 30 days from its creation, and the feed keeps its newest 200;
 an open `ask` is exempt from both. Both rules run on the scheduler heartbeat
