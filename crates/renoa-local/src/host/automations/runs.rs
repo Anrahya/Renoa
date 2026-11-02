@@ -349,21 +349,17 @@ pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, A
     Ok(q.query_map([after], run)?.collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Records that the process owning the schedule is alive, and expires runs
-/// and feed items past their age, and feed items past their count, on the
-/// same beat.
+/// Records that the process owning the schedule is alive, then expires runs
+/// and feed items on the same beat. The beat commits first, so retention
+/// that fails is logged and never holds liveness back.
 pub(super) fn heartbeat(path: &Path, now_ms: i64) -> Result<(), AutomationError> {
     let mut db = catalog::open_verified(path)?;
-    let tx = db.transaction()?;
-    tx.execute(
+    db.execute(
         "INSERT INTO host_automation_scheduler(singleton,heartbeat_ms) VALUES(1,?1)
          ON CONFLICT(singleton) DO UPDATE SET heartbeat_ms=excluded.heartbeat_ms",
         [now_ms],
     )?;
-    let runs = retention::expire(&tx, now_ms)?;
-    let items = feed::retention::expire(&tx, now_ms)?;
-    tx.commit()?;
-    retention::report(runs.into_iter().chain(items));
+    retention::expire_on_beat(&mut db, now_ms);
     Ok(())
 }
 

@@ -300,12 +300,18 @@ async fn deliver(
     failures: &mut Failures,
 ) -> Result<Option<RunOutcome>, NodeError> {
     let run = &due.run;
-    let task_id = match task_for(runtime, connection, due, shutdown, failures).await? {
-        Resolution::Task(task_id) => task_id,
-        Resolution::Refused(reason) => return Ok(Some(refused(due, None, &reason))),
-        Resolution::Shutdown => return Ok(None),
-    };
     let command_id = CommandId::from_uuid(run.id);
+    // A run delivered again, after its result could not be recorded or the
+    // node restarted, stays in the task it already executes in, whatever the
+    // task resolution would pick now.
+    let task_id = match runtime.state.task_of_command(command_id).await? {
+        Some(task_id) => task_id,
+        None => match task_for(runtime, connection, due, shutdown, failures).await? {
+            Resolution::Task(task_id) => task_id,
+            Resolution::Refused(reason) => return Ok(Some(refused(due, None, &reason))),
+            Resolution::Shutdown => return Ok(None),
+        },
+    };
     loop {
         match connection
             .submit(

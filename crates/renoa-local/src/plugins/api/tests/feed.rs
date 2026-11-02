@@ -77,6 +77,61 @@ async fn an_agent_turning_a_plugin_on_for_itself_reports_one_ability_per_act() {
 }
 
 #[tokio::test]
+async fn a_replacement_reports_only_when_it_turns_a_disabled_plugin_on() {
+    let root = tempfile::tempdir().expect("fixture");
+    let (manager, _) = manager(root.path());
+    package(&root.path().join("first"), "review", "FIRST", None);
+    package(&root.path().join("next"), "review", "NEXT", None);
+    let first = install(&manager, root.path(), "first").await;
+    let next = install(&manager, root.path(), "next").await;
+    let agent = test_agent_id(1);
+    let replace = |from: &str, to: &str| PluginRequest::ReplacePlugin {
+        plugin_id: first.clone(),
+        package_digest: to.to_owned(),
+        expected_digest: from.to_owned(),
+    };
+    let activate = PluginRequest::Activate {
+        package_digest: first.clone(),
+    };
+    act(&manager, root.path(), agent, "on", activate)
+        .await
+        .expect("activate");
+    act(&manager, root.path(), agent, "next", replace(&first, &next))
+        .await
+        .expect("replace an enabled plugin");
+    assert_eq!(
+        abilities(root.path()).len(),
+        1,
+        "replacing an enabled plugin turns nothing on"
+    );
+    let deactivate = PluginRequest::Deactivate {
+        plugin_id: first.clone(),
+    };
+    act(&manager, root.path(), agent, "off", deactivate)
+        .await
+        .expect("deactivate");
+    act(&manager, root.path(), agent, "back", replace(&next, &first))
+        .await
+        .expect("replace a disabled plugin");
+    assert_eq!(
+        abilities(root.path()),
+        [
+            (
+                "Turned on same-name".to_owned(),
+                agent.to_string(),
+                first.clone()
+            ),
+            (
+                "Turned on same-name".to_owned(),
+                agent.to_string(),
+                first.clone()
+            ),
+        ],
+        "replacing a disabled plugin turns it on"
+    );
+}
+
+#[tokio::test]
 async fn an_agent_turning_a_compiled_plugin_back_on_reports_it_once() {
     let root = tempfile::tempdir().expect("fixture");
     let (manager, _) = manager(root.path());

@@ -1,5 +1,6 @@
 //! What the node's own automation surface reads from the ledger: which task a
-//! Host session belongs to, and how a command it submitted ended.
+//! Host session belongs to, which task a command it submitted executes in,
+//! and how that command ended.
 
 use std::sync::Arc;
 
@@ -32,6 +33,26 @@ impl NodeStore {
                 .query_row(
                     "SELECT task_id FROM host_node_tasks WHERE session_id = ?1",
                     [session.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            task.map(|task| Ok(TaskId::from_uuid(parse_uuid(&task, "task")?)))
+                .transpose()
+        })
+        .await
+    }
+
+    /// The task `command_id` executes in, once this node has admitted it.
+    pub(crate) async fn task_of_command(
+        &self,
+        command_id: CommandId,
+    ) -> Result<Option<TaskId>, NodeStoreError> {
+        let path = Arc::clone(&self.path);
+        blocking(move || {
+            let task = open_connection(&path)?
+                .query_row(
+                    "SELECT task_id FROM host_node_executions WHERE command_id = ?1",
+                    [command_id.to_string()],
                     |row| row.get::<_, String>(0),
                 )
                 .optional()?;

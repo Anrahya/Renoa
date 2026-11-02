@@ -382,10 +382,87 @@ async fn the_scheduler_heartbeat_expires_old_items() {
         0,
     )
     .await;
+    let problem = items(&h).await[0].id;
+    HostFeed::open(h.config.home.path())
+        .expect("feed")
+        .dismiss(problem, 1)
+        .await
+        .expect("dismiss");
     runs::heartbeat(&h.config.database, 1).expect("heartbeat");
     assert_eq!(items(&h).await.len(), 1);
     runs::heartbeat(&h.config.database, 31 * 24 * HOUR).expect("heartbeat");
     assert!(items(&h).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_retention_failure_keeps_the_heartbeat_and_removes_nothing() {
+    let (_d, h, _parent, child) = fixture().await;
+    let automation = create(&h, child, "Digest").await;
+    ran(&h, child, &automation, &succeeded("Done."), 0).await;
+    let db = rusqlite::Connection::open(&h.config.database).expect("catalog");
+    db.execute_batch(
+        "CREATE TRIGGER keep_feed_items BEFORE DELETE ON host_feed_items
+         BEGIN SELECT RAISE(ABORT, 'injected feed failure'); END;",
+    )
+    .expect("storage failure boundary");
+    let late = 31 * 24 * HOUR;
+    runs::heartbeat(&h.config.database, late).expect("the beat outlives retention");
+    let state = |db: &rusqlite::Connection| -> (i64, i64, i64) {
+        db.query_row(
+            "SELECT (SELECT heartbeat_ms FROM host_automation_scheduler),
+                    (SELECT count(*) FROM host_automation_runs),
+                    (SELECT count(*) FROM host_feed_items)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("state")
+    };
+    assert_eq!(
+        state(&db),
+        (late, 1, 1),
+        "the beat is recorded; the run and its result both stay"
+    );
+    db.execute_batch("DROP TRIGGER keep_feed_items;")
+        .expect("storage recovers");
+    runs::heartbeat(&h.config.database, late + 1).expect("heartbeat");
+    assert_eq!(state(&db), (late + 1, 0, 0));
+}
+
+#[tokio::test]
+async fn a_failure_after_the_owner_dismissed_its_problem_opens_a_new_one() {
+    let (_d, h, _parent, child) = fixture().await;
+    let automation = create(&h, child, "Digest").await;
+    let subject = automation.id.to_string();
+    ran(
+        &h,
+        child,
+        &automation,
+        &failed("Scheduled run failed: one"),
+        1,
+    )
+    .await;
+    let feed = HostFeed::open(h.config.home.path()).expect("feed");
+    let problem = items(&h).await[0].id;
+    feed.dismiss(problem, 2).await.expect("dismiss");
+    ran(
+        &h,
+        child,
+        &automation,
+        &failed("Scheduled run failed: two"),
+        3,
+    )
+    .await;
+    assert_eq!(
+        shape(&h).await,
+        [
+            (FeedKind::Problem, subject.clone(), true),
+            (FeedKind::Problem, subject, false)
+        ],
+        "the automation still fails, so the owner hears it again"
+    );
+    let page = feed.list(None).await.expect("list");
+    assert_eq!(page.unread, 1);
+    assert_ne!(page.today, "All quiet.");
 }
 
 #[tokio::test]

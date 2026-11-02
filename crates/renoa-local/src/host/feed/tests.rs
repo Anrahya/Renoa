@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
-use super::{FEED_PAGE, FeedError, FeedKind, HostFeed, retention};
-use crate::host::catalog;
+use super::{FEED_PAGE, FeedError, FeedKind, HostFeed, produce, retention};
+use crate::{host::catalog, plugins::host::HostPluginId};
 
 const DAY: i64 = 24 * 3_600_000;
 
@@ -316,7 +316,7 @@ fn retention_keeps_the_newest_200_items() {
 #[test]
 fn retention_removes_an_item_30_days_after_its_creation() {
     let store = Store::new();
-    store.item(FeedKind::Problem, 0);
+    store.item(FeedKind::Update, 0);
     let (kept, _) = store.item(FeedKind::Result, 1);
     let removed = retention::expire(&store.db(), 30 * DAY + 1).expect("expire");
     assert_eq!(
@@ -330,17 +330,23 @@ fn retention_removes_an_item_30_days_after_its_creation() {
 }
 
 #[test]
-fn an_open_ask_outlives_both_retention_rules() {
+fn an_open_item_that_needs_the_owner_outlives_both_retention_rules() {
     let store = Store::new();
-    let (open, _) = store.item(FeedKind::Ask, 0);
-    let (_, answered) = store.item(FeedKind::Ask, 0);
-    store
-        .db()
-        .execute(
-            "UPDATE host_feed_items SET done_at_ms = 1 WHERE id = ?1",
-            [answered.to_string()],
-        )
-        .expect("answer one ask");
+    let (ask, _) = store.item(FeedKind::Ask, 0);
+    let (problem, _) = store.item(FeedKind::Problem, 0);
+    for kind in [FeedKind::Ask, FeedKind::Problem] {
+        let (_, done) = store.item(kind, 0);
+        store
+            .db()
+            .execute(
+                "UPDATE host_feed_items SET done_at_ms = 1 WHERE id = ?1",
+                [done.to_string()],
+            )
+            .expect("resolve one of each");
+    }
+    for kind in [FeedKind::Update, FeedKind::Result, FeedKind::Ability] {
+        store.item(kind, 0);
+    }
     for _ in 0..200 {
         store.item(FeedKind::Update, 40 * DAY);
     }
@@ -349,15 +355,40 @@ fn an_open_ask_outlives_both_retention_rules() {
         reported(&removed),
         [(
             "feed_items_pruned",
-            serde_json::json!({ "items": 1, "reason": "age" })
+            serde_json::json!({ "items": 5, "reason": "age" })
         )]
     );
     let sequences = store.sequences();
-    assert_eq!(sequences.len(), 201);
+    assert_eq!(sequences.len(), 202);
     assert_eq!(
-        sequences[0], open,
-        "the open ask is past both limits and stays"
+        sequences[..2],
+        [ask, problem],
+        "the open ask and problem are past both limits and stay"
     );
+}
+
+#[tokio::test]
+async fn a_replayed_item_takes_no_sequence() {
+    let store = Store::new();
+    let db = store.db();
+    for _ in 0..3 {
+        produce::ability_turned_on(
+            &db,
+            &store.agent,
+            produce::Ability::Compiled(HostPluginId::Memory),
+            "on",
+        )
+        .expect("an item, then its replays");
+    }
+    assert!(matches!(
+        store.feed().see(2).await,
+        Err(FeedError::AheadOfFeed {
+            through: 2,
+            newest: 1
+        })
+    ));
+    let (next, _) = store.item(FeedKind::Update, 0);
+    assert_eq!(next, 2, "the next item takes the next sequence");
 }
 
 #[test]

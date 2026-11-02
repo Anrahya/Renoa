@@ -131,9 +131,9 @@ impl PluginManager {
                 return Err(PluginError::Conflict("that revision already has a different activation identity for this agent".to_owned()));
             }
             // `plugin_manage` changes the calling agent's own activations, so
-            // an activation or enable that turns a plugin on is the agent's act.
-            let turns_on = matches!(change, ActivationChange::Activate { .. } | ActivationChange::Enable { .. })
-                && !current.as_ref().is_some_and(|current| current.enabled);
+            // any change that leaves a disabled or absent plugin enabled is the
+            // agent turning it on, a replacement included.
+            let turns_on = enabled && !current.as_ref().is_some_and(|current| current.enabled);
             let source = format!("package:{operation_id}");
             let act = if turns_on { ActivationAct::AgentTurnedOn { source: &source } } else { ActivationAct::Other };
             write_activation(&tx, &agent, &plugin_id, &digest, enabled, act)?;

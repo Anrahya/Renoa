@@ -347,15 +347,17 @@ or `turn_off`) on a `subject_id`, its creation time, and the time it was done.
 Every item commits in the transaction that records the fact it reports, so a
 crash leaves both or neither and a rejected change leaves no item. Its identity
 derives from its kind and source, and producers insert once, so a replay
-converges on one item. RCP carries none of it.
+converges on one item and takes no sequence. RCP carries none of it.
 
 The Host writes three kinds from fixed templates holding only an automation's
-name or a plugin's display name, never error text, a tool name, a URL, a digest
-or a model name; the agent's name is read when listing, so a rename shows.
-A failed, skipped or coordinator-refused run of an agent's automation opens a
-`problem` (`retry`, on the automation) when the automation's previous finished
-run did not fail and was not skipped, so a failure streak is reported once; a
-succeeded run marks the automation's open problem done. A succeeded run that
+name or a plugin's display name. A run's error text, a tool name and a digest
+never reach an item, but the names are written by agents and plugin authors,
+so a name can hold anything a name may; the agent's name is read when
+listing, so a rename shows. A failed, skipped or coordinator-refused run of an
+agent's automation opens a `problem` (`retry`, on the automation) unless the
+automation already has an open one, so a failure streak is reported once and
+a failure after the owner dismissed its problem is reported again; a succeeded
+run marks the automation's open problem done. A succeeded run that
 landed in the automation's own task writes a `result` (`open`, on the run) and
 removes the automation's previous one, so each automation has one result, unread
 again on each run; a result in a conversation is already there and writes
@@ -363,9 +365,10 @@ none. The node, which chose the task, reports where the run landed. A plugin's
 trigger runs write nothing. An agent turning a plugin on for itself writes an
 `ability` (`turn_off`, on the plugin): `plugin_manage` activating or enabling
 a package plugin, enabling a compiled one it had turned off, or selecting an
-account whose selection creates the plugin's activation. A selection the owner
-or the agent's creator made, at creation or later, writes none, and neither do
-replacement, deactivation and disconnection. Every write of an agent's package
+account whose selection creates the plugin's activation. A replacement writes
+one only when the plugin it replaces was turned off. A selection the owner or
+the agent's creator made, at creation or later, writes none, and neither do a
+replacement of a plugin that was on, deactivation and disconnection. Every write of an agent's package
 activations goes through one function, and a test fails on a write anywhere
 else. Nothing writes `ask` or `update` items yet; their tools will, and a
 producer marks its own item done by id as a dismissal does. Nothing is backfilled: runs and activations recorded
@@ -395,8 +398,11 @@ or "All quiet."). Nothing writes a sentence yet: its writer and who may call it
 come with the heartbeat, so today only the Host's line exists.
 
 An item is kept 30 days from its creation, and the feed keeps its newest 200;
-an open `ask` is exempt from both. Both rules run on the scheduler heartbeat
-and each removal logs `feed_items_pruned` with a count and a reason. A run's
+an open item that needs the owner, an `ask` or a `problem`, is exempt from
+both. Both rules run on the scheduler heartbeat, after it records the beat,
+in one transaction with run retention; each removal logs `feed_items_pruned`
+with a count and a reason, and a failure removes nothing, logs
+`retention_failed` and leaves the beat recorded. A run's
 removal removes the result about it, and purging a deleted automation removes
 its items, counted in `automation_runs_pruned` and `automation_purged`.
 
@@ -1720,8 +1726,9 @@ in a task of its own whose identity is the automation's. The command executes
 like any other on the node, with the agent's stored definition, workspace, and
 selected Host connections; its execution time enters the durable user-turn time
 context. A run keeps its occurrence ID until its result is recorded, so after a
-restart the scheduler submits the same command again, the coordinator keeps one
-copy, and the node re-drives an interrupted execution through the kernel. Once
+restart the scheduler submits the same command again, to the task the node
+ledger already records it in rather than one resolved afresh, the coordinator
+keeps one copy, and the node re-drives an interrupted execution through the kernel. Once
 the node ledger holds the command's terminal event, the node records the result
 on the run: the final answer, or the failure or cancellation reason, with a
 status and the number of tool calls that returned an error. A completed
@@ -1734,8 +1741,8 @@ waits for the plugin run in flight, leaving one stopped part way unrecorded;
 shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its
 result. An execution that fails in a conversation's task appears in that
-conversation; every failed, refused or skipped run that starts a failure streak
-also opens a `problem` in the owner's feed (see "While you were away"), and
+conversation; a failed, refused or skipped run of an automation with no open
+`problem` also opens one in the owner's feed (see "While you were away"), and
 every run is visible through `automation_results`, the Control Room, and the
 node's `automation_finished` and `automation_skipped` log events. A Host failure the
 schedule meets is logged as `automation_schedule_unavailable` and asked again

@@ -81,6 +81,31 @@ pub(super) fn expire(db: &Connection, now_ms: i64) -> Result<Option<Removed>, Au
     }))
 }
 
+/// Expires runs and feed items as of `now_ms` and reports the removals. A
+/// failure removes nothing and is logged: the beat that called it already
+/// counts.
+pub(super) fn expire_on_beat(db: &mut Connection, now_ms: i64) {
+    match expire_together(db, now_ms) {
+        Ok(removed) => report(removed),
+        Err(error) => renoa_telemetry::event(
+            LOG_COMPONENT,
+            "warn",
+            "retention_failed",
+            &json!({ "error": error.to_string() }),
+        ),
+    }
+}
+
+/// Runs and feed items past their age or count, removed in one transaction
+/// so a run and the result about it go together.
+fn expire_together(db: &mut Connection, now_ms: i64) -> Result<Vec<Removed>, AutomationError> {
+    let tx = db.transaction()?;
+    let mut removed: Vec<Removed> = expire(&tx, now_ms)?.into_iter().collect();
+    removed.extend(crate::host::feed::retention::expire(&tx, now_ms)?);
+    tx.commit()?;
+    Ok(removed)
+}
+
 /// Removes the runs `filter` selects and the feed results about them, so a
 /// result never points at a run that is gone, and counts both.
 fn remove_runs(
