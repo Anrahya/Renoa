@@ -150,7 +150,8 @@ impl RenoaNode {
     /// # Errors
     ///
     /// Returns an error for authentication, protocol, local durability, or a
-    /// failed execution task. Ordinary socket loss is retried.
+    /// failed execution task. Ordinary socket loss is retried. The automation
+    /// schedule's failures are logged and retried, never returned.
     pub async fn run(mut self, shutdown: CancellationToken) -> Result<(), NodeError> {
         let mut tasks = JoinSet::new();
         let mut running_tasks = HashSet::new();
@@ -168,10 +169,26 @@ impl RenoaNode {
         let connections =
             self.run_connections(&shutdown, &mut commits, &mut tasks, &mut running_tasks);
         // Each ends at shutdown; a draining node waits for both, its taken
-        // turns and its plugin run in flight, and the first error stops both.
+        // turns and its plugin run in flight. The schedule never fails the
+        // node; a failure of its connections ends both.
         let result = match schedule {
             None => connections.await,
-            Some(schedule) => tokio::try_join!(connections, schedule).map(drop),
+            Some(mut schedule) => {
+                // Boxed, like the schedule, to keep the node's future small.
+                let mut connections = Box::pin(connections);
+                let ended = tokio::select! {
+                    result = &mut connections => Some(result),
+                    () = &mut schedule => None,
+                };
+                match ended {
+                    Some(Ok(())) => {
+                        schedule.await;
+                        Ok(())
+                    }
+                    Some(Err(error)) => Err(error),
+                    None => connections.await,
+                }
+            }
         };
 
         tasks.abort_all();

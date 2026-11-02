@@ -1665,19 +1665,28 @@ task of its own, is visible through `automation_results`, the Control Room, and 
 schedule meets is logged as `automation_schedule_unavailable` and asked again
 a second later; a run whose result could not be recorded stays admitted and
 is submitted again under its own identity. A catalog another writer holds
-past its busy timeout is asked again for as long as it stays busy. Any other
-Host failure ends the scheduler, and with it the node, at the fifth in a
-row, so systemd restarts it and the failure shows rather than every
-reminder silently stopping; a tick that schedules or finds nothing due
-starts the count again. A due automation whose row does not parse or whose
-schedule cannot be computed is left as it is and logged as
-`automation_unschedulable` on every tick, and the others run. A compiled
-plugin's run that fails or panics stays admitted and is held back two
-seconds after its first failure in a row, doubling to at most five minutes,
-logged as `automation_plugin_run_failed` with the count. While it owns the
-schedule, the node writes a heartbeat every 30 seconds, which Host observation
-reports, so a stopped scheduler is visible. Credential and OAuth links reach the owner privately,
-as for any other command.
+past its busy timeout is asked again for as long as it stays busy. No
+scheduler failure ends the node, its connections, or its turns. From the
+fifth other Host failure in a row, or at once after a failure that stops the
+schedule, which then starts it again, the schedule is failing: each failure
+is logged at error level as `automation_schedule_failing` with the count,
+the wait before asking again doubles from two seconds to at most a minute,
+and the node writes no heartbeat. A tick that schedules or finds nothing due
+starts the count again, logs `automation_schedule_recovered`, and writes the
+heartbeat at once. A due automation, or an admitted run, whose row does not
+decode or whose schedule cannot be computed is left as it is and the others
+run; it is logged as `automation_unschedulable` once per automation and
+error in a process, then at most every ten minutes with the count of ticks
+it was met on. A compiled plugin's run that fails or panics stays admitted
+and is held back two seconds after its first failure in a row, doubling to
+at most five minutes, logged as `automation_plugin_run_failed` with the
+count. While it owns the schedule and the schedule is not failing, the node
+writes a heartbeat every 30 seconds, which Host observation reports as
+`automation_scheduler.heartbeat_ms`. A failing scheduler shows only as those
+error logs and a heartbeat that stops advancing in Host inspection: nothing,
+not `renoa-deploy health` nor the Control Room, reads the heartbeat's age or
+raises it. Credential and OAuth links reach the owner privately, as for any
+other command.
 
 At Slack chat admission, schema 8 appends up to eight newly relevant delivered chunks (4,000
 characters each) and their run IDs to the durable user-turn context. Selection

@@ -4,11 +4,11 @@
 
 use std::{sync::Arc, time::Duration};
 
-use renoa_local::{AutomationScheduler, ScheduledRun};
+use renoa_local::{AutomationScheduler, LocalHostError, ScheduledRun};
 use tokio::{task::JoinHandle, time::Instant};
 use tokio_util::sync::CancellationToken;
 
-use super::{host_error, now_ms};
+use super::now_ms;
 use crate::{
     bridge::{NodeError, NodeRuntime},
     node_log,
@@ -140,6 +140,10 @@ pub(super) async fn drain(
         () = shutdown.cancelled() => Ok(()),
         ended = ended(&mut task) => ended,
     }
+}
+
+fn host_error(error: &LocalHostError) -> NodeError {
+    NodeError::Store(error.to_string())
 }
 
 async fn ended(task: &mut PluginTask) -> Result<(), NodeError> {

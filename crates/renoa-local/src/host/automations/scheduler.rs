@@ -8,8 +8,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::{
-    AutomationError, AutomationRun, LocalHost, LocalHostError, RunOutcome, RunStatus, retention,
-    runs, store,
+    AutomationRun, LocalHost, LocalHostError, RunOutcome, RunStatus, retention, runs, store,
 };
 use crate::{
     host::{catalog, lease::ExecutionLease},
@@ -91,22 +90,21 @@ impl AutomationScheduler {
         plugin_running: bool,
     ) -> Result<Option<ScheduledRun>, LocalHostError> {
         let database = self.database.clone();
-        Ok(tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let Some(run) = runs::next(&database, now_ms, plugin_running)? else {
                 return Ok(None);
             };
             let db = catalog::open_verified(&database)?;
             let origin_session_id = store::origin(&db, run.automation_id)?;
-            let plugin = triggers::owner(&db, run.automation_id)
-                .map_err(|error| AutomationError::Invalid(error.to_string()))?
-                .map(HostPluginId::id);
-            Ok::<_, AutomationError>(Some(ScheduledRun {
+            // The plugin's error keeps its source, so a busy catalog shows.
+            let plugin = triggers::owner(&db, run.automation_id)?.map(HostPluginId::id);
+            Ok::<_, LocalHostError>(Some(ScheduledRun {
                 run,
                 origin_session_id,
                 plugin,
             }))
         })
-        .await??)
+        .await?
     }
 
     /// Runs one admitted run of a plugin's trigger on `host`, as of

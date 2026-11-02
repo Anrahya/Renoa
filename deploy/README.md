@@ -608,12 +608,19 @@ run more than half its period late is skipped without executing, and the node
 logs `automation_skipped`. A run stays admitted until its result is recorded,
 so a restart submits the same command again and the coordinator keeps one
 copy. A busy Host catalog does not stop the schedule: the node logs
-`automation_schedule_unavailable` and asks again a second later. Five other
-Host failures in a row end the node, so systemd restarts it and the failure
-shows in its log; one automation whose row cannot be read is skipped and
-logged as `automation_unschedulable`. While the
-node owns the schedule it writes a heartbeat every 30 seconds, which Host
-observation reports.
+`automation_schedule_unavailable` and asks again a second later. No
+scheduler failure ends the node or its turns. From five other Host failures
+in a row the schedule is failing: the node logs `automation_schedule_failing`
+at error level, writes no heartbeat, and asks again after a wait that doubles
+to a minute; the first tick that goes well logs
+`automation_schedule_recovered` and writes the heartbeat again. One
+automation whose row cannot be read is skipped and logged as
+`automation_unschedulable`, at most every ten minutes. While the node owns
+the schedule and it is not failing, it writes a heartbeat every 30 seconds,
+which Host inspection reports as `automation_scheduler.heartbeat_ms`. Neither
+`renoa-deploy health` nor the Control Room reads the heartbeat's age, so a
+failing scheduler shows only in the node's log and as a heartbeat that stops
+advancing in Host inspection.
 
 On the coordinator host, create the node identity for its owning principal, the
 only principal that may open new tasks on the node, and exchange the

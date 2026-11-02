@@ -13,6 +13,8 @@ use super::{
 };
 use crate::{host::catalog, plugins::host::triggers::PLUGIN_OWNED};
 
+mod unschedulable;
+
 /// Every read of a run selects these columns, in the order [`run`] maps them.
 pub(super) const RUN_COLUMNS: &str = "sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,submission,output,status,failed_tool_calls,finished_at_ms";
 
@@ -105,9 +107,10 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
 /// reports it and asks again. While `plugin_running`, a plugin's run is in
 /// flight beside the scheduler, so no plugin's run is handed on or admitted:
 /// one plugin run at a time, and an agent's due run is not held up by it. A
-/// due automation whose row does not parse or whose schedule cannot be
-/// computed is left unchanged and logged as `automation_unschedulable`, and
-/// the next due one is admitted, so one bad row does not stop the others.
+/// pending run whose row does not decode, or a due automation whose row does
+/// not decode or whose schedule cannot be computed, is left unchanged and
+/// logged as `automation_unschedulable`, at most every ten minutes, and the
+/// next one is taken, so one bad row does not stop the others.
 pub(super) fn next(
     path: &Path,
     now_ms: i64,
@@ -115,15 +118,8 @@ pub(super) fn next(
 ) -> Result<Option<AutomationRun>, AutomationError> {
     let mut db = catalog::open_verified(path)?;
     let mut tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let pending = tx
-        .query_row(
-            &format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE output IS NULL AND NOT (?1 AND automation_id IN ({PLUGIN_OWNED})) ORDER BY sequence LIMIT 1"),
-            [plugin_running],
-            run,
-        )
-        .optional()?;
-    if pending.is_some() {
-        return Ok(pending);
+    if let Some(pending) = pending(&tx, plugin_running)? {
+        return Ok(Some(pending));
     }
     super::owned::converge(&tx, now_ms)?;
     let due = tx
@@ -143,13 +139,33 @@ pub(super) fn next(
             }
             Err(error) if of_its_row(&error) => {
                 attempt.rollback()?;
-                unschedulable(&automation, &error);
+                unschedulable::report("automation_id", &automation, &error.to_string());
             }
             Err(error) => return Err(error),
         }
     }
     // The converged triggers stand whether or not a run is due.
     tx.commit()?;
+    Ok(None)
+}
+
+/// The oldest run without a result whose row decodes, as [`next`] describes.
+fn pending(
+    tx: &Connection,
+    plugin_running: bool,
+) -> Result<Option<AutomationRun>, AutomationError> {
+    let mut pending = tx.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE output IS NULL AND NOT (?1 AND automation_id IN ({PLUGIN_OWNED})) ORDER BY sequence"))?;
+    let mut rows = pending.query([plugin_running])?;
+    while let Some(row) = rows.next()? {
+        match run(row) {
+            Ok(found) => return Ok(Some(found)),
+            Err(error) if decodes_its_row(&error) => {
+                let id = row.get::<_, String>(1).unwrap_or_default();
+                unschedulable::report("run_id", &id, &error.to_string());
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
     Ok(None)
 }
 
@@ -196,15 +212,12 @@ fn admit(
 }
 
 /// Whether `error` is about one automation's stored row rather than the
-/// catalog: its row does not parse, or its schedule cannot be computed.
+/// catalog: its row does not decode, or its schedule cannot be computed.
 fn of_its_row(error: &AutomationError) -> bool {
     match error {
-        AutomationError::Database(rusqlite::Error::FromSqlConversionFailure(..))
-        | AutomationError::Invalid(_)
-        | AutomationError::Json(_)
-        | AutomationError::Time(_) => true,
-        AutomationError::Database(_)
-        | AutomationError::Conflict
+        AutomationError::Database(error) => decodes_its_row(error),
+        AutomationError::Invalid(_) | AutomationError::Json(_) | AutomationError::Time(_) => true,
+        AutomationError::Conflict
         | AutomationError::NotFound
         | AutomationError::Busy
         | AutomationError::Cancelled
@@ -213,14 +226,15 @@ fn of_its_row(error: &AutomationError) -> bool {
     }
 }
 
-/// Logs a due automation left unscheduled for its row.
-fn unschedulable(automation: &str, error: &AutomationError) {
-    renoa_telemetry::event(
-        "renoa.host",
-        "warn",
-        "automation_unschedulable",
-        &serde_json::json!({ "automation_id": automation, "error": error.to_string() }),
-    );
+/// Whether `error` is a stored value its column cannot be read as.
+fn decodes_its_row(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::FromSqlConversionFailure(..)
+            | rusqlite::Error::InvalidColumnType(..)
+            | rusqlite::Error::IntegralValueOutOfRange(..)
+            | rusqlite::Error::Utf8Error(..)
+    )
 }
 
 /// Records an executed run's outcome, which ends it; see [`end`].
@@ -325,5 +339,32 @@ fn duration(ms: i64) -> String {
         (0, minutes) => format!("{minutes} min"),
         (hours, 0) => format!("{hours} h"),
         (hours, minutes) => format!("{hours} h {minutes} min"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{ffi, types::Type};
+
+    use super::{AutomationError, of_its_row};
+
+    #[test]
+    fn every_value_its_column_cannot_be_read_as_is_its_rows_and_a_catalog_failure_is_not() {
+        let invalid = vec![0xff_u8];
+        let utf8 = std::str::from_utf8(&invalid).expect_err("not UTF-8");
+        let of_a_row = [
+            rusqlite::Error::FromSqlConversionFailure(0, Type::Text, "bad".into()),
+            rusqlite::Error::InvalidColumnType(0, "name".to_owned(), Type::Blob),
+            rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX),
+            rusqlite::Error::from(utf8),
+        ];
+        for error in of_a_row {
+            assert!(of_its_row(&AutomationError::Database(error)));
+        }
+        let busy = rusqlite::Error::SqliteFailure(ffi::Error::new(ffi::SQLITE_BUSY), None);
+        assert!(!of_its_row(&AutomationError::Database(busy)));
+        assert!(!of_its_row(&AutomationError::Database(
+            rusqlite::Error::QueryReturnedNoRows
+        )));
     }
 }

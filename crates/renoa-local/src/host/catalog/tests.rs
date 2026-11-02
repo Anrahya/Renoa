@@ -865,6 +865,8 @@ fn only_a_busy_or_locked_catalog_is_busy() {
         LocalHostError::HostCatalog(HostCatalogError::Database(busy())),
         LocalHostError::Automation(AutomationError::Database(busy())),
         LocalHostError::Automation(AutomationError::Catalog(HostCatalogError::Database(busy()))),
+        // How the schedule's read of a plugin's trigger fails.
+        LocalHostError::from(crate::PluginError::Database(busy())),
     ];
     for error in &wrapped {
         assert!(error.catalog_busy(), "{error:?}");
