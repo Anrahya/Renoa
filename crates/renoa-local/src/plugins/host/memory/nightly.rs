@@ -1,5 +1,6 @@
-//! `renoa.memory`'s nightly run: at 04:00 in the notebook zone, the Host's
-//! main agent compacts every person's notebook, then dreams over it.
+//! `renoa.memory`'s nightly run: at Mnem's pass day start (11:00) in the
+//! notebook zone, while the person is asleep, the Host's main agent compacts
+//! every person's notebook, then dreams over it.
 //!
 //! The run is this plugin's trigger (see `triggers`), for the one agent that
 //! drives every notebook: the main agent, while `renoa.memory` is on for it

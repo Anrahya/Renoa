@@ -410,7 +410,7 @@ mod tests {
             connection.execute(
                 "INSERT INTO host_memory_jobs(command_id, agent_id, run_id, position, principal_id,
                     job_json, prompt, frozen_at_ms, local_time, receipt)
-                 VALUES (?1, 'agent', 'run', ?2, 'person', '{}', NULL, 0, '2026-11-03T04:00', ?3)",
+                 VALUES (?1, 'agent', 'run', ?2, 'person', '{}', NULL, 0, '2026-11-03T11:00', ?3)",
                 rusqlite::params![
                     position.to_string(),
                     i64::try_from(position).expect("a small position"),

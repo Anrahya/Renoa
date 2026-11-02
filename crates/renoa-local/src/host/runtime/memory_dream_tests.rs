@@ -77,8 +77,8 @@ if (process.env.RENOA_MODEL_ACTION !== "stream" && existsSync(new URL("./broken"
 
 /// 2026-11-02T12:00Z, a Monday afternoon: the night after is the first one.
 const NOON: &str = "2026-11-02T12:00:00Z";
-/// 04:00 on 2026-11-03 in Asia/Kolkata, the notebook zone.
-const FIRST_NIGHT: &str = "2026-11-02T22:30:00Z";
+/// 11:00 on 2026-11-03 in Asia/Kolkata, the notebook zone.
+const FIRST_NIGHT: &str = "2026-11-03T05:30:00Z";
 
 fn ms(at: &str) -> i64 {
     at.parse::<Timestamp>()
@@ -293,7 +293,7 @@ async fn a_nightly_run_compacts_then_dreams_then_writes_mind_and_moves_the_water
     assert_eq!(
         trigger.next_due_ms,
         ms(FIRST_NIGHT),
-        "04:00 in Asia/Kolkata"
+        "11:00 in Asia/Kolkata"
     );
     assert!(trigger.enabled && trigger.last_run.is_none());
 
@@ -312,7 +312,7 @@ async fn a_nightly_run_compacts_then_dreams_then_writes_mind_and_moves_the_water
     }
     let dreamed = &fixture.calls()[3];
     assert_eq!(
-        dreamed["now"], "2026-11-03T04:00",
+        dreamed["now"], "2026-11-03T11:00",
         "the frozen time, in the zone"
     );
     assert_eq!(dreamed["notes"], json!(["0", "4"]));
@@ -345,7 +345,7 @@ async fn a_nightly_run_compacts_then_dreams_then_writes_mind_and_moves_the_water
     let summary = last.summary.expect("a plugin run's summary");
     assert_eq!(summary, "compaction: 3 saved; dream: 1 dreamed.");
     assert!(
-        trigger.next_due_ms == ms("2026-11-03T22:30:00Z"),
+        trigger.next_due_ms == ms("2026-11-04T05:30:00Z"),
         "the next night is due"
     );
     let inspected = serde_json::to_string(
@@ -361,7 +361,7 @@ async fn a_nightly_run_compacts_then_dreams_then_writes_mind_and_moves_the_water
         "inspection never shows a note or an answer"
     );
 
-    let (_, quiet) = fixture.night(ms("2026-11-03T22:30:00Z")).await;
+    let (_, quiet) = fixture.night(ms("2026-11-04T05:30:00Z")).await;
     assert_eq!(quiet, RunStatus::Succeeded);
     assert_eq!(
         fixture.calls().len(),
@@ -650,7 +650,7 @@ async fn a_failed_model_call_applies_nothing_and_a_decline_counts() {
     );
 
     fixture.script(&["silent"]);
-    let (due, status) = fixture.night(ms("2026-11-03T22:30:00Z")).await;
+    let (due, status) = fixture.night(ms("2026-11-04T05:30:00Z")).await;
     assert_eq!(status, RunStatus::Succeeded);
     assert_eq!(fixture.receipts(due.run.id), [receipt("dream", "declined")]);
     assert!(
@@ -879,7 +879,7 @@ async fn there_is_no_run_with_the_plugin_off_or_without_a_main_agent() {
         RunStatus::Skipped
     );
     assert!(fixture.calls().is_empty(), "no job ran");
-    assert!(fixture.next(ms("2026-11-03T22:30:00Z")).await.is_none());
+    assert!(fixture.next(ms("2026-11-04T05:30:00Z")).await.is_none());
     let off = fixture.trigger().await;
     assert!(!off.enabled, "the trigger is disabled with its plugin");
 
@@ -888,7 +888,7 @@ async fn there_is_no_run_with_the_plugin_off_or_without_a_main_agent() {
     assert!(fixture.next(ms("2026-11-04T12:00:00Z")).await.is_none());
     let on = fixture.trigger().await;
     assert!(on.enabled && on.revision > off.revision);
-    assert_eq!(on.next_due_ms, ms("2026-11-04T22:30:00Z"));
+    assert_eq!(on.next_due_ms, ms("2026-11-05T05:30:00Z"));
 
     // A new main agent takes the trigger; the old one's stays, disabled.
     let other = agent(&fixture.host, "Scout").await;
@@ -918,7 +918,7 @@ async fn there_is_no_run_with_the_plugin_off_or_without_a_main_agent() {
     connection
         .execute("DELETE FROM host_main_agent", [])
         .expect("no main agent");
-    assert!(fixture.next(ms("2026-11-05T22:30:00Z")).await.is_none());
+    assert!(fixture.next(ms("2026-11-06T05:30:00Z")).await.is_none());
     assert!(fixture.calls().is_empty());
 }
 
@@ -928,7 +928,7 @@ async fn a_missed_night_coalesces_into_one_run_or_is_skipped_when_too_late() {
     fixture.notebook(Uuid::new_v4(), 5);
     assert!(fixture.next(ms(NOON)).await.is_none());
 
-    // Down from before 04:00 until 10:00: one run, six hours late.
+    // Down from before 11:00 until 17:00: one run, six hours late.
     let late = ms(FIRST_NIGHT) + 6 * 3_600_000;
     let (due, status) = fixture.night(late).await;
     assert_eq!(
@@ -955,7 +955,7 @@ async fn a_missed_night_coalesces_into_one_run_or_is_skipped_when_too_late() {
     );
     assert_eq!(
         fixture.trigger().await.next_due_ms,
-        ms("2026-11-06T22:30:00Z")
+        ms("2026-11-07T05:30:00Z")
     );
     assert_eq!(fixture.calls().len(), calls, "a skipped run asks nothing");
 }

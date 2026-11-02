@@ -17,10 +17,10 @@ use crate::{
 };
 
 const NIGHTS: [&str; 4] = [
-    "2026-11-03T22:30:00Z",
-    "2026-11-04T22:30:00Z",
-    "2026-11-05T22:30:00Z",
-    "2026-11-06T22:30:00Z",
+    "2026-11-04T05:30:00Z",
+    "2026-11-05T05:30:00Z",
+    "2026-11-06T05:30:00Z",
+    "2026-11-07T05:30:00Z",
 ];
 
 /// The current memory session generation of `agent`, and why it moved.
@@ -283,7 +283,7 @@ async fn a_stored_session_that_cannot_open_on_three_runs_moves_the_agent_on() {
 
     mend(&fixture);
     assert_eq!(
-        fixture.night(ms("2026-11-07T22:30:00Z")).await.1,
+        fixture.night(ms("2026-11-08T05:30:00Z")).await.1,
         RunStatus::Succeeded
     );
     assert!(session_stored(&fixture, 1));
@@ -293,7 +293,7 @@ async fn a_stored_session_that_cannot_open_on_three_runs_moves_the_agent_on() {
     super::add_notes(&memory, 4);
     fs::write(fixture.root.join("broken"), "").expect("break the model");
     assert_eq!(
-        fixture.night(ms("2026-11-08T22:30:00Z")).await.1,
+        fixture.night(ms("2026-11-09T05:30:00Z")).await.1,
         RunStatus::Failed
     );
     let later = summary(&fixture).await;

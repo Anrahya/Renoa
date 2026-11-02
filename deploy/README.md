@@ -362,7 +362,7 @@ agent, admits the `renoa.memory` plugin, on by default for every agent, and
 adds the tables for plugin-owned triggers and `renoa.memory`'s job receipts and
 memory session generations; it
 refuses to upgrade while a daily or interval automation remains. The first
-scheduler pass then creates `renoa.memory`'s nightly run: 04:00 in the main
+scheduler pass then creates `renoa.memory`'s nightly run: 11:00 (Mnem's pass day start) in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
 notebook and writing their `MIND.md`. It runs in the main agent's memory
 session, apart from its conversations; inventory shows its next due time and the last

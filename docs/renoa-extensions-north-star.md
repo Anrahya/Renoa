@@ -771,16 +771,16 @@ last run's summary, which names job kinds and outcomes and never note text.
 
 ### `renoa.memory`'s nightly run
 
-`renoa.memory` wants one trigger: 04:00 every day in the notebook zone, for
+`renoa.memory` wants one trigger: Mnem's pass day start, 11:00, every day in the notebook zone, for
 the Host's main agent while the plugin is on for it. When the main agent
 changes, the next convergence disables the old agent's trigger and creates
 the new one's; when the plugin is turned off, the trigger is disabled, and a
 run already started stops before its next job. A cron schedule names an IANA
 zone, so a notebook zone without one, such as a fixed offset, a `TZ` rule, or
 a zone file with no name such as a copied `/etc/localtime`, is scheduled in
-UTC at the minute its own offset reads 04:00, the minute the Dream's `Now:`
+UTC at the minute its own offset reads 11:00, the minute the Dream's `Now:`
 shows; convergence moves it when that offset changes, so a rule zone still
-runs once a night at 04:00 on each side of a daylight-saving change. A Host
+runs once a night at 11:00 on each side of a daylight-saving change. A Host
 down across both the change and the old fire time skips that night under
 this fallback, since the moved schedule is due again only from when it comes
 back; an IANA zone's missed night catches up instead.

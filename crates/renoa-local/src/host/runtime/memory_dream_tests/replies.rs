@@ -119,7 +119,7 @@ async fn a_cut_reply_with_no_text_applies_nothing_and_stops_only_its_notebook() 
         ]
     );
     assert_eq!(dream::read_watermark(second.dir()).expect("watermark"), 5);
-    for night in ["2026-11-03T22:30:00Z", "2026-11-04T22:30:00Z"] {
+    for night in ["2026-11-04T05:30:00Z", "2026-11-05T05:30:00Z"] {
         fixture.script(&["cut:", "cut:"]);
         let (due, _) = fixture.night(ms(night)).await;
         assert_eq!(
@@ -177,7 +177,7 @@ async fn compaction_stops_at_its_bound_and_the_rest_waits_for_the_next_night() {
     assert_eq!(bounded[0].1["turns"], pass::COMPACTION_TURNS);
     assert!(memory.compaction_job().expect("job").is_some());
 
-    fixture.night(ms("2026-11-03T22:30:00Z")).await;
+    fixture.night(ms("2026-11-04T05:30:00Z")).await;
     assert!(
         fixture.kinds().len() > kinds.len(),
         "the next night goes on"
