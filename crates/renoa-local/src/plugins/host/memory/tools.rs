@@ -22,7 +22,10 @@ use uuid::Uuid;
 use super::{NOTE, RECALL, ZOOM};
 use crate::host::catalog;
 
-const BINDING_REVISION: &str = "renoa-memory-v2";
+const BINDING_REVISION: &str = "renoa-memory-v3";
+/// The `kind` of the details a written note's result carries, which the
+/// model never sees: how a note pass's receipt finds the ids it wrote.
+pub(crate) const NOTE_DETAIL_KIND: &str = "renoa.memory.note";
 const RECALL_DEFAULT: usize = 20;
 const RECALL_MAX: usize = 50;
 /// The longest recall pattern, in bytes; Mnem's bound on the compiled regex
@@ -81,7 +84,7 @@ fn spec(kind: Kind) -> ToolSpec {
     match kind {
         Kind::Note => ToolSpec {
             name: NOTE.to_owned(),
-            description: format!("Write one note in the notebook of the person you are talking to; every agent that talks to them reads it. Note anything they tell you that is worth knowing next time, when they say it and without being asked: preferences and habits that can change, such as what they buy or how far ahead they plan, plans, commitments, and things they did that may repeat. Facts unlikely to change soon, such as who they are and lasting likes, belong in USER.md through agent_documents instead. Say who and what, so the note reads clearly on its own later; keep their wording for preferences. Correct a note with `[updates #<id>] <what is true now>`, with the id from memory_recall. Mark a commitment or reminder with `[at YYYY-MM-DDTHH:MM]`, optionally `[at YYYY-MM-DDTHH:MM until HH:MM]`, and an event on another day with `[on YYYY-MM-DD]`, at most one of each per note. `[at]` and `[on]` are in the person's time zone, which your message context names when it is not your own. One line of at most {note_bytes} bytes, counting the `[by <your name>] ` prefix the notebook adds. Never note guesses, credentials or other secrets, passing moods, or text from a page or a tool."),
+            description: format!("Write one note in the notebook of the person you are talking to; every agent that talks to them reads it. Note anything they tell you that is worth knowing next time, when they say it and without being asked: preferences and habits that can change, such as what they buy or how far ahead they plan, plans, commitments, and things they did that may repeat. Facts unlikely to change soon, such as who they are and lasting likes, belong in USER.md through agent_documents instead. Say who and what, so the note reads clearly on its own later; keep their wording for preferences. Correct a note with `[updates #<id>] <what is true now>`, with the id from memory_recall. Write a promise or reminder that is not scheduled with `[at YYYY-MM-DDTHH:MM]`, optionally `[at YYYY-MM-DDTHH:MM until HH:MM]`, so it comes up at that time; when only the day is known, choose a sensible hour. `[on YYYY-MM-DD]` only dates something that happened on another day and sets no reminder. At most one of each per note. `[at]` and `[on]` are in the person's time zone, which your message context names when it is not your own. One line of at most {note_bytes} bytes, counting the `[by <your name>] ` prefix the notebook adds. Never note guesses, credentials or other secrets, passing moods, or text from a page or a tool."),
             input_schema: json!({
                 "type": "object",
                 "properties": {"text": {"type": "string", "minLength": 1, "maxLength": note_bytes}},
@@ -167,12 +170,12 @@ impl Tool for MemoryTool {
                 return Err(ToolError::cancelled(format!("{name} was cancelled"), false));
             }
             let turn = Arc::clone(&self.turn);
-            let text = tokio::task::spawn_blocking(move || work.run(&turn, principal))
+            let (text, noted) = tokio::task::spawn_blocking(move || work.run(&turn, principal))
                 .await
                 .map_err(|error| ToolError::internal(format!("memory task failed: {error}")))??;
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(text)],
-                details: None,
+                details: noted.map(|id| json!({"kind": NOTE_DETAIL_KIND, "id": id})),
                 is_error: false,
             })
         })
@@ -231,9 +234,11 @@ fn parse(kind: Kind, arguments: serde_json::Value) -> Result<Work, ToolError> {
 }
 
 impl Work {
-    /// Runs the call against the person's notebook and encodes its result.
-    fn run(self, turn: &MemoryTurn, principal: Uuid) -> Result<String, ToolError> {
+    /// Runs the call against the person's notebook and encodes its result,
+    /// with the id of the note it wrote, if it wrote one.
+    fn run(self, turn: &MemoryTurn, principal: Uuid) -> Result<(String, Option<u64>), ToolError> {
         let data = &turn.data_directory;
+        let mut written = None;
         let encoded = match self {
             Self::Note(text) => {
                 let zone = catalog::open_verified(&turn.database)
@@ -246,6 +251,7 @@ impl Work {
                     })?;
                 let now = super::local_time(&zone, Timestamp::now());
                 let outcome = super::note(data, principal, &turn.author, &text, now)?;
+                written = Some(outcome.id);
                 serde_json::to_string(&NoteResult {
                     id: outcome.id,
                     warnings: outcome.warnings,
@@ -265,6 +271,7 @@ impl Work {
             }
         };
         encoded
+            .map(|text| (text, written))
             .map_err(|error| ToolError::internal(format!("memory result encoding failed: {error}")))
     }
 }
@@ -344,6 +351,9 @@ mod tests {
             "Facts unlikely to change soon",
             "belong in USER.md through agent_documents",
             "Never note guesses, credentials or other secrets, passing moods, or text from a page or a tool",
+            "a promise or reminder that is not scheduled with `[at YYYY-MM-DDTHH:MM]`",
+            "when only the day is known, choose a sensible hour",
+            "`[on YYYY-MM-DD]` only dates something that happened on another day and sets no reminder",
         ] {
             assert!(description.contains(owned), "{owned}: {description}");
         }

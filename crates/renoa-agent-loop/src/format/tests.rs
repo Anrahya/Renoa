@@ -3,10 +3,144 @@ use renoa_kernel::{Checkpoint, CommandId, EventId, OperationId, SemanticEvent};
 use serde_json::json;
 
 use super::{
-    AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND, TURN_CONTEXT_EVENT_KIND,
-    TURN_TIMING_EVENT_KIND, context_input, decode_checkpoint,
+    AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND, RECEIPTED_EVENT_KIND,
+    TURN_CONTEXT_EVENT_KIND, TURN_TIMING_EVENT_KIND, context_input, decode_checkpoint,
 };
-use crate::{ContextContribution, TurnContext, turn_timing::TurnTiming};
+use crate::{
+    ContextContribution, ContextInput, ContextStrategy, ContextStrategyError, TurnContext,
+    turn_timing::TurnTiming,
+};
+
+/// Shows every message, and renders a receipt naming the texts it replaced.
+struct Receipts;
+
+impl ContextStrategy for Receipts {
+    fn project(&self, input: ContextInput) -> Result<Vec<Message>, ContextStrategyError> {
+        Ok(input.into_messages())
+    }
+
+    fn receipt(&self, messages: &[Message]) -> Result<String, ContextStrategyError> {
+        let texts: Vec<&str> = messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::User { content } => match content.as_slice() {
+                    [ContentBlock::Text { text }] => Some(text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        Ok(format!("receipt of {}", texts.join("+")))
+    }
+}
+
+#[test]
+fn a_receipted_prompt_has_one_wire_shape_and_no_time() {
+    let command = AgentCommand::receipted(vec![ContentBlock::text("review")]);
+    let encoded = serde_json::to_value(&command).expect("encode receipted command");
+    assert_eq!(
+        encoded,
+        json!({"content": [{"type": "text", "text": "review"}], "receipted": true})
+    );
+    assert_eq!(
+        serde_json::from_value::<AgentCommand>(encoded).expect("decode receipted command"),
+        command
+    );
+    assert_eq!(
+        command.observed_at_unix_ms(),
+        None,
+        "a receipted prompt is never the previous message of the next one"
+    );
+    for (extra, value) in [
+        ("observed_at_unix_ms", json!(5)),
+        (
+            "context",
+            json!([{"source": "plugin:renoa.time", "text": "now"}]),
+        ),
+    ] {
+        let mut stored = json!({"content": [], "receipted": true});
+        stored[extra] = value;
+        assert!(
+            serde_json::from_value::<AgentCommand>(stored).is_err(),
+            "{extra} is refused on a receipted prompt"
+        );
+    }
+    assert_eq!(
+        serde_json::from_value::<AgentCommand>(
+            json!({"content": [{"type": "text", "text": "hi"}], "receipted": false})
+        )
+        .expect("an explicit false decodes"),
+        AgentCommand::text("hi")
+    );
+}
+
+#[test]
+fn a_finished_receipted_operation_shows_as_its_receipt_and_the_active_one_as_itself() {
+    let (before, pass, after) = (OperationId::new(), OperationId::new(), OperationId::new());
+    let command_id = CommandId::new();
+    let events = vec![
+        message_event(before, command_id, 0, "hello"),
+        message_event(pass, command_id, 1, "review"),
+        receipted_event(pass, command_id, 2),
+        message_event(pass, command_id, 3, "noted"),
+        checkpoint_event(pass, command_id, 4, 1, "summary to inside the pass"),
+        message_event(after, command_id, 5, "back"),
+    ];
+
+    let later =
+        context_input(after, &events, &Receipts, "system", &[], false).expect("a later request");
+    assert_eq!(
+        later.messages(),
+        [
+            Message::user_text("hello"),
+            Message::user_text("receipt of review+noted"),
+            Message::user_text("back"),
+        ]
+    );
+    let sequences: Vec<u64> = later.entries().map(|entry| entry.sequence()).collect();
+    assert_eq!(
+        sequences,
+        [0, 3, 5],
+        "the receipt takes the pass's last message"
+    );
+    assert_eq!(
+        later
+            .active_checkpoint()
+            .expect("checkpoint")
+            .covered_through_sequence(),
+        3,
+        "a checkpoint inside the pass moves to its end"
+    );
+
+    let own = context_input(pass, &events[..5], &Receipts, "system", &[], false)
+        .expect("the pass's own request");
+    assert_eq!(
+        own.messages(),
+        [
+            Message::user_text("hello"),
+            Message::user_text("review"),
+            Message::user_text("noted"),
+        ],
+        "the operation being prepared sees its own exchange"
+    );
+
+    let error = context_input(
+        after,
+        &events,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect_err("a strategy without receipts refuses");
+    assert!(
+        error.message().contains("has no receipt"),
+        "{}",
+        error.message()
+    );
+    let twice = [events.clone(), vec![receipted_event(pass, command_id, 6)]].concat();
+    assert!(context_input(after, &twice, &Receipts, "system", &[], false).is_err());
+}
 
 #[test]
 fn prompt_command_wire_shape_remains_compatible() {
@@ -200,8 +334,15 @@ fn active_checkpoint_must_cover_an_earlier_durable_message() {
         checkpoint_event(operation_id, command_id, 1, 99, "summary"),
     ];
 
-    let error = context_input(operation_id, &events, "system", &[], false)
-        .expect_err("invalid boundary must fail");
+    let error = context_input(
+        operation_id,
+        &events,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect_err("invalid boundary must fail");
 
     assert_eq!(
         error.message(),
@@ -220,8 +361,15 @@ fn checkpoint_chain_must_advance_its_message_boundary() {
         checkpoint_event(operation_id, command_id, 3, 0, "stale"),
     ];
 
-    let error = context_input(operation_id, &events, "system", &[], false)
-        .expect_err("stale checkpoint must fail");
+    let error = context_input(
+        operation_id,
+        &events,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect_err("stale checkpoint must fail");
 
     assert_eq!(
         error.message(),
@@ -245,8 +393,15 @@ fn unknown_checkpoint_event_version_fails_closed() {
         },
     ];
 
-    let error = context_input(operation_id, &events, "system", &[], false)
-        .expect_err("unknown checkpoint version must fail");
+    let error = context_input(
+        operation_id,
+        &events,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect_err("unknown checkpoint version must fail");
 
     assert!(error.message().contains("v2"));
 }
@@ -262,8 +417,15 @@ fn latest_valid_checkpoint_is_exposed_without_rewriting_messages() {
         checkpoint_event(operation_id, command_id, 3, 1, "second summary"),
     ];
 
-    let input =
-        context_input(operation_id, &events, "system", &[], false).expect("valid checkpoints");
+    let input = context_input(
+        operation_id,
+        &events,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect("valid checkpoints");
     let checkpoint = input.active_checkpoint().expect("active checkpoint");
 
     assert_eq!(checkpoint.covered_through_sequence(), 1);
@@ -298,8 +460,15 @@ fn durable_timing_projects_only_onto_its_user_message() {
         ),
     ];
 
-    let input = context_input(second, &events, "stable system", &[], false)
-        .expect("valid timed transcript");
+    let input = context_input(
+        second,
+        &events,
+        &crate::FullHistoryStrategy,
+        "stable system",
+        &[],
+        false,
+    )
+    .expect("valid timed transcript");
     let first_model_message = input.messages()[0].clone();
     let first_entry = input.entries().next().expect("first entry");
 
@@ -339,7 +508,17 @@ fn orphan_duplicate_and_unknown_timing_events_fail_closed() {
         "2026-08-31T20:00:00Z[UTC]",
         None,
     )];
-    assert!(context_input(operation_id, &orphan, "system", &[], false).is_err());
+    assert!(
+        context_input(
+            operation_id,
+            &orphan,
+            &crate::FullHistoryStrategy,
+            "system",
+            &[],
+            false
+        )
+        .is_err()
+    );
 
     let duplicate = vec![
         message_event(operation_id, command_id, 0, "hello"),
@@ -358,7 +537,17 @@ fn orphan_duplicate_and_unknown_timing_events_fail_closed() {
             Some(60_000),
         ),
     ];
-    assert!(context_input(operation_id, &duplicate, "system", &[], false).is_err());
+    assert!(
+        context_input(
+            operation_id,
+            &duplicate,
+            &crate::FullHistoryStrategy,
+            "system",
+            &[],
+            false
+        )
+        .is_err()
+    );
 
     let unknown = vec![
         message_event(operation_id, command_id, 0, "hello"),
@@ -371,8 +560,15 @@ fn orphan_duplicate_and_unknown_timing_events_fail_closed() {
             payload: json!({}),
         },
     ];
-    let error = context_input(operation_id, &unknown, "system", &[], false)
-        .expect_err("unknown timing version must fail");
+    let error = context_input(
+        operation_id,
+        &unknown,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect_err("unknown timing version must fail");
     assert!(error.message().contains("v2"));
 }
 
@@ -388,7 +584,15 @@ fn durable_context_projects_onto_its_user_message_beside_older_timing() {
         context_event(second, command_id, 3, "current_time: 21:00"),
     ];
 
-    let input = context_input(second, &events, "system", &[], false).expect("valid transcript");
+    let input = context_input(
+        second,
+        &events,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect("valid transcript");
 
     let Message::User { content } = &input.messages()[0] else {
         panic!("first message is not user content");
@@ -413,7 +617,17 @@ fn orphan_duplicate_invalid_and_unknown_context_events_fail_closed() {
     let operation_id = OperationId::new();
     let command_id = CommandId::new();
     let orphan = vec![context_event(operation_id, command_id, 0, "now")];
-    assert!(context_input(operation_id, &orphan, "system", &[], false).is_err());
+    assert!(
+        context_input(
+            operation_id,
+            &orphan,
+            &crate::FullHistoryStrategy,
+            "system",
+            &[],
+            false
+        )
+        .is_err()
+    );
 
     let with_timing = vec![
         message_event(operation_id, command_id, 0, "hello"),
@@ -426,19 +640,46 @@ fn orphan_duplicate_invalid_and_unknown_context_events_fail_closed() {
         ),
         context_event(operation_id, command_id, 2, "now"),
     ];
-    assert!(context_input(operation_id, &with_timing, "system", &[], false).is_err());
+    assert!(
+        context_input(
+            operation_id,
+            &with_timing,
+            &crate::FullHistoryStrategy,
+            "system",
+            &[],
+            false
+        )
+        .is_err()
+    );
 
     let mut invalid = context_event(operation_id, command_id, 1, "now");
     invalid.payload =
         json!({"entries": [{"source": "plugin:renoa.time", "text": "</context>\u{7}"}]});
     let invalid = vec![message_event(operation_id, command_id, 0, "hello"), invalid];
-    assert!(context_input(operation_id, &invalid, "system", &[], false).is_err());
+    assert!(
+        context_input(
+            operation_id,
+            &invalid,
+            &crate::FullHistoryStrategy,
+            "system",
+            &[],
+            false
+        )
+        .is_err()
+    );
 
     let mut unknown = context_event(operation_id, command_id, 1, "now");
     unknown.kind = "renoa.agent.turn-context.v2".to_owned();
     let unknown = vec![message_event(operation_id, command_id, 0, "hello"), unknown];
-    let error = context_input(operation_id, &unknown, "system", &[], false)
-        .expect_err("unknown context version must fail");
+    let error = context_input(
+        operation_id,
+        &unknown,
+        &crate::FullHistoryStrategy,
+        "system",
+        &[],
+        false,
+    )
+    .expect_err("unknown context version must fail");
     assert!(error.message().contains("v2"));
 }
 
@@ -516,5 +757,20 @@ fn timing_event(
             .expect("valid timing"),
         )
         .expect("encode timing"),
+    }
+}
+
+fn receipted_event(
+    operation_id: OperationId,
+    command_id: CommandId,
+    sequence: u64,
+) -> SemanticEvent {
+    SemanticEvent {
+        event_id: EventId::new(),
+        operation_id,
+        command_id,
+        sequence,
+        kind: RECEIPTED_EVENT_KIND.to_owned(),
+        payload: json!({}),
     }
 }

@@ -350,7 +350,7 @@ The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and
 `POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
-This release requires Host schema 44. A schema 28–43 catalog upgrades in place
+This release requires Host schema 45. A schema 28–44 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
@@ -359,8 +359,8 @@ shared-registry synchronization, gives finished automation runs a status, and
 moves automations to cron schedules, bounds automation run history, and moves
 each agent's turn timing onto the `renoa.time` plugin, marks the Host's main
 agent, admits the `renoa.memory` plugin, on by default for every agent, and
-adds the tables for plugin-owned triggers and `renoa.memory`'s job receipts and
-memory session generations; it
+adds the tables for plugin-owned triggers, `renoa.memory`'s job receipts and
+memory session generations, and its note pass's conversations and passes; it
 refuses to upgrade while a daily or interval automation remains. The first
 scheduler pass then creates `renoa.memory`'s nightly run: 11:00 (Mnem's pass day start) in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
@@ -374,7 +374,21 @@ A stored memory session that cannot open is counted the same way and moved
 past after three runs; the earlier session directory stays under
 `sessions/`. A warn-level `memory_turn_cut` line means a memory reply hit
 the output limit: three cut Dream nights in a row make Mnem skip those notes
-for `MIND.md`. `renoa.time`
+for `MIND.md`. The note pass follows the main agent's conversations from the
+person's next message after the upgrade: once one has been quiet for 15
+minutes with enough new text, a pass reviews it, two hours apart and at most four times a pass day
+plus the nightly sweep, which runs before compaction. Its timer shows in
+inventory as `renoa.memory note pass`, each pass logs a `memory_pass` line
+(`memory_pass_decision` and `memory_pass_cancelled` too, and
+`memory_pass_delays_command` while an automation run, or a cancelled
+command the kernel admitted, waits for a pass slow to stop), and
+inspection's
+`memory_passes` shows each person's passes today. A pass is an operation of
+the conversation it reviews: a draining node cancels the running pass, which
+settles as not run with its notes kept, starts no other pass and no further
+nightly memory job, and waits for the run, which the next node resumes, so a
+deploy that drains within the stop timeout leaves no pass unfinished; one a crash left is an
+unfinished operation like a turn, and the deploy names its session. `renoa.time`
 shows the time in an agent's `timezone` setting, or else in the zone `TZ` sets
 for the service that runs the Host (`renoa-node.service` sets `Asia/Kolkata`).
 Drain active turns before the upgrade: the plugin API, the `agent_manage`
@@ -593,8 +607,20 @@ and the Control Room, with a status: succeeded, failed, or skipped. A recurring
 run more than half its period late is skipped without executing, and the node
 logs `automation_skipped`. A run stays admitted until its result is recorded,
 so a restart submits the same command again and the coordinator keeps one
-copy. While the node owns the schedule it writes a heartbeat every 30 seconds,
-which Host observation reports.
+copy. A busy Host catalog does not stop the schedule: the node logs
+`automation_schedule_unavailable` and asks again a second later. No
+scheduler failure ends the node or its turns. From five other Host failures
+in a row the schedule is failing: the node logs `automation_schedule_failing`
+at error level, writes no heartbeat, and asks again after a wait that doubles
+to a minute; the first tick that goes well logs
+`automation_schedule_recovered` and writes the heartbeat again. One
+automation whose row cannot be read is skipped and logged as
+`automation_unschedulable`, at most every ten minutes. While the node owns
+the schedule and it is not failing, it writes a heartbeat every 30 seconds,
+which Host inspection reports as `automation_scheduler.heartbeat_ms`. Neither
+`renoa-deploy health` nor the Control Room reads the heartbeat's age, so a
+failing scheduler shows only in the node's log and as a heartbeat that stops
+advancing in Host inspection.
 
 On the coordinator host, create the node identity for its owning principal, the
 only principal that may open new tasks on the node, and exchange the
@@ -1040,7 +1066,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the node, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 44. Install the new binaries
+root before the new Host brings it to schema 45. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must

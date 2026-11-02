@@ -1,12 +1,13 @@
 //! The `triggers` contribution point: a schedule a compiled plugin owns.
 //!
 //! A plugin's trigger is a Host automation that no agent created. The
-//! plugin says, from the catalog, which agent it runs for and on what
-//! schedule ([`wanted`]); the Host's scheduler converges the automation to
-//! that before it admits due runs, and hands each run of it back to the
-//! plugin ([`run`]) instead of sending it to the agent as a message. The
-//! scheduler's coalescing and lateness rules hold for it as for any cron
-//! automation.
+//! plugin says, from the catalog, which triggers it keeps, for which agent
+//! and on what schedule ([`wanted`]); the Host's scheduler converges the
+//! automations to that before it admits due runs, and hands each run of one
+//! back to the plugin ([`run`]) instead of sending it to the agent as a
+//! message. The scheduler's coalescing and lateness rules hold for it as for
+//! any automation, except that a trigger's one-time schedule may already be
+//! due when it is converged: its plugin, not an agent, set the time.
 //!
 //! No agent lists, reads, changes, or runs a plugin's automation, and its
 //! runs are not the agent's results: every agent-facing query leaves out
@@ -24,9 +25,8 @@ use crate::{
     AutomationRun, AutomationSpec, LocalHost, LocalHostError, RunStatus, plugins::PluginError,
 };
 
-/// The automations plugins own, one per plugin and agent it ever ran for. A
-/// row is kept, disabled, when its plugin stops running for that agent, so
-/// its runs stay with it.
+/// The automations plugins own, each for one agent. A row is kept, disabled,
+/// when its plugin no longer wants it, so its runs stay with it.
 pub(crate) const TRIGGERS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_plugin_triggers (
         automation_id TEXT PRIMARY KEY REFERENCES host_automations(id),
         plugin_id TEXT NOT NULL CHECK (plugin_id IN ('renoa.memory'))
@@ -40,27 +40,42 @@ pub(crate) fn initialize(transaction: &rusqlite::Transaction<'_>) -> rusqlite::R
     transaction.execute_batch(TRIGGERS_TABLE)
 }
 
-/// What `plugin`'s trigger should be as of `now_ms`: the automation it runs,
-/// enabled, for one agent; `None` while it runs for no agent.
+/// The triggers `plugin` keeps as of `now_ms`, each the automation it is and
+/// what it should be; every other one it owns is disabled.
 pub(crate) fn wanted(
     plugin: HostPluginId,
     db: &Connection,
     now_ms: i64,
-) -> Result<Option<AutomationSpec>, PluginError> {
+) -> Result<Vec<(Uuid, AutomationSpec)>, PluginError> {
     match plugin {
-        HostPluginId::Memory => memory::nightly::wanted(db, now_ms),
+        HostPluginId::Memory => Ok([
+            memory::nightly::wanted(db, now_ms)?
+                .map(|spec| (automation_id(plugin, spec.agent_id), spec)),
+            memory::note_pass::wanted(db)?,
+        ]
+        .into_iter()
+        .flatten()
+        .collect()),
         HostPluginId::Agents
         | HostPluginId::Automations
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Time => Ok(None),
+        | HostPluginId::Time => Ok(Vec::new()),
     }
 }
 
-/// The automation `plugin`'s trigger is for `agent`.
+/// The automation `plugin`'s first trigger is for `agent`.
 pub(crate) fn automation_id(plugin: HostPluginId, agent: AgentId) -> Uuid {
     crate::stable_id::stable_id(&format!("renoa.plugin.trigger.v1:{}:{agent}", plugin.id()))
+}
+
+/// The automation `plugin`'s trigger `name` is for `agent`.
+pub(crate) fn automation_id_named(plugin: HostPluginId, agent: AgentId, name: &str) -> Uuid {
+    crate::stable_id::stable_id(&format!(
+        "renoa.plugin.trigger.v1:{}:{agent}:{name}",
+        plugin.id()
+    ))
 }
 
 /// Records that `plugin` owns `automation`, inside the transaction that
@@ -128,6 +143,9 @@ pub(crate) async fn run(
     now_ms: i64,
 ) -> Result<Ended, LocalHostError> {
     match plugin {
+        HostPluginId::Memory if run.automation_id == memory::note_pass::timer_id(run.agent_id) => {
+            memory::note_pass::run(host, run, now_ms).await
+        }
         HostPluginId::Memory => memory::nightly::run(host, run, now_ms).await,
         HostPluginId::Agents
         | HostPluginId::Automations

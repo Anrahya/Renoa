@@ -180,6 +180,23 @@ message payload itself stays unchanged, so surface replay does not show Host
 bookkeeping. Reconstructing old turns with their original observations also
 keeps prior model-message prefixes byte-stable when a new turn is appended.
 
+A receipted prompt, one the Host admits on its own behalf with no time or
+context, records a marker on its operation:
+
+```text
+renoa.agent.receipted.v1   {}
+```
+
+An operation is marked at most once, and a receipted operation carries no
+turn timing or context; anything else, or an unknown version, fails closed.
+Every request after a marked operation finishes shows its whole exchange as
+one user message, the receipt the context strategy renders from the
+operation's own messages, at the sequence of its last message; a checkpoint
+that ended inside the operation moves to that end. The operation being
+prepared always sees its own exchange, the journal keeps every message, and
+surface history leaves the marked exchange out. A strategy that renders no
+receipt fails the request.
+
 An activated portable summary is a separate semantic event with kind:
 
 ```text
@@ -228,7 +245,9 @@ compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 14 gives a context summary its own model effect binding,
+Loop binding revision 15 adds the receipted prompt command and the
+`renoa.agent.receipted.v1` marker, and shows a finished marked operation as
+its receipt. Revision 14 gives a context summary its own model effect binding,
 `renoa.agent.compaction`, beside `renoa.agent.model`; both run the same model at
 the same revision. Its adapter never reports an assistant message, so no
 observer can present a summary as a reply. A summary effect saved under

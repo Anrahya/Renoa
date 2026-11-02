@@ -22,8 +22,8 @@ pub(super) struct MemoryJob {
     pub(super) frozen_at_ms: i64,
 }
 
-/// Nobody watches a memory job live; its trace records it.
-struct Unwatched;
+/// Nobody watches a memory job or a note pass live; its trace records it.
+pub(super) struct Unwatched;
 
 impl AgentEventSink for Unwatched {
     fn emit(&self, _: AgentEvent) -> BoxFuture<'_, ()> {
@@ -48,6 +48,7 @@ impl AgentSession {
         prompt: &str,
         frozen_at_ms: i64,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
+        let _claim = self.host.claims.surface_uncancelled(self.id).await?;
         self.execute(
             request_id,
             SessionCommand::MemoryJob(MemoryJob {

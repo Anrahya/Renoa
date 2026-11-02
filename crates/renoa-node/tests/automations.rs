@@ -492,6 +492,47 @@ async fn a_run_too_late_for_its_schedule_is_skipped_without_executing() {
     .expect("skipped automation test timed out");
 }
 
+#[tokio::test]
+async fn a_catalog_busy_past_its_timeout_delays_the_schedule_without_ending_it() {
+    timeout(Duration::from_secs(40), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let automation = create(&host, fixture.agent_id, "Write the digest.").await;
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        // Another writer holds the catalog past the scheduler's five second
+        // busy timeout.
+        let catalog = fixture.data.join("state/host.sqlite3");
+        tokio::task::spawn_blocking(move || {
+            let db = rusqlite::Connection::open(catalog).expect("open Host catalog");
+            db.execute_batch("BEGIN EXCLUSIVE")
+                .expect("hold the catalog");
+            std::thread::sleep(Duration::from_secs(7));
+            db.execute_batch("COMMIT").expect("let the catalog go");
+        })
+        .await
+        .expect("the other writer");
+        assert!(
+            !node_task.is_finished(),
+            "the scheduler outlives a busy catalog"
+        );
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+        assert_eq!(
+            result_of(&host, fixture.agent_id, run).await,
+            "Digest written."
+        );
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("busy catalog test timed out");
+}
+
 /// Starts a node that owns the automation schedule.
 fn deletion_marks(fixture: &HostFixture) -> i64 {
     rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
@@ -652,4 +693,163 @@ fn completed(events: &[TaskEvent]) -> bool {
                 terminal: ExecutionTerminal::Completed
             })
     )
+}
+
+/// The scheduler's heartbeat, read straight from the catalog.
+fn heartbeat(catalog: &rusqlite::Connection) -> Option<i64> {
+    use rusqlite::OptionalExtension as _;
+
+    catalog
+        .query_row(
+            "SELECT heartbeat_ms FROM host_automation_scheduler WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .expect("read the heartbeat")
+}
+
+#[tokio::test]
+async fn a_schedule_that_keeps_failing_stops_its_heartbeat_and_leaves_turns_running() {
+    Box::pin(timeout(Duration::from_secs(150), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        let catalog = rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
+            .expect("open Host catalog");
+        while heartbeat(&catalog).is_none() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let mut surface = system.connect_surface().await;
+        attach(&mut surface, system.task_id).await;
+        let mut sender = system.connect_surface().await;
+        submit_when_node_is_online(
+            &mut sender,
+            system.task_id,
+            CommandId::new(),
+            "Hold through reconnect.",
+        )
+        .await;
+        wait_for_path(&fixture.started()).await;
+
+        // Every tick of the schedule now fails, and would fail again.
+        catalog
+            .execute_batch(
+                "ALTER TABLE host_automation_deletions RENAME TO host_automation_deletions_gone",
+            )
+            .expect("break the schedule");
+        // Past the fifth failure in a row.
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        assert!(!node_task.is_finished(), "the node outlives its schedule");
+        let failing_since = heartbeat(&catalog);
+        fixture.release();
+        let events = collect_through_terminal(&mut surface).await;
+        assert!(completed(&events), "the turn in flight finished");
+
+        // A heartbeat falls due while the schedule is failing.
+        tokio::time::sleep(Duration::from_secs(32)).await;
+        assert_eq!(
+            heartbeat(&catalog),
+            failing_since,
+            "a failing schedule writes no heartbeat"
+        );
+        assert!(!node_task.is_finished(), "the node is still up");
+
+        catalog
+            .execute_batch(
+                "ALTER TABLE host_automation_deletions_gone RENAME TO host_automation_deletions",
+            )
+            .expect("mend the schedule");
+        while heartbeat(&catalog) == failing_since {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    }))
+    .await
+    .expect("failing schedule test timed out");
+}
+
+#[tokio::test]
+async fn an_automation_whose_row_cannot_be_read_does_not_stop_the_others() {
+    use rusqlite::OptionalExtension as _;
+
+    timeout(Duration::from_secs(30), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let now = now_ms();
+        let broken = armed(&host, fixture.agent_id, "Broken.", now).await;
+        let working = armed(&host, fixture.agent_id, "Write the digest.", now).await;
+        // Both are due; the broken one first, and its schedule does not parse.
+        let db = rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
+            .expect("open Host catalog");
+        db.execute(
+            "UPDATE host_automations SET schedule_json = '{\"kind\":\"nope\"}', next_due_ms = ?2
+             WHERE id = ?1",
+            rusqlite::params![broken.id.to_string(), now - 2_000],
+        )
+        .expect("break one automation");
+        db.execute(
+            "UPDATE host_automations SET next_due_ms = ?2 WHERE id = ?1",
+            rusqlite::params![working.id.to_string(), now - 1_000],
+        )
+        .expect("make the other due");
+        // And an admitted run of the broken one whose row does not decode: a
+        // status without its output.
+        db.execute(
+            "INSERT INTO host_automation_runs
+             (id, automation_id, agent_id, due_ms, admitted_at_ms, submission, status)
+             VALUES (?1, ?2, ?3, ?4, ?4, 'Broken.', 'failed')",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                broken.id.to_string(),
+                fixture.agent_id.to_string(),
+                now - 3_000,
+            ],
+        )
+        .expect("break one admitted run");
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        let output = loop {
+            let finished: Option<String> = db
+                .query_row(
+                    "SELECT output FROM host_automation_runs
+                     WHERE automation_id = ?1 AND output IS NOT NULL",
+                    [working.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .expect("the working one's run");
+            if let Some(output) = finished {
+                break output;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(
+            output, "Digest written.",
+            "the working automation ran past the broken one"
+        );
+        let left: i64 = db
+            .query_row(
+                "SELECT count(*) FROM host_automation_runs WHERE automation_id = ?1",
+                [broken.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("the broken one's runs");
+        assert_eq!(left, 1, "the broken one is left as it is");
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("broken automation test timed out");
 }

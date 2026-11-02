@@ -80,7 +80,7 @@ async fn a_run_later_than_its_schedule_allows_is_skipped_and_the_schedule_moves_
     .await;
     let now = automation.next_due_ms + 3 * HOUR + 60_000;
 
-    let skipped = runs::next(&h.config.database, now)
+    let skipped = runs::next(&h.config.database, now, false)
         .expect("admission")
         .expect("the late occurrence is recorded");
     assert_eq!(
@@ -93,7 +93,7 @@ async fn a_run_later_than_its_schedule_allows_is_skipped_and_the_schedule_moves_
         })
     );
     assert_eq!(
-        runs::next(&h.config.database, now).expect("admission"),
+        runs::next(&h.config.database, now, false).expect("admission"),
         None,
         "nothing is left to run until the next occurrence"
     );
@@ -110,7 +110,7 @@ async fn a_run_later_than_its_schedule_allows_is_skipped_and_the_schedule_moves_
 async fn a_run_is_told_its_automation_and_due_time_and_how_late_it_started() {
     let (_d, h, parent, child) = fixture().await;
     let automation = create(&h, parent, child, cron("30 9 * * *", "Asia/Kolkata")).await;
-    let on_time = runs::next(&h.config.database, automation.next_due_ms + 60_000)
+    let on_time = runs::next(&h.config.database, automation.next_due_ms + 60_000, false)
         .expect("admission")
         .expect("run");
     assert_eq!(on_time.result, None);
@@ -125,7 +125,7 @@ async fn a_run_is_told_its_automation_and_due_time_and_how_late_it_started() {
         .await
         .expect("automation")
         .next_due_ms;
-    let late = runs::next(&h.config.database, next_due + 12 * HOUR)
+    let late = runs::next(&h.config.database, next_due + 12 * HOUR, false)
         .expect("admission")
         .expect("run");
     assert_eq!(late.result, None, "exactly half the gap late still runs");
@@ -147,9 +147,13 @@ async fn a_one_time_run_runs_however_late() {
         },
     )
     .await;
-    let run = runs::next(&h.config.database, automation.next_due_ms + 72 * HOUR)
-        .expect("admission")
-        .expect("run");
+    let run = runs::next(
+        &h.config.database,
+        automation.next_due_ms + 72 * HOUR,
+        false,
+    )
+    .expect("admission")
+    .expect("run");
     assert_eq!(run.result, None);
     assert_eq!(
         run.submission,
@@ -170,7 +174,7 @@ async fn an_executed_run_records_its_status_and_failed_tool_calls() {
         },
     )
     .await;
-    let run = runs::next(&h.config.database, automation.next_due_ms)
+    let run = runs::next(&h.config.database, automation.next_due_ms, false)
         .expect("admission")
         .expect("run");
     let failed = RunOutcome::Failed {
@@ -268,7 +272,7 @@ async fn a_stored_run_with_a_status_but_no_output_is_refused_as_corrupt() {
         },
     )
     .await;
-    let run = runs::next(&h.config.database, automation.next_due_ms)
+    let run = runs::next(&h.config.database, automation.next_due_ms, false)
         .expect("admission")
         .expect("run");
     rusqlite::Connection::open(&h.config.database)

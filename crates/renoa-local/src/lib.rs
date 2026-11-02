@@ -65,9 +65,9 @@ pub use host::definition::{
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
     HostObservation, HostObserver, ObservedAgent, ObservedAutomation, ObservedConnection,
-    ObservedOperation, ObservedOperationState, ObservedPlugin, ObservedRegistryFailure,
-    ObservedRun, ObservedScheduler, ObservedSession, ObservedSessionState, ObservedSharedRegistry,
-    ObservedSkill,
+    ObservedMemoryPasses, ObservedOperation, ObservedOperationState, ObservedPlugin,
+    ObservedRegistryFailure, ObservedRun, ObservedScheduler, ObservedSession, ObservedSessionState,
+    ObservedSharedRegistry, ObservedSkill,
 };
 pub use host::{
     AgentPeers, HostResetReport, LocalHost, LocalHostAdapters, LocalHostError,

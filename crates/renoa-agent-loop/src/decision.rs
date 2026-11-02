@@ -290,6 +290,7 @@ impl AgentLoop {
         context_input(
             active_operation_id,
             events,
+            self.context.as_ref(),
             &self.config.system_prompt,
             &tools,
             compaction_required,

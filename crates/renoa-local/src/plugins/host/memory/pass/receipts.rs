@@ -195,7 +195,11 @@ const fn dreamed(outcome: &Outcome) -> Receipt {
 }
 
 /// Logs one event of `renoa.memory`'s jobs. Tests read them back.
-pub(super) fn event(level: &'static str, name: &'static str, fields: &serde_json::Value) {
+pub(in crate::plugins::host::memory) fn event(
+    level: &'static str,
+    name: &'static str,
+    fields: &serde_json::Value,
+) {
     #[cfg(test)]
     EVENTS
         .lock()

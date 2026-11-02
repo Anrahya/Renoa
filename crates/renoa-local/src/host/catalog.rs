@@ -11,6 +11,7 @@ mod cron_schedules;
 mod cutover;
 mod main_agent;
 mod memory_dream;
+mod memory_note_pass;
 mod memory_plugin;
 mod migrations;
 mod registry_sync;
@@ -34,6 +35,8 @@ pub(crate) use main_agent::restore_schema_41;
 #[cfg(test)]
 pub(crate) use memory_dream::restore_schema_43;
 #[cfg(test)]
+pub(crate) use memory_note_pass::restore_schema_44;
+#[cfg(test)]
 pub(crate) use memory_plugin::restore_schema_42;
 #[cfg(test)]
 pub(crate) use registry_sync::restore_schema_35;
@@ -42,7 +45,7 @@ pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 #[cfg(test)]
 pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 44;
+const SCHEMA_VERSION: u32 = 45;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -54,6 +57,34 @@ pub enum HostCatalogError {
     Database(#[from] rusqlite::Error),
     #[error("invalid Host catalog: {0}")]
     Invalid(String),
+}
+
+impl crate::LocalHostError {
+    /// Whether this failure is SQLite finding the database busy or locked:
+    /// another writer held it past the busy timeout, so a later attempt may
+    /// succeed. Every other failure would happen again.
+    #[must_use]
+    pub fn catalog_busy(&self) -> bool {
+        let mut next: Option<&(dyn std::error::Error + 'static)> = Some(self);
+        while let Some(error) = next {
+            let code = error
+                .downcast_ref::<rusqlite::Error>()
+                .and_then(rusqlite::Error::sqlite_error_code)
+                .or_else(|| {
+                    error
+                        .downcast_ref::<rusqlite::ffi::Error>()
+                        .map(|error| error.code)
+                });
+            if matches!(
+                code,
+                Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+            ) {
+                return true;
+            }
+            next = error.source();
+        }
+        false
+    }
 }
 
 const SCHEMA: &str = "
@@ -283,7 +314,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=43 => {
+        28..=44 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -333,6 +364,9 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             if version < 44 {
                 memory_dream::add_triggers_and_memory_jobs(&transaction)?;
             }
+            if version < 45 {
+                memory_note_pass::add_note_passes(&transaction)?;
+            }
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -351,6 +385,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             super::definition::schema::initialize(&transaction)?;
             super::automations::initialize(&transaction)?;
             memory_dream::add_triggers_and_memory_jobs(&transaction)?;
+            memory_note_pass::add_note_passes(&transaction)?;
             registry_sync::record_sync_failures(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",

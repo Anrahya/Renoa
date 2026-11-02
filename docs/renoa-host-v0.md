@@ -566,7 +566,11 @@ with `AgentCreationOrigin::AgentTool`; owner management is `Principal` with
 `ensure_agent_session` binds an exact caller-supplied Session ID to an existing
 Agent. Several sessions may share that Agent while retaining independent
 workspaces, model selections, histories, and exclusive execution ownership.
-Deleting a session does not delete its Agent definition.
+Within one Host process every opener of a session shares its one open
+instance; each turn, compaction or configuration change claims the session for
+itself, so a `renoa.memory` note pass never starts during one, and a
+surface's claim cancels a running pass (see `agent_session::claim`). Deleting a session does not delete its
+Agent definition.
 
 A session manifest is `{version: 4, agent_id, session_id, workspace}`. Published
 manifests remain authoritative for their Agent, Session, and workspace binding;
@@ -703,7 +707,8 @@ library, MCP catalog, skill library, and credential resolution boundary.
 
 `LocalHost::inspect_session` opens existing durable history without provider
 catalog discovery, saved-model validation, or runtime construction. Its
-`AgentSessionHistory` handle retains exclusive kernel ownership and exposes a
+`AgentSessionHistory` handle retains exclusive kernel ownership, and the
+session's claim, cancelling a note pass reviewing it first, and exposes a
 separate diagnostic-store error without hiding intact history. Inspection checks
 the stored agent definition, exact session/Agent identity, canonical workspace binding,
 and authoritative data integrity. It cannot execute or recover a turn; callers
@@ -983,6 +988,8 @@ renoa-host <config.json> move-to-preset <agent-id> <preset-id>
 ```
 
 `inspect` opens the existing data root read-only and prints the Host snapshot.
+Its `memory_passes` list each person's completed note passes in today's pass
+day and when one of their conversations is next asked, never what was noted.
 The remaining commands assemble the ordinary Host from the same launch
 configuration a running service uses. `provision` is the trusted creation path
 for a `System`/`Provisioning` caller: the first agent on an empty Host is created
@@ -1107,7 +1114,8 @@ written and to recall before noting it again. Recall, zoom and
 `MIND.md` open the notebook read-only: with no notebook they return nothing and
 create nothing. A recall pattern holds at most 256 bytes; Mnem bounds the
 compiled regex too. Mnem's compaction and Dream run in `renoa.memory`'s nightly
-run, described in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md);
+run, and its note pass reviews the main agent's quiet conversations, both
+described in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md);
 its agenda and heartbeat do not run.
 
 The session-context point adds attributed blocks to the system prompt of a turn
@@ -1256,7 +1264,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 44
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 45
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1272,7 +1280,9 @@ activation, so every existing agent has the plugin at its default, on. Every
 catalog below schema 44 gains the plugin-trigger owner table,
 `renoa.memory`'s job receipts and its memory session generations, all
 empty; the scheduler creates
-`renoa.memory`'s nightly trigger at its first pass. Live selections
+`renoa.memory`'s nightly trigger at its first pass. Every catalog below
+schema 45 gains the note pass's conversations and passes, both empty: a
+conversation is followed from the person's next message in it. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1537,7 +1547,8 @@ management policy; selecting machine tools
 and account connections remains independent. List returns bounded pages with exact
 automation IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
 complete automation for inspection or editing.
-An automation a compiled plugin owns, such as `renoa.memory`'s nightly run, is
+An automation a compiled plugin owns, such as `renoa.memory`'s nightly run or
+its note pass timer, is
 outside these operations: no agent lists, reads, changes or runs it, and its
 results are not listed (see the triggers point in
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md)).
@@ -1640,15 +1651,42 @@ the node ledger holds the command's terminal event, the node records the result
 on the run: the final answer, or the failure or cancellation reason, with a
 status and the number of tool calls that returned an error. A completed
 execution succeeded even when some of its tool calls failed; the count shows
-them. A failed or cancelled execution failed. A run the coordinator refuses, for
+them. A failed or cancelled execution failed. A run of a compiled plugin's
+trigger runs on the node beside the schedule, one at a time, so an agent's run
+due meanwhile is submitted on time, and its result reaches surfaces while the
+plugin run is unfinished. A draining node stops the Host's memory runs and
+waits for the plugin run in flight, leaving one stopped part way unrecorded;
+shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its
 result. An execution that fails in a conversation's task appears in that
 conversation; a refused or skipped run, and any failure of an automation with a
 task of its own, is visible through `automation_results`, the Control Room, and the node's
-`automation_finished` and `automation_skipped` log events. While it owns the
-schedule, the node writes a heartbeat every 30 seconds, which Host observation
-reports, so a stopped scheduler is visible. Credential and OAuth links reach the owner privately,
-as for any other command.
+`automation_finished` and `automation_skipped` log events. A Host failure the
+schedule meets is logged as `automation_schedule_unavailable` and asked again
+a second later; a run whose result could not be recorded stays admitted and
+is submitted again under its own identity. A catalog another writer holds
+past its busy timeout is asked again for as long as it stays busy. No
+scheduler failure ends the node, its connections, or its turns. From the
+fifth other Host failure in a row, or at once after a failure that stops the
+schedule, which then starts it again, the schedule is failing: each failure
+is logged at error level as `automation_schedule_failing` with the count,
+the wait before asking again doubles from two seconds to at most a minute,
+and the node writes no heartbeat. A tick that schedules or finds nothing due
+starts the count again, logs `automation_schedule_recovered`, and writes the
+heartbeat at once. A due automation, or an admitted run, whose row does not
+decode or whose schedule cannot be computed is left as it is and the others
+run; it is logged as `automation_unschedulable` once per automation and
+error in a process, then at most every ten minutes with the count of ticks
+it was met on. A compiled plugin's run that fails or panics stays admitted
+and is held back two seconds after its first failure in a row, doubling to
+at most five minutes, logged as `automation_plugin_run_failed` with the
+count. While it owns the schedule and the schedule is not failing, the node
+writes a heartbeat every 30 seconds, which Host observation reports as
+`automation_scheduler.heartbeat_ms`. A failing scheduler shows only as those
+error logs and a heartbeat that stops advancing in Host inspection: nothing,
+not `renoa-deploy health` nor the Control Room, reads the heartbeat's age or
+raises it. Credential and OAuth links reach the owner privately, as for any
+other command.
 
 At Slack chat admission, schema 8 appends up to eight newly relevant delivered chunks (4,000
 characters each) and their run IDs to the durable user-turn context. Selection

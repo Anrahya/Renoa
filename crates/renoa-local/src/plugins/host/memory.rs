@@ -31,6 +31,7 @@ mod context;
 pub(crate) mod fixtures;
 pub(crate) mod jobs;
 pub(crate) mod nightly;
+pub(crate) mod note_pass;
 pub(crate) mod pass;
 pub(crate) mod sessions;
 mod tools;

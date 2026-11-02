@@ -5,12 +5,13 @@ use renoa_kernel::{LoopError, NewEvent, SemanticEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    context::{ActivatedCheckpoint, ContextInput, ContextOrigin},
+    context::{ActivatedCheckpoint, ContextInput, ContextOrigin, ContextStrategy},
     turn_context::{TurnAnnotation, TurnContext},
 };
 
 mod checkpoint;
 mod command;
+mod receipts;
 pub(crate) use checkpoint::{LoopPhase, checkpoint, decode_checkpoint};
 pub use command::AgentCommand;
 pub(crate) use command::{AgentCommandKind, Observation};
@@ -28,6 +29,10 @@ const TURN_TIMING_EVENT_PREFIX: &str = "renoa.agent.turn-timing.";
 /// Versioned semantic-event kind carrying the context admitted with one user message.
 pub const TURN_CONTEXT_EVENT_KIND: &str = "renoa.agent.turn-context.v1";
 const TURN_CONTEXT_EVENT_PREFIX: &str = "renoa.agent.turn-context.";
+/// Versioned semantic-event kind marking an operation a receipted prompt
+/// started, so later requests show its receipt instead of its exchange.
+pub const RECEIPTED_EVENT_KIND: &str = "renoa.agent.receipted.v1";
+const RECEIPTED_EVENT_PREFIX: &str = "renoa.agent.receipted.";
 /// Versioned semantic-event kind carrying one activated portable summary.
 pub const CONTEXT_CHECKPOINT_EVENT_KIND: &str = "renoa.agent.context-checkpoint.v1";
 const CONTEXT_CHECKPOINT_EVENT_PREFIX: &str = "renoa.agent.context-checkpoint.";
@@ -65,6 +70,7 @@ pub(crate) fn message_events(
 pub(crate) fn observation_event(observation: Observation) -> Result<Option<NewEvent>, LoopError> {
     let (kind, payload) = match observation {
         Observation::Unobserved => return Ok(None),
+        Observation::Receipted => (RECEIPTED_EVENT_KIND, Ok(serde_json::json!({}))),
         Observation::Timed(timing) => (TURN_TIMING_EVENT_KIND, serde_json::to_value(timing)),
         Observation::Observed { context, .. } if context.is_empty() => return Ok(None),
         Observation::Observed { context, .. } => (
@@ -122,9 +128,13 @@ pub(crate) fn compaction_result_event(estimated_input_tokens: u64) -> Result<New
     .map_err(|error| LoopError::new(format!("compaction result encoding failed: {error}")))
 }
 
+/// The request input for `active_operation_id` from the session's events.
+/// Each finished operation a receipted prompt started shows as the one receipt
+/// `strategy` renders for it.
 pub(crate) fn context_input(
     active_operation_id: renoa_kernel::OperationId,
     events: &[SemanticEvent],
+    strategy: &dyn ContextStrategy,
     system_prompt: &str,
     tools: &[ToolSpec],
     compaction_required: bool,
@@ -132,6 +142,7 @@ pub(crate) fn context_input(
     let mut entries = Vec::new();
     let mut message_sequences = HashSet::new();
     let mut annotations = HashMap::new();
+    let mut receipted = HashSet::new();
     let mut checkpoint: Option<ActivatedCheckpoint> = None;
     for event in events {
         if event.kind == MESSAGE_EVENT_KIND {
@@ -156,6 +167,7 @@ pub(crate) fn context_input(
                 "message event kind `{}` is unsupported",
                 event.kind
             )));
+        } else if receipts::mark(event, &mut receipted)? {
         } else if let Some(annotation) = decode_annotation(event)? {
             if annotations.insert(event.operation_id, annotation).is_some() {
                 return Err(LoopError::new(format!(
@@ -164,34 +176,11 @@ pub(crate) fn context_input(
                 )));
             }
         } else if event.kind == CONTEXT_CHECKPOINT_EVENT_KIND {
-            let decoded = serde_json::from_value::<ContextCheckpointEvent>(event.payload.clone())
-                .map_err(|error| {
-                LoopError::new(format!(
-                    "context checkpoint event {} cannot be decoded: {error}",
-                    event.event_id
-                ))
-            })?;
-            if decoded.summary.trim().is_empty() {
-                return Err(LoopError::new(
-                    "context checkpoint event has an empty summary",
-                ));
-            }
-            if !message_sequences.contains(&decoded.covered_through_sequence) {
-                return Err(LoopError::new(
-                    "context checkpoint boundary is not an earlier durable message",
-                ));
-            }
-            if checkpoint.as_ref().is_some_and(|current| {
-                current.covered_through_sequence >= decoded.covered_through_sequence
-            }) {
-                return Err(LoopError::new(
-                    "context checkpoint does not advance its durable message boundary",
-                ));
-            }
-            checkpoint = Some(ActivatedCheckpoint {
-                covered_through_sequence: decoded.covered_through_sequence,
-                summary: decoded.summary,
-            });
+            checkpoint = Some(activated_checkpoint(
+                event,
+                &message_sequences,
+                checkpoint.as_ref(),
+            )?);
         } else if event.kind.starts_with(CONTEXT_CHECKPOINT_EVENT_PREFIX) {
             return Err(LoopError::new(format!(
                 "context checkpoint event kind `{}` is unsupported",
@@ -213,6 +202,14 @@ pub(crate) fn context_input(
             })?;
         }
     }
+    receipts::unannotated(&receipted, &annotations)?;
+    let entries = receipts::replace(
+        entries,
+        &receipted,
+        active_operation_id,
+        strategy,
+        checkpoint.as_mut(),
+    )?;
     finish_context_input(
         active_operation_id,
         entries,
@@ -222,6 +219,44 @@ pub(crate) fn context_input(
         tools,
         compaction_required,
     )
+}
+
+/// The checkpoint `event` activates: a nonempty summary through an earlier
+/// durable message, past the `current` one.
+fn activated_checkpoint(
+    event: &SemanticEvent,
+    message_sequences: &HashSet<u64>,
+    current: Option<&ActivatedCheckpoint>,
+) -> Result<ActivatedCheckpoint, LoopError> {
+    let decoded = serde_json::from_value::<ContextCheckpointEvent>(event.payload.clone()).map_err(
+        |error| {
+            LoopError::new(format!(
+                "context checkpoint event {} cannot be decoded: {error}",
+                event.event_id
+            ))
+        },
+    )?;
+    if decoded.summary.trim().is_empty() {
+        return Err(LoopError::new(
+            "context checkpoint event has an empty summary",
+        ));
+    }
+    if !message_sequences.contains(&decoded.covered_through_sequence) {
+        return Err(LoopError::new(
+            "context checkpoint boundary is not an earlier durable message",
+        ));
+    }
+    if current
+        .is_some_and(|current| current.covered_through_sequence >= decoded.covered_through_sequence)
+    {
+        return Err(LoopError::new(
+            "context checkpoint does not advance its durable message boundary",
+        ));
+    }
+    Ok(ActivatedCheckpoint {
+        covered_through_sequence: decoded.covered_through_sequence,
+        summary: decoded.summary,
+    })
 }
 
 fn decode_payload<T: serde::de::DeserializeOwned>(event: &SemanticEvent) -> Result<T, LoopError> {

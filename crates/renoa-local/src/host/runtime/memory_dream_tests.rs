@@ -180,7 +180,7 @@ impl Fixture {
     }
 
     async fn next(&self, now: i64) -> Option<ScheduledRun> {
-        self.scheduler.next_run(now).await.expect("next run")
+        self.scheduler.next_run(now, false).await.expect("next run")
     }
 
     /// Admits the run due at `now`, runs it and records how it ended.

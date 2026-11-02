@@ -26,6 +26,10 @@ impl ContextOrigin {
     pub(crate) const fn operation_id(self) -> OperationId {
         self.operation_id
     }
+
+    pub(crate) const fn sequence(self) -> u64 {
+        self.sequence
+    }
 }
 
 /// One model-ready message plus its durable session-journal position.
@@ -287,6 +291,21 @@ pub trait ContextStrategy: Send + Sync {
             "context strategy does not support compaction responses",
         ))
     }
+
+    /// The text of the one user message a finished operation that a
+    /// receipted prompt started shows as in every later request, rendered from
+    /// its durable `messages` in order. It must be deterministic for the same
+    /// messages and binding revision.
+    ///
+    /// # Errors
+    ///
+    /// The default refuses: a strategy that serves receipted prompts names
+    /// their receipts.
+    fn receipt(&self, _messages: &[Message]) -> Result<String, ContextStrategyError> {
+        Err(ContextStrategyError::new(
+            "context strategy does not render receipts",
+        ))
+    }
 }
 
 /// A deterministic transformation applied to normal model-request messages.
@@ -307,6 +326,18 @@ pub trait ContextProjector: Send + Sync {
     ///
     /// A failure commits no loop transition and can be retried safely.
     fn project(&self, messages: Vec<Message>) -> Result<Vec<Message>, ContextStrategyError>;
+
+    /// The receipt of a finished receipted operation; see
+    /// [`ContextStrategy::receipt`].
+    ///
+    /// # Errors
+    ///
+    /// The default refuses, as the strategy's does.
+    fn receipt(&self, _messages: &[Message]) -> Result<String, ContextStrategyError> {
+        Err(ContextStrategyError::new(
+            "context projector does not render receipts",
+        ))
+    }
 }
 
 pub(crate) fn model_visible_messages(mut messages: Vec<Message>) -> Vec<Message> {

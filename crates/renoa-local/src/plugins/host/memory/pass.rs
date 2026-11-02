@@ -14,7 +14,7 @@
 //! Mnem is synchronous and takes file locks, so every call to it runs off the
 //! async executor.
 
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use jiff::civil::DateTime;
 use mnem::{compactor::SummaryJob, model::Answer};
@@ -36,7 +36,7 @@ mod stuck;
 #[cfg(test)]
 pub(crate) use receipts::EVENTS;
 use receipts::{Verdict, answer};
-pub(super) use receipts::{refusal, summary};
+pub(super) use receipts::{event, refusal, summary};
 
 /// The most compaction turns one pass spends on one notebook, retries and
 /// re-asks included; what is left waits for a later pass, and the bound is
@@ -117,6 +117,9 @@ impl<'a> Pass<'a> {
     /// Refuses to start a job once `renoa.memory` stopped running for this
     /// agent.
     pub(super) async fn gate(&self) -> Result<(), Halt> {
+        if self.host.memory_runs_stopped() {
+            return Err(Halt::Failed("the Host is stopping".to_owned()));
+        }
         let database = self.database.clone();
         let driver = tokio::task::spawn_blocking(move || {
             super::nightly::driver(&catalog::open_verified(&database)?)
@@ -137,6 +140,25 @@ impl<'a> Pass<'a> {
             .into_iter()
             .filter(|job| job.principal == principal)
             .collect())
+    }
+
+    /// The memory session, once the job a stopped pass left is settled: the
+    /// kernel admits nothing else in the session while that job's command is
+    /// unfinished, whichever run froze it. A notebook that job stops is added
+    /// to `failed`.
+    pub(super) async fn open(&self, failed: &mut Vec<String>) -> Result<Arc<AgentSession>, Halt> {
+        let mut pending = self.unsettled().await?;
+        // A Dream answer whose apply began needs no session to be closed.
+        if let Some(interrupted) = pending.take_if(|pending| pending.applying) {
+            notebook(self.close_interrupted(interrupted).await.map(drop), failed)?;
+        }
+        let session = self
+            .session(pending.as_ref().map(|job| job.command))
+            .await?;
+        if let Some(pending) = pending {
+            notebook(self.settle(&session, pending).await.map(drop), failed)?;
+        }
+        Ok(session)
     }
 
     /// The agent's job a stopped pass left, if any.
@@ -192,6 +214,36 @@ impl<'a> Pass<'a> {
             }));
         }
         Ok(bounded)
+    }
+
+    /// Compaction of each of `people`'s notebooks at `local_time`, as
+    /// [`Self::compact`] does, and the receipts of this pass's run, for its
+    /// output. A notebook that fails stops its own compaction alone.
+    pub(crate) async fn compact_all(&self, people: &[Uuid], local_time: DateTime) -> String {
+        let mut failed = Vec::new();
+        let mut bounded = 0;
+        let compacted = async {
+            self.gate().await?;
+            let session = self.open(&mut failed).await?;
+            for &principal in people {
+                let result = self.compact(&session, principal, local_time).await;
+                if matches!(result, Ok(true)) {
+                    bounded += 1;
+                }
+                notebook(result.map(drop), &mut failed)?;
+            }
+            Ok::<_, Halt>(())
+        }
+        .await;
+        let halt = compacted
+            .err()
+            .or_else(|| (!failed.is_empty()).then(|| Halt::Failed(failed.join("; "))));
+        let (database, run) = (self.database.clone(), self.run);
+        match tokio::task::spawn_blocking(move || jobs::of_run(&database, run)).await {
+            Ok(Ok(done)) => summary(&done, bounded, halt.as_ref()),
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+        }
     }
 
     async fn compaction_job(&self, principal: Uuid) -> Result<Option<SummaryJob>, Halt> {
@@ -363,7 +415,40 @@ impl<'a> Pass<'a> {
     }
 }
 
+/// Records a failure of one person's notebook, once when its compaction and
+/// its Dream fail for the same cause, and lets the run go on; any other halt
+/// ends the run.
+pub(super) fn notebook(result: Result<(), Halt>, failed: &mut Vec<String>) -> Result<(), Halt> {
+    match result {
+        Err(Halt::Notebook(reason) | Halt::Unopened(reason)) => {
+            if !failed.contains(&reason) {
+                failed.push(reason);
+            }
+            Ok(())
+        }
+        other => other,
+    }
+}
+
 /// A notebook or profile that could not be opened or read.
 pub(super) fn unopened(error: impl std::fmt::Display) -> Halt {
     Halt::Unopened(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Halt, notebook};
+
+    #[test]
+    fn one_cause_is_reported_once() {
+        let mut failed = Vec::new();
+        for reason in [
+            "notes.log cannot be read",
+            "notes.log cannot be read",
+            "busy",
+        ] {
+            notebook(Err(Halt::Notebook(reason.to_owned())), &mut failed).expect("goes on");
+        }
+        assert_eq!(failed, ["notes.log cannot be read", "busy"]);
+    }
 }

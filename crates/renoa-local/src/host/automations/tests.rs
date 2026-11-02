@@ -221,7 +221,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
             .await
             .expect("replay ignores new clock")
     );
-    let run = runs::next(&h.config.database, first.next_due_ms + 60_000)
+    let run = runs::next(&h.config.database, first.next_due_ms + 60_000, false)
         .expect("admit on time")
         .expect("run");
     assert_eq!(run.due_ms, first.next_due_ms);
@@ -268,7 +268,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
         .await
         .is_err()
     );
-    let resumed = runs::next(&h.config.database, run.due_ms + 200_000_000)
+    let resumed = runs::next(&h.config.database, run.due_ms + 200_000_000, false)
         .expect("resume")
         .expect("same occurrence");
     assert_eq!(run, resumed);
@@ -336,7 +336,7 @@ async fn real_model_tool_schedules_a_specialist_that_reschedules_its_own_automat
     assert_eq!(records.len(), 1);
     let scheduler = h.automation_scheduler().expect("own the schedule");
     let due = scheduler
-        .next_run(records[0].next_due_ms)
+        .next_run(records[0].next_due_ms, false)
         .await
         .expect("admit")
         .expect("due");
@@ -444,7 +444,7 @@ async fn an_automation_an_agent_creates_for_itself_returns_to_the_creating_sessi
         .remove(0);
     let scheduler = h.automation_scheduler().expect("own the schedule");
     let due = scheduler
-        .next_run(record.next_due_ms)
+        .next_run(record.next_due_ms, false)
         .await
         .expect("admit")
         .expect("due");
@@ -468,7 +468,7 @@ async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_t
         .await
         .expect("paused automation");
     assert!(
-        runs::next(&h.config.database, 100_000_000)
+        runs::next(&h.config.database, 100_000_000, false)
             .expect("paused")
             .is_none()
     );
@@ -486,14 +486,14 @@ async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_t
     h.manage_automation(child, op, manual, 200_000_000, CancellationToken::new())
         .await
         .expect("manual replay");
-    let admitted = runs::next(&h.config.database, 200_000_000)
+    let admitted = runs::next(&h.config.database, 200_000_000, false)
         .expect("queue")
         .expect("manual");
     assert_eq!(admitted.id, op);
     assert_eq!(admitted.admitted_at_ms, 100_000_000);
     runs::finish(&h.config.database, op, &succeeded("done"), 0).expect("complete");
     assert!(
-        runs::next(&h.config.database, 300_000_000)
+        runs::next(&h.config.database, 300_000_000, false)
             .expect("no recurring run")
             .is_none()
     );

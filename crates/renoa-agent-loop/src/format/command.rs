@@ -34,6 +34,12 @@ pub(crate) enum Observation {
         observed_at_unix_ms: i64,
         context: TurnContext,
     },
+    /// A prompt the Host admitted on its own behalf, not a message from
+    /// anyone. Every later request shows the operation it starts as one
+    /// receipt in place of its exchange (see [`crate::ContextStrategy::receipt`]).
+    /// It carries no time or context, so it never counts as the previous
+    /// message of the next prompt.
+    Receipted,
 }
 
 #[derive(Serialize)]
@@ -53,6 +59,8 @@ struct PromptCommandRef<'a> {
     observed_at_unix_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<&'a TurnContext>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    receipted: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,10 +77,18 @@ struct PromptCommand {
     turn_timing: Option<TurnTiming>,
     observed_at_unix_ms: Option<i64>,
     context: Option<TurnContext>,
+    #[serde(default)]
+    receipted: bool,
 }
 
 impl PromptCommand {
     fn observation(&self) -> Result<Observation, &'static str> {
+        if self.receipted {
+            return match (&self.turn_timing, self.observed_at_unix_ms, &self.context) {
+                (None, None, None) => Ok(Observation::Receipted),
+                _ => Err("a receipted prompt carries no time or context"),
+            };
+        }
         match (&self.turn_timing, self.observed_at_unix_ms, &self.context) {
             (None, None, None) => Ok(Observation::Unobserved),
             (Some(timing), None, None) => Ok(Observation::Timed(timing.clone())),
@@ -135,6 +151,19 @@ impl AgentCommand {
         })
     }
 
+    /// Creates a prompt the Host admits on its own behalf. Later requests show
+    /// the operation it starts only as the receipt its context strategy
+    /// renders from that operation's messages.
+    #[must_use]
+    pub const fn receipted(content: Vec<ContentBlock>) -> Self {
+        Self {
+            kind: AgentCommandKind::Prompt {
+                content,
+                observation: Observation::Receipted,
+            },
+        }
+    }
+
     #[must_use]
     pub fn text(text: impl Into<String>) -> Self {
         Self::new(vec![ContentBlock::text(text)])
@@ -183,7 +212,7 @@ impl AgentCommand {
                 ..
             } => Some(*observed_at_unix_ms),
             AgentCommandKind::Prompt {
-                observation: Observation::Unobserved,
+                observation: Observation::Unobserved | Observation::Receipted,
                 ..
             }
             | AgentCommandKind::Compact => None,
@@ -218,7 +247,7 @@ impl Serialize for AgentCommand {
                 observation,
             } => {
                 let (turn_timing, observed_at_unix_ms, context) = match observation {
-                    Observation::Unobserved => (None, None, None),
+                    Observation::Unobserved | Observation::Receipted => (None, None, None),
                     Observation::Timed(timing) => (Some(timing), None, None),
                     Observation::Observed {
                         observed_at_unix_ms,
@@ -234,6 +263,7 @@ impl Serialize for AgentCommand {
                     turn_timing,
                     observed_at_unix_ms,
                     context,
+                    receipted: matches!(observation, Observation::Receipted),
                 })
                 .serialize(serializer)
             }

@@ -54,13 +54,16 @@ impl Speaker {
     }
 }
 
-/// Whether a turn's tool calls run. A refused turn still offers every tool
-/// definition, so a history holding earlier tool calls stays valid for the
-/// provider; each call returns a refusal instead.
+/// Whether a turn's tool calls run. A refused or limited turn still offers
+/// every tool definition, so a history holding earlier tool calls stays valid
+/// for the provider and the prompt prefix stays cached; each call it does not
+/// run returns a refusal instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolAccess {
     Granted,
     Refused,
+    /// A `renoa.memory` note pass: only the calls it needs run.
+    NotePass,
 }
 
 impl ToolAccess {
@@ -68,6 +71,7 @@ impl ToolAccess {
         match self {
             Self::Granted => bindings,
             Self::Refused => bindings.iter().map(refused).collect(),
+            Self::NotePass => crate::plugins::host::memory::note_pass::guard(&bindings),
         }
     }
 }

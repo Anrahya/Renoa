@@ -19,7 +19,7 @@ flate2 = "1.1"
 getrandom = "0.4.3"
 globset = { version = "0.4.20", default-features = false }
 jiff = "0.2.35"
-mnem = { git = "https://github.com/Anrahya/mnem", rev = "3dd012a2552ad78632101b5b833aa1d7ce52b670" }
+mnem = { git = "https://github.com/Anrahya/mnem", rev = "0d1b6effb84ce79d6e71609fc910feb185832da5" }
 nix = { version = "0.30", features = ["process", "signal", "user"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
 ring = "0.17.14"

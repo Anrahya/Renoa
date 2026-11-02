@@ -20,16 +20,20 @@ use crate::{
     trace::TraceStore,
 };
 
+pub(crate) mod claim;
 mod context;
 mod execution;
 mod memory_job;
+mod note_pass;
+mod waiting;
 
 /// One durable Agent session assembled from one canonical agent definition.
 pub struct AgentSession {
     id: Uuid,
     agent: AgentId,
     host: Arc<HostConfig>,
-    kernel: LocalSession,
+    /// Shared so blocking journal reads run off the executor.
+    kernel: Arc<LocalSession>,
     workspace: PathBuf,
     selection_path: PathBuf,
     session_context_pin: PathBuf,
@@ -55,6 +59,8 @@ struct SessionState {
     reasoning: ReasoningLevel,
     accepting_work: bool,
     activity: Activity,
+    /// The cancellations of surface operations waiting for their claim.
+    waiting: std::collections::HashMap<Uuid, CancellationToken>,
 }
 
 enum Activity {
@@ -87,7 +93,7 @@ impl AgentSession {
             id,
             agent,
             host,
-            kernel: storage.kernel,
+            kernel: Arc::new(storage.kernel),
             workspace: storage.workspace,
             selection_path: storage.selection_path,
             session_context_pin: storage.session_context_pin,
@@ -99,6 +105,7 @@ impl AgentSession {
                 reasoning: selection.reasoning,
                 accepting_work: true,
                 activity: Activity::Idle,
+                waiting: std::collections::HashMap::new(),
             }),
             idle: tokio::sync::Notify::new(),
         }
@@ -114,7 +121,19 @@ impl AgentSession {
         self.agent
     }
 
-    /// Returns the complete kernel-backed transcript for a loading surface.
+    /// The workspace this session is bound to.
+    pub(crate) fn workspace(&self) -> &std::path::Path {
+        &self.workspace
+    }
+
+    /// Whether it still takes work: not closed by
+    /// [`Self::close_and_wait_until_idle`].
+    pub(crate) fn accepts_work(&self) -> bool {
+        self.state().is_ok_and(|state| state.accepting_work)
+    }
+
+    /// Returns the kernel-backed transcript for a loading surface, a note
+    /// pass's exchange left out.
     ///
     /// # Errors
     ///
@@ -145,6 +164,7 @@ impl AgentSession {
     /// Rejects concurrent work and preserves the previous catalog if discovery or
     /// validation fails.
     pub async fn refresh_configuration(&self) -> Result<AgentSessionConfiguration, LocalHostError> {
+        let _claim = self.host.claims.surface_uncancelled(self.id).await?;
         let guard = self.begin_configuration()?;
         let (provider, model_id, reasoning) = {
             let state = self.state()?;
@@ -183,15 +203,18 @@ impl AgentSession {
         )
     }
 
-    /// Signals the exact active turn, if any.
+    /// Signals the exact active turn, if any, and every turn or compaction
+    /// still waiting for a note pass to let go of the session.
     ///
     /// # Errors
     ///
     /// Returns an error if session coordination state was poisoned.
     pub fn cancel_active_turn(&self) -> Result<(), LocalHostError> {
-        if let Activity::Prompt { cancellation, .. } = &self.state()?.activity {
+        let state = self.state()?;
+        if let Activity::Prompt { cancellation, .. } = &state.activity {
             cancellation.cancel();
         }
+        state.waiting.values().for_each(CancellationToken::cancel);
         Ok(())
     }
 
@@ -224,6 +247,7 @@ impl AgentSession {
     ///
     /// Rejects unsupported or concurrent changes and preserves the prior selection on failure.
     pub async fn set_reasoning(&self, reasoning: ReasoningLevel) -> Result<(), LocalHostError> {
+        let _claim = self.host.claims.surface_uncancelled(self.id).await?;
         let guard = self.begin_configuration()?;
         let (model, current) = {
             let state = self.state()?;
@@ -255,6 +279,7 @@ impl AgentSession {
     ///
     /// Rejects unknown or concurrent changes and preserves the prior selection on failure.
     pub async fn set_model(&self, model_id: &str) -> Result<(), LocalHostError> {
+        let _claim = self.host.claims.surface_uncancelled(self.id).await?;
         let guard = self.begin_configuration()?;
         let (current_selection, current_reasoning) = {
             let state = self.state()?;

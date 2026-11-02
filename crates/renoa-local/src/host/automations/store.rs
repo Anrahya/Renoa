@@ -160,6 +160,30 @@ pub(super) fn updated_record(
     spec: AutomationSpec,
     now_ms: i64,
 ) -> Result<AutomationRecord, AutomationError> {
+    revised(old, expected_revision, spec, now_ms, |spec| {
+        spec.schedule.first_due(now_ms, spec.enabled)
+    })
+}
+
+/// [`updated_record`] for a plugin's trigger, whose one-time schedule may be
+/// due already: its plugin set the time, and its run runs however late.
+pub(super) fn updated_trigger(
+    old: &AutomationRecord,
+    spec: AutomationSpec,
+    now_ms: i64,
+) -> Result<AutomationRecord, AutomationError> {
+    revised(old, old.revision, spec, now_ms, |spec| {
+        spec.schedule.next_after(now_ms)
+    })
+}
+
+fn revised(
+    old: &AutomationRecord,
+    expected_revision: i64,
+    spec: AutomationSpec,
+    now_ms: i64,
+    first_due: impl FnOnce(&AutomationSpec) -> Result<i64, AutomationError>,
+) -> Result<AutomationRecord, AutomationError> {
     if old.revision != expected_revision || old.spec.agent_id != spec.agent_id {
         return Err(AutomationError::Conflict);
     }
@@ -167,7 +191,7 @@ pub(super) fn updated_record(
     let next_due_ms = if old.spec.schedule == spec.schedule && old.spec.enabled == spec.enabled {
         old.next_due_ms
     } else {
-        spec.schedule.first_due(now_ms, spec.enabled)?
+        first_due(&spec)?
     };
     Ok(AutomationRecord {
         id: old.id,
@@ -242,7 +266,7 @@ pub(in crate::host) fn insert_first_automation(
 }
 
 pub(super) fn save(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     r: &AutomationRecord,
     create: bool,
 ) -> Result<(), AutomationError> {

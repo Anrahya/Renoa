@@ -126,6 +126,7 @@ pub(crate) struct HostConfig {
     /// How this Host's agents reach other agents; set by the node serving this
     /// Host, and replaced by the next node that opens on it.
     pub(crate) peers: std::sync::Mutex<Option<Arc<dyn AgentPeers>>>,
+    pub(crate) claims: crate::agent_session::claim::Claims,
 }
 
 struct HostInitialization {
@@ -218,6 +219,12 @@ pub enum LocalHostError {
     Background(#[from] tokio::task::JoinError),
     #[error("local Host session state lock was poisoned")]
     StatePoisoned,
+    #[error(
+        "a memory pass in this conversation did not stop in time; nothing was run, so send it again"
+    )]
+    PassStillRunning,
+    #[error("another request is still opening this session; nothing was run, so send it again")]
+    SessionStillOpening,
     #[error("agent {0} is already bound to different creation fields")]
     AgentConflict(renoa_kernel::AgentId),
     #[error("agent {0} is not registered with this Host")]
@@ -387,6 +394,7 @@ impl LocalHost {
                 plugins,
                 code_mode,
                 peers: std::sync::Mutex::new(None),
+                claims: crate::agent_session::claim::Claims::default(),
             }),
         })
     }

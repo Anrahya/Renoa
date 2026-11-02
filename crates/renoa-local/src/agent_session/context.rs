@@ -1,16 +1,22 @@
 //! The context points one session command resolves: the session context its
-//! system prompt carries, and the trace of contributors a point left out.
+//! system prompt carries, the runtime it resolves with, and the trace of
+//! contributors a point left out.
 
-use renoa_kernel::CommandId;
+use std::sync::Arc;
+
+use renoa_agent::AgentEventSink;
+use renoa_kernel::{CommandId, Runtime};
 use uuid::Uuid;
 
 use super::AgentSession;
 use crate::{
-    LocalHostError,
+    LocalHostError, LocalWorkspace, ModelChoice,
+    host::{RuntimeRequest, resolve_runtime},
     plugins::host::{
         Skipped,
         session_context::{self, ContextRequest, SessionContext},
     },
+    speaker::ToolAccess,
     trace::TraceRun,
 };
 
@@ -43,6 +49,43 @@ impl AgentSession {
             })
         })
         .await?)
+    }
+
+    /// The runtime a command of the agent's conversation runs with: its
+    /// definition, with the person it talks to and their session context, and
+    /// the tools `tools` grants.
+    pub(super) async fn conversation_runtime(
+        &self,
+        command_id: CommandId,
+        principal: Option<Uuid>,
+        tools: ToolAccess,
+        model: &ModelChoice,
+        reasoning: crate::ReasoningLevel,
+        events: Arc<dyn AgentEventSink>,
+    ) -> Result<(Runtime, Vec<Skipped>), LocalHostError> {
+        let workspace = LocalWorkspace::open(&self.workspace)?;
+        let (session_context, context_skipped) =
+            self.session_context(command_id, principal).await?;
+        let definition = self
+            .definition()
+            .await?
+            .with_principal(principal)
+            .with_session_context(session_context);
+        let runtime = resolve_runtime(
+            &self.host,
+            RuntimeRequest {
+                definition: &definition,
+                session_id: renoa_kernel::SessionId::from_uuid(self.id),
+                command_id: Some(command_id),
+                model,
+                reasoning,
+                workspace: &workspace,
+                events: Some(events),
+                tools,
+            },
+        )
+        .await?;
+        Ok((runtime, context_skipped))
     }
 }
 

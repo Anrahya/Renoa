@@ -33,7 +33,7 @@ pub(in crate::host) fn report(removed: impl IntoIterator<Item = Removed>) {
 
 /// Removes an automation's finished runs beyond its newest [`KEEP_RUNS`].
 pub(super) fn keep_newest(
-    tx: &Transaction<'_>,
+    tx: &Connection,
     automation: Uuid,
 ) -> Result<Option<Removed>, AutomationError> {
     let runs = tx.execute(

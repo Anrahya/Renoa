@@ -6,18 +6,22 @@ use uuid::Uuid;
 use super::{LocalHost, LocalHostError};
 use crate::{
     LocalHistoryEntry, LocalSession,
+    agent_session::claim::Claim,
     host_storage::OpenedSessionStorage,
     trace::{TRACE_DATABASE, TraceStore},
 };
 
 /// An existing session held for history inspection without an execution runtime.
 ///
-/// This handle retains exclusive kernel ownership until dropped. It cannot
-/// execute, recover a turn, or change the saved runtime selection.
+/// This handle retains exclusive kernel ownership until dropped, and a
+/// surface's claim on the session, so no note pass starts meanwhile. It
+/// cannot execute, recover a turn, or change the saved runtime selection.
 pub struct AgentSessionHistory {
     id: Uuid,
     kernel: LocalSession,
     diagnostic_error: Option<String>,
+    /// Released after the kernel handle.
+    _claim: Claim,
 }
 
 impl AgentSessionHistory {
@@ -32,7 +36,8 @@ impl AgentSessionHistory {
         self.diagnostic_error.as_deref()
     }
 
-    /// Projects the complete durable transcript with its original event identities.
+    /// Projects the durable transcript with its original event identities, a
+    /// note pass's exchange left out.
     ///
     /// # Errors
     ///
@@ -47,7 +52,8 @@ impl LocalHost {
     ///
     /// Only a session owned by `agent_id` is inspected; a session bound to a
     /// different agent is refused from its manifest before its kernel is opened
-    /// or its history read. The exact
+    /// or its history read. A note pass reviewing it is cancelled and waited for
+    /// first, as for a turn. The exact
     /// session identity, workspace binding, and exclusive kernel ownership are
     /// checked just as for executable loading. Diagnostic failures are reported
     /// by the handle and do not hide history. Drop the handle before loading
@@ -64,6 +70,8 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<AgentSessionHistory, LocalHostError> {
+        self.refuse_before_claim(agent_id, session_uuid).await?;
+        let claim = self.config.claims.surface_uncancelled(session_uuid).await?;
         let OpenedSessionStorage {
             directory,
             manifest,
@@ -83,6 +91,7 @@ impl LocalHost {
             id: session_uuid,
             kernel,
             diagnostic_error,
+            _claim: claim,
         })
     }
 }

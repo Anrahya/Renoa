@@ -249,6 +249,8 @@ mod execution_tests;
 #[cfg(test)]
 mod memory_dream_tests;
 #[cfg(test)]
+mod memory_pass_tests;
+#[cfg(test)]
 mod memory_plugin_tests;
 #[cfg(test)]
 mod time_plugin_tests;

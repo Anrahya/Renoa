@@ -3,6 +3,8 @@ use std::{path::Path, sync::Arc};
 use renoa_kernel::{AgentId, SessionId};
 use uuid::Uuid;
 
+mod deletion;
+
 use super::{
     LocalHost, LocalHostError, RuntimeRequest,
     definition::{ResolvedAgentDefinition, resolve_definition},
@@ -10,11 +12,10 @@ use super::{
 };
 use crate::{
     AgentSession, LocalWorkspace,
-    agent_session::AgentSessionStorage,
+    agent_session::{AgentSessionStorage, claim::Claim},
     host::models::validate_selection,
     host_storage::{
-        OpenedSessionStorage, SessionPublication, create_session_storage, delete_session_storage,
-        open_session_storage,
+        OpenedSessionStorage, SessionPublication, create_session_storage, open_session_storage,
     },
     plugins::host::session_context,
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
@@ -40,18 +41,77 @@ impl LocalHost {
         require_absolute(cwd)?;
         let definition = resolve_definition(&self.config, agent_id).await?;
         let session_id = SessionId::from_uuid(session_uuid);
-        if self
+        let opened = self
             .config
-            .sessions
-            .join(session_id.to_string())
-            .try_exists()?
-        {
-            return self
-                .load_session_for_agent(agent_id, session_uuid, cwd)
-                .await;
-        }
-        self.create_session_for_definition(&definition, cwd, session_uuid)
-            .await
+            .claims
+            .open_for_surface(
+                session_uuid,
+                // Boxed: loading or creating a session is a large future.
+                Box::pin(async {
+                    if self
+                        .config
+                        .sessions
+                        .join(session_id.to_string())
+                        .try_exists()?
+                    {
+                        return self.load_unshared(agent_id, session_uuid, cwd).await;
+                    }
+                    self.create_session_for_definition(&definition, cwd, session_uuid)
+                        .await
+                }),
+            )
+            .await?;
+        owned(opened, agent_id, cwd).await
+    }
+
+    /// Opens a stored conversation of `agent_id` for a note pass that
+    /// `cancellation` stops, claimed until the returned handle drops; `None`
+    /// while a surface holds it or passes are stopped. A surface that claims
+    /// it meanwhile cancels the pass and waits for it (see
+    /// [`claim`](crate::agent_session::claim)).
+    ///
+    /// # Errors
+    /// Returns a foreign-agent rejection, or identity, workspace, provider,
+    /// runtime, or storage incompatibility.
+    pub(crate) async fn open_for_note_pass(
+        &self,
+        agent_id: AgentId,
+        session_uuid: Uuid,
+        cwd: &Path,
+        cancellation: &tokio_util::sync::CancellationToken,
+    ) -> Result<Option<ClaimedSession>, LocalHostError> {
+        let Some(claim) = self.config.claims.note_pass(session_uuid, cancellation) else {
+            return Ok(None);
+        };
+        let opened = self
+            .config
+            .claims
+            .open(
+                session_uuid,
+                self.load_unshared(agent_id, session_uuid, cwd),
+            )
+            .await?;
+        let session = owned(opened, agent_id, cwd).await?;
+        Ok(Some(ClaimedSession {
+            session,
+            _claim: claim,
+        }))
+    }
+
+    /// Stops `renoa.memory`'s runs in this process, for a node that is
+    /// draining before it stops: every running note pass is cancelled and
+    /// settles as not run, its notes kept, no new pass starts, and a nightly
+    /// run stops before its next job, so no pass's command is left unfinished
+    /// under the runtime a deploy replaces. A run stopped part way is not to
+    /// be recorded: the next scheduler hands it on and it resumes.
+    pub fn stop_memory_runs(&self) {
+        self.config.claims.stop_passes();
+    }
+
+    /// Whether [`Self::stop_memory_runs`] was called.
+    #[must_use]
+    pub fn memory_runs_stopped(&self) -> bool {
+        self.config.claims.passes_stopped()
     }
 
     /// Whether a session with this id is stored.
@@ -161,6 +221,26 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
+        let opened = self
+            .config
+            .claims
+            .open_for_surface(
+                session_uuid,
+                self.load_unshared(agent_id, session_uuid, cwd),
+            )
+            .await?;
+        owned(opened, agent_id, cwd).await
+    }
+
+    /// Opens a new instance of a stored session; only through
+    /// [`Claims::open`](crate::agent_session::claim::Claims::open), which
+    /// keeps one per session.
+    async fn load_unshared(
+        &self,
+        agent_id: AgentId,
+        session_uuid: Uuid,
+        cwd: &Path,
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
         let stored = self
             .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
@@ -248,6 +328,8 @@ impl LocalHost {
         {
             return Ok(Some(crate::LocalTurnOutcome::Cancelled));
         }
+        self.refuse_before_claim(agent_id, session_uuid).await?;
+        let _claim = self.config.claims.surface_uncancelled(session_uuid).await?;
         let stored = self
             .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
@@ -283,33 +365,41 @@ impl LocalHost {
         })
         .await?
     }
+}
 
-    /// Permanently removes one closed Agent session owned by `agent_id`.
-    ///
-    /// A session bound to a different agent is refused from the manifest its
-    /// deletion already reads, before any storage is removed. Deleting a
-    /// missing session succeeds so a retried ACP request is safe.
-    ///
-    /// # Errors
-    ///
-    /// Returns a foreign-agent rejection, or an ownership, identity, metadata,
-    /// or storage failure. A session still owned by any process cannot be
-    /// deleted.
-    pub async fn delete_session(
-        &self,
-        agent_id: AgentId,
-        session_uuid: Uuid,
-    ) -> Result<(), LocalHostError> {
-        let sessions = self.config.sessions.clone();
-        let session_id = SessionId::from_uuid(session_uuid);
-        tokio::task::spawn_blocking(move || {
-            delete_session_storage(&sessions, agent_id, session_id)
-        })
-        .await??;
-        let skills = self.config.skill_store.clone();
-        tokio::task::spawn_blocking(move || skills.remove_session(session_id)).await??;
-        Ok(())
+/// A session opened for a note pass, claimed for it until dropped; the
+/// session goes before the claim.
+pub(crate) struct ClaimedSession {
+    session: Arc<AgentSession>,
+    _claim: Claim,
+}
+
+impl std::ops::Deref for ClaimedSession {
+    type Target = AgentSession;
+
+    fn deref(&self) -> &AgentSession {
+        &self.session
     }
+}
+
+/// `session` when `agent_id` owns it and it is bound to `cwd`: the checks
+/// opening its storage makes, again for an instance already open.
+async fn owned(
+    session: Arc<AgentSession>,
+    agent_id: AgentId,
+    cwd: &Path,
+) -> Result<Arc<AgentSession>, LocalHostError> {
+    if session.agent_id() != agent_id {
+        return Err(LocalHostError::InvalidRequest(
+            "session belongs to a different agent".to_owned(),
+        ));
+    }
+    if session.workspace() != tokio::fs::canonicalize(cwd).await? {
+        return Err(LocalHostError::InvalidRequest(
+            "session workspace differs from its durable binding".to_owned(),
+        ));
+    }
+    Ok(session)
 }
 
 fn require_absolute(cwd: &Path) -> Result<(), LocalHostError> {

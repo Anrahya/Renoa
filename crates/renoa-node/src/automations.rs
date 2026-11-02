@@ -13,12 +13,17 @@
 //!
 //! The Host decides whether a due occurrence is too late to run; a skipped
 //! one is only reported here. A run of a compiled plugin's trigger is not a
-//! message to the agent: the Host runs it in this process, and this loop only
-//! waits for it and records how it ended. While it owns the schedule, the scheduler
-//! writes a heartbeat so Host observation can tell it is alive.
+//! message to the agent: the Host runs it in this process, beside this loop,
+//! which goes on submitting agents' due runs meanwhile and runs one plugin
+//! run at a time. A draining node stops admitting runs, stops the Host's note
+//! passes, and waits for the plugin run in flight, so it is not left
+//! unfinished under the runtime a deploy replaces; shutdown drops it, and the
+//! next scheduler resumes it. While it owns the schedule and the schedule
+//! is not failing, the scheduler writes a heartbeat, so Host observation can
+//! tell it is alive.
 
 use std::{
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
@@ -28,6 +33,13 @@ use renoa_protocol::{CommandId, CommandInput, ExecutionTerminal};
 use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
 
+mod failures;
+mod plugin_run;
+
+use self::{
+    failures::{Failures, beat, heartbeat},
+    plugin_run::{PluginTask, Retry},
+};
 use crate::{
     agent_targets, automation_cleanup,
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
@@ -48,47 +60,92 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 pub(crate) struct AutomationLink {
     pub(crate) endpoint: String,
     pub(crate) credentials: DeviceCredentials,
-    pub(crate) scheduler: AutomationScheduler,
+    pub(crate) scheduler: Arc<AutomationScheduler>,
 }
 
-/// Runs the schedule until shutdown, reconnecting the surface link with
-/// bounded backoff, and writes the heartbeat throughout, since a lost
-/// coordinator link does not stop the scheduler. Only socket loss is retried.
+/// Runs the schedule until shutdown or `drain`, reconnecting the surface link
+/// with bounded backoff, and writes the heartbeat while the schedule works.
+/// Nothing the schedule meets ends the node or its turns.
+///
+/// Socket loss reconnects. A catalog busy past its timeout is asked again
+/// after [`PAUSE`] for as long as it stays busy. Any other Host failure is
+/// asked again too; from the [`failures::FAILURES`]th in a row, or after any
+/// failure that stops the schedule, which starts it again, the schedule is
+/// failing: it logs `automation_schedule_failing`, writes no heartbeat, and
+/// waits twice as long each time, up to a minute. The first tick that goes
+/// well writes the heartbeat again. A plugin run that failed is held back
+/// longer after each failure in a row.
+///
+/// At `drain` it stops the Host's note passes and returns once the plugin
+/// run in flight ended, or at shutdown, which drops it.
 pub(crate) async fn run(
     runtime: Arc<NodeRuntime>,
     link: AutomationLink,
     shutdown: CancellationToken,
-) -> Result<(), NodeError> {
-    tokio::select! {
-        result = schedule(&runtime, &link, &shutdown) => result,
-        result = heartbeat(&link.scheduler, &shutdown) => result,
-    }
-}
-
-async fn heartbeat(
-    scheduler: &AutomationScheduler,
-    shutdown: &CancellationToken,
-) -> Result<(), NodeError> {
-    let mut ticks = tokio::time::interval(HEARTBEAT);
+    drain: CancellationToken,
+) {
+    let failing = Arc::new(AtomicBool::new(false));
+    let mut state = State {
+        plugin: None,
+        retry: Retry::default(),
+        failures: Failures::new(Arc::clone(&failing)),
+    };
     loop {
+        let scheduled = tokio::select! {
+            result = schedule(&runtime, &link, &shutdown, &mut state) => result,
+            () = heartbeat(&link.scheduler, &shutdown, &failing) => Ok(()),
+            () = drain.cancelled() => Ok(()),
+        };
+        let Err(error) = scheduled else { break };
+        let delay = state.failures.stopped(&error);
         tokio::select! {
-            () = shutdown.cancelled() => return Ok(()),
-            _ = ticks.tick() => {}
+            () = shutdown.cancelled() => return,
+            () = drain.cancelled() => break,
+            () = tokio::time::sleep(delay) => {}
         }
-        if let Err(error) = scheduler.heartbeat(now_ms()?).await {
+    }
+    if let Some(task) = state.plugin.take()
+        && drain.is_cancelled()
+    {
+        let drained = tokio::select! {
+            result = plugin_run::drain(&runtime, task, &shutdown) => result,
+            () = heartbeat(&link.scheduler, &shutdown, &failing) => Ok(()),
+        };
+        // A plugin run that failed is logged; the node drains its turns.
+        if let Err(error) = drained {
             node_log::event(
-                "warn",
-                "automation_heartbeat_failed",
+                "error",
+                "automation_plugin_run_failed",
                 &serde_json::json!({ "error": error.to_string() }),
             );
         }
     }
 }
 
+/// What the schedule keeps across reconnects: the plugin run in flight
+/// beside it, how long plugin runs are held back after failing, and the
+/// Host failures it met in a row.
+struct State {
+    plugin: Option<PluginTask>,
+    retry: Retry,
+    failures: Failures,
+}
+
+impl State {
+    /// A tick that went well: a schedule that was failing writes its
+    /// heartbeat again at once.
+    async fn worked(&mut self, scheduler: &AutomationScheduler) {
+        if self.failures.cleared() {
+            beat(scheduler).await;
+        }
+    }
+}
+
 async fn schedule(
-    runtime: &NodeRuntime,
+    runtime: &Arc<NodeRuntime>,
     link: &AutomationLink,
     shutdown: &CancellationToken,
+    state: &mut State,
 ) -> Result<(), NodeError> {
     let mut backoff = ReconnectBackoff::new();
     loop {
@@ -101,7 +158,7 @@ async fn schedule(
             // No task is attached, so the event stream carries nothing.
             Ok((connection, _events)) => {
                 connected_at = Some(Instant::now());
-                serve(runtime, &link.scheduler, &connection, shutdown).await
+                serve(runtime, &link.scheduler, &connection, shutdown, state).await
             }
             Err(error) => Err(error.into()),
         };
@@ -128,38 +185,47 @@ async fn schedule(
 }
 
 async fn serve(
-    runtime: &NodeRuntime,
-    scheduler: &AutomationScheduler,
+    runtime: &Arc<NodeRuntime>,
+    scheduler: &Arc<AutomationScheduler>,
     connection: &Connection,
     shutdown: &CancellationToken,
+    state: &mut State,
 ) -> Result<(), NodeError> {
     let mut next_cleanup = Instant::now();
     loop {
-        let Some(due) = scheduler
-            .next_run(now_ms()?)
-            .await
-            .map_err(|error| host_error(&error))?
-        else {
-            // Deleted automations' conversations go while nothing is due.
-            // Stopping part way is safe: every step converges on a retry and
-            // the Host's mark goes last.
-            if Instant::now() >= next_cleanup {
-                tokio::select! {
-                    () = shutdown.cancelled() => return Ok(()),
-                    deleted = automation_cleanup::delete_conversations(
-                        runtime, scheduler, connection,
-                    ) => deleted?,
+        // A plugin's run that failed stays admitted, and is handed out again
+        // once its retry delay passed.
+        if let Some(ended) = plugin_run::reap(&mut state.plugin).await {
+            state.retry.ended(ended);
+        }
+        let plugins_held = state.plugin.is_some() || state.retry.holds();
+        let due = match scheduler.next_run(now_ms()?, plugins_held).await {
+            Ok(Some(due)) => due,
+            Ok(None) => {
+                state.worked(scheduler).await;
+                // Deleted automations' conversations go while nothing is due.
+                // Stopping part way is safe: every step converges on a retry
+                // and the Host's mark goes last.
+                if Instant::now() >= next_cleanup {
+                    tokio::select! {
+                        () = shutdown.cancelled() => return Ok(()),
+                        deleted = automation_cleanup::delete_conversations(
+                            runtime, scheduler, connection,
+                        ) => deleted?,
+                    }
+                    next_cleanup = Instant::now() + HEARTBEAT;
                 }
-                next_cleanup = Instant::now() + HEARTBEAT;
+                if !rest(connection, shutdown, PAUSE).await? {
+                    return Ok(());
+                }
+                continue;
             }
-            tokio::select! {
-                () = shutdown.cancelled() => return Ok(()),
-                () = connection.closed() => {
-                    return Err(ClientError::Transport(
-                        "the coordinator connection ended".to_owned(),
-                    ).into());
+            Err(error) => {
+                let delay = state.failures.met(&error);
+                if !rest(connection, shutdown, delay).await? {
+                    return Ok(());
                 }
-                () = tokio::time::sleep(PAUSE) => continue,
+                continue;
             }
         };
         if due.run.result.as_ref().map(|result| result.status) == Some(RunStatus::Skipped) {
@@ -173,35 +239,16 @@ async fn serve(
                     "late_ms": due.run.admitted_at_ms.saturating_sub(due.run.due_ms),
                 }),
             );
+            state.worked(scheduler).await;
             continue;
         }
-        if let Some(plugin) = due.plugin {
-            // A plugin's run stays admitted when shutdown drops it, and the
-            // next scheduler resumes it.
-            let finished = tokio::select! {
-                () = shutdown.cancelled() => return Ok(()),
-                finished = scheduler.run_for_plugin(&runtime.host, &due, now_ms()?) => {
-                    finished.map_err(|error| host_error(&error))?
-                }
-            };
-            let status = finished.status();
-            scheduler
-                .finish_plugin_run(finished, now_ms()?)
-                .await
-                .map_err(|error| host_error(&error))?;
-            node_log::event(
-                "info",
-                "automation_finished",
-                &serde_json::json!({
-                    "automation_id": due.run.automation_id,
-                    "run_id": due.run.id,
-                    "plugin": plugin,
-                    "status": status,
-                }),
-            );
+        if let Some(owner) = due.plugin {
+            state.plugin = Some(plugin_run::start(runtime, scheduler, due, owner)?);
+            state.worked(scheduler).await;
             continue;
         }
-        let Some(outcome) = deliver(runtime, connection, &due, shutdown).await? else {
+        let delivered = deliver(runtime, connection, &due, shutdown, &mut state.failures).await?;
+        let Some(outcome) = delivered else {
             return Ok(());
         };
         let fields = serde_json::json!({
@@ -210,11 +257,34 @@ async fn serve(
             "status": outcome.status(),
             "failed_tool_calls": outcome.failed_tool_calls(),
         });
-        scheduler
-            .finish_run(due.run.id, outcome, now_ms()?)
-            .await
-            .map_err(|error| host_error(&error))?;
+        // A result the Host could not record leaves the run admitted: the
+        // next tick submits the same command again, and the coordinator and
+        // the ledger hand back the outcome it already has.
+        if let Err(error) = scheduler.finish_run(due.run.id, outcome, now_ms()?).await {
+            let delay = state.failures.met(&error);
+            if !rest(connection, shutdown, delay).await? {
+                return Ok(());
+            }
+            continue;
+        }
+        state.worked(scheduler).await;
         node_log::event("info", "automation_finished", &fields);
+    }
+}
+
+/// Waits `delay` before the schedule's next tick. Returns `false` at
+/// shutdown, and the transport failure when the coordinator link ended.
+async fn rest(
+    connection: &Connection,
+    shutdown: &CancellationToken,
+    delay: Duration,
+) -> Result<bool, NodeError> {
+    tokio::select! {
+        () = shutdown.cancelled() => Ok(false),
+        () = connection.closed() => Err(ClientError::Transport(
+            "the coordinator connection ended".to_owned(),
+        ).into()),
+        () = tokio::time::sleep(delay) => Ok(true),
     }
 }
 
@@ -225,9 +295,10 @@ async fn deliver(
     connection: &Connection,
     due: &ScheduledRun,
     shutdown: &CancellationToken,
+    failures: &mut Failures,
 ) -> Result<Option<RunOutcome>, NodeError> {
     let run = &due.run;
-    let task_id = match task_for(runtime, connection, due, shutdown).await? {
+    let task_id = match task_for(runtime, connection, due, shutdown, failures).await? {
         Resolution::Task(task_id) => task_id,
         Resolution::Refused(reason) => return Ok(Some(refused(due, None, &reason))),
         Resolution::Shutdown => return Ok(None),
@@ -244,7 +315,7 @@ async fn deliver(
         {
             Ok(()) => break,
             Err(error) if error.code() == Some(ErrorCode::NodeOffline) => {
-                if !pause(shutdown).await {
+                if !pause(shutdown, PAUSE).await {
                     return Ok(None);
                 }
             }
@@ -285,6 +356,7 @@ async fn task_for(
     connection: &Connection,
     due: &ScheduledRun,
     shutdown: &CancellationToken,
+    failures: &mut Failures,
 ) -> Result<Resolution, NodeError> {
     if let Some(session) = due.origin_session_id
         && let Some(task_id) = runtime.state.task_for_session(session).await?
@@ -295,6 +367,7 @@ async fn task_for(
     let task_id = TaskId::from_uuid(due.run.automation_id);
     let target = agent_targets::target(agent_id);
     loop {
+        let mut delay = PAUSE;
         let nodes = connection
             .list_targets()
             .await?
@@ -316,19 +389,18 @@ async fn task_for(
             },
             // This node advertises every Host agent soon after it connects, so
             // only an agent the Host no longer has stays unadvertised.
-            [] => {
-                let exists = runtime
-                    .host
-                    .agent_definition(agent_id)
-                    .await
-                    .map_err(|error| host_error(&error))?
-                    .is_some();
-                if !exists {
+            [] => match runtime.host.agent_definition(agent_id).await {
+                // The Host answered, so the heartbeat resumes on its next tick.
+                Ok(Some(_)) => {
+                    failures.cleared();
+                }
+                Ok(None) => {
                     return Ok(Resolution::Refused(format!(
                         "agent {agent_id} no longer exists"
                     )));
                 }
-            }
+                Err(error) => delay = failures.met(&error),
+            },
             _ => {
                 return Ok(Resolution::Refused(format!(
                     "more than one node advertises `{}`",
@@ -336,7 +408,7 @@ async fn task_for(
                 )));
             }
         }
-        if !pause(shutdown).await {
+        if !pause(shutdown, delay).await {
             return Ok(Resolution::Shutdown);
         }
     }
@@ -405,15 +477,11 @@ fn now_ms() -> Result<i64, NodeError> {
 }
 
 /// Waits before a retry. Returns `false` when the node is shutting down.
-async fn pause(shutdown: &CancellationToken) -> bool {
+async fn pause(shutdown: &CancellationToken, delay: Duration) -> bool {
     tokio::select! {
         () = shutdown.cancelled() => false,
-        () = tokio::time::sleep(PAUSE) => true,
+        () = tokio::time::sleep(delay) => true,
     }
-}
-
-fn host_error(error: &renoa_local::LocalHostError) -> NodeError {
-    NodeError::Store(error.to_string())
 }
 
 impl From<ClientError> for NodeError {

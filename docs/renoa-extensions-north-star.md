@@ -580,8 +580,9 @@ grants remain owner-controlled and cannot be added to the caller by plugin
 management. Every created agent receives the plugin protocol regardless of its
 machine selection. Schema 32 owns these activation records alongside external
 plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings, and
-schema 43 adds `renoa.memory`, and schema 44 adds plugin-owned triggers and
-`renoa.memory`'s job receipts and memory session generations.
+schema 43 adds `renoa.memory`, schema 44 adds plugin-owned triggers and
+`renoa.memory`'s job receipts and memory session generations, and schema 45
+adds the conversations and passes of its note pass.
 
 ## Contribution model
 
@@ -741,7 +742,10 @@ library, pinned to one revision, and keeps one notebook per person at
 resident tools, `memory_note`, `memory_recall` and `memory_zoom`, act on the
 notebook of the person the turn talks to. A turn with no person does not list
 them, and refuses them when found through search; `memory_note`'s
-description says what is worth noting. Its
+description says what is worth noting, that a promise or reminder nothing
+schedules is written with `[at YYYY-MM-DDTHH:MM]`, at a sensible hour when
+only the day is known, and that `[on YYYY-MM-DD]` only dates something that
+happened on another day and sets no reminder. Its
 `session_context` block is that person's `MIND.md`: the whole file for the
 Host's main agent, and the file without its Nudges section for every other
 agent, each keyed by Mnem's revision of that view. It is enabled by default
@@ -758,11 +762,13 @@ not run yet.
 ### Triggers
 
 A trigger is an automation a compiled plugin owns. Each plugin has one owner
-function that says which automation it wants from the catalog's current
-state; the scheduler converges the stored automation to it before it looks
-for a due run, in the same transaction, creating, updating or disabling it.
-Its id is derived from the plugin and the agent, so convergence never
-duplicates it. `host_plugin_triggers` records the owner. No agent creates,
+function that says which automations it wants from the catalog's current
+state; the scheduler converges the stored automations to them before it looks
+for a due run, in the same transaction, creating, updating or disabling them.
+Each id is derived from the plugin, the agent and, past a plugin's first
+trigger, the trigger's name, so convergence never duplicates one. A
+trigger's one-time schedule may already be due when it is converged, since
+its plugin set the time; it runs at once, however late. `host_plugin_triggers` records the owner. No agent creates,
 lists, reads, changes or runs a plugin-owned automation through
 `automation_manage` or `automation_results`, and its runs are not agent
 work: the node hands a due run to its plugin instead of submitting a turn.
@@ -771,8 +777,9 @@ last run's summary, which names job kinds and outcomes and never note text.
 
 ### `renoa.memory`'s nightly run
 
-`renoa.memory` wants one trigger: Mnem's pass day start, 11:00, every day in the notebook zone, for
-the Host's main agent while the plugin is on for it. When the main agent
+`renoa.memory` wants two triggers, both for the Host's main agent while the
+plugin is on for it: the nightly run, at Mnem's pass day start, 11:00, every
+day in the notebook zone, and the note pass timer (see below). When the main agent
 changes, the next convergence disables the old agent's trigger and creates
 the new one's; when the plugin is turned off, the trigger is disabled, and a
 run already started stops before its next job. A cron schedule names an IANA
@@ -785,8 +792,9 @@ down across both the change and the old fire time skips that night under
 this fallback, since the moved schedule is due again only from when it comes
 back; an IANA zone's missed night catches up instead.
 
-A run works through every person's notebook in turn: compaction while Mnem
-has a summary due, then one nightly Dream with the person's `USER.md`, asked
+A run first sweeps the main agent's conversations with a note pass, then
+works through every person's notebook in turn: compaction while Mnem has a
+summary due, then one nightly Dream with the person's `USER.md`, asked
 again after a stale job. A job is stale only when another dream moved the
 watermark first, or the notebook shrank below the job's end; new notes do
 not make it stale. Compaction spends at most 32 turns on a notebook and
@@ -855,6 +863,127 @@ outcome and duration, and as its detail how a compaction summary was written
 job that could not settle emits one as `unsettled`, a compaction bound
 reached emits `memory_compaction_bounded`, and a move to a new session emits
 `memory_session_moved`.
+
+### `renoa.memory`'s note pass
+
+The note pass is Mnem's backup note-taker: once a conversation of the Host's
+main agent with a person has gone quiet, the main agent reviews it and notes
+what it missed. Mnem decides when (`mnem::pass::due`), writes the one message
+the pass sends (`Memory::note_pass`), and owns its wording; Renoa keeps the
+counts Mnem decides from and runs the pass. Only the main agent's
+conversations with a person who speaks as a principal get one, while the
+plugin is on for it.
+
+`host_memory_conversations` keeps, per conversation, its last activity, the
+later of the person's last message and the agent's last output; the person's
+characters since its last completed pass, counted once per command and only
+once the kernel admitted it, so a message refused before admission counts
+for nothing and the same message sent again counts once; where
+its range begins, a time and the notebook's length; and when to ask Mnem
+again. A conversation that already had turns when the pass began to follow
+it, such as one from before the upgrade, has its range begin at the person's
+first followed message, since the pass cannot tell which earlier text the
+agent already noted. `host_memory_passes` keeps each pass: frozen with its message under a
+derived command id before that command is admitted, and settled once as
+completed, cancelled or failed with the count of notes it wrote. A person's
+last pass and passes in `pass::day(now)` count completed passes only, in any
+of their conversations, a deleted one's included, so every pass counts
+toward the person's cap. A settled pass is pruned two days after it finished.
+
+Each message and each turn's end asks Mnem again and stores when: now for a
+pass to run, the time Mnem names for one to wait, and never, until new
+activity, for one Mnem skips. The plugin's second trigger, the note pass
+timer, is a one-time automation at the earliest of those times; it is not
+polled. Its run visits each conversation due, most unreviewed text first,
+asks Mnem again, and runs a pass when it is due. Afterwards it compacts, with
+its own run id, every notebook a pass noted in. A pass that failed is not
+asked again until new activity; one a turn held, or one the person
+cancelled, is asked again a quiet spell later; and a conversation still due
+after the run is cleared and logged, so the timer never comes back at once.
+
+A pass claims its conversation (`agent_session::claim`) for its review, and
+a surface claims it for each turn, compaction or configuration change, not
+for as long as it keeps the session open: the Host process keeps one open
+instance per session, which every opener shares, so a surface that caches a
+session, as Telegram, Slack and ACP do, leaves its conversation passable
+between turns. A pass never starts while a surface's operation holds the
+claim, and Mnem decides again under the claim. Only the node admits a
+person's message, so only conversations it serves get a pass; a session
+another process holds fails to open, and that conversation waits for new
+activity. The pass is a receipted prompt in the conversation's own
+session, with the turn's system prompt and tool list byte for byte, so the
+cached prefix holds; its armed list is the agent's enabled automations and
+its ended list the automations whose latest run finished in the pass day,
+the one the nightly sweep ends included; a deletion removes an automation's
+runs and name, so a deleted one is not listed. During the pass the Host
+refuses every tool call but `memory_note`, `memory_recall`, `agent_documents`
+for `USER.md`, and `automation_manage` `list` or `get`; all but `memory_note`
+also run through `tool_execute`. `memory_note` runs only when called
+directly: Code Mode reaches plugins only through `tool_execute` and keeps no
+plugin result's details, so a note written there would be missing from the
+receipt. Each refusal says what to do instead. The pass's text is discarded: the loop marks a receipted
+prompt's operation, and every later request shows its exchange as one user
+message, its receipt, which the Host renders from the notes the exchange
+wrote: `memory pass: noted #41, #42`, `memory pass: nothing new`, or `memory
+pass interrupted: …` for one that stopped before its answer. The journal
+keeps the exchange; compaction and its cuts see the receipt, and the history
+a surface replays leaves the exchange out.
+
+The person's message cancels a pass: their surface's claim cancels the
+pass's command, which aborts an in-flight model call, and waits for the pass
+to settle, at most 20 seconds; past that the message is refused with nothing
+run, to be sent again. An agent's automation run the scheduler is
+delivering waits again instead, under the run's own command id, and so does
+any command when the catalog cannot say whether it is one, so a pass slow to
+stop does not fail a reminder. Cancelling the turn while it waits, by ACP's
+cancel or the caller's own cancellation, ends it with nothing run; a command
+the kernel had already admitted waits on uncancelled, since only the claim
+settles it, and is then settled as cancelled, so it is not left unfinished.
+A command cancelled while its runtime resolves is not admitted. Opening a
+session claims nothing and cancels no pass, since a load does not watch
+cancellation and a surface may open a session, as ACP's `load_session`
+does, without sending anything; it waits for another opener's load no
+longer than for the claim, and is then refused, to be sent again. The
+pass's outcome is
+recorded before its claim is released, unless its command could not run or
+the record failed, and then the pass is closed before the person's message.
+Inspecting a conversation's history and deleting it claim it the same way,
+so a pass reviewing it is cancelled and waited for first. Both are refused
+before the claim, leaving the pass running, for another agent's
+conversation or one an instance in this process holds for anything but the
+pass; another process's hold is found only after the claim, by the kernel.
+A deletion removes the session's storage first, outside any catalog
+transaction, then, in one short transaction, the conversation's row and its
+passes that do not count; a stop between the two leaves only those rows,
+which a retried deletion removes. A draining node, as a deploy
+stops it, stops the Host's memory runs: the running pass is cancelled and
+settles before the node stops, no pass and no further nightly job starts,
+and the run is left unrecorded for the next node to resume. Notes the pass wrote stay, and
+a cancelled pass does not count. A pass a stopped process left is closed, never resumed: before the
+person's next message, or by the next timer or nightly run, its command is
+driven with its cancellation requested, so a model call is not made again and
+a `memory_note` whose call had begun is not run twice; it counts only if its
+command had completed. Closing drives the command with the runtime it was
+admitted with, so a pass a crash left cannot close under a changed runtime,
+and the kernel then refuses the conversation's next message, as for any
+operation left unfinished across an upgrade; the deploy refuses to switch
+while one is. A
+conversation whose pass cannot close or open is logged
+(`memory_pass_unclosed`, `memory_pass_unopened`) and the run goes on to the
+next. A completed pass ends its range; a cancelled or failed
+one leaves it, and the next pass lists the notes written since.
+
+The nightly run sweeps before it compacts and dreams: a sweep pass in every
+main-agent conversation with unreviewed text, which Mnem allows one more of
+per pass day and with no gap, counted toward the pass day the night ends. A
+conversation the person is still in, which Mnem says to wait for, is left.
+
+Each decision emits a `memory_pass_decision` event (run, wait or skip, with
+the reason), each pass a `memory_pass` event with its outcome, notes counted,
+failed tool calls and duration, and each cancelled pass a
+`memory_pass_cancelled` event; none carries note text. Inspection lists, per
+person, the completed passes in today's pass day and when one of their
+conversations is next asked.
 
 ### What stays closed
 

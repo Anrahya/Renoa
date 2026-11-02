@@ -39,6 +39,22 @@ pub struct HostObservation {
     pub plugins: Vec<ObservedPlugin>,
     pub skills: Vec<ObservedSkill>,
     pub shared_registry: Option<ObservedSharedRegistry>,
+    /// Each person's note passes with the main agent in today's pass day.
+    pub memory_passes: Vec<ObservedMemoryPasses>,
+}
+
+/// One person's note passes in the main agent's conversations with them:
+/// counts and times, never what was noted.
+#[derive(Debug, Serialize)]
+pub struct ObservedMemoryPasses {
+    pub principal_id: Uuid,
+    /// The pass day counted, in the notebook zone.
+    pub pass_day: String,
+    /// Completed passes in that day; cancelled and failed ones do not count.
+    pub passes_today: u32,
+    /// When one of their conversations is next asked whether a pass is due;
+    /// null until they write again.
+    pub next_check_ms: Option<i64>,
 }
 
 /// Read access to one existing Host, pinned to its durable identity. It cannot
@@ -97,6 +113,10 @@ impl HostObserver {
             plugins: inventory::plugins(&tx)?,
             skills: inventory::skills(&tx)?,
             shared_registry: inventory::shared_registry(&tx)?,
+            memory_passes: crate::plugins::host::memory::note_pass::observed(
+                &tx,
+                &self.root.join(catalog::HOST_DATABASE),
+            ),
         };
         tx.commit().map_err(HostCatalogError::from)?;
         result.sessions = sessions::read(&self.root.join("sessions"), &result.agents)?;

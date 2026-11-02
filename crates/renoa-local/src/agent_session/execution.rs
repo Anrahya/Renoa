@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use renoa_agent::{AgentEventSink, ContentBlock};
 use renoa_agent_loop::AgentCommand;
-use renoa_kernel::{CancellationId, CommandId, Runtime};
+use renoa_kernel::{CancellationId, CommandId};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -10,12 +10,12 @@ use super::{
     AgentSession,
     context::{MESSAGE_CONTEXT_TRACE, SESSION_CONTEXT_TRACE, record_skipped},
     memory_job::MemoryJob,
+    note_pass::NotePass,
 };
 use crate::{
-    LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, Speaker, TurnObservation,
+    LocalHostError, LocalTurnOutcome, ModelChoice, Speaker, TurnObservation,
     agent_trace::finish_trace,
-    host::{RuntimeRequest, resolve_runtime},
-    plugins::host::{Skipped, message_context},
+    plugins::host::{memory::note_pass, message_context},
     session::PromptAdmission,
     speaker::ToolAccess,
     trace::{ObservedEventSink, TraceRun},
@@ -25,6 +25,7 @@ pub(super) enum SessionCommand {
     Prompt(Prompt),
     Compact,
     MemoryJob(MemoryJob),
+    NotePass(NotePass),
 }
 
 /// One user message, with when and where it was received and who sent it.
@@ -44,6 +45,7 @@ impl SessionCommand {
                 Some((prompt.speaker.principal(), prompt.speaker.tool_access()))
             }
             Self::Compact => Some((None, ToolAccess::Granted)),
+            Self::NotePass(pass) => Some((Some(pass.principal), ToolAccess::NotePass)),
             Self::MemoryJob(_) => None,
         }
     }
@@ -52,6 +54,7 @@ impl SessionCommand {
         match self {
             Self::Prompt(prompt) => Some(&prompt.content),
             Self::MemoryJob(job) => Some(&job.content),
+            Self::NotePass(pass) => Some(&pass.content),
             Self::Compact => None,
         }
     }
@@ -61,6 +64,7 @@ impl SessionCommand {
             Self::Prompt(_) => "prompt",
             Self::Compact => "compact",
             Self::MemoryJob(_) => "memory_job",
+            Self::NotePass(_) => "note_pass",
         }
     }
 }
@@ -139,17 +143,28 @@ impl AgentSession {
         cancellation: CancellationToken,
         speaker: Speaker,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        self.execute(
-            request_id,
-            SessionCommand::Prompt(Prompt {
-                content,
-                observation,
-                speaker,
-            }),
-            events,
-            cancellation,
-        )
-        .await
+        let Some(_claim) = self.surface_claim(request_id, &cancellation).await? else {
+            return Ok(LocalTurnOutcome::Cancelled);
+        };
+        self.close_stale_note_pass().await;
+        let person = speaker.principal();
+        let said = (note_pass::chars(&content), observation.unix_milliseconds());
+        let outcome = self
+            .execute(
+                request_id,
+                SessionCommand::Prompt(Prompt {
+                    content,
+                    observation,
+                    speaker,
+                }),
+                events,
+                cancellation,
+            )
+            .await;
+        if let Some(principal) = person {
+            self.note_message(request_id, said, principal).await;
+        }
+        outcome
     }
 
     /// Runs one caller-identified explicit compaction operation.
@@ -180,6 +195,10 @@ impl AgentSession {
         events: Arc<dyn AgentEventSink>,
         cancellation: CancellationToken,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
+        let Some(_claim) = self.surface_claim(request_id, &cancellation).await? else {
+            return Ok(LocalTurnOutcome::Cancelled);
+        };
+        self.close_stale_note_pass().await;
         self.execute(request_id, SessionCommand::Compact, events, cancellation)
             .await
     }
@@ -347,20 +366,13 @@ impl AgentSession {
                     .await
             }
         };
-        let runtime = match resolved {
-            Ok((runtime, context_skipped)) => {
-                record_skipped(trace, SESSION_CONTEXT_TRACE, command_id, &context_skipped).await;
-                runtime
-            }
-            Err(error) => {
-                if let Some(outcome) =
-                    self.cancelled_outcome(request_id, &command, &cancellation)?
-                {
-                    return Ok(outcome);
-                }
-                return Err(error);
-            }
-        };
+        // Resolving the runtime does not watch the cancellation; a command
+        // cancelled meanwhile, resolved or not, is not admitted.
+        if let Some(outcome) = self.cancelled_outcome(request_id, &command, &cancellation)? {
+            return Ok(outcome);
+        }
+        let (runtime, context_skipped) = resolved?;
+        record_skipped(trace, SESSION_CONTEXT_TRACE, command_id, &context_skipped).await;
         match command {
             SessionCommand::Prompt(prompt) => {
                 self.admit_prompt(command_id, prompt, &runtime, cancellation, trace)
@@ -374,44 +386,11 @@ impl AgentSession {
                 self.admit_memory_job(command_id, job, &runtime, cancellation)
                     .await
             }
+            SessionCommand::NotePass(pass) => {
+                self.admit_note_pass(command_id, pass, &runtime, cancellation)
+                    .await
+            }
         }
-    }
-
-    /// The runtime a command of the agent's conversation runs with: its
-    /// definition, with the person it talks to and their session context, and
-    /// the tools `tools` grants.
-    async fn conversation_runtime(
-        &self,
-        command_id: CommandId,
-        principal: Option<Uuid>,
-        tools: ToolAccess,
-        model: &ModelChoice,
-        reasoning: crate::ReasoningLevel,
-        events: Arc<dyn AgentEventSink>,
-    ) -> Result<(Runtime, Vec<Skipped>), LocalHostError> {
-        let workspace = LocalWorkspace::open(&self.workspace)?;
-        let (session_context, context_skipped) =
-            self.session_context(command_id, principal).await?;
-        let definition = self
-            .definition()
-            .await?
-            .with_principal(principal)
-            .with_session_context(session_context);
-        let runtime = resolve_runtime(
-            &self.host,
-            RuntimeRequest {
-                definition: &definition,
-                session_id: renoa_kernel::SessionId::from_uuid(self.id),
-                command_id: Some(command_id),
-                model,
-                reasoning,
-                workspace: &workspace,
-                events: Some(events),
-                tools,
-            },
-        )
-        .await?;
-        Ok((runtime, context_skipped))
     }
 
     /// Admits a prompt with the context its surface and enabled plugins
