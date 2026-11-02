@@ -18,19 +18,11 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.reflect.KClass
 import kotlin.time.Duration
-import java.util.Base64
 import kotlin.uuid.Uuid
 
 private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 private val TICKET_PATTERN = Regex("^[0-9a-fA-F]{64}$")
 private val NONCE_PATTERN = Regex("^[0-9a-f]{64}$")
-
-/** The text a device signs to prove its key on one connection, as `docs/identity-v0.md` defines it. */
-internal fun deviceProofText(deviceId: Uuid, nonce: String): ByteArray =
-    "renoa device proof v1\n$deviceId\n$nonce".toByteArray(Charsets.UTF_8)
-
-/** Bytes as the coordinator carries keys and signatures: base64url without padding, which it requires. */
-internal fun base64Url(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
 /** Replay of one attachment: complete once the event at [through] has been applied. [applied] hears each event applied before then. */
 private class Replay {
@@ -205,6 +197,14 @@ class WebSocketRcpSurface(
     override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer =
         request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) }, timeouts.hostReply)
             .let { HostAnswer(it.status, it.body) }
+
+    override suspend fun setPushToken(token: String) {
+        request(ServerMessage.PushTokenSet::class, { ClientMessage.SetPushToken(it, "fcm", token) })
+    }
+
+    override suspend fun clearPushToken() {
+        request(ServerMessage.PushTokenCleared::class, { ClientMessage.ClearPushToken(it) })
+    }
 
     override suspend fun resendPending(command: PendingTextCommand) {
         connected()

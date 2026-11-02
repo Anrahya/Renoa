@@ -15,6 +15,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.math.BigInteger
+import java.util.Base64
 import java.security.interfaces.ECPublicKey
 import kotlin.uuid.Uuid
 
@@ -42,6 +43,13 @@ fun uncompressedPoint(key: ECPublicKey): ByteArray {
 /** The text a key signs to bind itself to one passkey ceremony, as `docs/identity-v0.md` defines it. */
 internal fun deviceRegistrationText(ceremonyId: Uuid): ByteArray =
     "renoa device registration v1\n$ceremonyId".toByteArray(Charsets.UTF_8)
+
+/** The text a device signs to prove its key on one connection, as `docs/identity-v0.md` defines it. */
+internal fun deviceProofText(deviceId: Uuid, nonce: String): ByteArray =
+    "renoa device proof v1\n$deviceId\n$nonce".toByteArray(Charsets.UTF_8)
+
+/** Bytes as the coordinator carries keys and signatures: base64url without padding, which it requires. */
+internal fun base64Url(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
 /** The coordinator refused a sign-in. [code] is its error code, such as `conflict` or `not_found`. */
 class SignInRefused(val status: Int, val code: String, message: String) : Exception(message)

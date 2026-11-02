@@ -103,6 +103,9 @@ class FakeCoordinator : AutoCloseable {
     @Volatile var authenticatedVersion = RCP_BINDING_VERSION
     @Volatile var refuseVersion = false
 
+    /** The push token the signed-in device registered, or null once it is cleared or before it is set. */
+    @Volatile var pushToken: String? = null
+
     private val sockets = CopyOnWriteArrayList<Session>()
     private val server = MockWebServer()
 
@@ -202,6 +205,7 @@ class FakeCoordinator : AutoCloseable {
         val attached: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
         val attachedLive: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
         private var authenticated = false
+        private var byTicket = false
         private var nonce: String? = null
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -251,6 +255,8 @@ class FakeCoordinator : AutoCloseable {
                 "submit" -> submit(requestId, frame)
                 "stop_command" -> stopCommand(requestId, frame)
                 "call_host" -> callHost(requestId, frame)
+                "set_push_token" -> setPushToken(requestId, frame)
+                "clear_push_token" -> clearPushToken(requestId)
                 else -> webSocket.send(error(requestId, "invalid_message", "unsupported frame $type"))
             }
         }
@@ -283,6 +289,7 @@ class FakeCoordinator : AutoCloseable {
                 return
             }
             authenticated = true
+            byTicket = type == "authenticate_ticket"
             socket.send("""{"type":"authenticated","version":$authenticatedVersion}""")
         }
 
@@ -399,6 +406,29 @@ class FakeCoordinator : AutoCloseable {
                 return
             }
             reply(requestId, "host_answer") { put("status", answer.first); put("body", answer.second) }
+        }
+
+        private fun setPushToken(requestId: Long, frame: JsonObject) {
+            if (refuseTicket(requestId)) return
+            val provider = frame.getValue("provider").jsonPrimitive.content
+            if (provider != "fcm") {
+                socket.send(error(requestId, "invalid_message", "provider \"$provider\" is not supported; expected \"fcm\""))
+                return
+            }
+            pushToken = frame.getValue("token").jsonPrimitive.content
+            reply(requestId, "push_token_set") {}
+        }
+
+        private fun clearPushToken(requestId: Long) {
+            if (refuseTicket(requestId)) return
+            pushToken = null
+            reply(requestId, "push_token_cleared") {}
+        }
+
+        /** Push tokens belong to an enrolled device, so a ticket connection is refused. Returns whether it was. */
+        private fun refuseTicket(requestId: Long): Boolean {
+            if (byTicket) socket.send(error(requestId, "invalid_role", "push tokens belong to an enrolled device; this connection was opened with a browser ticket"))
+            return byTicket
         }
 
         private fun stopCommand(requestId: Long, frame: JsonObject) {

@@ -106,6 +106,16 @@ interface RcpSurface {
     suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer
 
     /**
+     * Registers [token], issued by Firebase Cloud Messaging, as this device's push token, so Renoa can
+     * wake the app while it holds no connection. A new token replaces the old one, and repeating it is
+     * safe. A connection opened with a ticket is refused with `invalid_role`.
+     */
+    suspend fun setPushToken(token: String)
+
+    /** Stops Renoa waking this device. Safe to repeat, and it succeeds when no token is registered. */
+    suspend fun clearPushToken()
+
+    /**
      * Sends [command] again with its original identity if the outbox still holds it, and removes it
      * once the coordinator admitted it. Safe to repeat: the coordinator converges on one command, and
      * one no longer in the outbox is not sent. The caller decides the order and when to stop.
