@@ -372,11 +372,11 @@ impl Coordinator {
             {
                 let state = Arc::clone(&self.state);
                 let stop = dispatcher_stop.clone();
-                move |last_sent| {
+                move |pacing| {
                     crate::push_dispatch::spawn(
                         Arc::clone(&state),
                         delivery.clone(),
-                        last_sent,
+                        pacing,
                         stop.clone(),
                     )
                 }

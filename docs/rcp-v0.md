@@ -459,10 +459,18 @@ execution do, every other record does not. It marks the wake owed to the
 record's principal in the transaction that appends the record, so the mark is
 durable before the node's events are acknowledged and a retried batch that
 appends nothing marks nothing. A dispatcher started only while serving drains
-the marks, holding no database lock across a network call, and deletes a mark
+the marks, holding no database lock across a network call, and settles a mark
 only at the generation its sends covered, each send counted for the token it
 went to, so a wake is sent at least once while owed: a restart mid-send sends it
-again, and a token registered mid-send gets its own. FCM is a coordinator-side
+again, and a token registered mid-send gets its own. A settled mark keeps its
+row, so a principal's generation never restarts and a send for an older wake
+cannot cover a newer one. A send counts once FCM delivers it, refuses it, or
+calls its token dead; FCM calls a token dead only with `UNREGISTERED` or a
+`BadRequest` violation on `message.token`, and only then is the token deleted.
+A send that gives up on a transient failure after its retries does not count:
+the device stays owed and is sent again after a backoff that doubles from two
+seconds up to ten minutes and resets once a send is delivered. FCM is a
+coordinator-side
 adapter: its request carries no task, principal, agent or text, so RCP
 semantics stay independent of the cloud vendor (locked decision 12), and
 another platform adds a provider rather than changing the operations. Revoking
@@ -879,11 +887,15 @@ The current implementation demonstrates:
   task's last committed sequence beside it;
 - content-free push wakes: a device registers an opaque token, the transaction
   that commits a waking record marks the wake owed, and a dispatcher sends a
-  constant FCM message at least once while owed, across a coordinator restart,
-  coalesces per principal and per device, sends a wake recorded during a send
-  again, deletes only tokens FCM names dead, keeps one device's outage from
-  delaying another's, and starts no send to a device revoked before it (one
-  already handed to FCM cannot be recalled);
+  constant FCM message at least once while owed, across a coordinator restart
+  and an FCM outage longer than a send's retries, coalesces per principal and
+  per device, sends a wake recorded during a send again, deletes a token only
+  when FCM names it dead, keeps one device's outage from delaying another's up
+  to the 8-send bound (a hung send holds its slot until its attempts end, at
+  most four requests and their token fetches of ten seconds each and two
+  retry delays of a minute, under three and a half minutes), and starts no
+  send to a device revoked before it (one already handed to FCM cannot be
+  recalled);
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
   tickets that bind a principal and surface without creating a device;

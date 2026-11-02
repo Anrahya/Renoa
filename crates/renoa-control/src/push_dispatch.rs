@@ -9,24 +9,23 @@
 //! [`MAX_IN_FLIGHT`] sends run at once across every principal, so a device
 //! whose sends hang or are retried holds up no other device, up to that bound.
 //! Once every device has had a send that started at or after a generation, the
-//! marker is deleted at that generation only, so a wake recorded during a send
-//! stays owed and is sent again. No SQLite lock is held across a network call.
+//! marker is settled at that generation only, so a wake recorded during a send
+//! stays owed and is sent again. A marker's generation never restarts, so a
+//! send started for an older wake cannot cover a newer one. No SQLite lock is
+//! held across a network call.
 //!
 //! Wakes coalesce three ways: one marker per principal, a least gap between
 //! two sends to one device (the marker stays until the trailing wake goes
 //! out), and FCM's collapse key, so an offline phone holds one pending wake.
-//! A wake is sent at least once while its marker exists: a shutdown or restart
-//! mid-send leaves the marker, and the next `serve` sends again. A wake FCM
-//! refuses, or one that outlasts its retries, is not repeated; the journal is
-//! the truth and the app reconciles from its cursors. A device revoked before
-//! a send starts is not sent one; a send already handed to FCM cannot be
-//! recalled.
+//! A wake is sent at least once while its marker is owed: a shutdown or
+//! restart mid-send leaves it owed, and the next `serve` sends again. A send
+//! that gave up after its retries leaves its device owed, sent again after
+//! the backoff [`Pacing`] keeps. A wake FCM refuses or whose token it calls
+//! dead counts as sent and is not repeated; the journal is the truth and the
+//! app reconciles from its cursors. A device revoked before a send starts is
+//! not sent one; a send already handed to FCM cannot be recalled.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use renoa_protocol::PrincipalId;
 use tokio::{
@@ -39,6 +38,7 @@ use crate::{
     ControlError, DeviceId, PushToken, control_log,
     coordinator::CoordinatorState,
     fcm::{FcmSender, WakeOutcome},
+    push_pacing::{Pacing, Ready},
     push_tokens::PushTarget,
     push_wake::OwedWake,
 };
@@ -58,20 +58,6 @@ pub(crate) enum Delivery {
     Disabled,
 }
 
-/// When each device's latest send started or ended. The supervisor keeps it
-/// across dispatcher restarts, so a dispatcher that dies mid-send does not
-/// cost a device its gap. It lives in memory only: a coordinator restart
-/// forgets it, so the first wake after one may come inside a device's gap.
-#[derive(Clone, Default)]
-pub(crate) struct LastSent(Arc<Mutex<HashMap<DeviceId, Instant>>>);
-
-impl LastSent {
-    fn lock(&self) -> MutexGuard<'_, HashMap<DeviceId, Instant>> {
-        // A dispatcher that panicked while holding it left whole entries.
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
 /// A send in flight.
 struct Sending {
     principal_id: PrincipalId,
@@ -80,7 +66,8 @@ struct Sending {
     target: PushTarget,
 }
 
-/// The latest ended send to one device.
+/// The latest send to one device that delivered, or that FCM refused or
+/// called its token dead.
 struct Covered {
     /// The marker's generation when the send started.
     generation: i64,
@@ -97,8 +84,8 @@ impl Covered {
 
 struct Dispatcher {
     state: Arc<CoordinatorState>,
-    last_sent: LastSent,
-    /// Per principal with an owed wake, each device's latest ended send.
+    pacing: Pacing,
+    /// Per principal with an owed wake, each device's latest send that counts.
     /// Dropped with the principal's marker.
     covered: HashMap<PrincipalId, HashMap<DeviceId, Covered>>,
     in_flight: JoinSet<WakeOutcome>,
@@ -115,22 +102,23 @@ enum Woken {
 pub(crate) fn spawn(
     state: Arc<CoordinatorState>,
     delivery: Delivery,
-    last_sent: LastSent,
+    pacing: Pacing,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
-    tokio::spawn(dispatch(state, delivery, last_sent, shutdown))
+    tokio::spawn(dispatch(state, delivery, pacing, shutdown))
 }
 
 /// Runs a dispatcher until `shutdown`.
 pub(crate) async fn dispatch(
     state: Arc<CoordinatorState>,
     delivery: Delivery,
-    last_sent: LastSent,
+    pacing: Pacing,
     shutdown: CancellationToken,
 ) {
+    pacing.orphans_ended(Instant::now());
     let dispatcher = Dispatcher {
         state,
-        last_sent,
+        pacing,
         covered: HashMap::new(),
         in_flight: JoinSet::new(),
         sending: HashMap::new(),
@@ -205,9 +193,7 @@ impl Dispatcher {
             }
         }
         if let Delivery::Fcm { gap, .. } = delivery {
-            let now = Instant::now();
-            // The gap is at most a day, so adding it cannot overflow.
-            self.last_sent.lock().retain(|_, sent| now < *sent + *gap);
+            self.pacing.prune(*gap, Instant::now());
         }
         due
     }
@@ -241,14 +227,6 @@ impl Dispatcher {
     ) -> Result<(), ControlError> {
         let targets = self.state.store.push_targets(wake.principal_id).await?;
         let covered = self.covered.entry(wake.principal_id).or_default();
-        // A generation restarts at one after its marker is deleted, so
-        // coverage above the marker's generation belongs to an older marker.
-        if covered
-            .values()
-            .any(|covered| covered.generation > wake.generation)
-        {
-            covered.clear();
-        }
         let mut waiting = false;
         let mut ready = Vec::new();
         for target in targets {
@@ -262,36 +240,20 @@ impl Dispatcher {
             ready.push(target);
         }
         for target in ready {
-            if self.is_sending(target.device_id) {
-                continue;
-            }
-            // The gap is at most a day, so adding it cannot overflow.
-            let gap_ends = self
-                .last_sent
-                .lock()
-                .get(&target.device_id)
-                .map(|sent| *sent + gap);
-            if let Some(ends) = gap_ends
-                && Instant::now() < ends
-            {
-                earliest(due, ends);
-                continue;
-            }
-            // At the bound, the send that ends next starts another pass.
-            if self.in_flight.len() < MAX_IN_FLIGHT {
-                self.start(sender, shutdown, wake, target);
+            match self.pacing.ready(target.device_id, gap, Instant::now()) {
+                Ready::At(at) => earliest(due, at),
+                Ready::Now if self.in_flight.len() < MAX_IN_FLIGHT => {
+                    self.start(sender, shutdown, wake, target);
+                }
+                // At the bound, the send that ends next starts another pass;
+                // a send in flight starts one when it ends.
+                Ready::Now | Ready::InFlight => {}
             }
         }
         if waiting {
             return Ok(());
         }
         self.settle(wake).await
-    }
-
-    fn is_sending(&self, device_id: DeviceId) -> bool {
-        self.sending
-            .values()
-            .any(|send| send.target.device_id == device_id)
     }
 
     fn start(
@@ -301,11 +263,7 @@ impl Dispatcher {
         wake: OwedWake,
         target: PushTarget,
     ) {
-        // Recorded at the start too, so a dispatcher that dies mid-send
-        // leaves the device's gap behind for the next one.
-        self.last_sent
-            .lock()
-            .insert(target.device_id, Instant::now());
+        self.pacing.started(target.device_id);
         let sender = Arc::clone(sender);
         let stop = shutdown.clone();
         let token = target.token.clone();
@@ -323,7 +281,7 @@ impl Dispatcher {
     }
 
     /// Records a send that ended, reports it, and settles its wake when every
-    /// device of the principal has had a send.
+    /// device of the principal has had a send that counts.
     async fn finish(
         &mut self,
         ended: Result<(task::Id, WakeOutcome), JoinError>,
@@ -346,9 +304,14 @@ impl Dispatcher {
         let device_id = target.device_id;
         // The gap runs from the end of the send, whatever its outcome, so a
         // failing device sees no more requests than a healthy one.
-        self.last_sent.lock().insert(device_id, Instant::now());
-        if outcome == WakeOutcome::Cancelled {
-            return Ok(());
+        let retry_after = self.pacing.ended(device_id, outcome, Instant::now());
+        match outcome {
+            WakeOutcome::Cancelled => return Ok(()),
+            // The device stays owed, and a pass sends again after its backoff.
+            WakeOutcome::GaveUp(_) => {
+                return report(&self.state, principal_id, target, outcome, retry_after).await;
+            }
+            WakeOutcome::Delivered | WakeOutcome::DeadToken(_) | WakeOutcome::Refused(_) => {}
         }
         let devices = self.covered.entry(principal_id).or_default();
         let generation = match devices.get(&device_id) {
@@ -362,7 +325,7 @@ impl Dispatcher {
                 token: target.token.clone(),
             },
         );
-        report(&self.state, principal_id, target, outcome).await?;
+        report(&self.state, principal_id, target, outcome, None).await?;
         self.settle_if_covered(principal_id, generation).await
     }
 
@@ -433,6 +396,7 @@ async fn report(
     principal_id: PrincipalId,
     target: PushTarget,
     outcome: WakeOutcome,
+    retry_after: Option<Duration>,
 ) -> Result<(), ControlError> {
     let device_id = target.device_id;
     let fields = |reason: &str| {
@@ -440,7 +404,7 @@ async fn report(
             "device_id": device_id,
             "principal_id": principal_id,
             "reason": reason,
-            "retried": matches!(outcome, WakeOutcome::GaveUp(_)),
+            "retry_after_ms": retry_after.map(|delay| delay.as_millis()),
         })
     };
     match outcome {

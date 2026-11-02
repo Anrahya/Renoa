@@ -52,8 +52,10 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
 
 /// Push wake-ups. A device holds at most one token and a token belongs to one
 /// device; `principal_id` is the device's principal, copied at registration.
-/// A principal holds at most one pending wake, whose `generation` grows with
-/// every record that wakes, so the dispatcher deletes only what it sent.
+/// A principal holds one wake row, whose `generation` grows with every record
+/// that wakes; a wake is owed while `settled` is below it. The row is kept
+/// once settled, so a generation never restarts and the dispatcher settles
+/// only what it sent.
 fn create_push_schema(connection: &Connection) -> Result<(), ControlError> {
     connection
         .execute_batch(
@@ -69,7 +71,9 @@ fn create_push_schema(connection: &Connection) -> Result<(), ControlError> {
 
             CREATE TABLE IF NOT EXISTS push_wakes (
                 principal_id TEXT PRIMARY KEY,
-                generation INTEGER NOT NULL CHECK (generation >= 1)
+                generation INTEGER NOT NULL CHECK (generation >= 1),
+                settled INTEGER NOT NULL DEFAULT 0
+                    CHECK (settled >= 0 AND settled <= generation)
             );",
         )
         .map_err(sqlite_error)

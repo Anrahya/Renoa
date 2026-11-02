@@ -847,12 +847,18 @@ no request to Google carries a task, principal, agent or text. Check the
 journal after a reply for `push_wake_sent`, and for `push_wake_failed` with
 `SENDER_ID_MISMATCH` (a token from another project) or a rejected service
 account (a revoked or wrong key; after a rejection the token endpoint is asked
-again at most once a minute). A `push_token_dropped` warning names a device
-whose token FCM called dead; its `deleted` field is false when the device had
-already registered another token, and null when the deletion failed. That device is not woken until it registers a new one. A
-`push_dispatcher_failed` error means the dispatcher stopped and is started again
-after `restart_after_ms`: a second after the first failure, doubling with each
-of its `consecutive_failures` up to a minute.
+again at most once a minute, and after it fails on its side at most once a
+second). A `push_wake_failed` with a `retry_after_ms` is an outage that outlasted
+a send's retries: the device stays owed and is sent again after that delay,
+which doubles from two seconds up to ten minutes until a send is delivered. A
+`push_token_dropped` warning names a device whose token FCM called dead, which
+it does only with `UNREGISTERED` or a `BadRequest` violation on
+`message.token`; its `deleted` field is false when the device had already
+registered another token, and null when the deletion failed. That device is not
+woken until it registers a new one. A `push_dispatcher_failed` error means the
+dispatcher stopped and is started again after `restart_after_ms`: a second
+after the first failure, doubling with each of its `consecutive_failures` up to
+a minute.
 
 ### Public RCP route
 

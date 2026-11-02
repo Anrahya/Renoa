@@ -46,6 +46,11 @@ const MAX_TOKEN_LIFETIME: Duration = Duration::from_hours(1);
 /// After the token endpoint rejects the credentials, requests are refused
 /// this long without asking it again, rather than once per device per wake.
 const REJECTION_HOLD: Duration = Duration::from_mins(1);
+/// After the token endpoint fails on its side, requests fail this long
+/// without asking it again, so a fast-failing endpoint is asked at most once
+/// a second across every send. It is no longer than a send's first retry
+/// delay, so that retry asks again.
+const UNAVAILABLE_HOLD: Duration = Duration::from_secs(1);
 const MAX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// Credentials that obtain Google access tokens, without exposing them.
@@ -271,6 +276,15 @@ impl AccessError {
             Self::Signing => "the token assertion could not be signed",
         }
     }
+
+    /// How long the failure is repeated without asking the endpoint again.
+    const fn hold(self) -> Duration {
+        match self {
+            Self::Rejected => REJECTION_HOLD,
+            Self::Unavailable => UNAVAILABLE_HOLD,
+            Self::Malformed | Self::Signing => Duration::ZERO,
+        }
+    }
 }
 
 struct CachedToken {
@@ -281,9 +295,8 @@ struct CachedToken {
 #[derive(Default)]
 struct Cache {
     token: Option<CachedToken>,
-    /// Until when a rejection of the credentials is repeated without asking.
-    rejected_until: Option<Instant>,
-    /// The last failed refresh and when it ended.
+    /// The last failed refresh and when it ended. It is repeated to every
+    /// caller that waited on it, and to later ones for its error's hold.
     failed: Option<(Instant, AccessError)>,
 }
 
@@ -291,7 +304,8 @@ struct Cache {
 /// expire. The cache lock is held across a refresh, so at most one refresh is
 /// in flight and every caller waiting on it shares its result, a failure too:
 /// a stalled token endpoint costs one timeout, not one per waiting send. A
-/// rejection is cached for [`REJECTION_HOLD`].
+/// rejection is then repeated for [`REJECTION_HOLD`] and an unavailable
+/// endpoint for [`UNAVAILABLE_HOLD`].
 pub(crate) struct AccessTokens {
     credentials: GoogleCredentials,
     http: reqwest::Client,
@@ -331,12 +345,13 @@ impl AccessTokens {
         {
             return Ok(current.token.clone());
         }
-        if cache.rejected_until.is_some_and(|until| now < until) {
-            return Err(AccessError::Rejected);
-        }
-        // A refresh that failed while this caller waited for the lock.
+        // A refresh that failed while this caller waited for the lock, or
+        // one still inside its hold.
         if let Some((ended, error)) = cache.failed
-            && ended >= asked
+            && (ended >= asked
+                || ended
+                    .checked_add(error.hold())
+                    .is_some_and(|until| now < until))
         {
             return Err(error);
         }
@@ -350,11 +365,7 @@ impl AccessTokens {
                 Ok(token)
             }
             Err(error) => {
-                let ended = Instant::now();
-                cache.failed = Some((ended, error));
-                if error == AccessError::Rejected {
-                    cache.rejected_until = ended.checked_add(REJECTION_HOLD);
-                }
+                cache.failed = Some((Instant::now(), error));
                 Err(error)
             }
         }

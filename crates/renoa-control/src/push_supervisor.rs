@@ -3,8 +3,8 @@
 //! A dispatcher that ends before shutdown, by a panic or otherwise, is started
 //! again after a delay that doubles with each consecutive failure, from one
 //! second up to a minute, and falls back to a second after a dispatcher has
-//! run healthy for five minutes. Every dispatcher shares one [`LastSent`], so
-//! a restart does not cost a device its gap. The running dispatcher is
+//! run healthy for five minutes. Every dispatcher shares one [`Pacing`], so
+//! a restart does not cost a device its gap or its backoff. The running dispatcher is
 //! aborted when the supervising future is dropped, so none outlives `serve`.
 
 use std::time::Duration;
@@ -12,7 +12,10 @@ use std::time::Duration;
 use tokio::{task::JoinHandle, time::Instant};
 use tokio_util::sync::CancellationToken;
 
-use crate::{control_log, push_dispatch::LastSent};
+use crate::{
+    control_log,
+    push_pacing::{Pacing, doubled},
+};
 
 const FIRST_RESTART_DELAY: Duration = Duration::from_secs(1);
 const MAX_RESTART_DELAY: Duration = Duration::from_mins(1);
@@ -20,16 +23,16 @@ const MAX_RESTART_DELAY: Duration = Duration::from_mins(1);
 const HEALTHY_RUN: Duration = Duration::from_mins(5);
 
 /// Runs a dispatcher from `start` until `shutdown`, and starts another
-/// whenever one ends before it. `start` receives the shared [`LastSent`].
+/// whenever one ends before it. `start` receives the shared [`Pacing`].
 pub(crate) async fn supervise(
-    mut start: impl FnMut(LastSent) -> JoinHandle<()>,
+    mut start: impl FnMut(Pacing) -> JoinHandle<()>,
     shutdown: CancellationToken,
 ) {
-    let last_sent = LastSent::default();
+    let pacing = Pacing::default();
     let mut failures: u32 = 0;
     loop {
         let started = Instant::now();
-        let mut running = AbortOnDrop(start(last_sent.clone()));
+        let mut running = AbortOnDrop(start(pacing.clone()));
         let ended = tokio::select! {
             ended = &mut running.0 => ended,
             () = shutdown.cancelled() => {
@@ -69,10 +72,7 @@ pub(crate) async fn supervise(
 
 /// One second after the first failure in a row, doubling up to a minute.
 fn restart_delay(failures: u32) -> Duration {
-    let doublings = failures.saturating_sub(1).min(16);
-    FIRST_RESTART_DELAY
-        .saturating_mul(1 << doublings)
-        .min(MAX_RESTART_DELAY)
+    doubled(FIRST_RESTART_DELAY, failures, MAX_RESTART_DELAY)
 }
 
 struct AbortOnDrop(JoinHandle<()>);

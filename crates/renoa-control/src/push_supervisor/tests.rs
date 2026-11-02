@@ -21,6 +21,7 @@ use super::{HEALTHY_RUN, MAX_RESTART_DELAY, restart_delay, supervise};
 use crate::{
     Coordinator, PeerIdentity,
     control_schema::open_connection,
+    coordinator::CoordinatorState,
     fcm::FcmSender,
     push_dispatch::{Delivery, dispatch},
 };
@@ -165,18 +166,18 @@ async fn dropping_the_supervisor_aborts_its_dispatcher() {
     .await;
 }
 
-/// A token endpoint that answers, and an FCM that counts each wake and never
-/// answers it.
-async fn google() -> (Url, watch::Receiver<usize>) {
-    async fn answer(State(sent): State<Arc<watch::Sender<usize>>>, uri: Uri) -> String {
+/// A token endpoint that answers, and an FCM that records when each wake
+/// arrived and never answers it.
+async fn google() -> (Url, watch::Receiver<Vec<Instant>>) {
+    async fn answer(State(sent): State<Arc<watch::Sender<Vec<Instant>>>>, uri: Uri) -> String {
         if uri.path() == "/token" {
             return serde_json::json!({"access_token": "ya29.unit", "expires_in": 3599})
                 .to_string();
         }
-        sent.send_modify(|sent| *sent += 1);
+        sent.send_modify(|sent| sent.push(Instant::now()));
         std::future::pending().await
     }
-    let (sent, seen) = watch::channel(0);
+    let (sent, seen) = watch::channel(Vec::new());
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("stub listener");
@@ -190,16 +191,9 @@ async fn google() -> (Url, watch::Receiver<usize>) {
     (origin, seen)
 }
 
-#[tokio::test]
-async fn a_dispatcher_that_panics_mid_send_leaves_the_device_its_gap() {
-    let (origin, seen) = google().await;
-    let observed = seen.clone();
-    let files = TempDir::new().expect("temporary directory");
-    let settings = crate::google_access::tests::push_settings(files.path())
-        .with_google_endpoints(origin.join("/token").expect("token endpoint"), origin);
-    let coordinator =
-        Coordinator::open(files.path().join("control.sqlite")).expect("open the coordinator");
-    let state = coordinator.state();
+/// Enrolls a phone with a push token and owes its principal a wake. Returns
+/// a connection to the coordinator's database.
+async fn owe_a_phone_a_wake(state: &CoordinatorState) -> rusqlite::Connection {
     let owner = PrincipalId::new();
     let enrollment = state
         .store
@@ -232,32 +226,57 @@ async fn a_dispatcher_that_panics_mid_send_leaves_the_device_its_gap() {
             [owner.to_string()],
         )
         .expect("owe the owner a wake");
+    database
+}
+
+#[tokio::test]
+async fn a_send_cut_short_by_a_dying_dispatcher_ends_its_gap_after_the_restart() {
+    // Longer than the one-second restart delay, so a send right after the
+    // restart is told apart from one after the gap.
+    let gap = Duration::from_secs(3);
+    let (origin, seen) = google().await;
+    let files = TempDir::new().expect("temporary directory");
+    let settings = crate::google_access::tests::push_settings(files.path())
+        .with_google_endpoints(origin.join("/token").expect("token endpoint"), origin)
+        .with_device_gap(gap);
+    let coordinator =
+        Coordinator::open(files.path().join("control.sqlite")).expect("open the coordinator");
+    let state = coordinator.state();
+    let database = owe_a_phone_a_wake(&state).await;
     let delivery = Delivery::Fcm {
         sender: Arc::new(FcmSender::new(&settings).expect("build the sender")),
-        gap: settings.device_gap(),
+        gap,
     };
 
+    let died: Arc<Mutex<Option<Instant>>> = Arc::default();
     let starts = Arc::new(AtomicUsize::new(0));
     let stop = CancellationToken::new();
     let supervisor = tokio::spawn(supervise(
         {
-            let starts = Arc::clone(&starts);
+            let state = Arc::clone(&state);
+            let died = Arc::clone(&died);
+            let seen = seen.clone();
             let stop = stop.clone();
-            move |last_sent| {
-                let run = dispatch(
-                    Arc::clone(&state),
-                    delivery.clone(),
-                    last_sent,
-                    stop.clone(),
-                );
+            move |pacing| {
+                let run = dispatch(Arc::clone(&state), delivery.clone(), pacing, stop.clone());
                 if starts.fetch_add(1, Ordering::SeqCst) > 0 {
                     return tokio::spawn(run);
                 }
                 let mut seen = seen.clone();
+                let state = Arc::clone(&state);
+                let died = Arc::clone(&died);
                 tokio::spawn(async move {
+                    let outlived = async {
+                        let _ = seen.wait_for(|sent| sent.len() == 1).await;
+                        tokio::time::sleep(gap).await;
+                        // A pass while the send is in flight past its gap.
+                        state.push_wakes.notify_one();
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    };
                     tokio::select! {
                         () = run => {}
-                        _ = seen.wait_for(|sent| *sent == 1) => {
+                        () = outlived => {
+                            *died.lock().expect("death") = Some(Instant::now());
                             panic!("the dispatcher dies with its send in flight");
                         }
                     }
@@ -266,21 +285,31 @@ async fn a_dispatcher_that_panics_mid_send_leaves_the_device_its_gap() {
         },
         stop.clone(),
     ));
-    eventually("a second dispatcher starts after the panic", || {
-        starts.load(Ordering::SeqCst) == 2
-    })
-    .await;
-    // Long enough for the new dispatcher's first pass.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let owed: i64 = database
-        .query_row("SELECT count(*) FROM push_wakes", [], |row| row.get(0))
-        .expect("count owed wakes");
-    assert_eq!(owed, 1, "the interrupted wake is still owed");
-    assert_eq!(
-        *observed.borrow(),
-        1,
-        "the restarted dispatcher waits out the device's gap"
+    let mut arrivals = seen.clone();
+    // The death comes a gap after the first send, the restart a second
+    // later, and the second send a gap after that.
+    let sent = timeout(WAIT * 2, arrivals.wait_for(|sent| sent.len() == 2))
+        .await
+        .expect("the restarted dispatcher sends again")
+        .expect("the stub is alive")
+        .clone();
+    let died = died
+        .lock()
+        .expect("death")
+        .expect("the first dispatcher died");
+    assert!(
+        sent[1] >= died + gap,
+        "the device waits a full gap after the send that was cut short: {:?}",
+        sent[1] - died
     );
+    let owed: i64 = database
+        .query_row(
+            "SELECT count(*) FROM push_wakes WHERE generation > settled",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count owed wakes");
+    assert_eq!(owed, 1, "a wake whose sends never ended is still owed");
     stop.cancel();
     supervisor.await.expect("the supervisor returns");
 }

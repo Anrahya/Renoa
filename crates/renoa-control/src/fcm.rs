@@ -94,11 +94,11 @@ pub(crate) enum WakeOutcome {
     /// FCM named the token dead; its row is deleted.
     DeadToken(&'static str),
     /// A configuration fault, such as another project's token or rejected
-    /// credentials. Nothing is deleted and nothing is retried.
+    /// credentials. Nothing is deleted and nothing is retried: the device
+    /// counts as sent.
     Refused(&'static str),
-    /// A transient failure outlasted the retries. The wake is dropped: the
-    /// journal is the truth, and the app reconciles from its cursors on its
-    /// next connection. A wake lost this way is not delivered later.
+    /// A transient failure outlasted the retries. The device stays owed and
+    /// the dispatcher sends again after its retry backoff.
     GaveUp(&'static str),
     /// The coordinator is shutting down.
     Cancelled,
@@ -112,7 +112,8 @@ enum Attempt {
         after: Option<Duration>,
     },
     /// FCM refused the access token. The first refusal in a wake is retried
-    /// at once with a fresh token; a second is a configuration fault.
+    /// at once with a fresh token, outside the attempt budget; a second is a
+    /// configuration fault.
     Unauthorized,
 }
 
@@ -151,7 +152,7 @@ impl FcmSender {
 
     /// Sends one wake to `token`, retrying a transient failure a bounded
     /// number of times with exponential backoff or the server's
-    /// `Retry-After`.
+    /// `Retry-After`, and a refused access token once with a fresh one.
     pub(crate) async fn wake(
         &self,
         token: &PushToken,
@@ -167,9 +168,11 @@ impl FcmSender {
             let (reason, after) = match result {
                 Attempt::Done(outcome) => return outcome,
                 Attempt::Retry { reason, after } => (reason, after),
+                // Outside the attempt budget, so even a refusal on the last
+                // attempt is retried with a fresh token.
                 Attempt::Unauthorized if !refreshed => {
                     refreshed = true;
-                    (UNAUTHORIZED, Some(Duration::ZERO))
+                    continue;
                 }
                 Attempt::Unauthorized => return WakeOutcome::Refused(UNAUTHORIZED),
             };
@@ -242,22 +245,18 @@ fn wake_body(token: &PushToken) -> String {
 }
 
 /// Classifies an FCM error answer by its `FcmError` code, then its details,
-/// canonical status and HTTP status. A token is called dead only when a detail
-/// names it: an `FcmError` of `UNREGISTERED`, an `FcmError` of
-/// `INVALID_ARGUMENT` unless `BadRequest` violations name only other fields
-/// (the payload is constant and valid, so otherwise it means the token), or a
-/// `BadRequest` violation on `message.token`. A bare 400 deletes nothing.
+/// canonical status and HTTP status. A token is called dead only when FCM
+/// names it: an `FcmError` of `UNREGISTERED`, or a `BadRequest` violation on
+/// `message.token`. An `INVALID_ARGUMENT` without that violation, and a bare
+/// 400, delete nothing and are refused.
 fn classify(status: StatusCode, body: &[u8], after: Option<Duration>) -> Attempt {
     let retry = |reason| Attempt::Retry { reason, after };
     let refused = |reason| Attempt::Done(WakeOutcome::Refused(reason));
     let error = ErrorBody::parse(body);
     match error.fcm_code.as_deref() {
         Some("UNREGISTERED") => return Attempt::Done(WakeOutcome::DeadToken("UNREGISTERED")),
-        Some("INVALID_ARGUMENT") if error.names_only_other_fields() => {
-            return refused("FCM rejected a field other than the token");
-        }
-        Some("INVALID_ARGUMENT") => {
-            return Attempt::Done(WakeOutcome::DeadToken("INVALID_ARGUMENT"));
+        Some("INVALID_ARGUMENT") if !error.names_the_token() => {
+            return refused("INVALID_ARGUMENT without a violation on the token");
         }
         Some("SENDER_ID_MISMATCH") => return refused("SENDER_ID_MISMATCH"),
         Some("THIRD_PARTY_AUTH_ERROR") => return refused("THIRD_PARTY_AUTH_ERROR"),
@@ -340,11 +339,6 @@ impl ErrorBody {
         self.violated_fields
             .iter()
             .any(|field| field == "message.token")
-    }
-
-    /// Whether `BadRequest` violations name fields, none of them the token.
-    fn names_only_other_fields(&self) -> bool {
-        !self.violated_fields.is_empty() && !self.names_the_token()
     }
 }
 

@@ -1,12 +1,21 @@
 use std::{
+    collections::VecDeque,
     path::Path,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
 
+use axum::{Router, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{RSA_PKCS1_2048_8192_SHA256, RsaKeyPair, UnparsedPublicKey};
+use serde_json::{Value, json};
+use tokio::net::TcpListener;
+use url::Url;
 
-use super::{AccessToken, GoogleCredentials, pkcs8_der};
+use super::{
+    AccessError, AccessToken, AccessTokens, GoogleCredentials, REFRESH_MARGIN, UNAVAILABLE_HOLD,
+    pkcs8_der,
+};
 
 /// A key generated for these tests only; it signs nothing anywhere else.
 const TEST_KEY: &str = include_str!("../../tests/support/push-test-key.pem");
@@ -180,4 +189,131 @@ fn no_other_module_handles_key_material() {
         }
     }
     assert!(offenders.is_empty(), "{offenders:?}");
+}
+
+/// A token endpoint that gives each request the next of `answers`, and the
+/// count of requests it has had.
+async fn token_endpoint(answers: Vec<(u16, Value)>) -> (Url, Arc<Mutex<usize>>) {
+    struct Stub {
+        answers: Mutex<VecDeque<(u16, Value)>>,
+        asked: Arc<Mutex<usize>>,
+    }
+    async fn answer(State(stub): State<Arc<Stub>>) -> (StatusCode, String) {
+        *stub.asked.lock().expect("count") += 1;
+        let (status, body) = stub
+            .answers
+            .lock()
+            .expect("answers")
+            .pop_front()
+            .expect("an answer for every request");
+        (
+            StatusCode::from_u16(status).expect("status"),
+            body.to_string(),
+        )
+    }
+    let asked = Arc::default();
+    let stub = Arc::new(Stub {
+        answers: Mutex::new(answers.into()),
+        asked: Arc::clone(&asked),
+    });
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stub listener");
+    let endpoint = Url::parse(&format!(
+        "http://{}/token",
+        listener.local_addr().expect("address")
+    ))
+    .expect("stub endpoint");
+    let app = Router::new().fallback(answer).with_state(stub);
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve the stub") });
+    (endpoint, asked)
+}
+
+fn access_tokens(endpoint: Url) -> AccessTokens {
+    let (credentials, _) =
+        GoogleCredentials::from_service_account_json(&service_account_json(TEST_KEY))
+            .expect("load the test service account");
+    AccessTokens::new(
+        credentials.with_token_endpoint(endpoint),
+        reqwest::Client::new(),
+    )
+}
+
+fn granted(token: &str, expires_in: u64) -> (u16, Value) {
+    (
+        200,
+        json!({"access_token": token, "expires_in": expires_in}),
+    )
+}
+
+/// The token `bearer` gives, as text.
+async fn bearer(tokens: &AccessTokens) -> Result<String, AccessError> {
+    tokens.bearer().await.map(|token| token.0)
+}
+
+#[tokio::test]
+async fn an_unavailable_token_endpoint_is_asked_again_only_after_a_second() {
+    let (endpoint, asked) = token_endpoint(vec![(503, json!({})), (503, json!({}))]).await;
+    let tokens = access_tokens(endpoint);
+    assert_eq!(bearer(&tokens).await, Err(AccessError::Unavailable));
+    assert_eq!(*asked.lock().expect("count"), 1);
+
+    // Only the clock moves while it is paused, so nothing else can ask.
+    tokio::time::pause();
+    tokio::time::advance(
+        UNAVAILABLE_HOLD
+            .checked_sub(Duration::from_millis(1))
+            .expect("the hold is longer than a millisecond"),
+    )
+    .await;
+    assert_eq!(bearer(&tokens).await, Err(AccessError::Unavailable));
+    assert_eq!(*asked.lock().expect("count"), 1, "inside the hold");
+    tokio::time::advance(Duration::from_millis(1)).await;
+    tokio::time::resume();
+    assert_eq!(bearer(&tokens).await, Err(AccessError::Unavailable));
+    assert_eq!(*asked.lock().expect("count"), 2, "after the hold");
+}
+
+#[tokio::test]
+async fn a_token_is_refreshed_its_margin_before_a_lifetime_of_at_most_an_hour() {
+    let hour = Duration::from_hours(1);
+    for (expires_in, lifetime) in [
+        (3599, Duration::from_secs(3599)),
+        (7200, hour),
+        (u64::MAX, hour),
+    ] {
+        let (endpoint, asked) = token_endpoint(vec![
+            granted("ya29.one", expires_in),
+            granted("ya29.two", 3599),
+        ])
+        .await;
+        let tokens = access_tokens(endpoint);
+        assert_eq!(bearer(&tokens).await.as_deref(), Ok("ya29.one"));
+
+        tokio::time::pause();
+        // A second short of the refresh, as the pause came just after the
+        // token was cached.
+        let refresh = lifetime
+            .checked_sub(REFRESH_MARGIN)
+            .expect("a lifetime longer than the margin");
+        tokio::time::advance(
+            refresh
+                .checked_sub(Duration::from_secs(1))
+                .expect("a refresh later than a second"),
+        )
+        .await;
+        assert_eq!(
+            bearer(&tokens).await.as_deref(),
+            Ok("ya29.one"),
+            "{expires_in}: cached until its refresh"
+        );
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::time::resume();
+        assert_eq!(
+            bearer(&tokens).await.as_deref(),
+            Ok("ya29.two"),
+            "{expires_in}: refreshed at {refresh:?}"
+        );
+        assert_eq!(*asked.lock().expect("count"), 2);
+    }
 }

@@ -50,7 +50,8 @@ pub(crate) fn wake_reason(kind: &TaskEventKind) -> Option<&'static str> {
 }
 
 /// Marks a wake as owed to `principal_id` inside the caller's transaction:
-/// creates the principal's one marker or advances its generation.
+/// creates the principal's one marker or advances its generation past the
+/// settled one.
 pub(crate) fn record(
     transaction: &Transaction<'_>,
     principal_id: PrincipalId,
@@ -78,7 +79,10 @@ impl ControlStore {
         blocking(move || {
             let connection = open_connection(&path)?;
             let mut statement = connection
-                .prepare("SELECT principal_id, generation FROM push_wakes ORDER BY principal_id")
+                .prepare(
+                    "SELECT principal_id, generation FROM push_wakes
+                     WHERE generation > settled ORDER BY principal_id",
+                )
                 .map_err(sqlite_error)?;
             let rows = statement
                 .query_map([], |row| {
@@ -98,17 +102,19 @@ impl ControlStore {
         .await
     }
 
-    /// Deletes the marker only at `wake.generation`, so a wake recorded since
-    /// that generation was sent stays owed. Returns whether it deleted one.
+    /// Settles the marker only at `wake.generation`, so a wake recorded since
+    /// that generation was sent stays owed. The row stays, so the next wake
+    /// takes a later generation. Returns whether it settled one.
     pub(crate) async fn settle_wake(&self, wake: OwedWake) -> Result<bool, ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
             open_connection(&path)?
                 .execute(
-                    "DELETE FROM push_wakes WHERE principal_id = ?1 AND generation = ?2",
+                    "UPDATE push_wakes SET settled = generation
+                     WHERE principal_id = ?1 AND generation = ?2 AND settled < generation",
                     params![wake.principal_id.to_string(), wake.generation],
                 )
-                .map(|deleted| deleted > 0)
+                .map(|settled| settled > 0)
                 .map_err(sqlite_error)
         })
         .await
