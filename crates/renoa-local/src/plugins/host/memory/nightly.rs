@@ -5,8 +5,9 @@
 //! drives every notebook: the main agent, while `renoa.memory` is on for it
 //! ([`driver`]). It is a pass of memory jobs (see `pass`). A notebook that
 //! fails stops its own jobs, and the run goes on to the next; a failed
-//! compaction still lets that person's Dream run, since Dream reads the notes
-//! after its watermark, not their summaries.
+//! compaction still lets that person's Dream run. Dream reads the notes after
+//! its watermark, with an overview of the notebook that includes summaries,
+//! so missing summaries only thin the overview.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -208,14 +209,35 @@ impl Night<'_> {
     }
 }
 
-/// Records a failure of one person's notebook and lets the run go on; any
-/// other halt ends the run.
+/// Records a failure of one person's notebook, once when its compaction and
+/// its Dream fail for the same cause, and lets the run go on; any other halt
+/// ends the run.
 fn notebook(result: Result<(), Halt>, failed: &mut Vec<String>) -> Result<(), Halt> {
     match result {
         Err(Halt::Notebook(reason) | Halt::Unopened(reason)) => {
-            failed.push(reason);
+            if !failed.contains(&reason) {
+                failed.push(reason);
+            }
             Ok(())
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Halt, notebook};
+
+    #[test]
+    fn one_cause_is_reported_once() {
+        let mut failed = Vec::new();
+        for reason in [
+            "notes.log cannot be read",
+            "notes.log cannot be read",
+            "busy",
+        ] {
+            notebook(Err(Halt::Notebook(reason.to_owned())), &mut failed).expect("goes on");
+        }
+        assert_eq!(failed, ["notes.log cannot be read", "busy"]);
     }
 }

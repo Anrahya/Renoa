@@ -367,10 +367,14 @@ agent's `renoa.time` zone, or else the Host's, compacting each person's
 notebook and writing their `MIND.md`. It runs in the main agent's memory
 session, apart from its conversations; inventory shows its next due time and the last
 run's summary, and each job logs a `memory_job` telemetry line. A job that
-cannot run on three nights is abandoned and the agent moves to a new memory
-session (`memory_session_moved` in the log, the reason in
-`host_memory_sessions`); the earlier session directory stays under
-`sessions/`. `renoa.time`
+cannot run is counted once per distinct run that failed it; after three runs
+it is abandoned and the agent moves to a new memory session
+(`memory_session_moved` in the log, the reason in `host_memory_sessions`).
+A stored memory session that cannot open is counted the same way and moved
+past after three runs; the earlier session directory stays under
+`sessions/`. A warn-level `memory_turn_cut` line means a memory reply hit
+the output limit: three cut Dream nights in a row make Mnem skip those notes
+for `MIND.md`. `renoa.time`
 shows the time in an agent's `timezone` setting, or else in the zone `TZ` sets
 for the service that runs the Host (`renoa-node.service` sets `Asia/Kolkata`).
 Drain active turns before the upgrade: the plugin API, the `agent_manage`

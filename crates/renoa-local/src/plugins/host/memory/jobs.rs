@@ -10,7 +10,8 @@
 //! it cannot read or write, and counts none of those. So a Dream job is
 //! marked before its answer is applied, and a restart that finds the mark
 //! never applies it again. A job whose command cannot run is counted once per
-//! run that tried it, and abandoned after `ATTEMPTS` (see `pass`).
+//! distinct run that failed it, however often that run tried, and abandoned
+//! once `ATTEMPTS` runs have (see `pass::stuck`).
 
 use std::path::Path;
 
@@ -22,6 +23,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::host::catalog::{self, HostCatalogError};
+
+mod receipt;
+
+pub(in crate::plugins::host::memory) use receipt::Receipt;
 
 /// One row per job. A job without a receipt keeps its prompt, which the
 /// receipt clears; the kernel admits nothing else in the session while its
@@ -38,7 +43,8 @@ pub(crate) const JOBS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_memory_jobs
         local_time TEXT NOT NULL,
         applying INTEGER NOT NULL DEFAULT 0 CHECK (applying IN (0, 1)),
         attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-        receipt TEXT CHECK (receipt IN ('saved','settled','retried','dreamed','declined','rejected','conflict','invalid','busy','failed','unanswered','interrupted','abandoned')),
+        last_failed_run TEXT,
+        receipt TEXT CHECK (receipt IN ('saved','settled','retried','dreamed','declined','rejected','conflict','invalid','busy','failed','unanswered','truncated','interrupted','abandoned')),
         CHECK ((prompt IS NULL) = (receipt IS NOT NULL)),
         UNIQUE (run_id, position)
     ) STRICT;
@@ -134,87 +140,6 @@ impl JobKind {
             Self::Compaction => "compaction",
             Self::Dream => "dream",
         }
-    }
-}
-
-/// How a job settled: Mnem's answer to its apply, or why it was not applied.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Receipt {
-    /// Compaction saved the summary.
-    Saved,
-    /// Nothing more to do: the answer was applied already, or a later job
-    /// covered it.
-    Settled,
-    /// Compaction's line was too long; the next job asks again.
-    Retried,
-    /// Dream wrote a new `MIND.md`.
-    Dreamed,
-    /// The model declined; Dream counted it toward giving up.
-    Declined,
-    /// Dream refused the draft and counted it toward giving up.
-    Rejected,
-    /// The job was stale: the notebook moved on since it was made.
-    Conflict,
-    /// Compaction cannot use the answer, such as one that repeats the prompt.
-    /// Dream never refuses an answer this way: it rejects a bad draft.
-    Invalid,
-    /// Another dream held the notebook.
-    Busy,
-    /// The notebook could not be read or written.
-    Failed,
-    /// The model call failed, so nothing was applied.
-    Unanswered,
-    /// A restart found this Dream answer's apply begun and its receipt
-    /// unwritten, so it is not applied again.
-    Interrupted,
-    /// Its command could not run on `ATTEMPTS` runs, so it was closed without
-    /// an answer, and the agent moved to a new memory session.
-    Abandoned,
-}
-
-impl Receipt {
-    pub(super) const ALL: [Self; 13] = [
-        Self::Saved,
-        Self::Settled,
-        Self::Retried,
-        Self::Dreamed,
-        Self::Declined,
-        Self::Rejected,
-        Self::Conflict,
-        Self::Invalid,
-        Self::Busy,
-        Self::Failed,
-        Self::Unanswered,
-        Self::Interrupted,
-        Self::Abandoned,
-    ];
-
-    /// The stored name, the same as the serialized one.
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Saved => "saved",
-            Self::Settled => "settled",
-            Self::Retried => "retried",
-            Self::Dreamed => "dreamed",
-            Self::Declined => "declined",
-            Self::Rejected => "rejected",
-            Self::Conflict => "conflict",
-            Self::Invalid => "invalid",
-            Self::Busy => "busy",
-            Self::Failed => "failed",
-            Self::Unanswered => "unanswered",
-            Self::Interrupted => "interrupted",
-            Self::Abandoned => "abandoned",
-        }
-    }
-
-    fn parse(stored: &str) -> Result<Self, HostCatalogError> {
-        Self::ALL
-            .into_iter()
-            .find(|receipt| receipt.as_str() == stored)
-            .ok_or_else(|| {
-                HostCatalogError::Invalid(format!("unknown memory job receipt `{stored}`"))
-            })
     }
 }
 
@@ -361,17 +286,23 @@ pub(super) fn mark_applying(database: &Path, command: Uuid) -> Result<(), HostCa
     exactly_one(marked, command)
 }
 
-/// Counts one more run whose attempt at the unsettled job of `command` could
-/// not run its command, and returns how many have.
-pub(super) fn failed_attempt(database: &Path, command: Uuid) -> Result<u32, HostCatalogError> {
+/// Counts `run` among the runs that could not run the command of the
+/// unsettled job of `command`, once however often it tried, and returns how
+/// many runs have failed it.
+pub(super) fn failed_attempt(
+    database: &Path,
+    command: Uuid,
+    run: Uuid,
+) -> Result<u32, HostCatalogError> {
     let connection = catalog::open_verified(database)?;
     let attempts: Option<i64> = connection
         .query_row(
             &format!(
-                "UPDATE host_memory_jobs SET attempts = attempts + 1
+                "UPDATE host_memory_jobs
+                 SET attempts = attempts + (last_failed_run IS NOT ?2), last_failed_run = ?2
                  WHERE command_id = ?1 AND {UNSETTLED} RETURNING attempts"
             ),
-            [command.to_string()],
+            params![command.to_string(), run.to_string()],
             |row| row.get(0),
         )
         .optional()?;

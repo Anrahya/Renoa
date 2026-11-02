@@ -48,10 +48,14 @@ pub(crate) fn wanted(db: &Connection, now_ms: i64) -> Result<Option<AutomationSp
 }
 
 /// 04:00 every day in `zone`. A cron schedule names an IANA zone, so a zone
-/// without one, a fixed offset or a `TZ` rule, is scheduled in UTC at the
-/// minute its offset at `at` reads 04:00: the minute Dream's `Now:` shows,
-/// which reads the same zone. The trigger converges as time passes, so a
-/// rule's change of offset moves it.
+/// without one, a fixed offset, a `TZ` rule, or a zone file with no name
+/// such as a copied `/etc/localtime`, is scheduled in UTC at the minute its
+/// offset at `at` reads 04:00: the minute Dream's `Now:` shows, which reads
+/// the same zone. The scheduler converges the trigger before each due query,
+/// so after a change of offset the next query moves it, and the night's run
+/// comes at 04:00 in the new offset. A Host down across both the change and
+/// the old fire time skips that night, since the moved schedule is due again
+/// from when it comes back; an IANA zone's missed night catches up instead.
 fn schedule(zone: &TimeZone, at: Timestamp) -> AutomationSchedule {
     if let Some(name) = zone.iana_name() {
         return AutomationSchedule::Cron {
@@ -141,6 +145,31 @@ mod tests {
                 (expression.to_owned(), four),
                 "{zone:?}"
             );
+        }
+    }
+
+    /// Each night's run, as the trigger converged half an hour before 04:00
+    /// on that night's date, across a spring-forward and a fall-back of a
+    /// `TZ` rule: once a night, at 04:00 local, on consecutive dates.
+    #[test]
+    fn a_rule_runs_at_four_on_each_side_of_its_changes() {
+        let zone = TimeZone::posix("EST5EDT,M3.2.0,M11.1.0").expect("rule");
+        let four = time(4, 0, 0, 0);
+        for (before, after) in [
+            ("2026-03-07T08:30:00Z", "2026-03-08T07:30:00Z"),
+            ("2026-10-31T07:30:00Z", "2026-11-01T08:30:00Z"),
+        ] {
+            let nights: Vec<_> = [before, after]
+                .into_iter()
+                .map(|at| {
+                    let (_, wall) = next_in(&zone, at);
+                    let date = local_time(&zone, at.parse().expect("time")).date();
+                    (date, wall)
+                })
+                .collect();
+            assert_eq!(nights[0].1, four, "{before}");
+            assert_eq!(nights[1].1, four, "{after}");
+            assert_eq!(nights[0].0.tomorrow().expect("date"), nights[1].0);
         }
     }
 }

@@ -1106,8 +1106,9 @@ before it is acknowledged. A failure in that work tells the agent the note was
 written and to recall before noting it again. Recall, zoom and
 `MIND.md` open the notebook read-only: with no notebook they return nothing and
 create nothing. A recall pattern holds at most 256 bytes; Mnem bounds the
-compiled regex too. Mnem's compaction, Dream, agenda and heartbeat do not run
-yet; the notebook accumulates notes.
+compiled regex too. Mnem's compaction and Dream run in `renoa.memory`'s nightly
+run, described in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md);
+its agenda and heartbeat do not run.
 
 The session-context point adds attributed blocks to the system prompt of a turn
 that talks to a person, asking each compiled plugin enabled for the agent for at

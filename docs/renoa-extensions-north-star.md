@@ -776,9 +776,14 @@ the Host's main agent while the plugin is on for it. When the main agent
 changes, the next convergence disables the old agent's trigger and creates
 the new one's; when the plugin is turned off, the trigger is disabled, and a
 run already started stops before its next job. A cron schedule names an IANA
-zone, so a notebook zone without one, such as a fixed offset or a `TZ` rule,
-is scheduled in UTC at the minute its own offset reads 04:00, the minute the
-Dream's `Now:` shows; convergence moves it when that offset changes.
+zone, so a notebook zone without one, such as a fixed offset, a `TZ` rule, or
+a zone file with no name such as a copied `/etc/localtime`, is scheduled in
+UTC at the minute its own offset reads 04:00, the minute the Dream's `Now:`
+shows; convergence moves it when that offset changes, so a rule zone still
+runs once a night at 04:00 on each side of a daylight-saving change. A Host
+down across both the change and the old fire time skips that night under
+this fallback, since the moved schedule is due again only from when it comes
+back; an IANA zone's missed night catches up instead.
 
 A run works through every person's notebook in turn: compaction while Mnem
 has a summary due, then one nightly Dream with the person's `USER.md`, asked
@@ -809,32 +814,47 @@ interrupted instead of applied again.
 
 A job whose command cannot run, say because the session's model is gone or
 its stored runtime no longer matches after an upgrade, stays for the next
-run, which resumes it in the same session. Each run that tries it and fails
-counts once in `host_memory_jobs`; on the third it is closed as abandoned,
-without an answer, so Mnem never applies or counts it, and the agent moves
-to a new memory session generation, recorded with why in
-`host_memory_sessions`. A session's id derives from the agent and its
-generation, and earlier sessions stay stored and readable. A stored session
-that cannot open with no job pending moves the agent on at once; one that
-was never stored is not moved past, since a new one would fail the same way.
+run, which resumes it in the same session. It counts once per distinct run
+that failed it in `host_memory_jobs`, however often that run tried, a run
+resumed after a restart included; once three runs have, it is closed as
+abandoned, without an answer, so Mnem never applies or counts it, and the
+agent moves to a new memory session generation, recorded with why in
+`host_memory_sessions`. The move compares the generation the run observed
+and changes nothing when the agent already moved past it. A session's id
+derives from the agent and its generation, and earlier sessions stay stored
+and readable. A stored session that cannot open with no job pending counts
+the same way, on its generation, and moves the agent on after three runs;
+one that was never stored, or whose storage cannot be read, is not moved
+past, since a new one would fail the same way.
 
 A turn the model ended itself answers: with text, a reply; with none, a
-decline. A reply cut at the output limit goes to Mnem as it is: Dream
-rejects a draft without its closing tag and counts it, so after three nights
-it gives up on those notes, and compaction asks again for a line that does
-not fit. A turn that failed or was cancelled is recorded as unanswered and
-applies nothing. A provider refusal reaches Renoa as a failed turn, or, from
-a provider that sends it as text, as a reply, so it is never recorded as a
-decline. Mnem's verdict decides what comes next: a saved, settled or retried
-summary continues, and a stale Dream is asked again. An invalid answer, or a
-notebook that cannot be read or written, stops that job's kind for the
-person; a failed compaction still lets their Dream run, since Dream reads
-the notes after its watermark, not their summaries, and a notebook that
-cannot be opened at all is skipped. The run goes on to the next person and
-ends failed. Only a model that failed ends the run failed, and a notebook
-another dream holds ends it. Each job emits a `memory_job` telemetry event
-with its kind, outcome and duration, a job that could not settle emits one
-as `unsettled`, and a move to a new session emits `memory_session_moved`.
+decline. A reply stopped at the output limit, or for a tool it was never
+offered, is incomplete. A Dream takes its text as a reply, and Mnem rejects
+a draft without its closing tag and counts it: three cut Dream nights in a
+row make Mnem give up on that batch, so those notes stay in the notebook but
+never reach `MIND.md`. Each such turn emits a warn-level `memory_turn_cut`
+event to catch that before the third night. Compaction declines a cut line,
+so Mnem saves a mechanical cut of the block rather than half a line. A cut
+turn with no text at all is recorded as `truncated`, applies nothing, counts
+toward nothing, and stops only that person's notebook. A turn that failed or
+was cancelled is recorded as unanswered and applies nothing. A provider
+refusal reaches Renoa as a failed turn, or, from a provider that sends it as
+text, as a reply, so it is never recorded as a decline. Mnem's verdict
+decides what comes next: a saved, settled or retried summary continues, and
+a stale Dream is asked again. An invalid answer, or a notebook that cannot
+be read or written, stops that job's kind for the person; a failed
+compaction still lets their Dream run, since Dream reads the notes after its
+watermark with an overview of the notebook that includes summaries, so
+missing summaries only thin the overview, and a notebook that cannot be
+opened at all is skipped. The run goes on to the next person and ends
+failed, naming one cause once when both of a person's jobs stopped for it.
+Only a model that failed ends the run failed, and a notebook another dream
+holds ends it. Each job emits a `memory_job` telemetry event with its kind,
+outcome and duration, and as its detail how a compaction summary was written
+(`ByModel`, `CutReply` or `CutInput`) or why a Dream draft was rejected; a
+job that could not settle emits one as `unsettled`, a compaction bound
+reached emits `memory_compaction_bounded`, and a move to a new session emits
+`memory_session_moved`.
 
 ### What stays closed
 

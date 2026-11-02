@@ -15,6 +15,8 @@ pub(crate) enum Point {
     Answered(JobKind),
     /// The answer is applied; the job has no receipt.
     Applied(JobKind),
+    /// A run that could not go on is counted; the agent has not moved on.
+    Counted,
 }
 
 type Hook = Box<dyn FnOnce() + Send>;

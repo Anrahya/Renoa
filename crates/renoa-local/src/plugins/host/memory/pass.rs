@@ -33,6 +33,8 @@ pub(crate) mod fault;
 mod receipts;
 mod stuck;
 
+#[cfg(test)]
+pub(crate) use receipts::EVENTS;
 use receipts::{Verdict, answer};
 pub(super) use receipts::{refusal, summary};
 
@@ -88,6 +90,8 @@ pub(crate) struct Pass<'a> {
     pub(super) agent: AgentId,
     pub(super) run: Uuid,
     pub(super) now_ms: i64,
+    /// The memory session generation this pass opened.
+    pub(super) generation: std::sync::OnceLock<u32>,
 }
 
 /// A settled job: its receipt, and the job Mnem asked for next when a
@@ -106,6 +110,7 @@ impl<'a> Pass<'a> {
             agent,
             run,
             now_ms,
+            generation: std::sync::OnceLock::new(),
         }
     }
 
@@ -310,9 +315,29 @@ impl<'a> Pass<'a> {
                     kind.as_str()
                 ))
             })?;
-        let answer = match answer(outcome) {
+        if matches!(
+            outcome,
+            crate::LocalTurnOutcome::Completed {
+                stop_reason: renoa_agent::StopReason::Length,
+                ..
+            }
+        ) {
+            // Three cut Dreams in a row make Mnem give up on those notes, so
+            // the output limit wants raising before then.
+            receipts::event(
+                "warn",
+                "memory_turn_cut",
+                &json!({
+                    "agent_id": self.agent,
+                    "run_id": self.run,
+                    "command_id": command,
+                    "kind": kind.as_str(),
+                }),
+            );
+        }
+        let answer = match answer(outcome, kind) {
             Ok(answer) => answer,
-            Err(reason) => return Ok((Receipt::Unanswered, None, Some(reason))),
+            Err((receipt, reason)) => return Ok((receipt, None, Some(reason))),
         };
         #[cfg(test)]
         fault::hit(self.run, fault::Point::Answered(kind))?;

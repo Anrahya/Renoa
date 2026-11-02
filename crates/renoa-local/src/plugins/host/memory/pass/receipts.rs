@@ -28,14 +28,20 @@ use crate::LocalTurnOutcome;
 /// too long, and what went wrong, for the trace only.
 pub(super) type Verdict = (Receipt, Option<SummaryJob>, Option<String>);
 
-/// The answer a memory job's turn gave Mnem. A turn the model ended itself
-/// answers: with text, a reply; with none, a decline. A reply cut at the
-/// output limit, or stopped for a tool it was never offered, goes to Mnem as
-/// it is: Dream rejects a draft without its closing tag and counts it, and
-/// compaction asks again for a line that does not fit, so the notebook alone
-/// carries it. A turn that failed or was cancelled never reached an answer,
-/// so nothing is applied and Mnem's give-up rule does not count it.
-pub(super) fn answer(outcome: LocalTurnOutcome) -> Result<Answer, String> {
+/// The answer a memory job's turn gave Mnem, or the receipt of a turn that
+/// gave none. A turn the model ended itself answers: with text, a reply;
+/// with none, a decline. A reply stopped at the output limit, or for a tool
+/// it was never offered, is incomplete: Dream takes its text as a reply, and
+/// rejects and counts a draft without its closing tag, while compaction
+/// declines it, so Mnem cuts the shortest earlier try or the block's own
+/// input rather than saving half a line. One with no text at all is
+/// `Truncated`, which stops only its notebook, and nothing is applied. A turn
+/// that failed or was cancelled is `Unanswered`: nothing is applied, and
+/// Mnem's give-up rule counts neither.
+pub(super) fn answer(
+    outcome: LocalTurnOutcome,
+    kind: JobKind,
+) -> Result<Answer, (Receipt, String)> {
     match outcome {
         LocalTurnOutcome::Completed {
             output,
@@ -47,12 +53,29 @@ pub(super) fn answer(outcome: LocalTurnOutcome) -> Result<Answer, String> {
         }),
         LocalTurnOutcome::Completed {
             output,
-            stop_reason: StopReason::Length | StopReason::ToolUse,
-        } => Ok(Answer::Reply(output)),
-        LocalTurnOutcome::Failed { reason } => Err(reason),
-        LocalTurnOutcome::Cancelled => Err("the job was cancelled".to_owned()),
-        LocalTurnOutcome::WaitingForInput => Err("the job waited for input".to_owned()),
-        LocalTurnOutcome::Compacted { .. } => Err("the job compacted instead".to_owned()),
+            stop_reason: stop_reason @ (StopReason::Length | StopReason::ToolUse),
+        } => {
+            if output.trim().is_empty() {
+                Err((
+                    Receipt::Truncated,
+                    format!("the reply stopped ({stop_reason:?}) before any text"),
+                ))
+            } else if kind == JobKind::Dream {
+                Ok(Answer::Reply(output))
+            } else {
+                Ok(Answer::Declined)
+            }
+        }
+        LocalTurnOutcome::Failed { reason } => Err((Receipt::Unanswered, reason)),
+        LocalTurnOutcome::Cancelled => {
+            Err((Receipt::Unanswered, "the job was cancelled".to_owned()))
+        }
+        LocalTurnOutcome::WaitingForInput => {
+            Err((Receipt::Unanswered, "the job waited for input".to_owned()))
+        }
+        LocalTurnOutcome::Compacted { .. } => {
+            Err((Receipt::Unanswered, "the job compacted instead".to_owned()))
+        }
     }
 }
 
@@ -79,13 +102,19 @@ pub(super) fn apply(
     };
     match applying {
         Applying::Compaction(id) => match memory.apply_compaction(id, answer) {
-            Ok(Applied::Saved(_)) => (Receipt::Saved, None, None),
+            Ok(Applied::Saved(how)) => (Receipt::Saved, None, Some(format!("{how:?}"))),
             Ok(Applied::Settled) => (Receipt::Settled, None, None),
             Ok(Applied::Retry(next)) => (Receipt::Retried, Some(next), None),
             Err(error) => refused(error),
         },
         Applying::Dream(id) => match memory.apply_dream(id, answer, local_time) {
-            Ok(report) => (dreamed(&report.outcome), None, None),
+            Ok(report) => {
+                let detail = match &report.outcome {
+                    Outcome::Rejected(why) => Some(why.clone()),
+                    _ => None,
+                };
+                (dreamed(&report.outcome), None, detail)
+            }
             Err(error) => refused(error),
         },
     }
@@ -101,6 +130,9 @@ pub(super) fn halt(receipt: Receipt, kind: JobKind) -> Option<Halt> {
         ))),
         Receipt::Failed => Some(Halt::Notebook(format!(
             "a notebook could not take a {kind} answer"
+        ))),
+        Receipt::Truncated => Some(Halt::Notebook(format!(
+            "a {kind} reply stopped at the output limit before any text"
         ))),
         Receipt::Unanswered => Some(Halt::Failed(format!(
             "the model did not answer a {kind} job"
@@ -162,16 +194,30 @@ const fn dreamed(outcome: &Outcome) -> Receipt {
     }
 }
 
+/// Logs one event of `renoa.memory`'s jobs. Tests read them back.
+pub(super) fn event(level: &'static str, name: &'static str, fields: &serde_json::Value) {
+    #[cfg(test)]
+    EVENTS
+        .lock()
+        .expect("events")
+        .push((level, name, fields.clone()));
+    renoa_telemetry::event(PLUGIN_ID, level, name, fields);
+}
+
+/// Every event logged in this test process.
+#[cfg(test)]
+pub(crate) static EVENTS: std::sync::Mutex<Vec<(&str, &str, serde_json::Value)>> =
+    std::sync::Mutex::new(Vec::new());
+
 /// Logs one job's `memory_job` event: a warning when it stopped its notebook
 /// or the run.
 pub(super) fn trace(fields: &serde_json::Value, halted: bool) {
-    let level = if halted { "warn" } else { "info" };
-    renoa_telemetry::event(PLUGIN_ID, level, "memory_job", fields);
+    event(if halted { "warn" } else { "info" }, "memory_job", fields);
 }
 
 /// Logs that the compaction bound stopped a notebook with work still due.
 pub(super) fn trace_bound(fields: &serde_json::Value) {
-    renoa_telemetry::event(PLUGIN_ID, "info", "memory_compaction_bounded", fields);
+    event("info", "memory_compaction_bounded", fields);
 }
 
 /// The receipts of one run, counted, the notebooks the compaction bound
