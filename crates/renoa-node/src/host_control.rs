@@ -9,6 +9,7 @@
 mod agents;
 mod automations;
 mod discord;
+mod feed;
 mod main_agent;
 mod profile;
 mod reply;
@@ -50,7 +51,11 @@ enum Operation {
     DiscordChannels,
     DiscordBind,
     AutomationEnabled(String),
+    AutomationRun(String),
     MainAgentSet,
+    FeedList(Option<String>),
+    FeedSee,
+    FeedDismiss(String),
 }
 
 /// Every operation at a path, by method. The one table of the Host's control
@@ -70,7 +75,12 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         ["discord", "channels"] => vec![(Get, Op::DiscordChannels)],
         ["discord", "bindings"] => vec![(Post, Op::DiscordBind)],
         ["automations", id, "enabled"] => vec![(Post, Op::AutomationEnabled((*id).to_owned()))],
+        ["automations", id, "run"] => vec![(Post, Op::AutomationRun((*id).to_owned()))],
         ["main-agent"] => vec![(Post, Op::MainAgentSet)],
+        ["feed"] => vec![(Get, Op::FeedList(None))],
+        ["feed", "before", sequence] => vec![(Get, Op::FeedList(Some((*sequence).to_owned())))],
+        ["feed", "seen"] => vec![(Post, Op::FeedSee)],
+        ["feed", "items", id, "dismissal"] => vec![(Post, Op::FeedDismiss((*id).to_owned()))],
         _ => Vec::new(),
     }
 }
@@ -205,6 +215,20 @@ impl HostControl {
                 )?;
                 automations::set_enabled(host, host_id, principal, &id, request).await
             }
+            Operation::AutomationRun(id) => {
+                let request = decode(body, BODY_LIMIT, "Send an operation ID as JSON.")?;
+                automations::run_now(host, host_id, principal, &id, request).await
+            }
+            Operation::FeedList(before) => feed::list(host, before.as_deref()).await,
+            Operation::FeedSee => {
+                let seen = decode(
+                    body,
+                    BODY_LIMIT,
+                    "Send the newest feed sequence you have seen as JSON, such as {\"through\": 120}.",
+                )?;
+                feed::see(host, seen).await
+            }
+            Operation::FeedDismiss(id) => feed::dismiss(host, &id).await,
             Operation::MainAgentSet => {
                 let change = decode(
                     body,

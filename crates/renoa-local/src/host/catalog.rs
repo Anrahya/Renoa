@@ -9,6 +9,7 @@ mod automation_outcomes;
 mod automation_rename;
 mod cron_schedules;
 mod cutover;
+mod feed;
 mod main_agent;
 mod memory_dream;
 mod memory_note_pass;
@@ -31,6 +32,8 @@ pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 #[cfg(test)]
+pub(crate) use feed::restore_schema_45;
+#[cfg(test)]
 pub(crate) use main_agent::restore_schema_41;
 #[cfg(test)]
 pub(crate) use memory_dream::restore_schema_43;
@@ -45,7 +48,7 @@ pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 #[cfg(test)]
 pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 45;
+const SCHEMA_VERSION: u32 = 46;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -297,6 +300,62 @@ fn open(path: &Path, flags: rusqlite::OpenFlags) -> Result<Connection, HostCatal
     Ok(connection)
 }
 
+/// Runs every step from schema `version` to [`SCHEMA_VERSION`] in `transaction`,
+/// and returns the removals to report once it commits.
+fn upgrade(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<Vec<crate::host::automations::Removed>, HostCatalogError> {
+    // Schema 46's feed tables come first: the schema 40 step purges deleted
+    // automations, and a purge removes their feed items.
+    if version < 46 {
+        feed::add_feed(transaction)?;
+    }
+    // Schema 32 already holds exact plugin activations; only the earlier
+    // schemas need their selections migrated or refused.
+    if version < 32 {
+        selection_migration::migrate(transaction)?;
+        crate::plugins::activation::schema::initialize_lifecycle(transaction, true)?;
+    }
+    if version < 34 {
+        cutover::retire_review_tables(transaction)?;
+        automation_rename::rename_routines(transaction)?;
+    }
+    if version < 35 {
+        automation_delivery::deliver_runs_through_tasks(transaction)?;
+    }
+    if version < 36 {
+        registry_sync::record_sync_failures(transaction)?;
+    }
+    if version < 37 {
+        automation_outcomes::record_run_outcomes(transaction)?;
+    }
+    if version < 38 {
+        cron_schedules::adopt_cron_schedules(transaction)?;
+    }
+    let purged = if version < 40 {
+        run_retention::bound_run_history(transaction)?
+    } else {
+        Vec::new()
+    };
+    if version < 41 {
+        time_plugin::move_turn_timing_to_plugin(transaction)?;
+    }
+    if version < 42 {
+        main_agent::mark_main_agent(transaction)?;
+    }
+    if version < 43 {
+        memory_plugin::admit_memory_plugin(transaction)?;
+    }
+    if version < 44 {
+        memory_dream::add_triggers_and_memory_jobs(transaction)?;
+    }
+    if version < 45 {
+        memory_note_pass::add_note_passes(transaction)?;
+    }
+    Ok(purged)
+}
+
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
@@ -314,7 +373,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=44 => {
+        28..=45 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -325,48 +384,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
                     "Host schema version and metadata disagree".to_owned(),
                 ));
             }
-            // Schema 32 already holds exact plugin activations; only the
-            // earlier schemas need their selections migrated or refused.
-            if version < 32 {
-                selection_migration::migrate(&transaction)?;
-                crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
-            }
-            if version < 34 {
-                cutover::retire_review_tables(&transaction)?;
-                automation_rename::rename_routines(&transaction)?;
-            }
-            if version < 35 {
-                automation_delivery::deliver_runs_through_tasks(&transaction)?;
-            }
-            if version < 36 {
-                registry_sync::record_sync_failures(&transaction)?;
-            }
-            if version < 37 {
-                automation_outcomes::record_run_outcomes(&transaction)?;
-            }
-            if version < 38 {
-                cron_schedules::adopt_cron_schedules(&transaction)?;
-            }
-            let purged = if version < 40 {
-                run_retention::bound_run_history(&transaction)?
-            } else {
-                Vec::new()
-            };
-            if version < 41 {
-                time_plugin::move_turn_timing_to_plugin(&transaction)?;
-            }
-            if version < 42 {
-                main_agent::mark_main_agent(&transaction)?;
-            }
-            if version < 43 {
-                memory_plugin::admit_memory_plugin(&transaction)?;
-            }
-            if version < 44 {
-                memory_dream::add_triggers_and_memory_jobs(&transaction)?;
-            }
-            if version < 45 {
-                memory_note_pass::add_note_passes(&transaction)?;
-            }
+            let purged = upgrade(&transaction, version)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -386,6 +404,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             super::automations::initialize(&transaction)?;
             memory_dream::add_triggers_and_memory_jobs(&transaction)?;
             memory_note_pass::add_note_passes(&transaction)?;
+            feed::add_feed(&transaction)?;
             registry_sync::record_sync_failures(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",

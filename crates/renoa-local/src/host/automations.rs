@@ -12,7 +12,7 @@ pub(crate) mod result_tool;
 mod results;
 mod retention;
 mod runs;
-pub use control::{AutomationEnablement, HostAutomationControl};
+pub use control::{AutomationEnablement, AutomationRunRequest, HostAutomationControl};
 pub use results::AutomationResultSummary;
 mod schedule;
 mod scheduler;
@@ -152,14 +152,27 @@ impl rusqlite::types::FromSql for RunStatus {
     }
 }
 
+/// Where an executed run's result landed. Only the executor knows: a run goes
+/// to the conversation its automation was created in while that conversation
+/// has a task, and otherwise to the automation's own task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunLanding {
+    /// The automation's own task, which nobody is in.
+    OwnTask,
+    /// A conversation, where the result already shows.
+    Conversation,
+}
+
 /// How an executed run ended, as its executor reports it. Only the Host skips
 /// a run, so an executor reports success or failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunOutcome {
-    /// The execution completed with `answer`, its last assistant message.
+    /// The execution completed with `answer`, its last assistant message, in
+    /// the task `landing` names.
     Succeeded {
         answer: String,
         failed_tool_calls: u32,
+        landing: RunLanding,
     },
     /// The run could not be sent, or its execution failed or was stopped.
     Failed {

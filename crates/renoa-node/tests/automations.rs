@@ -10,8 +10,8 @@ use std::{sync::Arc, time::Duration};
 use renoa_control::{TaskEvent, TaskEventKind, TaskId};
 use renoa_kernel::AgentId;
 use renoa_local::{
-    AutomationMutation, AutomationRecord, AutomationSchedule, AutomationSpec, HostObserver,
-    LocalHost, RunResult, RunStatus, TurnObservation,
+    AutomationMutation, AutomationRecord, AutomationSchedule, AutomationSpec, FeedKind, HostFeed,
+    HostObserver, LocalHost, RunResult, RunStatus, TurnObservation,
 };
 use renoa_node::RenoaNode;
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef};
@@ -71,6 +71,10 @@ async fn an_automation_created_in_a_conversation_answers_in_that_conversation() 
             2,
             "the run continued the conversation's Host session"
         );
+        assert!(
+            feed(&host).await.is_empty(),
+            "a result in the conversation is already where the owner reads it"
+        );
 
         shutdown.cancel();
         node_task
@@ -114,6 +118,7 @@ async fn an_automation_made_outside_a_conversation_runs_in_its_own_task() {
         let events = collect_through_terminal(&mut surface).await;
         assert_submitted_by_automations(&events, run, "Write the digest.", &system);
         assert!(answered(&events, "Digest written."));
+        assert_eq!(feed(&host).await, [(FeedKind::Result, run.to_string())]);
 
         shutdown.cancel();
         node_task
@@ -124,6 +129,54 @@ async fn an_automation_made_outside_a_conversation_runs_in_its_own_task() {
     })
     .await
     .expect("own-task automation test timed out");
+}
+
+#[tokio::test]
+async fn a_run_whose_conversation_has_no_task_lands_in_its_own_task_and_the_feed() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let automation = create(&host, fixture.agent_id, "Write the digest.").await;
+        // Created from a conversation that no task executes, so the node
+        // falls back to the automation's own task.
+        rusqlite::Connection::open(host.home().host_database())
+            .expect("catalog")
+            .execute(
+                "UPDATE host_automations SET origin_session_id = ?2 WHERE id = ?1",
+                [automation.id.to_string(), Uuid::new_v4().to_string()],
+            )
+            .expect("an origin session without a task");
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        assert_eq!(
+            result_of(&host, fixture.agent_id, run).await,
+            "Digest written."
+        );
+        assert_eq!(feed(&host).await, [(FeedKind::Result, run.to_string())]);
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("fallback automation test timed out");
+}
+
+/// The owner's feed, newest first: each item's kind and subject.
+async fn feed(host: &LocalHost) -> Vec<(FeedKind, String)> {
+    HostFeed::open(host.home().path())
+        .expect("feed")
+        .list(None)
+        .await
+        .expect("list")
+        .items
+        .into_iter()
+        .map(|item| (item.kind, item.subject_id))
+        .collect()
 }
 
 #[tokio::test]

@@ -94,3 +94,95 @@ async fn disabled_retained_plugin_does_not_block_selecting_another_plugin() {
         "lifecycle toggles use the retained catalogs without new network calls"
     );
 }
+
+#[tokio::test]
+async fn an_ability_chosen_for_an_agent_is_not_reported_and_one_it_turns_on_is() {
+    let directory = tempdir().unwrap();
+    let root = directory.path();
+    prepare_fixture(root);
+    let host = host(root);
+    for (name, connection) in [("first-service", "first"), ("second-service", "second")] {
+        host.register_gh_cli_mcp_connection(
+            name,
+            connection,
+            "https://example.com/mcp",
+            "github.com",
+            "fixture-owner",
+        )
+        .await
+        .unwrap();
+        host.refresh_mcp_catalog(connection).await.unwrap();
+    }
+    // Its creator chose `first` at creation, and the owner adds `second`;
+    // each selection creates the plugin's activation.
+    let agent = host
+        .create_agent(
+            AgentCreator::System {
+                component: "shared-capabilities".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::ALPHA_PRESET_ID).expect("preset"),
+                "Chosen for",
+            )
+            .with_connections(["first".to_owned()]),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("agent")
+        .id;
+    host.enable_agent_connection(agent, "second").await.unwrap();
+    let feed = crate::HostFeed::open(host.config.home.path()).unwrap();
+    assert!(feed.list(None).await.unwrap().items.is_empty());
+
+    let second = host
+        .installed_plugins()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|plugin| plugin.metadata().name() == "second-service")
+        .unwrap();
+    for (operation, request) in [
+        (
+            "off",
+            PluginRequest::Deactivate {
+                plugin_id: second.digest().to_owned(),
+            },
+        ),
+        (
+            "on",
+            PluginRequest::EnablePlugin {
+                plugin_id: second.digest().to_owned(),
+            },
+        ),
+        (
+            "on",
+            PluginRequest::EnablePlugin {
+                plugin_id: second.digest().to_owned(),
+            },
+        ),
+    ] {
+        host.manage_plugin(
+            &agent,
+            &root.join("workspace"),
+            request,
+            PluginInvocation {
+                operation_id: operation,
+                updates: None,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let items = feed.list(None).await.unwrap().items;
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| (item.agent.id, item.title.as_str(), item.subject_id.as_str()))
+            .collect::<Vec<_>>(),
+        [(agent, "Turned on second-service", second.digest())],
+        "the agent's own turn-on is reported once"
+    );
+}

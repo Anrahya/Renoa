@@ -260,6 +260,7 @@ impl Fixture {
                 crate::RunOutcome::Succeeded {
                     answer: "Done.".to_owned(),
                     failed_tool_calls: 0,
+                    landing: crate::RunLanding::OwnTask,
                 },
                 at,
             )
@@ -1097,6 +1098,7 @@ async fn an_agents_due_run_is_handed_on_while_a_pass_runs() {
                         crate::RunOutcome::Succeeded {
                             answer: "Reminded.".to_owned(),
                             failed_tool_calls: 0,
+                            landing: crate::RunLanding::OwnTask,
                         },
                         now,
                     )

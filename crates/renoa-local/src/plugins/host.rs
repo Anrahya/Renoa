@@ -57,6 +57,18 @@ impl HostPluginId {
     pub(crate) fn parse(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|plugin| plugin.id() == id)
     }
+    /// The name an owner reads, as in the feed.
+    pub(crate) const fn display_name(self) -> &'static str {
+        match self {
+            Self::Agents => "Agents",
+            Self::Automations => "Automations",
+            Self::Documents => "Documents",
+            Self::Skills => "Skills",
+            Self::Git => "Git",
+            Self::Time => "Time",
+            Self::Memory => "Memory",
+        }
+    }
     pub(crate) const fn description(self) -> &'static str {
         match self {
             Self::Agents => {

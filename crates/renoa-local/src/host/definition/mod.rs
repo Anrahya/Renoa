@@ -357,6 +357,7 @@ impl LocalHost {
                 &transaction,
                 &id.to_string(),
                 &connection_id,
+                crate::plugins::activation::SelectedBy::OwnerOrCreator,
             )?;
             let mut selected = store::read_connections(&transaction, id)?;
             selected.insert(connection_id);

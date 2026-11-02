@@ -11,7 +11,13 @@ use super::{
     AutomationError, AutomationRecord, AutomationRun, RunOutcome, RunResult, RunStatus, retention,
     store,
 };
-use crate::{host::catalog, plugins::host::triggers::PLUGIN_OWNED};
+use crate::{
+    host::{
+        catalog,
+        feed::{self, RunEnded},
+    },
+    plugins::host::triggers::PLUGIN_OWNED,
+};
 
 mod unschedulable;
 
@@ -196,6 +202,7 @@ fn admit(
             duration(limit)
         );
         record(tx, id, RunStatus::Skipped, &reason, None, now_ms)?;
+        feed::run_ended(tx, id, r.id, RunEnded::Skipped, now_ms)?;
     }
     let pruned = retention::keep_newest(tx, r.id)?;
     // Coalesce missed times into one occurrence, then resume from the current clock.
@@ -237,29 +244,34 @@ fn decodes_its_row(error: &rusqlite::Error) -> bool {
     )
 }
 
-/// Records an executed run's outcome, which ends it; see [`end`].
+/// Records an executed run's outcome, which ends it, and reports it in the
+/// feed in the same transaction; see [`end`].
 pub(super) fn finish(
     path: &Path,
     id: Uuid,
     outcome: &RunOutcome,
     now_ms: i64,
 ) -> Result<(), AutomationError> {
-    let (RunOutcome::Succeeded { answer: output, .. } | RunOutcome::Failed { reason: output, .. }) =
-        outcome;
-    end(
+    let (output, ended) = match outcome {
+        RunOutcome::Succeeded {
+            answer, landing, ..
+        } => (answer, RunEnded::Succeeded(*landing)),
+        RunOutcome::Failed { reason, .. } => (reason, RunEnded::Failed),
+    };
+    close(
         path,
         id,
         outcome.status(),
         output,
         Some(outcome.failed_tool_calls()),
         now_ms,
+        Some(ended),
     )
 }
 
-/// Ends an unfinished run with `status`, then applies its automation's
-/// retention: the run limit, and the purge a deletion waited for. Only the
-/// Host skips: an executor reports through [`finish`], and a plugin that owns
-/// the run decides its status itself.
+/// Ends an unfinished run of a plugin's trigger with the `status` its plugin
+/// decided; see [`close`]. Only the Host skips: an executor reports through
+/// [`finish`].
 pub(super) fn end(
     path: &Path,
     id: Uuid,
@@ -268,9 +280,27 @@ pub(super) fn end(
     failed_tool_calls: Option<u32>,
     now_ms: i64,
 ) -> Result<(), AutomationError> {
+    close(path, id, status, output, failed_tool_calls, now_ms, None)
+}
+
+/// Ends an unfinished run with `status`, reports it in the feed as `ended`,
+/// then applies its automation's retention: the run limit, and the purge a
+/// deletion waited for.
+fn close(
+    path: &Path,
+    id: Uuid,
+    status: RunStatus,
+    output: &str,
+    failed_tool_calls: Option<u32>,
+    now_ms: i64,
+    ended: Option<RunEnded>,
+) -> Result<(), AutomationError> {
     let mut db = catalog::open_verified(path)?;
     let tx = db.transaction()?;
     let automation = record(&tx, id, status, output, failed_tool_calls, now_ms)?;
+    if let Some(ended) = ended {
+        feed::run_ended(&tx, id, automation, ended, now_ms)?;
+    }
     let removed = [
         retention::keep_newest(&tx, automation)?,
         retention::purge_deleted(&tx, automation)?,
@@ -320,15 +350,20 @@ pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, A
 }
 
 /// Records that the process owning the schedule is alive, and expires runs
-/// past their age on the same beat.
+/// and feed items past their age, and feed items past their count, on the
+/// same beat.
 pub(super) fn heartbeat(path: &Path, now_ms: i64) -> Result<(), AutomationError> {
-    let db = catalog::open_verified(path)?;
-    db.execute(
+    let mut db = catalog::open_verified(path)?;
+    let tx = db.transaction()?;
+    tx.execute(
         "INSERT INTO host_automation_scheduler(singleton,heartbeat_ms) VALUES(1,?1)
          ON CONFLICT(singleton) DO UPDATE SET heartbeat_ms=excluded.heartbeat_ms",
         [now_ms],
     )?;
-    retention::report(retention::expire(&db, now_ms)?);
+    let runs = retention::expire(&tx, now_ms)?;
+    let items = feed::retention::expire(&tx, now_ms)?;
+    tx.commit()?;
+    retention::report(runs.into_iter().chain(items));
     Ok(())
 }
 

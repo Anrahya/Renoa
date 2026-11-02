@@ -123,6 +123,7 @@ impl McpCatalogStore {
             &transaction,
             agent_id,
             &candidate.connection_id,
+            crate::plugins::activation::SelectedBy::TheAgent,
         )?;
         transaction.execute(
             "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)

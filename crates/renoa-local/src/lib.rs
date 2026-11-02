@@ -106,9 +106,12 @@ pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 
 pub use host::automations::{
     AutomationEnablement, AutomationError, AutomationMutation, AutomationRecord,
-    AutomationResultSummary, AutomationRun, AutomationSchedule, AutomationScheduler,
-    AutomationSpec, HostAutomationControl, PluginRun, RunOutcome, RunResult, RunStatus,
-    ScheduledRun,
+    AutomationResultSummary, AutomationRun, AutomationRunRequest, AutomationSchedule,
+    AutomationScheduler, AutomationSpec, HostAutomationControl, PluginRun, RunLanding, RunOutcome,
+    RunResult, RunStatus, ScheduledRun,
+};
+pub use host::feed::{
+    FEED_PAGE, FeedAction, FeedAgent, FeedError, FeedItem, FeedKind, FeedPage, FeedSeen, HostFeed,
 };
 
 pub use renoa_home::RenoaHome;

@@ -29,15 +29,17 @@ use std::{
 
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_local::{AutomationScheduler, RunOutcome, RunStatus, ScheduledRun, TurnObservation};
-use renoa_protocol::{CommandId, CommandInput, ExecutionTerminal};
+use renoa_protocol::{CommandId, CommandInput};
 use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
 
 mod failures;
+mod outcome;
 mod plugin_run;
 
 use self::{
     failures::{Failures, beat, heartbeat},
+    outcome::{finished, refused},
     plugin_run::{PluginTask, Retry},
 };
 use crate::{
@@ -339,7 +341,7 @@ async fn deliver(
     );
     Ok(wait_for_outcome(runtime, command_id, shutdown)
         .await?
-        .map(finished))
+        .map(|outcome| finished(outcome, run, task_id)))
 }
 
 enum Resolution {
@@ -430,43 +432,6 @@ async fn wait_for_outcome(
                 NodeError::Protocol("local commit signal closed".to_owned())
             })?,
         }
-    }
-}
-
-fn finished(outcome: CommandOutcome) -> RunOutcome {
-    let failed_tool_calls = outcome.failed_tool_calls;
-    match outcome.terminal {
-        ExecutionTerminal::Completed => RunOutcome::Succeeded {
-            answer: outcome.answer.unwrap_or_default(),
-            failed_tool_calls,
-        },
-        ExecutionTerminal::Failed { error } => RunOutcome::Failed {
-            reason: format!("Scheduled run failed: {error}"),
-            failed_tool_calls,
-        },
-        ExecutionTerminal::Cancelled { reason } => RunOutcome::Failed {
-            reason: format!("Scheduled run stopped: {reason}"),
-            failed_tool_calls,
-        },
-    }
-}
-
-/// A run the coordinator would not accept ends with the refusal as its result,
-/// so it is visible where results are read and the schedule moves on.
-fn refused(due: &ScheduledRun, task_id: Option<TaskId>, reason: &str) -> RunOutcome {
-    node_log::event(
-        "warn",
-        "automation_refused",
-        &serde_json::json!({
-            "automation_id": due.run.automation_id,
-            "run_id": due.run.id,
-            "task_id": task_id,
-            "error": reason,
-        }),
-    );
-    RunOutcome::Failed {
-        reason: format!("Scheduled run could not be sent: {reason}"),
-        failed_tool_calls: 0,
     }
 }
 

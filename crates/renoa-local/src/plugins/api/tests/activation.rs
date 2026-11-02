@@ -6,7 +6,7 @@ use serde_json::json;
 use std::os::unix::fs::PermissionsExt as _;
 use tokio_util::sync::CancellationToken;
 
-async fn act(
+pub(super) async fn act(
     manager: &PluginManager,
     root: &Path,
     agent: AgentId,
@@ -31,7 +31,7 @@ async fn act(
     }
 }
 
-fn package(root: &Path, skill: &str, body: &str, endpoint: Option<&str>) {
+pub(super) fn package(root: &Path, skill: &str, body: &str, endpoint: Option<&str>) {
     fs::create_dir_all(root.join(format!("skills/{skill}"))).expect("skill directory");
     fs::write(
         root.join("plugin.json"),
@@ -48,7 +48,7 @@ fn package(root: &Path, skill: &str, body: &str, endpoint: Option<&str>) {
     }
 }
 
-async fn install(manager: &PluginManager, root: &Path, source: &str) -> String {
+pub(super) async fn install(manager: &PluginManager, root: &Path, source: &str) -> String {
     let source = PluginSource::Package {
         source_path: source.into(),
     };

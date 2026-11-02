@@ -91,6 +91,16 @@ pub(crate) fn change(
         }
         return Ok(result);
     }
+    // Only `plugin_manage` reaches this, for the calling agent itself, so
+    // turning a plugin back on is the agent's own act.
+    if enabled && !enabled_in(&tx, agent, plugin)? {
+        crate::host::feed::ability_turned_on(
+            &tx,
+            &agent.to_string(),
+            crate::host::feed::Ability::Compiled(plugin),
+            &format!("compiled:{operation}"),
+        )?;
+    }
     tx.execute("INSERT INTO host_agent_builtin_plugins(agent_id,plugin_id,enabled) VALUES(?1,?2,?3) ON CONFLICT(agent_id,plugin_id) DO UPDATE SET enabled=excluded.enabled",params![agent.to_string(), plugin.id(), enabled])?;
     let result = HostPluginActivation {
         plugin_id: plugin.id().to_owned(),
