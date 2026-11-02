@@ -372,6 +372,10 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         if (state.pendingCommands().any { it.commandId == command.commandId }) deliver(command)
     }
 
+    override suspend fun setPushToken(token: String) = error("unused")
+
+    override suspend fun clearPushToken() = error("unused")
+
     override fun close() {
         closed = true
         drop()
@@ -808,6 +812,30 @@ class RcpAgentRepositoryTest {
         advanceTimeBy(5.seconds)
         runCurrent()
         assertEquals(Link.Connected, repo.link.value)
+    }
+
+    @Test
+    fun everyConnectionRenoaAcceptsRunsTheHookAndItsFailureDropsNothing() = runTest {
+        var connections = 0
+        val repo =
+            RcpAgentRepository(surface, state, backgroundScope, retryAfter = { 5.seconds }, here = { KOLKATA }, onConnected = {
+                connections++
+                throw IllegalStateException("registering failed")
+            })
+        surface.refuseConnects = 1
+        repo.start()
+        runCurrent()
+        assertEquals(0, connections, "not for a connection Renoa refused")
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(1, connections)
+        assertEquals(Link.Connected, repo.link.value, "its failure is its own")
+
+        surface.drop()
+        runCurrent()
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(2, connections, "again on the next connection")
     }
 
     @Test

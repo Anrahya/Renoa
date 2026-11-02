@@ -5,3 +5,5 @@ local.properties
 *.iml
 .kotlin/
 captures/
+# The owner's Firebase configuration; the build reads it from outside the checkout (app/build.gradle.kts).
+google-services.json

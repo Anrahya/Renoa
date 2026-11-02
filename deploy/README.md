@@ -858,7 +858,8 @@ needs no app change. Provisioning is manual and outside the repository:
    <keystore>`; a debug and a release certificate differ, and the same
    certificate's hash forms the passkey origin `android:apk-key-hash:...`).
    Download its `google-services.json` and keep it out of the public
-   repository; the app build reads it from outside the checkout.
+   repository; the app build reads it from outside the checkout, by default
+   from `~/.config/renoa/google-services.json` (`clients/android/README.md`).
 3. Under Project settings, Service accounts, generate a private key for a
    service account that may send FCM messages (the Firebase Admin SDK account
    does). Install the downloaded JSON file root-only on the VPS:

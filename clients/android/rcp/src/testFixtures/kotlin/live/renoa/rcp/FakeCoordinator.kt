@@ -90,6 +90,15 @@ class FakeCoordinator : AutoCloseable {
     /** When set, an attach replays at most this many events and the rest never come. */
     @Volatile var replayOnly: Int? = null
 
+    /** Tasks whose attach drops the connection at once, as a fault that ends it. */
+    val dropOnAttach: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
+
+    /** Tasks whose next replay drops the connection after this many events, once each. */
+    val dropDuringReplay: MutableMap<Uuid, Int> = ConcurrentHashMap()
+
+    /** Tasks whose next replay drops the connection once it is all sent, once each. */
+    val dropAfterReplay: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
+
     /** Milliseconds between the events of a replay, as over a slow link. */
     @Volatile var replayEvery = 0L
 
@@ -102,6 +111,9 @@ class FakeCoordinator : AutoCloseable {
     /** The version the coordinator claims in `authenticated`, and whether it refuses the client's version instead. */
     @Volatile var authenticatedVersion = RCP_BINDING_VERSION
     @Volatile var refuseVersion = false
+
+    /** The push token the signed-in device registered, or null once it is cleared or before it is set. */
+    @Volatile var pushToken: String? = null
 
     private val sockets = CopyOnWriteArrayList<Session>()
     private val server = MockWebServer()
@@ -202,6 +214,7 @@ class FakeCoordinator : AutoCloseable {
         val attached: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
         val attachedLive: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
         private var authenticated = false
+        private var byTicket = false
         private var nonce: String? = null
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -251,6 +264,8 @@ class FakeCoordinator : AutoCloseable {
                 "submit" -> submit(requestId, frame)
                 "stop_command" -> stopCommand(requestId, frame)
                 "call_host" -> callHost(requestId, frame)
+                "set_push_token" -> setPushToken(requestId, frame)
+                "clear_push_token" -> clearPushToken(requestId)
                 else -> webSocket.send(error(requestId, "invalid_message", "unsupported frame $type"))
             }
         }
@@ -283,6 +298,7 @@ class FakeCoordinator : AutoCloseable {
                 return
             }
             authenticated = true
+            byTicket = type == "authenticate_ticket"
             socket.send("""{"type":"authenticated","version":$authenticatedVersion}""")
         }
 
@@ -367,6 +383,10 @@ class FakeCoordinator : AutoCloseable {
 
         private fun attach(requestId: Long, frame: JsonObject) {
             val taskId = Uuid.parse(frame.getValue("task_id").jsonPrimitive.content)
+            if (taskId in dropOnAttach) {
+                socket.cancel()
+                return
+            }
             val record = tasks[taskId] ?: run {
                 socket.send(error(requestId, "not_found", "no such task"))
                 return
@@ -379,12 +399,28 @@ class FakeCoordinator : AutoCloseable {
             val through = record.journal.size - 1L
             reply(requestId, "attached") { put("task_id", taskId.toString()); put("through_sequence", if (through < 0) JsonNull else JsonPrimitive(through)) }
             val replayed = record.journal.filter { it.getValue("event").jsonObject.getValue("sequence").jsonPrimitive.long > after }
-            for (event in replayed.take(replayOnly ?: replayed.size)) {
+            val cutAfter = dropDuringReplay.remove(taskId)
+            for ((sent, event) in replayed.take(replayOnly ?: replayed.size).withIndex()) {
+                if (sent == cutAfter) {
+                    dropOnceDelivered()
+                    return
+                }
                 Thread.sleep(replayEvery)
                 socket.send(event.toString())
             }
+            if (dropAfterReplay.remove(taskId)) {
+                dropOnceDelivered()
+                return
+            }
             attached += taskId
             if (live) attachedLive += taskId
+        }
+
+        /** Drops the connection once what was sent has left and the client has had a moment to apply it. */
+        private fun dropOnceDelivered() {
+            while (socket.queueSize() > 0) Thread.sleep(5)
+            Thread.sleep(200)
+            socket.cancel()
         }
 
         private fun callHost(requestId: Long, frame: JsonObject) {
@@ -399,6 +435,29 @@ class FakeCoordinator : AutoCloseable {
                 return
             }
             reply(requestId, "host_answer") { put("status", answer.first); put("body", answer.second) }
+        }
+
+        private fun setPushToken(requestId: Long, frame: JsonObject) {
+            if (refuseTicket(requestId)) return
+            val provider = frame.getValue("provider").jsonPrimitive.content
+            if (provider != "fcm") {
+                socket.send(error(requestId, "invalid_message", "provider \"$provider\" is not supported; expected \"fcm\""))
+                return
+            }
+            pushToken = frame.getValue("token").jsonPrimitive.content
+            reply(requestId, "push_token_set") {}
+        }
+
+        private fun clearPushToken(requestId: Long) {
+            if (refuseTicket(requestId)) return
+            pushToken = null
+            reply(requestId, "push_token_cleared") {}
+        }
+
+        /** Push tokens belong to an enrolled device, so a ticket connection is refused. Returns whether it was. */
+        private fun refuseTicket(requestId: Long): Boolean {
+            if (byTicket) socket.send(error(requestId, "invalid_role", "push tokens belong to an enrolled device; this connection was opened with a browser ticket"))
+            return byTicket
         }
 
         private fun stopCommand(requestId: Long, frame: JsonObject) {

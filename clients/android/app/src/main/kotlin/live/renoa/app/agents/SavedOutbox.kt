@@ -37,7 +37,10 @@ internal class SavedOutbox(private val file: File) : RcpState {
     private val changing = Mutex()
     private var pending: LinkedHashMap<Uuid, PendingTextCommand>? = null
 
-    override suspend fun cursor(taskId: Uuid): Long? = synchronized(lock) { cursors[taskId] }
+    override suspend fun cursor(taskId: Uuid): Long? = applied(taskId)
+
+    /** The last sequence of [taskId] the app applied this launch, read at once. */
+    fun applied(taskId: Uuid): Long? = synchronized(lock) { cursors[taskId] }
 
     override suspend fun advanceCursor(taskId: Uuid, sequence: Long) {
         synchronized(lock) { cursors[taskId] = sequence }

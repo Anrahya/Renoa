@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -42,6 +44,7 @@ import live.renoa.app.home.HomeViewModel
 import live.renoa.app.nav.EntryStores
 import live.renoa.app.nav.Route
 import live.renoa.app.nav.rememberNavigator
+import live.renoa.app.push.AskToNotify
 import live.renoa.app.signin.Passkeys
 import live.renoa.app.signin.SignInCode
 import live.renoa.app.signin.SignInScreen
@@ -64,9 +67,21 @@ internal val MAX_CONTENT_WIDTH = 600.dp
 /**
  * The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then.
  * When Renoa refuses this phone's sign-in, [signedOut] forgets it and the app goes back to sign-in.
+ * [chatShown] hears each chat come on screen and leave it; [notificationsAnswered], the owner's
+ * answer when asked to allow notifications. [openChat] is a chat a tapped notice asks for, opened
+ * as [Navigator.openChat][live.renoa.app.nav.Navigator.openChat] says; [chatOpened] then clears it.
  */
 @Composable
-internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, signingIn: suspend (SignInCode, Passkeys) -> Unit, signedOut: suspend () -> Unit = {}) {
+internal fun RenoaApp(
+    repository: () -> AgentRepository,
+    signedIn: Boolean,
+    signingIn: suspend (SignInCode, Passkeys) -> Unit,
+    signedOut: suspend () -> Unit = {},
+    chatShown: (agentId: String, shown: Boolean) -> Unit = { _, _ -> },
+    notificationsAnswered: () -> Unit = {},
+    openChat: String? = null,
+    chatOpened: () -> Unit = {},
+) {
     // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
     var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
     val theme = picked ?: if (isSystemInDarkTheme()) ThemeName.Graphite else ThemeName.Paper
@@ -77,6 +92,11 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
         val below = navigator.entries.dropLast(1)
         navigator.resetTo(route)
         below.forEach { stores.release(it.id) }
+    }
+    LaunchedEffect(openChat) {
+        if (openChat == null) return@LaunchedEffect
+        navigator.openChat(openChat)
+        chatOpened()
     }
     var wasSignedOut by rememberSaveable { mutableStateOf(false) }
     if (navigator.top != Route.SignIn) {
@@ -130,6 +150,11 @@ internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, sign
                     is Route.Chat -> {
                         val model: ChatViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { ChatViewModel(repository(), route.agentId) } })
                         ChatScreen(model, onBack = { navigator.pop() }, onOpenProfile = { navigator.push(Route.Edit(it)) })
+                        LifecycleStartEffect(route.agentId) {
+                            chatShown(route.agentId, true)
+                            onStopOrDispose { chatShown(route.agentId, false) }
+                        }
+                        AskToNotify(model.state.collectAsState().value.sending, notificationsAnswered)
                     }
                     is Route.Edit -> {
                         val model: AgentEditorViewModel =

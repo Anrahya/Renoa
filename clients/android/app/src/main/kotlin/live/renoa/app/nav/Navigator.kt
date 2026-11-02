@@ -74,6 +74,15 @@ class Navigator private constructor(entries: List<Entry>, private var nextId: In
         entries = listOf(Entry(nextId++, route))
     }
 
+    /**
+     * Opens the chat with [agentId] over whatever is shown, as a tapped notice asks, so back returns
+     * there. One already on top stays as it is; before Home is reached, as on sign-in, nothing opens.
+     */
+    fun openChat(agentId: String) {
+        if (entries.none { it.route == Route.Home } || top == Route.Chat(agentId)) return
+        push(Route.Chat(agentId))
+    }
+
     /** Goes back one screen. Returns false at the bottom, where the system should take over. */
     fun pop(): Boolean {
         if (entries.size <= 1) return false

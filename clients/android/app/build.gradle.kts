@@ -4,6 +4,19 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+/**
+ * Firebase's client configuration, for push wake-ups. It belongs to the owner's Firebase project and
+ * never enters the repository: the build reads it from outside the checkout, from the Gradle property
+ * `renoa.googleServices`, else the environment variable `RENOA_GOOGLE_SERVICES`, else
+ * `~/.config/renoa/google-services.json`. Without the file the app builds and runs with push off.
+ */
+val googleServicesNamed: String? =
+    providers.gradleProperty("renoa.googleServices").orNull ?: providers.environmentVariable("RENOA_GOOGLE_SERVICES").orNull
+val googleServices: File = googleServicesNamed?.let { File(it) } ?: File(System.getProperty("user.home"), ".config/renoa/google-services.json")
+if (googleServicesNamed != null && !googleServices.isFile) {
+    logger.warn("Renoa: $googleServices, named for google-services.json, is not a file; building with push off.")
+}
+
 android {
     namespace = "live.renoa.app"
     compileSdk = 37
@@ -17,6 +30,8 @@ android {
         // The Renoa the app signs in to; its passkeys and assetlinks.json belong to this origin.
         buildConfigField("String", "RENOA_ORIGIN", "\"https://renoa.live\"")
         buildConfigField("String", "RENOA_CONNECT", "\"wss://renoa.live/connect\"")
+        // Firebase reads these resources as the app starts, as it would those the google-services plugin writes.
+        firebaseResources(googleServices, "live.renoa.app").forEach { (name, value) -> resValue("string", name, value) }
     }
 
     buildTypes {
@@ -36,6 +51,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        resValues = true
     }
 
     testOptions {
@@ -85,6 +101,9 @@ dependencies {
     implementation(libs.androidx.credentials)
     // Credential Manager reaches passkeys through Play services on Android 13 and earlier.
     implementation(libs.androidx.credentials.play.services)
+    // Push wake-ups: Firebase Cloud Messaging delivers them, and WorkManager runs the catch-up each one starts.
+    implementation(libs.firebase.messaging)
+    implementation(libs.androidx.work.runtime)
     // Agent replies render as markdown. Only the core and Material 3 modules: no remote images.
     implementation(libs.markdown.renderer.m3)
 
@@ -96,4 +115,35 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(testFixtures(project(":rcp")))
+}
+
+/**
+ * The string resources Firebase initialises itself from, named as the google-services plugin names
+ * them, taken from [file]'s entry for [packageName]; none when there is no file. Only the four values
+ * Firebase Cloud Messaging needs are read. Errors name the file, never its contents.
+ */
+fun firebaseResources(file: File, packageName: String): Map<String, String> {
+    if (!file.isFile) return emptyMap()
+    fun Any?.field(name: String): Any? = (this as? Map<*, *>)?.get(name)
+    // The parser's own message quotes the offending text, which may hold the API key, so it is not passed on.
+    val json =
+        try {
+            groovy.json.JsonSlurper().parse(file)
+        } catch (_: Exception) {
+            throw GradleException("$file is not valid JSON; download it again from the Firebase console")
+        }
+    val project = json.field("project_info")
+    val client =
+        (json.field("client") as? List<*>)?.firstOrNull { it.field("client_info").field("android_client_info").field("package_name") == packageName }
+            ?: throw GradleException("$file has no Android app with package $packageName; download the one registered for it")
+    val values =
+        mapOf(
+            "google_app_id" to client.field("client_info").field("mobilesdk_app_id"),
+            "google_api_key" to (client.field("api_key") as? List<*>)?.firstOrNull().field("current_key"),
+            "gcm_defaultSenderId" to project.field("project_number"),
+            "project_id" to project.field("project_id"),
+        )
+    val missing = values.filterValues { it !is String || it.isEmpty() }.keys
+    if (missing.isNotEmpty()) throw GradleException("$file lacks ${missing.joinToString()}; download it again from the Firebase console")
+    return values.mapValues { it.value as String }
 }
