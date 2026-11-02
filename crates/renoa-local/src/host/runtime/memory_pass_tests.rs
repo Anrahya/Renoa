@@ -85,9 +85,9 @@ if (process.env.RENOA_MODEL_ACTION !== "stream" && existsSync(here("broken"))) {
 
 /// 12:00 on 2026-11-02 in Asia/Kolkata, the notebook zone.
 const NOON: &str = "2026-11-02T06:30:00Z";
-/// 04:00 on 2026-11-03 in Asia/Kolkata: the nightly run, and the end of the
-/// pass day 2026-11-02.
-const NIGHT: &str = "2026-11-02T22:30:00Z";
+/// 11:00 on 2026-11-03 in Asia/Kolkata, Mnem's pass day start: the nightly
+/// run, and the end of the pass day 2026-11-02.
+const NIGHT: &str = "2026-11-03T05:30:00Z";
 const MINUTE: i64 = 60_000;
 /// More than Mnem's least unreviewed text for a pass.
 const ENOUGH: &str =
@@ -654,7 +654,7 @@ async fn the_daytime_cap_leaves_the_last_pass_of_the_day_to_the_sweep_before_dre
     assert_eq!(fixture.calls_of("pass").len(), 4);
     // The promised call is made at 19:00, in the day the sweep ends.
     assert_eq!(fixture.agent_run(ms("2026-11-02T13:30:00Z")).await, call);
-    // 02:00 on the next morning is still the same pass day.
+    // 09:00 on the next morning is still the same pass day.
     fixture
         .say(session, person, ms(NIGHT) - 2 * 60 * MINUTE, ENOUGH)
         .await;
@@ -665,7 +665,7 @@ async fn the_daytime_cap_leaves_the_last_pass_of_the_day_to_the_sweep_before_dre
     );
     let spent = fixture.events("memory_pass_decision");
     assert_eq!(spent.len(), 4, "every decision was to run");
-    // Someone still talking at 03:50 is left by the sweep.
+    // Someone still talking at 10:50 is left by the sweep.
     fixture
         .say(late, other, ms(NIGHT) - 10 * MINUTE, ENOUGH)
         .await;
@@ -696,7 +696,7 @@ async fn the_daytime_cap_leaves_the_last_pass_of_the_day_to_the_sweep_before_dre
         .expect("prompt")
         .to_owned();
     let (_, ended) = swept
-        .split_once("Finished or deleted since 04:00:")
+        .split_once("Finished or deleted since ")
         .expect("the ended automations");
     assert!(
         ended.contains("· Call mom ·"),
@@ -1258,7 +1258,7 @@ async fn a_stopping_host_starts_no_job_of_a_nightly_run() {
     let fixture = Fixture::new().await;
     let person = Uuid::new_v4();
     fixture.notebook(person, 5);
-    // Scheduled for 04:00 at noon.
+    // Scheduled for 11:00 the next day, at noon.
     assert_eq!(fixture.timer_due(ms(NOON)).await, None);
     fixture.host.stop_memory_runs();
     let (_, status) = fixture.run(ms(NIGHT)).await.expect("the nightly run");
