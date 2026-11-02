@@ -464,17 +464,24 @@ only at the generation its sends covered, each send counted for the token it
 went to, so a wake is sent at least once while owed: a restart mid-send sends it
 again, and a token registered mid-send gets its own. A settled mark keeps its
 row, so a principal's generation never restarts and a send for an older wake
-cannot cover a newer one. A send counts once FCM delivers it, refuses it, or
-calls its token dead; FCM calls a token dead only with `UNREGISTERED` or a
+cannot cover a newer one. A send counts once FCM delivers it, calls its token
+dead, or gives a permanent answer that is not about the token (another
+project's token, a second refused access token, an `INVALID_ARGUMENT` without a
+violation on the token, or any other answer it does not expect), and when its
+send task panics. FCM calls a token dead only with `UNREGISTERED` or a
 `BadRequest` violation on `message.token`, and only then is the token deleted.
-A send that gives up on a transient failure after its retries does not count:
-the device stays owed and is sent again after a backoff that doubles from two
-seconds up to ten minutes and resets once a send is delivered. FCM is a
-coordinator-side
-adapter: its request carries no task, principal, agent or text, so RCP
-semantics stay independent of the cloud vendor (locked decision 12), and
-another platform adds a provider rather than changing the operations. Revoking
-a device deletes its token in the same transaction.
+A send does not count when it gives up on a transient failure after its
+retries or obtains no access token, whatever the token endpoint answered: the
+device stays owed and is sent again after a backoff that doubles from two
+seconds up to ten minutes, resets once a send is delivered, and starts afresh
+when the device registers another token. A device waits out its backoff even
+when a newer wake arrives. Delivery is at least once: coverage lives in the
+dispatcher's memory, so a dispatcher or coordinator restart before a marker
+settles may send its wake again to devices already woken. FCM is a
+coordinator-side adapter: its request carries no task, principal, agent or
+text, so RCP semantics stay independent of the cloud vendor (locked decision
+12), and another platform adds a provider rather than changing the operations.
+Revoking a device deletes its token in the same transaction.
 
 ## Executor link
 

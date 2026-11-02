@@ -51,6 +51,8 @@ const REJECTION_HOLD: Duration = Duration::from_mins(1);
 /// a second across every send. It is no longer than a send's first retry
 /// delay, so that retry asks again.
 const UNAVAILABLE_HOLD: Duration = Duration::from_secs(1);
+// A send's first retry must ask the endpoint again, not meet the hold.
+const _: () = assert!(UNAVAILABLE_HOLD.as_nanos() <= crate::fcm::BACKOFF_BASE.as_nanos());
 const MAX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// Credentials that obtain Google access tokens, without exposing them.

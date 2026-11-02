@@ -191,9 +191,8 @@ async fn google() -> (Url, watch::Receiver<Vec<Instant>>) {
     (origin, seen)
 }
 
-/// Enrolls a phone with a push token and owes its principal a wake. Returns
-/// a connection to the coordinator's database.
-async fn owe_a_phone_a_wake(state: &CoordinatorState) -> rusqlite::Connection {
+/// Enrolls a phone with a push token and owes its principal a wake.
+async fn owe_a_phone_a_wake(state: &CoordinatorState) {
     let owner = PrincipalId::new();
     let enrollment = state
         .store
@@ -226,7 +225,6 @@ async fn owe_a_phone_a_wake(state: &CoordinatorState) -> rusqlite::Connection {
             [owner.to_string()],
         )
         .expect("owe the owner a wake");
-    database
 }
 
 #[tokio::test]
@@ -242,7 +240,7 @@ async fn a_send_cut_short_by_a_dying_dispatcher_ends_its_gap_after_the_restart()
     let coordinator =
         Coordinator::open(files.path().join("control.sqlite")).expect("open the coordinator");
     let state = coordinator.state();
-    let database = owe_a_phone_a_wake(&state).await;
+    owe_a_phone_a_wake(&state).await;
     let delivery = Delivery::Fcm {
         sender: Arc::new(FcmSender::new(&settings).expect("build the sender")),
         gap,
@@ -302,14 +300,12 @@ async fn a_send_cut_short_by_a_dying_dispatcher_ends_its_gap_after_the_restart()
         "the device waits a full gap after the send that was cut short: {:?}",
         sent[1] - died
     );
-    let owed: i64 = database
-        .query_row(
-            "SELECT count(*) FROM push_wakes WHERE generation > settled",
-            [],
-            |row| row.get(0),
-        )
-        .expect("count owed wakes");
-    assert_eq!(owed, 1, "a wake whose sends never ended is still owed");
+    let owed = state.store.owed_wakes().await.expect("read owed wakes");
+    assert_eq!(
+        owed.len(),
+        1,
+        "a wake whose sends never ended is still owed"
+    );
     stop.cancel();
     supervisor.await.expect("the supervisor returns");
 }

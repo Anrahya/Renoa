@@ -240,7 +240,7 @@ impl Dispatcher {
             ready.push(target);
         }
         for target in ready {
-            match self.pacing.ready(target.device_id, gap, Instant::now()) {
+            match self.pacing.ready(&target, gap, Instant::now()) {
                 Ready::At(at) => earliest(due, at),
                 Ready::Now if self.in_flight.len() < MAX_IN_FLIGHT => {
                     self.start(sender, shutdown, wake, target);
@@ -304,7 +304,7 @@ impl Dispatcher {
         let device_id = target.device_id;
         // The gap runs from the end of the send, whatever its outcome, so a
         // failing device sees no more requests than a healthy one.
-        let retry_after = self.pacing.ended(device_id, outcome, Instant::now());
+        let retry_after = self.pacing.ended(&target, outcome, Instant::now());
         match outcome {
             WakeOutcome::Cancelled => return Ok(()),
             // The device stays owed, and a pass sends again after its backoff.
@@ -329,7 +329,7 @@ impl Dispatcher {
         self.settle_if_covered(principal_id, generation).await
     }
 
-    /// Deletes the principal's marker once every device it would wake has had
+    /// Settles the principal's marker once every device it would wake has had
     /// a send to its current token and none is in flight, at the oldest
     /// generation those sends started at. A wake recorded since keeps the
     /// marker for the next pass.

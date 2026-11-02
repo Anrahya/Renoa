@@ -848,9 +848,12 @@ journal after a reply for `push_wake_sent`, and for `push_wake_failed` with
 `SENDER_ID_MISMATCH` (a token from another project) or a rejected service
 account (a revoked or wrong key; after a rejection the token endpoint is asked
 again at most once a minute, and after it fails on its side at most once a
-second). A `push_wake_failed` with a `retry_after_ms` is an outage that outlasted
-a send's retries: the device stays owed and is sent again after that delay,
-which doubles from two seconds up to ten minutes until a send is delivered. A
+second). A `push_wake_failed` with a `retry_after_ms`, such as a rejected
+service account or an FCM outage that outlasted a send's retries, says nothing
+about the device: it stays owed and is sent again after that delay, which
+doubles from two seconds up to ten minutes until a send is delivered or the
+device registers another token; a lasting fault is logged with each retry,
+every ten minutes per device once the delay reaches its cap. A
 `push_token_dropped` warning names a device whose token FCM called dead, which
 it does only with `UNREGISTERED` or a `BadRequest` violation on
 `message.token`; its `deleted` field is false when the device had already

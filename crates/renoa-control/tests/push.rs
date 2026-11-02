@@ -417,6 +417,17 @@ async fn answer(
 
 // --- The coordinator under test ---
 
+/// The wakes owed in `database`, by the predicate `push_wake::OWED` owns.
+fn owed_in(database: &Connection) -> i64 {
+    database
+        .query_row(
+            "SELECT count(*) FROM push_wakes WHERE generation > settled",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count owed wakes")
+}
+
 #[derive(Clone, Copy)]
 enum Push {
     /// FCM through the stand-in, with this least gap between two wakes to
@@ -563,13 +574,7 @@ impl Fixture {
     }
 
     fn owed_wakes(&self) -> i64 {
-        self.database()
-            .query_row(
-                "SELECT count(*) FROM push_wakes WHERE generation > settled",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count owed wakes")
+        owed_in(&self.database())
     }
 
     /// Waits until the dispatcher has settled every owed wake.
@@ -1615,14 +1620,11 @@ async fn a_shutdown_mid_send_keeps_the_wake_owed_and_the_next_serve_sends_it() {
     drop((socket, node));
 
     f.restart_after(&google, push, |database| {
-        let owed: i64 = database
-            .query_row(
-                "SELECT count(*) FROM push_wakes WHERE generation > settled",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count owed wakes");
-        assert_eq!(owed, 1, "a send cut short by shutdown leaves the wake owed");
+        assert_eq!(
+            owed_in(database),
+            1,
+            "a send cut short by shutdown leaves the wake owed"
+        );
     })
     .await;
     google.wait_for_fcm(2).await;
@@ -1738,27 +1740,6 @@ async fn a_configuration_fault_deletes_nothing_and_is_not_retried() {
     let (_, mut phone) = f.phone().await;
     set_token(&mut phone, 1, "fcm:phone-token").await;
     let mut node = f.node().await;
-
-    google.answer_token(Answer {
-        status: 400,
-        body: json!({"error": "invalid_grant", "error_description": "Invalid JWT Signature."}),
-        retry_after: None,
-    });
-    node.reply(&mut phone, 2, "news").await;
-    google.wait_for(1).await;
-    f.drained().await;
-    let requests = google.settled().await;
-    assert_eq!(requests.len(), 1, "a rejected sign-in starts no retries");
-    assert_eq!(requests[0].path, "/token");
-    assert_eq!(f.tokens().len(), 1, "a rejected sign-in deletes nothing");
-    drop((phone, node));
-    f.stop().await;
-
-    // A fresh coordinator, whose credentials were never rejected.
-    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
-    let (_, mut phone) = f.phone().await;
-    set_token(&mut phone, 1, "fcm:phone-token").await;
-    let mut node = f.node().await;
     google.answer_fcm(Answer::fcm_error(
         403,
         "SENDER_ID_MISMATCH",
@@ -1793,14 +1774,64 @@ async fn a_rejected_service_account_is_asked_once_for_every_device_and_wake() {
         retry_after: None,
     });
     node.reply(&mut phone, 2, "news").await;
-    f.drained().await;
+    google.wait_for(1).await;
     node.reply(&mut phone, 3, "more news").await;
-    f.drained().await;
+    // Past both devices' first backoff, inside the rejection's hold.
+    tokio::time::sleep(Duration::from_secs(3)).await;
     let requests = google.settled().await;
     assert_eq!(
         requests.len(),
         1,
-        "one rejection answers both devices and the next wake: {requests:?}"
+        "one rejection answers both devices, their retries and the next wake: {requests:?}"
+    );
+    assert_eq!(f.owed_wakes(), 1, "the wake stays owed");
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_failing_token_endpoint_leaves_the_wake_owed_until_it_answers() {
+    let push = Push::Fcm(Duration::ZERO);
+    let google = Google::start().await;
+    let mut f = Fixture::start(&google, push).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+
+    // A rejection says nothing about the device, which stays owed.
+    google.answer_token(Answer {
+        status: 400,
+        body: json!({"error": "invalid_grant", "error_description": "Invalid JWT Signature."}),
+        retry_after: None,
+    });
+    node.reply(&mut phone, 2, "news").await;
+    google.wait_for(1).await;
+    let requests = google.settled().await;
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert_eq!(f.owed_wakes(), 1, "a rejected sign-in keeps the wake owed");
+    assert_eq!(f.tokens().len(), 1, "a rejected sign-in deletes nothing");
+    drop((phone, node));
+
+    // A rejection is held for a minute; a restart forgets it. The next
+    // answer is no token at all, which is not held: the device's backoff
+    // passes and the endpoint, recovered, grants one.
+    google.answer_token(Answer {
+        status: 200,
+        body: json!({"not": "a token"}),
+        retry_after: None,
+    });
+    f.restart(&google, push).await;
+    google.wait_for_fcm(1).await;
+    f.drained().await;
+    let requests = google.settled().await;
+    let paths: Vec<&str> = requests[1..].iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        ["/token", "/token", "/v1/projects/renoa-test/messages:send"]
+    );
+    assert!(
+        requests[2].at - requests[1].at >= Duration::from_secs(2),
+        "the device's backoff passes before it asks again"
     );
     f.stop().await;
     google.stop();
@@ -2016,14 +2047,18 @@ async fn sends_waiting_on_a_failed_token_fetch_share_its_failure() {
     // two wait on the cache before the stub can answer the first.
     google.wait_for(1).await;
     drop(held);
+    // Each device backs off, then one asks again and the rest share its
+    // token.
     f.drained().await;
     let requests = google.settled().await;
-    assert_eq!(
-        requests.len(),
-        1,
-        "one failed fetch answers every send that waited on it: {requests:?}"
+    let fetches: Vec<&Recorded> = requests.iter().filter(|r| r.path == "/token").collect();
+    assert_eq!(fetches.len(), 2, "{requests:?}");
+    assert!(
+        fetches[1].at - fetches[0].at >= Duration::from_secs(2),
+        "one failed fetch answers every send that waited on it; only a retry \
+         after the backoff asks again"
     );
-    assert_eq!(requests[0].path, "/token");
+    assert_eq!(requests.iter().filter(|r| r.is_fcm()).count(), 3);
     f.stop().await;
     google.stop();
 }
@@ -2211,7 +2246,8 @@ async fn push_log_scenario() {
     });
     node.reply(&mut phone, 2, "rejected sign-in").await;
     google.wait_for(1).await;
-    rejected.drained().await;
+    // The wake stays owed; the quiet moment lets its failure be logged.
+    google.settled().await;
     drop((phone, node));
     let rejected_files = rejected.stop().await;
 

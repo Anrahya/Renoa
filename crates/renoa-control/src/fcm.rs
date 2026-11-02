@@ -26,7 +26,8 @@ const MAX_DEVICE_GAP: Duration = Duration::from_hours(24);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// One send and at most two retries of a transient failure.
 const MAX_ATTEMPTS: u32 = 3;
-const BACKOFF_BASE: Duration = Duration::from_secs(1);
+/// The first retry delay within one wake.
+pub(crate) const BACKOFF_BASE: Duration = Duration::from_secs(1);
 const MAX_RETRY_DELAY: Duration = Duration::from_mins(1);
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 
@@ -93,12 +94,13 @@ pub(crate) enum WakeOutcome {
     Delivered,
     /// FCM named the token dead; its row is deleted.
     DeadToken(&'static str),
-    /// A configuration fault, such as another project's token or rejected
-    /// credentials. Nothing is deleted and nothing is retried: the device
-    /// counts as sent.
+    /// FCM's permanent answer that is not about the token, such as another
+    /// project's token or a second refused access token. Nothing is deleted
+    /// and nothing is retried: the device counts as sent.
     Refused(&'static str),
-    /// A transient failure outlasted the retries. The device stays owed and
-    /// the dispatcher sends again after its retry backoff.
+    /// The send reached no verdict on the device: a transient failure
+    /// outlasted the retries, or no access token could be obtained. The
+    /// device stays owed and the dispatcher sends again after its backoff.
     GaveUp(&'static str),
     /// The coordinator is shutting down.
     Cancelled,
@@ -199,7 +201,13 @@ impl FcmSender {
                     after: None,
                 };
             }
-            Err(error) => return Attempt::Done(WakeOutcome::Refused(error.reason())),
+            // Without a token nothing reached FCM, so nothing is known about
+            // the device. None of these is retried within the wake.
+            Err(
+                error @ (AccessError::Rejected | AccessError::Malformed | AccessError::Signing),
+            ) => {
+                return Attempt::Done(WakeOutcome::GaveUp(error.reason()));
+            }
         };
         let Ok(response) = self
             .http

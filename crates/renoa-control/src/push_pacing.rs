@@ -1,6 +1,7 @@
 //! When the dispatcher may next send to each device: not while a send to it is
 //! in flight, not inside the least gap after its last send, and not before
-//! the backoff after sends that gave up has passed.
+//! the backoff after sends to its current token that gave up has passed. A
+//! device that registers another token starts its backoff afresh.
 //!
 //! The supervisor keeps one [`Pacing`] across dispatcher restarts, so a
 //! dispatcher that dies costs no device its gap or its backoff. A send left in
@@ -16,7 +17,7 @@ use std::{
 
 use tokio::time::Instant;
 
-use crate::{DeviceId, fcm::WakeOutcome};
+use crate::{DeviceId, PushToken, fcm::WakeOutcome, push_tokens::PushTarget};
 
 /// The wait after a send gives up, doubling with each send in a row that
 /// gives up, up to [`MAX_RETRY_DELAY`].
@@ -29,7 +30,8 @@ pub(crate) struct Pacing(Arc<Mutex<HashMap<DeviceId, Device>>>);
 
 struct Device {
     last: LastSend,
-    /// Present after a send gave up, until one is delivered.
+    /// Present after a send gave up, until one is delivered or the device
+    /// registers another token.
     backoff: Option<Backoff>,
 }
 
@@ -39,8 +41,9 @@ enum LastSend {
     Ended(Instant),
 }
 
-#[derive(Clone, Copy)]
 struct Backoff {
+    /// The token the sends that gave up went to.
+    token: PushToken,
     /// Sends in a row that gave up.
     failures: u32,
     /// The earliest the next send may start.
@@ -71,18 +74,27 @@ impl Pacing {
         }
     }
 
-    /// Whether a send to `device_id` may start at `now`. A gap is at most a
-    /// day, so adding it cannot overflow.
-    pub(crate) fn ready(&self, device_id: DeviceId, gap: Duration, now: Instant) -> Ready {
-        let devices = self.lock();
-        let Some(device) = devices.get(&device_id) else {
+    /// Whether a send to `target` may start at `now`. A backoff earned by
+    /// another token is dropped; the gap holds whatever the token. A gap is at
+    /// most a day, so adding it cannot overflow.
+    pub(crate) fn ready(&self, target: &PushTarget, gap: Duration, now: Instant) -> Ready {
+        let mut devices = self.lock();
+        let Some(device) = devices.get_mut(&target.device_id) else {
             return Ready::Now;
         };
         let LastSend::Ended(ended) = device.last else {
             return Ready::InFlight;
         };
+        if device
+            .backoff
+            .as_ref()
+            .is_some_and(|backoff| backoff.token != target.token)
+        {
+            device.backoff = None;
+        }
         let at = device
             .backoff
+            .as_ref()
             .map_or(ended + gap, |backoff| backoff.until.max(ended + gap));
         if now < at { Ready::At(at) } else { Ready::Now }
     }
@@ -97,16 +109,17 @@ impl Pacing {
             });
     }
 
-    /// Records a send that ended at `now` with `outcome`. Returns how long the
-    /// device now waits before it is sent again, when the send gave up.
+    /// Records a send to `target` that ended at `now` with `outcome`. Returns
+    /// how long the device now waits before it is sent again, when the send
+    /// gave up.
     pub(crate) fn ended(
         &self,
-        device_id: DeviceId,
+        target: &PushTarget,
         outcome: WakeOutcome,
         now: Instant,
     ) -> Option<Duration> {
         let mut devices = self.lock();
-        let device = devices.entry(device_id).or_insert(Device {
+        let device = devices.entry(target.device_id).or_insert(Device {
             last: LastSend::Ended(now),
             backoff: None,
         });
@@ -119,9 +132,12 @@ impl Pacing {
             WakeOutcome::GaveUp(_) => {
                 let failures = device
                     .backoff
+                    .as_ref()
+                    .filter(|backoff| backoff.token == target.token)
                     .map_or(1, |backoff| backoff.failures.saturating_add(1));
                 let delay = doubled(FIRST_RETRY_DELAY, failures, MAX_RETRY_DELAY);
                 device.backoff = Some(Backoff {
+                    token: target.token.clone(),
                     failures,
                     until: now + delay,
                 });
@@ -143,6 +159,7 @@ impl Pacing {
             now < ended + gap
                 || device
                     .backoff
+                    .as_ref()
                     .is_some_and(|backoff| now < backoff.until + MAX_RETRY_DELAY)
         });
     }

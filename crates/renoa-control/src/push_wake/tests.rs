@@ -3,7 +3,7 @@ use renoa_protocol::{
     ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
 };
 
-use super::wake_reason;
+use super::{OWED, wake_reason};
 use crate::TaskEventKind;
 
 /// How many record shapes the wake rule tells apart.
@@ -123,4 +123,31 @@ fn only_a_reply_with_text_and_a_failed_run_wake_the_owner() {
         covered.iter().all(|covered| *covered),
         "every record shape has a sample: {covered:?}"
     );
+}
+
+/// The tests outside the crate cannot name `OWED`, so each copies it; a copy
+/// that drifts, or a count of rows that ignores it, fails here.
+#[test]
+fn every_test_counts_owed_wakes_with_the_one_predicate() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut copies = 0;
+    let mut drifted = Vec::new();
+    for entry in std::fs::read_dir(&directory).expect("read the tests directory") {
+        let path = entry.expect("test entry").path();
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read a test file");
+        for (number, line) in text.lines().enumerate() {
+            if !line.contains("FROM push_wakes") || !line.contains("count(") {
+                continue;
+            }
+            copies += 1;
+            if !line.contains(&format!("FROM push_wakes WHERE {OWED}\"")) {
+                drifted.push(format!("{}:{}", path.display(), number + 1));
+            }
+        }
+    }
+    assert!(drifted.is_empty(), "{drifted:?}");
+    assert!(copies > 0, "no test counts owed wakes; delete this check");
 }

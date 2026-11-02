@@ -66,6 +66,11 @@ pub(crate) fn record(
     Ok(())
 }
 
+/// When a principal's wake row is owed. The one place the predicate is
+/// written; the tests outside the crate copy it, and
+/// `tests::every_test_counts_owed_wakes_with_the_one_predicate` checks them.
+pub(crate) const OWED: &str = "generation > settled";
+
 /// One principal's owed wake as the dispatcher read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OwedWake {
@@ -79,10 +84,10 @@ impl ControlStore {
         blocking(move || {
             let connection = open_connection(&path)?;
             let mut statement = connection
-                .prepare(
+                .prepare(&format!(
                     "SELECT principal_id, generation FROM push_wakes
-                     WHERE generation > settled ORDER BY principal_id",
-                )
+                     WHERE {OWED} ORDER BY principal_id"
+                ))
                 .map_err(sqlite_error)?;
             let rows = statement
                 .query_map([], |row| {
@@ -110,8 +115,10 @@ impl ControlStore {
         blocking(move || {
             open_connection(&path)?
                 .execute(
-                    "UPDATE push_wakes SET settled = generation
-                     WHERE principal_id = ?1 AND generation = ?2 AND settled < generation",
+                    &format!(
+                        "UPDATE push_wakes SET settled = generation
+                         WHERE principal_id = ?1 AND generation = ?2 AND {OWED}"
+                    ),
                     params![wake.principal_id.to_string(), wake.generation],
                 )
                 .map(|settled| settled > 0)
