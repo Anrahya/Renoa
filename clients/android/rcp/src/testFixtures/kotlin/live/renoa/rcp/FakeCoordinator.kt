@@ -93,6 +93,12 @@ class FakeCoordinator : AutoCloseable {
     /** Tasks whose attach drops the connection at once, as a fault that ends it. */
     val dropOnAttach: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
 
+    /** Tasks whose next replay drops the connection after this many events, once each. */
+    val dropDuringReplay: MutableMap<Uuid, Int> = ConcurrentHashMap()
+
+    /** Tasks whose next replay drops the connection once it is all sent, once each. */
+    val dropAfterReplay: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
+
     /** Milliseconds between the events of a replay, as over a slow link. */
     @Volatile var replayEvery = 0L
 
@@ -393,12 +399,28 @@ class FakeCoordinator : AutoCloseable {
             val through = record.journal.size - 1L
             reply(requestId, "attached") { put("task_id", taskId.toString()); put("through_sequence", if (through < 0) JsonNull else JsonPrimitive(through)) }
             val replayed = record.journal.filter { it.getValue("event").jsonObject.getValue("sequence").jsonPrimitive.long > after }
-            for (event in replayed.take(replayOnly ?: replayed.size)) {
+            val cutAfter = dropDuringReplay.remove(taskId)
+            for ((sent, event) in replayed.take(replayOnly ?: replayed.size).withIndex()) {
+                if (sent == cutAfter) {
+                    dropOnceDelivered()
+                    return
+                }
                 Thread.sleep(replayEvery)
                 socket.send(event.toString())
             }
+            if (dropAfterReplay.remove(taskId)) {
+                dropOnceDelivered()
+                return
+            }
             attached += taskId
             if (live) attachedLive += taskId
+        }
+
+        /** Drops the connection once what was sent has left and the client has had a moment to apply it. */
+        private fun dropOnceDelivered() {
+            while (socket.queueSize() > 0) Thread.sleep(5)
+            Thread.sleep(200)
+            socket.cancel()
         }
 
         private fun callHost(requestId: Long, frame: JsonObject) {

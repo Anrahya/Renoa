@@ -44,7 +44,8 @@ app. A chat on screen gets no notice, opening a chat takes its notice back, and 
 applied of a chat when it came on screen or left it counts as read, so a later wake does not show
 it again; the job checks that, and the screen, right before it posts. Nothing posts after sign-out.
 A task, the token or the baseline that failed does not stop the rest; a task that ends the
-connection is tried once more on a new one, and left for the next run if it ends that one too. The
+connection, or finds it already gone, is tried once more on a new one that reads from the kept
+cursors afresh, and is left for the next run if it ends that one too. The
 job then runs again, a few times at most. A sign-in Renoa refused ends it; one the Keystore could
 not read just now is retried.
 

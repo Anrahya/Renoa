@@ -102,9 +102,11 @@ private class WakeState(private val saved: WakeCursors) : RcpState {
  *
  * A failure in one task, or in registering, does not stop the others; [run] then returns false, for
  * the caller to run it again. A failure that ends the connection is followed by a new one, and the
- * task is tried once more; one that ends it twice is left for the next run. Without a baseline there
- * is nothing to read from, so it returns false too. A failure to connect or to list the tasks throws.
- * [connect] makes a client over the state it is given; [run] connects and closes each one it makes.
+ * task is tried once more; one that ends it twice is left for the next run. Each connection reads from
+ * the kept cursors afresh, so what a dropped one read and did not show is read again. Without a
+ * baseline there is nothing to read from, so it returns false too. A failure to connect or to list
+ * the tasks throws. [connect] makes a client over the state it is given; [run] connects and closes
+ * each one it makes.
  */
 internal class WakeUp(
     private val cursors: WakeCursors,
@@ -116,8 +118,7 @@ internal class WakeUp(
 ) {
     /** Returns whether every step and every task went through. */
     suspend fun run(): Boolean {
-        val state = WakeState(cursors)
-        var surface = connect(state)
+        var surface = connect(WakeState(cursors))
         try {
             surface.connect()
             var complete = attempt { register(surface) } == null
@@ -127,12 +128,18 @@ internal class WakeUp(
                 var ended = 0
                 while (true) {
                     val failure = attempt { if ((cursors.cursor(task.taskId) ?: -1) < through) catchUp(surface, task) } ?: break
-                    complete = false
-                    if (!failure.endsTheConnection) break
+                    if (!failure.endsTheConnection && alive(surface)) {
+                        complete = false
+                        break
+                    }
                     surface.close()
-                    surface = connect(state)
+                    // A new state too: the old one moved past records the dropped connection read and nothing showed.
+                    surface = connect(WakeState(cursors))
                     surface.connect()
-                    if (++ended == CONNECTIONS_PER_TASK) break
+                    if (++ended == CONNECTIONS_PER_TASK) {
+                        complete = false
+                        break
+                    }
                 }
             }
             return complete
@@ -159,6 +166,9 @@ internal class WakeUp(
         }
         replayed.lastOrNull()?.let { cursors.advance(task.taskId, it.sequence) }
     }
+
+    /** Whether [surface] still answers, as after a failure that did not say the connection ended. */
+    private suspend fun alive(surface: RcpSurface): Boolean = attempt { surface.probe() } == null
 
     /** Runs [step]; returns what it failed with, or null. */
     private suspend fun attempt(step: suspend () -> Unit): Exception? =

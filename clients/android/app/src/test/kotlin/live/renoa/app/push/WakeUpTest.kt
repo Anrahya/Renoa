@@ -54,6 +54,9 @@ class WakeUpTest {
 
     /** Set to make the next notices fail to post, as when the process dies on the way. */
     private var postFails: (Notice) -> Boolean = { false }
+
+    /** Milliseconds each notice takes to post, as on a busy phone. */
+    private var postTakes: (Notice) -> Long = { 0 }
     private val arcee get() = AgentSummary(agentId(coordinator.nodeId, "agent:arcee"), "Arcee", "", AgentState.Resting)
     private val arceesChat get() = chatTaskId(coordinator.nodeId, "agent:arcee")
 
@@ -66,6 +69,7 @@ class WakeUpTest {
             onScreen = { it in shown },
             post = {
                 if (postFails(it)) throw IllegalStateException("the process died")
+                Thread.sleep(postTakes(it))
                 posted += it
             },
         )
@@ -183,6 +187,35 @@ class WakeUpTest {
         val attempts = coordinator.framesOfType("attach").count { it.getValue("task_id").jsonPrimitive.content == dropping.toString() }
         assertEquals(2, attempts, "tried once more, then left for the next run")
         assertEquals(3, coordinator.connectionsAccepted.get() - connected, "one connection, and one after each drop")
+    }
+
+    @Test
+    fun aConnectionCutMidReplayReadsTheTaskAgainFromWhatWasKept() = wakes {
+        val chat = coordinator.seedTask()
+        wake.run()
+        coordinator.append(chat, reply("Dinner is at seven."))
+        repeat(3) { coordinator.append(chat, reply("  ")) }
+        // The reply arrives, and the connection drops before the rest of the replay.
+        coordinator.dropDuringReplay[chat] = 2
+
+        assertTrue(wake.run(), "read again, whole, on a new connection")
+        assertEquals(listOf(News.Replied("Dinner is at seven.", 0)), posted.map { it.news })
+        assertEquals(3, cursors.cursor(chat))
+    }
+
+    @Test
+    fun aConnectionThatDiedBetweenTasksIsReplacedForTheNext() = wakes {
+        val first = coordinator.seedTask(Uuid.parse("00000000-0000-0000-0000-000000000001"))
+        val second = coordinator.seedTask(Uuid.parse("00000000-0000-0000-0000-000000000002"))
+        wake.run()
+        coordinator.append(first, reply("First."))
+        coordinator.append(second, reply("Second."))
+        // The socket dies once the first chat is read, while its notice posts, so the second finds it gone.
+        coordinator.dropAfterReplay += first
+        postTakes = { if (it.taskId == first) 600 else 0 }
+
+        assertTrue(wake.run())
+        assertEquals(listOf(first, second), posted.map { it.taskId })
     }
 
     @Test
