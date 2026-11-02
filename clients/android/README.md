@@ -26,27 +26,41 @@ The Kotlin app shell. Two modules:
 
 Renoa wakes a closed app with a content-free Firebase Cloud Messaging message (issue #116,
 `crates/renoa-control/src/fcm.rs`); what changed is read over RCP, so nothing an agent wrote
-reaches Google. `PushMessages` only enqueues `WakeWork`, an expedited WorkManager job. The job
-(`WakeUp`) connects with the device credential and key, registers the push token, lists the
-tasks, attaches from its own cursor (`WakeCursors`, kept per sign-in in the app's storage) to
-each task whose `throughSequence` passed it, closes the connection, and posts one notification
-per task: the agent's latest reply, or that it got stuck, under the name Home keeps for it. A
-chat on screen gets none, and opening a chat takes its notification back. The first
-registration of a sign-in records where every task stands, so a new phone is not told its whole
-history.
+reaches Google. `PushMessages` takes `{"renoa": "changed"}` and `{"renoa": "ring"}` (#86; the
+same catch-up for now), ignores anything else, and only enqueues `WakeWork`, an expedited
+WorkManager job. Jobs run one after another; one whose wake a later catch-up already covered ends
+without connecting.
+
+The job (`WakeUp`) connects with the device credential and key, registers the push token, lists the
+tasks, attaches from its own cursor (`WakeCursors`, kept per sign-in in the app's storage) to each
+task whose `throughSequence` passed it, closes the connection, and posts one notification per task:
+the agent's latest reply as plain words (markdown marks removed, at most 1,000 characters), or that
+it got stuck, under the name Home keeps for it. A task's cursor moves only once its notice is up. A
+notice from an agent's chat opens that chat when tapped; one from another task, such as a routine's,
+opens the app. A chat on screen gets no notice, opening a chat takes its notice back, and what the
+app showed of a chat while it was on screen counts as read, so a later wake does not show it again.
+A task, the token or the baseline that failed does not stop the rest; the job then runs again, a few
+times at most. A sign-in Renoa refused ends it; one the Keystore could not read just now is retried.
+
+The first registration of a sign-in records where every task stands, so a new phone is not told its
+whole history. If a wake-up has to take it, because the app never could, what was there counts as
+history too. A cursor file that does not parse counts as nothing kept: a new baseline is taken, and
+records since the last good write are not shown, rather than every chat's history.
 
 Every connection Renoa accepts, the app's own and each job's, sends `set_push_token` while
-notifications are allowed and `clear_push_token` once they are not; a new token from Firebase
-starts a job, and so does each wake. Android 13 and later ask for the notification permission
-the first time the owner sends a message. The app uses Firebase registration tokens, which
-firebase-messaging 26 deprecates in favour of installation IDs; which of the two FCM HTTP v1
-takes is open in `docs/rcp-v0.md`.
+notifications are allowed and `clear_push_token` once they are not, one at a time so an older answer
+never lands after a newer one; a new token from Firebase starts a job. Android 13 and later ask for
+the notification permission the first time the owner sends a message. The app uses Firebase
+registration tokens, which firebase-messaging 26 deprecates in favour of installation IDs; which of
+the two FCM HTTP v1 takes is open in `docs/rcp-v0.md`.
 
 `google-services.json` belongs to the owner's Firebase project and never enters the repository.
 The build reads it from the Gradle property `renoa.googleServices`, else the environment
 variable `RENOA_GOOGLE_SERVICES`, else `~/.config/renoa/google-services.json`, and writes the four
-values Firebase needs as string resources, as the google-services plugin would. Without the file
-the app builds, its tests pass, and push is off: the app clears its token on every connection.
+values Firebase needs as string resources, as the google-services plugin would. A named file that
+does not exist is a warning; one that does not parse fails the build, naming the file and never
+quoting it. Without the file the app builds, its tests pass, and push is off: the app clears its
+token on every connection.
 
 ## Build
 

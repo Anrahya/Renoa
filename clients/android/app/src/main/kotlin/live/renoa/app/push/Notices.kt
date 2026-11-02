@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
@@ -17,6 +18,20 @@ import kotlin.uuid.Uuid
 
 /** The words a notice shows when the agent's run failed. */
 internal const val STUCK_WORDS = "It got stuck. Open the chat to try again."
+
+/** What a tap on a notice asks [MainActivity] to do, and the agent whose chat it opens. */
+internal const val OPEN_CHAT = "live.renoa.app.OPEN_CHAT"
+internal const val CHAT = "chat"
+
+/** What a tap on [notice] opens: the agent's chat when the notice came from it, else the app as it was. */
+internal fun noticeTap(context: Context, notice: Notice): Intent =
+    Intent(context, MainActivity::class.java)
+        .setAction(OPEN_CHAT)
+        // One per task, so each notice keeps its own tap.
+        .setData(Uri.fromParts("renoa", notice.taskId.toString(), null))
+        .apply { notice.chat?.let { putExtra(CHAT, it) } }
+        // MainActivity is singleTop: a running app gets the tap in onNewIntent, with its screens kept.
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
 /**
  * The app's notifications: one per task, replaced by the next notice from the same task, on the
@@ -52,15 +67,10 @@ internal object Notices {
         }
         val text =
             when (val news = notice.news) {
-                is News.Replied -> news.text
+                is News.Replied -> plainText(news.text)
                 News.Stuck -> STUCK_WORDS
             }
-        // As the launcher opens the app: back to the task it left, not a second copy on top.
-        val open =
-            Intent(context, MainActivity::class.java)
-                .setAction(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_LAUNCHER)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val open = PendingIntent.getActivity(context, 0, noticeTap(context, notice), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification =
             NotificationCompat.Builder(context, REPLIES)
                 .setSmallIcon(R.drawable.ic_notification)
@@ -68,8 +78,10 @@ internal object Notices {
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                .setContentIntent(PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE))
+                .setContentIntent(open)
                 .setAutoCancel(true)
+                // A notice replaced by the next from the same chat, or shown again by a retry, does not ring twice.
+                .setOnlyAlertOnce(true)
                 .build()
         NotificationManagerCompat.from(context).notify(notice.taskId.toString(), NOTICE, notification)
     }

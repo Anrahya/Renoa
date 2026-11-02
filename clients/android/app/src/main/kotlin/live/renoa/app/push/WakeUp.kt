@@ -2,6 +2,8 @@ package live.renoa.app.push
 
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.agentAddress
+import live.renoa.app.agents.chatTaskId
+import kotlinx.coroutines.CancellationException
 import live.renoa.rcp.ExecutionEventKind
 import live.renoa.rcp.ExecutionTerminal
 import live.renoa.rcp.PendingTextCommand
@@ -49,11 +51,24 @@ internal fun news(read: List<TaskEvent>): News? {
     return latest
 }
 
-/** One notification: [news] from the task [taskId], whose agent is called [agent] when the app knows it. */
-internal data class Notice(val taskId: Uuid, val agent: String?, val news: News)
+/**
+ * One notification: [news] from the task [taskId], whose agent is called [agent] when the app knows
+ * it. [chat] is the agent whose chat the task is, which a tap opens, or null for another task.
+ */
+internal data class Notice(val taskId: Uuid, val agent: String?, val chat: String?, val news: News)
 
-/** The name the app keeps for the agent [task] runs for, found by its target among [agents], or null. */
-internal fun agentName(task: TaskSummary, agents: List<AgentSummary>): String? = agents.firstOrNull { agentAddress(it.id)?.second == task.target }?.name
+/** Who a task speaks for, as far as the app knows: the agent's [name], and its [chat] when the task is that chat. */
+internal data class Sender(val name: String?, val chat: String?)
+
+/**
+ * The agent [task] runs for, found by its target among the [agents] the app keeps; [Sender.chat] is
+ * set only when the task is that agent's chat in the app.
+ */
+internal fun sender(task: TaskSummary, agents: List<AgentSummary>): Sender {
+    val agent = agents.firstOrNull { agentAddress(it.id)?.second == task.target } ?: return Sender(null, null)
+    val chat = agentAddress(agent.id)?.let { (node, target) -> chatTaskId(node, target) }
+    return Sender(agent.name, agent.id.takeIf { chat == task.taskId })
+}
 
 /**
  * A wake-up's connection state: cursors come from [saved] until this connection reads past them, and
@@ -81,42 +96,62 @@ private class WakeState(private val saved: WakeCursors) : RcpState {
  * new, unless that chat is [onScreen]. A task's cursor moves only after its notice was posted or
  * passed over, so a wake-up cut short shows those records on the next one.
  *
- * [connect] makes the client over the state it is given; [run] connects it and closes it.
+ * A failure in one task, or in registering, does not stop the others; [run] then returns false, for
+ * the caller to run it again. Without a baseline there is nothing to read from, so it returns false
+ * too. A failure to connect or to list the tasks throws. [connect] makes the client over the state it
+ * is given; [run] connects it and closes it.
  */
 internal class WakeUp(
     private val cursors: WakeCursors,
     private val connect: (RcpState) -> RcpSurface,
     private val register: suspend (RcpSurface) -> Unit,
-    private val agentName: (TaskSummary) -> String?,
+    private val sender: (TaskSummary) -> Sender,
     private val onScreen: (Uuid) -> Boolean,
     private val post: (Notice) -> Unit,
 ) {
-    suspend fun run() {
+    /** Returns whether every step and every task went through. */
+    suspend fun run(): Boolean {
         val state = WakeState(cursors)
         val surface = connect(state)
         try {
             surface.connect()
-            register(surface)
-            // Taken by registering, or by the app before; one that could not be written is taken next time.
-            if (!cursors.baselined()) return
+            var complete = attempt { register(surface) }
+            if (!cursors.baselined()) return false
             for (task in surface.listTasks()) {
                 val through = task.throughSequence ?: continue
-                if ((cursors.cursor(task.taskId) ?: -1) >= through) continue
-                val read = mutableListOf<TaskEvent>()
-                try {
-                    surface.attach(task.taskId) { event -> synchronized(read) { read += event } }
-                } catch (gone: RcpException) {
-                    // Deleted since it was listed.
-                    if (gone.code == RcpErrorCode.NotFound && gone.requestId != null) continue
-                    throw gone
-                }
-                // A record arriving live from here on is left to the next wake-up, which Renoa sends for it.
-                val replayed = synchronized(read) { read.toList() }
-                news(replayed)?.let { if (!onScreen(task.taskId)) post(Notice(task.taskId, agentName(task), it)) }
-                replayed.lastOrNull()?.let { cursors.advance(task.taskId, it.sequence) }
+                complete = attempt { if ((cursors.cursor(task.taskId) ?: -1) < through) catchUp(surface, task) } && complete
             }
+            return complete
         } finally {
             surface.close()
         }
     }
+
+    private suspend fun catchUp(surface: RcpSurface, task: TaskSummary) {
+        val read = mutableListOf<TaskEvent>()
+        try {
+            surface.attach(task.taskId) { event -> synchronized(read) { read += event } }
+        } catch (gone: RcpException) {
+            // Deleted since it was listed.
+            if (gone.code == RcpErrorCode.NotFound && gone.requestId != null) return
+            throw gone
+        }
+        // A record arriving live from here on is left to the next wake-up, which Renoa sends for it.
+        val replayed = synchronized(read) { read.toList() }
+        news(replayed)?.let {
+            if (!onScreen(task.taskId)) sender(task).let { from -> post(Notice(task.taskId, from.name, from.chat, it)) }
+        }
+        replayed.lastOrNull()?.let { cursors.advance(task.taskId, it.sequence) }
+    }
+
+    /** Runs [step]; returns whether it went through. */
+    private suspend fun attempt(step: suspend () -> Unit): Boolean =
+        try {
+            step()
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            false
+        }
 }

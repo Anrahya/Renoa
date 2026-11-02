@@ -6,12 +6,23 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.time.Duration.Companion.seconds
 
-/** Whether a push is Renoa's wake-up. It carries nothing else: what changed is read over RCP. */
-internal fun isWake(data: Map<String, String>): Boolean = data["renoa"] == "changed"
+/**
+ * Whether a push is one of Renoa's wake-ups: `changed`, or `ring`, which #86 adds for what needs the
+ * owner now and which runs the same catch-up for now. It carries nothing else: what changed is read
+ * over RCP. Anything else is ignored.
+ */
+internal fun isWake(data: Map<String, String>): Boolean = data["renoa"] in WAKES
+
+private val WAKES = setOf("changed", "ring")
+
+/** How long the app waits for Firebase to issue a token before it gives up until the next try. */
+private val TOKEN_WAIT = 30.seconds
 
 /**
  * Where Firebase delivers Renoa's wake-ups and this install's new tokens. Both only start a
@@ -33,7 +44,7 @@ class PushMessages : FirebaseMessagingService() {
 
 /**
  * This install's Firebase Cloud Messaging registration token, or null when the build has no Firebase
- * configuration. Throws when Firebase cannot issue one right now.
+ * configuration. Throws when Firebase cannot issue one right now, or does not within [TOKEN_WAIT].
  *
  * firebase-messaging 26 deprecates registration tokens in favour of installation IDs, which it
  * issues only once the app opts in (`firebase_messaging_installation_id_enabled`). Whether HTTP v1
@@ -44,9 +55,11 @@ internal suspend fun firebaseToken(context: Context): String? {
     if (FirebaseApp.getApps(context).isEmpty()) return null
     @Suppress("DEPRECATION")
     val issuing = FirebaseMessaging.getInstance().token
-    return suspendCancellableCoroutine { waiting ->
-        issuing.addOnCompleteListener { done ->
-            if (done.isSuccessful) waiting.resume(done.result) else waiting.resumeWithException(done.exception ?: IOException("Firebase issued nothing"))
+    return withTimeoutOrNull(TOKEN_WAIT) {
+        suspendCancellableCoroutine { waiting ->
+            issuing.addOnCompleteListener { done ->
+                if (done.isSuccessful) waiting.resume(done.result) else waiting.resumeWithException(done.exception ?: IOException("Firebase issued nothing"))
+            }
         }
-    }
+    } ?: throw IOException("Firebase did not answer within $TOKEN_WAIT")
 }

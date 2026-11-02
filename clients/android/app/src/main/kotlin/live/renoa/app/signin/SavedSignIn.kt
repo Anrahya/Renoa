@@ -25,15 +25,19 @@ internal data class SavedSignIn(val origin: String, val credentials: DeviceCrede
 internal class SignInStore(context: Context) {
     private val preferences = context.getSharedPreferences("sign-in", Context.MODE_PRIVATE)
 
-    fun load(): SavedSignIn? {
+    /** The sign-in, or null when there is none or it cannot be read; a key the Keystore lost, as after a restore to a new phone, means signing in again. */
+    fun load(): SavedSignIn? = runCatching { read() }.getOrNull()
+
+    /**
+     * The sign-in, or null when none is stored. Throws when one is stored but cannot be read now, as
+     * when the Keystore fails, which a caller that can wait may try again.
+     */
+    fun read(): SavedSignIn? {
         val stored = preferences.getString(ENTRY, null) ?: return null
-        // A key the Keystore lost, as after a restore to a new phone, means signing in again.
-        return runCatching {
-            val bytes = Base64.decode(stored, Base64.NO_WRAP)
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV_BYTES))
-            Json.decodeFromString(SavedSignIn.serializer(), String(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES), Charsets.UTF_8))
-        }.getOrNull()
+        val bytes = Base64.decode(stored, Base64.NO_WRAP)
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV_BYTES))
+        return Json.decodeFromString(SavedSignIn.serializer(), String(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES), Charsets.UTF_8))
     }
 
     // The KTX edit drops commit's result, and a sign-in that did not reach the disk must not count.

@@ -5,26 +5,27 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import live.renoa.app.agents.replaceAtomically
 import live.renoa.app.agents.replacement
+import live.renoa.rcp.RcpState
 import live.renoa.rcp.TaskSummary
 import java.io.File
-import java.io.IOException
 import kotlin.uuid.Uuid
 
 /**
- * How far this phone has told its owner about each task: the last sequence a wake-up read, so the
- * next one attaches only to the tasks that moved past it and reads only what follows. Nothing is
- * kept until the first [baseline], which records where every task stood, so a newly signed-in phone
- * is not told its whole history; a task first seen after that is read from its start.
+ * How far this phone's owner has been told about, or has read, each task: the last sequence a
+ * wake-up read or a chat on screen showed, so the next wake-up attaches only to the tasks that moved
+ * past it and reads only what follows. Nothing is kept until the first [baseline], which records
+ * where every task stood, so a newly signed-in phone is not told its whole history; a task first seen
+ * after that is read from its start.
  *
  * Kept per sign-in, as [owner] names it, in the app's private storage. Every change rewrites [file]
- * whole, as [replaceAtomically] does. A file that cannot be read, or one kept for another owner,
- * counts as nothing kept. A change that cannot be written is dropped: the next wake-up reads those
- * records again and shows them under the same notification.
+ * whole, as [replaceAtomically] does, and throws an [java.io.IOException] when it cannot be written,
+ * as does a file that cannot be read at all. A file whose contents do not parse, or one kept for
+ * another owner, counts as nothing kept: the next registration takes a new baseline, so records that
+ * arrived since the last good write are not shown, rather than every chat's history.
  */
 internal class WakeCursors(private val file: File, val owner: String) {
     @Serializable
@@ -40,7 +41,7 @@ internal class WakeCursors(private val file: File, val owner: String) {
     /** Whether a [baseline] was taken for this sign-in. */
     suspend fun baselined(): Boolean = changed { load() != null }
 
-    /** The last sequence of [taskId] the owner was told about, or null for a task never read. */
+    /** The last sequence of [taskId] the owner was told about or read, or null for a task never read. */
     suspend fun cursor(taskId: Uuid): Long? = changed { load()?.get(taskId) }
 
     /** Records where each of [tasks] stands, unless a baseline was already taken. */
@@ -65,25 +66,27 @@ internal class WakeCursors(private val file: File, val owner: String) {
 
     private fun load(): Map<Uuid, Long>? = (loaded ?: Loaded(read()).also { loaded = it }).cursors
 
-    private fun read(): Map<Uuid, Long>? =
-        try {
-            if (!file.exists()) null
-            else Json.decodeFromString(Saved.serializer(), file.readText()).takeIf { it.owner == owner }?.cursors?.mapKeys { Uuid.parse(it.key) }
-        } catch (_: IOException) {
-            null
-        } catch (_: SerializationException) {
-            null
+    private fun read(): Map<Uuid, Long>? {
+        if (!file.exists()) return null
+        val text = file.readText()
+        return try {
+            Json.decodeFromString(Saved.serializer(), text).takeIf { it.owner == owner }?.cursors?.mapKeys { Uuid.parse(it.key) }
         } catch (_: IllegalArgumentException) {
             null
         }
+    }
 
     private fun save(cursors: Map<Uuid, Long>) {
-        try {
-            val saved = Saved(owner, cursors.mapKeys { it.key.toString() })
-            file.replaceAtomically(Json.encodeToString(Saved.serializer(), saved).toByteArray(Charsets.UTF_8))
-            loaded = Loaded(cursors)
-        } catch (_: IOException) {
-            // Dropped, as the class says: the next wake-up reads those records again.
-        }
+        val saved = Saved(owner, cursors.mapKeys { it.key.toString() })
+        file.replaceAtomically(Json.encodeToString(Saved.serializer(), saved).toByteArray(Charsets.UTF_8))
+        loaded = Loaded(cursors)
     }
+}
+
+/**
+ * The owner had the chat [taskId] on screen: everything the app applied of it, as [applied] holds,
+ * counts as read, so a later wake-up does not show it again.
+ */
+internal suspend fun markRead(taskId: Uuid, applied: RcpState, cursors: WakeCursors) {
+    applied.cursor(taskId)?.let { cursors.advance(taskId, it) }
 }

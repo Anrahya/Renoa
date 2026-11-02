@@ -68,7 +68,8 @@ internal val MAX_CONTENT_WIDTH = 600.dp
  * The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then.
  * When Renoa refuses this phone's sign-in, [signedOut] forgets it and the app goes back to sign-in.
  * [chatShown] hears each chat come on screen and leave it; [notificationsAnswered], the owner's
- * answer when asked to allow notifications.
+ * answer when asked to allow notifications. [openChat] is a chat a tapped notice asks for, opened
+ * as [Navigator.openChat][live.renoa.app.nav.Navigator.openChat] says; [chatOpened] then clears it.
  */
 @Composable
 internal fun RenoaApp(
@@ -78,6 +79,8 @@ internal fun RenoaApp(
     signedOut: suspend () -> Unit = {},
     chatShown: (agentId: String, shown: Boolean) -> Unit = { _, _ -> },
     notificationsAnswered: () -> Unit = {},
+    openChat: String? = null,
+    chatOpened: () -> Unit = {},
 ) {
     // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
     var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
@@ -89,6 +92,11 @@ internal fun RenoaApp(
         val below = navigator.entries.dropLast(1)
         navigator.resetTo(route)
         below.forEach { stores.release(it.id) }
+    }
+    LaunchedEffect(openChat) {
+        if (openChat == null) return@LaunchedEffect
+        navigator.openChat(openChat)
+        chatOpened()
     }
     var wasSignedOut by rememberSaveable { mutableStateOf(false) }
     if (navigator.top != Route.SignIn) {

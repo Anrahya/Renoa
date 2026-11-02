@@ -4,9 +4,11 @@ import kotlinx.coroutines.test.runTest
 import live.renoa.rcp.TaskStatus
 import live.renoa.rcp.TaskSummary
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -50,6 +52,16 @@ class WakeCursorsTest {
 
         file.writeText("not cursors")
         assertFalse(WakeCursors(file, "me").baselined())
+    }
+
+    @Test
+    fun aFileThatCannotBeReadOrWrittenIsAFailureNotAnEmptyStart() = runTest {
+        file.mkdir()
+        assertFailsWith<IOException>("a baseline over it would hide what is new") { WakeCursors(file, "me").baselined() }
+
+        val nowhere = WakeCursors(File(File(dir, "plain").apply { writeText("") }, "wake"), "me")
+        assertFailsWith<IOException> { nowhere.baseline(emptyList()) }
+        assertFalse(nowhere.baselined(), "a baseline that was not kept was not taken")
     }
 
     @Test

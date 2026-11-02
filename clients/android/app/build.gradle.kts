@@ -10,10 +10,12 @@ plugins {
  * `renoa.googleServices`, else the environment variable `RENOA_GOOGLE_SERVICES`, else
  * `~/.config/renoa/google-services.json`. Without the file the app builds and runs with push off.
  */
-val googleServices: File =
-    (providers.gradleProperty("renoa.googleServices").orNull ?: providers.environmentVariable("RENOA_GOOGLE_SERVICES").orNull)
-        ?.let { File(it) }
-        ?: File(System.getProperty("user.home"), ".config/renoa/google-services.json")
+val googleServicesNamed: String? =
+    providers.gradleProperty("renoa.googleServices").orNull ?: providers.environmentVariable("RENOA_GOOGLE_SERVICES").orNull
+val googleServices: File = googleServicesNamed?.let { File(it) } ?: File(System.getProperty("user.home"), ".config/renoa/google-services.json")
+if (googleServicesNamed != null && !googleServices.isFile) {
+    logger.warn("Renoa: $googleServices, named for google-services.json, is not a file; building with push off.")
+}
 
 android {
     namespace = "live.renoa.app"
@@ -123,7 +125,13 @@ dependencies {
 fun firebaseResources(file: File, packageName: String): Map<String, String> {
     if (!file.isFile) return emptyMap()
     fun Any?.field(name: String): Any? = (this as? Map<*, *>)?.get(name)
-    val json = groovy.json.JsonSlurper().parse(file)
+    // The parser's own message quotes the offending text, which may hold the API key, so it is not passed on.
+    val json =
+        try {
+            groovy.json.JsonSlurper().parse(file)
+        } catch (_: Exception) {
+            throw GradleException("$file is not valid JSON; download it again from the Firebase console")
+        }
     val project = json.field("project_info")
     val client =
         (json.field("client") as? List<*>)?.firstOrNull { it.field("client_info").field("android_client_info").field("package_name") == packageName }

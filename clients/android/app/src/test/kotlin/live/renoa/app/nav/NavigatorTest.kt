@@ -19,6 +19,22 @@ class NavigatorTest {
     }
 
     @Test
+    fun aTappedNoticeOpensItsChatOverWhatIsShownOnceAndNeverBeforeHome() {
+        val nav = Navigator.starting(Route.Home)
+        nav.push(Route.Edit("tifa"))
+        nav.openChat("tifa")
+        assertEquals(listOf(Route.Home, Route.Edit("tifa"), Route.Chat("tifa")), nav.stack, "back returns to where the owner was")
+        nav.openChat("tifa")
+        assertEquals(3, nav.stack.size, "a chat already on top is not opened twice")
+        nav.openChat("ledger")
+        assertEquals(Route.Chat("ledger"), nav.top)
+
+        val signingIn = Navigator.starting(Route.SignIn)
+        signingIn.openChat("tifa")
+        assertEquals(listOf(Route.SignIn), signingIn.stack, "no chat opens before sign-in")
+    }
+
+    @Test
     fun pushingOpensAScreenAndPoppingReturnsToTheOneBelow() {
         val nav = Navigator.starting(Route.Home)
         nav.push(Route.Chat("tifa"))
