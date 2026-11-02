@@ -29,6 +29,8 @@ tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+jiff.workspace = true
+mnem.workspace = true
 nix.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true

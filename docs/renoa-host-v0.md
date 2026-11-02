@@ -1742,7 +1742,8 @@ due meanwhile is submitted on time, and its result reaches surfaces while the
 plugin run is unfinished. A `renoa.memory` reminder, though its plugin owns
 it, runs as an agent's run: its submission is Mnem's message for the item,
 chosen when the run is admitted, and it goes to the conversation the plugin
-chose then. A draining node stops the Host's memory runs and
+chose then; a node with no task for that conversation fails the run instead
+of opening the automation's own task. A draining node stops the Host's memory runs and
 waits for the plugin run in flight, leaving one stopped part way unrecorded;
 shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its

@@ -137,7 +137,7 @@ pub(crate) fn chars(content: &[ContentBlock]) -> usize {
 /// `at`: counts it toward the conversation's unreviewed text, once per
 /// command, and asks again when a pass is due. A conversation the pass begins
 /// to follow with turns `earlier` is reviewed from this message on. Nothing
-/// for any other agent.
+/// for any other agent, nor for a reminder's run, which the Host submitted.
 ///
 /// # Errors
 ///
@@ -151,7 +151,9 @@ pub(crate) fn message(
     earlier: bool,
 ) -> Result<(), PluginError> {
     let db = catalog::open_verified(&at.database)?;
-    if driver(&db)? != Some(at.agent) {
+    // A reminder's run is the Host's text in the person's conversation, not
+    // theirs.
+    if driver(&db)? != Some(at.agent) || super::reminders::is_run(&db, command)? {
         return Ok(());
     }
     store::message(

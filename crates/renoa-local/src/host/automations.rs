@@ -329,5 +329,5 @@ pub(super) use retention::{
     CONVERSATION_DELETIONS, RUN_INDEXES, Removed, purge_all_deleted, report as report_removed,
 };
 pub(super) use runs::SCHEDULER_TABLE;
-pub(crate) use runs::delivering;
+pub(crate) use runs::{Throttle, delivering};
 pub(super) use store::initialize;

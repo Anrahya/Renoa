@@ -102,7 +102,7 @@ pub(super) fn ms(at: &str) -> i64 {
         .as_millisecond()
 }
 
-struct Quiet;
+pub(super) struct Quiet;
 
 impl AgentEventSink for Quiet {
     fn emit(&self, _: AgentEvent) -> BoxFuture<'_, ()> {
@@ -179,7 +179,7 @@ impl Fixture {
         &self.host.config.database
     }
 
-    async fn open(&self, agent: AgentId, session: Uuid) -> Arc<AgentSession> {
+    pub(super) async fn open(&self, agent: AgentId, session: Uuid) -> Arc<AgentSession> {
         self.host
             .ensure_agent_session(agent, &self.root.join("workspace"), session)
             .await

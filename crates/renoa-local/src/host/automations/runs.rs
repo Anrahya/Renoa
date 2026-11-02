@@ -16,10 +16,13 @@ use crate::{
         catalog,
         feed::{self, RunEnded},
     },
-    plugins::host::triggers::{self, Delivery, HOST_RUN, PLUGIN_OWNED, TriggerContext},
+    plugins::host::triggers::{self, Delivery, HOST_RUN, PLUGIN_OWNED, Prepared, TriggerContext},
 };
 
 mod unschedulable;
+
+pub(crate) use unschedulable::Throttle;
+pub(super) use unschedulable::report as report_unschedulable;
 
 /// Every read of a run selects these columns, in the order [`run`] maps them.
 pub(super) const RUN_COLUMNS: &str = "sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,submission,output,status,failed_tool_calls,finished_at_ms";
@@ -123,12 +126,15 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
 
 /// Called only while holding the Host scheduler process lease. Returns the
 /// oldest unfinished run, or converges every plugin's trigger and admits the
-/// next due occurrence. Admission and
+/// next due occurrence. What plugins read and write outside the catalog for
+/// this is done first, before the write transaction opens (see
+/// [`triggers::prepare`]). Admission and
 /// advancing the clock commit together; unfinished runs retain their command
 /// ID. An occurrence admitted later than its schedule allows, or one its
 /// plugin says is no longer due, is recorded as skipped in the same
 /// transaction and returned finished, so the scheduler reports it and asks
-/// again. While `plugin_running`, a plugin's run is in flight beside the
+/// again; one its plugin is not ready to send stays due for the next call.
+/// While `plugin_running`, a plugin's run is in flight beside the
 /// scheduler, so no run the Host runs for a plugin is handed on or admitted:
 /// one plugin run at a time, and a run delivered to an agent is not held up
 /// by it. A
@@ -142,12 +148,13 @@ pub(super) fn next(
     now_ms: i64,
     plugin_running: bool,
 ) -> Result<Option<AutomationRun>, AutomationError> {
+    let prepared = triggers::prepare(path, context, now_ms);
     let mut db = catalog::open_verified(path)?;
     let mut tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if let Some(pending) = pending(&tx, plugin_running)? {
         return Ok(Some(pending));
     }
-    let retired = super::owned::converge(&tx, context, now_ms)?;
+    let retired = super::owned::converge(&tx, &prepared, now_ms)?;
     let due = tx
         .prepare(&format!("SELECT id FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND NOT (?2 AND id IN ({HOST_RUN})) ORDER BY next_due_ms,id"))?
         .query_map(params![now_ms, plugin_running], |row| row.get::<_, String>(0))?
@@ -156,13 +163,14 @@ pub(super) fn next(
     // and logged, so it does not hold up the others.
     for automation in due {
         let mut attempt = tx.savepoint()?;
-        match admit(&attempt, context, &automation, now_ms) {
-            Ok((admitted, pruned)) => {
+        match admit(&attempt, &prepared, &automation, now_ms) {
+            Ok(Some((admitted, pruned))) => {
                 attempt.commit()?;
                 tx.commit()?;
                 retention::report(retired.into_iter().chain(pruned));
                 return Ok(Some(admitted));
             }
+            Ok(None) => attempt.rollback()?,
             Err(error) if of_its_row(&error) => {
                 attempt.rollback()?;
                 unschedulable::report("automation_id", &automation, &error.to_string());
@@ -198,14 +206,14 @@ fn pending(
 
 /// Admits the due occurrence of `automation`, as [`next`] describes, and
 /// returns the run with the runs retention removed. A plugin's trigger whose
-/// run goes to its agent is sent as its plugin decides now (see
-/// [`triggers::delivery`]).
+/// run goes to its agent is sent as its plugin decides from what was
+/// `prepared` (see [`triggers::delivery`]), or not admitted yet.
 fn admit(
     tx: &Connection,
-    context: &TriggerContext,
+    prepared: &Prepared,
     automation: &str,
     now_ms: i64,
-) -> Result<(AutomationRun, Option<retention::Removed>), AutomationError> {
+) -> Result<Option<(AutomationRun, Option<retention::Removed>)>, AutomationError> {
     let mut r = tx.query_row(
         "SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE id=?1",
         [automation],
@@ -215,17 +223,17 @@ fn admit(
         "renoa.automation.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
     ));
-    let delivery =
-        triggers::delivery(tx, context, r.id, r.spec.agent_id, now_ms).map_err(|error| {
-            AutomationError::Invalid(format!(
-                "a plugin trigger's run could not be prepared: {error}"
-            ))
-        })?;
+    let delivery = triggers::delivery(tx, prepared, r.id, r.spec.agent_id).map_err(|error| {
+        AutomationError::Invalid(format!(
+            "a plugin trigger's run could not be prepared: {error}"
+        ))
+    })?;
     let due = Some(r.next_due_ms);
     let skipped = match delivery {
+        Some(Delivery::Later) => return Ok(None),
         Some(Delivery::Send { message, origin }) => {
             insert(tx, &r, id, due, now_ms, &message)?;
-            store::set_origin(tx, r.id, origin)?;
+            store::set_origin(tx, r.id, Some(origin))?;
             None
         }
         Some(Delivery::Skip(reason)) => {
@@ -252,7 +260,7 @@ fn admit(
         [id.to_string()],
         run,
     )?;
-    Ok((admitted, pruned))
+    Ok(Some((admitted, pruned)))
 }
 
 /// Why the occurrence of `r` due now is skipped when admitted at `now_ms`,
@@ -271,7 +279,7 @@ fn late(r: &AutomationRecord, now_ms: i64) -> Result<Option<String>, AutomationE
 
 /// Whether `error` is about one automation's stored row rather than the
 /// catalog: its row does not decode, or its schedule cannot be computed.
-fn of_its_row(error: &AutomationError) -> bool {
+pub(super) fn of_its_row(error: &AutomationError) -> bool {
     match error {
         AutomationError::Database(error) => decodes_its_row(error),
         AutomationError::Invalid(_) | AutomationError::Json(_) | AutomationError::Time(_) => true,

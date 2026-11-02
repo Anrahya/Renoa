@@ -54,6 +54,8 @@ internal data class ObservedAutomation(
     val revision: Long,
     @SerialName("next_due_ms") val nextDueMs: Long,
     @SerialName("last_run") val lastRun: ObservedRun? = null,
+    /** The Host plugin whose own trigger this is, such as a reminder; null for a routine an agent or the owner made. */
+    val plugin: String? = null,
 ) {
     fun routine(rosterId: String?, here: ZoneId): Routine =
         Routine(
@@ -141,7 +143,8 @@ internal class HeldRoutines(private val host: HostRoutines, private val changed:
             } catch (failed: RepositoryException) {
                 return null
             }
-        val listed = observed.automations
+        // A plugin's own triggers, such as reminders, are the Host's work, not routines.
+        val listed = observed.automations.filter { it.plugin == null }
         synchronized(lock) {
             val held = automations.toMap()
             automations.clear()

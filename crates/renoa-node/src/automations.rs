@@ -363,9 +363,8 @@ enum Resolution {
     Shutdown,
 }
 
-/// The task a run is submitted to: the task executing in the conversation
-/// its automation was created in, or else the automation's own task, opened
-/// on this node when the run first needs it.
+/// The task a run is submitted to: its conversation's, or else, unless it goes
+/// only there, the automation's own, opened here when the run first needs it.
 async fn task_for(
     runtime: &NodeRuntime,
     connection: &Connection,
@@ -377,6 +376,11 @@ async fn task_for(
         && let Some(task_id) = runtime.state.task_for_session(session).await?
     {
         return Ok(Resolution::Task(task_id));
+    }
+    if due.origin_required {
+        return Ok(Resolution::Refused(
+            "its conversation is not open here".to_owned(),
+        ));
     }
     let agent_id = due.run.agent_id;
     let task_id = TaskId::from_uuid(due.run.automation_id);

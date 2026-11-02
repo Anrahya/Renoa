@@ -27,6 +27,10 @@ pub struct ScheduledRun {
     /// conversation with its person. `None` runs in a conversation of the
     /// automation's own.
     pub origin_session_id: Option<Uuid>,
+    /// Whether the run goes only to `origin_session_id`: a reminder's, told
+    /// to its person there. One whose conversation cannot be reached fails,
+    /// and is never sent to a conversation of the automation's own.
+    pub origin_required: bool,
     /// The compiled plugin that runs this run of its trigger. Its run is not
     /// sent to the agent: [`AutomationScheduler::run_for_plugin`] runs it on
     /// the Host. `None` for a run sent to the agent, a reminder's included.
@@ -107,9 +111,12 @@ impl AutomationScheduler {
             let origin_session_id = store::origin(&db, run.automation_id)?;
             // The plugin's error keeps its source, so a busy catalog shows.
             let plugin = triggers::runner(&db, run.automation_id)?.map(HostPluginId::id);
+            let origin_required =
+                triggers::delivers(&db, run.automation_id).map_err(super::AutomationError::from)?;
             Ok::<_, LocalHostError>(Some(ScheduledRun {
                 run,
                 origin_session_id,
+                origin_required,
                 plugin,
             }))
         })
