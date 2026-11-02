@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
-import { RcpError, RcpSurfaceClient, type TaskEvent } from "../src/index.js";
+import { RcpError, RcpSurfaceClient, type TaskEvent, type TaskSummary } from "../src/index.js";
 import type { PendingTextCommand, RcpSurfaceState } from "../src/contract.js";
 import { RcpSurfaceClientCore } from "../src/core-client.js";
 import { SurfaceState } from "../src/state.js";
@@ -58,7 +58,13 @@ test("a command for an offline node remains durable across process restart", asy
     "continue when the node returns",
   );
   await assert.rejects(submission.accepted, isNodeOffline);
-  assert.deepEqual(await first.listTasks(), fixture.tasks);
+  // An earlier test admitted commands to the first task, so only the
+  // offline task's sequence is still the fixture's: nothing was recorded.
+  const listed = await first.listTasks();
+  const withoutSequence = (tasks: readonly TaskSummary[]) =>
+    tasks.map(({ throughSequence: _, ...task }) => task);
+  assert.deepEqual(withoutSequence(listed), withoutSequence(fixture.tasks));
+  assert.equal(listed[2]?.throughSequence, fixture.tasks[2]?.throughSequence);
   await first.close();
 
   const resumed = new RcpSurfaceClient({

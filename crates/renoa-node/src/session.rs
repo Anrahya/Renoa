@@ -353,6 +353,8 @@ async fn handle_server_message(
         | ServerMessage::Attached { .. }
         | ServerMessage::StopAccepted { .. }
         | ServerMessage::HostAnswer { .. }
+        | ServerMessage::PushTokenSet { .. }
+        | ServerMessage::PushTokenCleared { .. }
         | ServerMessage::LiveActivity { .. }
         | ServerMessage::TaskEvent { .. } => {
             return Err(NodeError::Protocol(

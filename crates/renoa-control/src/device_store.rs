@@ -381,14 +381,7 @@ impl ControlStore {
                 .optional()
                 .map_err(sqlite_error)?
                 .ok_or_else(|| ControlError::not_found(format!("device {device_id} was not found")))?;
-            if !revoked {
-                transaction
-                    .execute(
-                        "UPDATE devices SET revoked = 1 WHERE device_id = ?1",
-                        [device_id.to_string()],
-                    )
-                    .map_err(sqlite_error)?;
-            }
+            crate::identity_store::mark_revoked(&transaction, device_id)?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(!revoked)
         })

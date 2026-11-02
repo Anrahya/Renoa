@@ -15,9 +15,24 @@ export interface Fixture {
   readonly statePath: string;
   /** The first task has a command no node has run, so it is working. */
   readonly tasks: readonly [
-    { readonly taskId: string; readonly target: string; readonly status: "working" },
-    { readonly taskId: string; readonly target: string; readonly status: "idle" },
-    { readonly taskId: string; readonly target: string; readonly status: "idle" },
+    {
+      readonly taskId: string;
+      readonly target: string;
+      readonly status: "working";
+      readonly throughSequence: number;
+    },
+    {
+      readonly taskId: string;
+      readonly target: string;
+      readonly status: "idle";
+      readonly throughSequence: null;
+    },
+    {
+      readonly taskId: string;
+      readonly target: string;
+      readonly status: "idle";
+      readonly throughSequence: null;
+    },
   ];
   stop(): Promise<void>;
 }

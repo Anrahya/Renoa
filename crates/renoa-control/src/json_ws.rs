@@ -8,12 +8,12 @@ use uuid::Uuid;
 
 use crate::{
     ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
-    HostMethod, NodeId, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary,
+    HostMethod, NodeId, PushToken, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary,
     agent_messages::OutgoingMessage,
-    operations::{NodeOperation, SurfaceOperation},
+    operations::{NodeOperation, PushOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 14;
+pub const JSON_WS_VERSION: u32 = 15;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -81,6 +81,16 @@ pub enum ClientMessage {
         method: HostMethod,
         path: String,
         body: Option<String>,
+    },
+    /// The device's push token, from an app that signed in. `provider` stays
+    /// text on the wire so an unsupported one is answered by name.
+    SetPushToken {
+        request_id: u64,
+        provider: String,
+        token: PushToken,
+    },
+    ClearPushToken {
+        request_id: u64,
     },
     AdvertiseTargets {
         targets: Vec<TargetCard>,
@@ -198,7 +208,9 @@ impl ClientMessage {
             | Self::Submit { .. }
             | Self::StopCommand { .. }
             | Self::DeleteTask { .. }
-            | Self::CallHost { .. } => return self.into_surface_operation(),
+            | Self::CallHost { .. }
+            | Self::SetPushToken { .. }
+            | Self::ClearPushToken { .. } => return self.into_surface_operation(),
         };
         Some(JsonOperation::Node(operation))
     }
@@ -274,6 +286,17 @@ impl ClientMessage {
                 request_id,
                 SurfaceOperation::CallHost { method, path, body },
             ),
+            Self::SetPushToken {
+                request_id,
+                provider,
+                token,
+            } => (
+                request_id,
+                SurfaceOperation::Push(PushOperation::Set { provider, token }),
+            ),
+            Self::ClearPushToken { request_id } => {
+                (request_id, SurfaceOperation::Push(PushOperation::Clear))
+            }
             Self::Enroll { .. }
             | Self::ListTargets { .. }
             | Self::Authenticate { .. }
@@ -366,6 +389,12 @@ pub enum ServerMessage {
         request_id: u64,
         status: u16,
         body: String,
+    },
+    PushTokenSet {
+        request_id: u64,
+    },
+    PushTokenCleared {
+        request_id: u64,
     },
     ExecutionEventsAccepted {
         command_id: CommandId,

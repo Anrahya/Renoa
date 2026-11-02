@@ -134,19 +134,16 @@ impl ControlStore {
     pub(crate) async fn revoke_device(&self, device_id: DeviceId) -> Result<(), ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
-            let connection = crate::control_schema::open_connection(&path)?;
-            let changed = connection
-                .execute(
-                    "UPDATE devices SET revoked = 1 WHERE device_id = ?1",
-                    [device_id.to_string()],
-                )
+            let mut connection = crate::control_schema::open_connection(&path)?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(sqlite_error)?;
-            if changed == 0 {
+            if !mark_revoked(&transaction, device_id)? {
                 return Err(ControlError::not_found(format!(
                     "device {device_id} was not found"
                 )));
             }
-            Ok(())
+            transaction.commit().map_err(sqlite_error)
         })
         .await
     }
@@ -174,6 +171,23 @@ impl ControlStore {
         })
         .await
     }
+}
+
+/// What revoking a device writes, for every path that revokes one: the device
+/// is marked revoked and its push token is deleted, in the caller's
+/// transaction. Returns whether the device exists.
+pub(crate) fn mark_revoked(
+    connection: &rusqlite::Connection,
+    device_id: DeviceId,
+) -> Result<bool, ControlError> {
+    let changed = connection
+        .execute(
+            "UPDATE devices SET revoked = 1 WHERE device_id = ?1",
+            [device_id.to_string()],
+        )
+        .map_err(sqlite_error)?;
+    crate::push_tokens::forget_device_token(connection, device_id)?;
+    Ok(changed > 0)
 }
 
 /// One single-use enrollment prepared outside the database transaction that

@@ -237,11 +237,13 @@ fn write_description(
         "replayEndpoint": replay_endpoint,
         "credentials": credentials,
         "unownedTaskId": unowned_task_id,
-        // Only the first task has a command, and no node ever runs it.
+        // Only the first task has a command, at sequence 0, and no node ever
+        // runs it.
         "tasks": tasks.iter().enumerate().map(|(index, (task_id, target, _))| json!({
             "taskId": task_id,
             "target": target,
             "status": if index == 0 { "working" } else { "idle" },
+            "throughSequence": if index == 0 { Some(0) } else { None },
         })).collect::<Vec<_>>(),
     });
     let mut stdout = io::stdout().lock();

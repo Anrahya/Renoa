@@ -375,6 +375,8 @@ async fn read_peer(
         | ClientMessage::StopCommand { .. }
         | ClientMessage::DeleteTask { .. }
         | ClientMessage::CallHost { .. }
+        | ClientMessage::SetPushToken { .. }
+        | ClientMessage::ClearPushToken { .. }
         | ClientMessage::AcknowledgeExecution { .. }
         | ClientMessage::AcknowledgeStop { .. }
         | ClientMessage::PublishLiveActivity { .. }

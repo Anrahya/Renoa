@@ -39,6 +39,10 @@ pub struct TaskSummary {
     pub task_id: TaskId,
     pub target: TargetRef,
     pub status: TaskStatus,
+    /// The task's last committed sequence, as `attached` reports it; `None`
+    /// for an empty task. A woken app attaches only where this passed its
+    /// cursor.
+    pub through_sequence: Option<u64>,
 }
 
 /// What a task is doing, from its latest command. See `task_status`.
@@ -145,6 +149,17 @@ pub(crate) enum SurfaceOperation {
         path: String,
         body: Option<String>,
     },
+    Push(PushOperation),
+}
+
+/// A device's push-token registration: device state, not a task operation.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PushOperation {
+    Set {
+        provider: String,
+        token: crate::PushToken,
+    },
+    Clear,
 }
 
 /// The methods of an owner's Host control call. The relay forwards no other.

@@ -1,7 +1,7 @@
 use renoa_control::{
     ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, HostMethod,
-    JSON_WS_VERSION, NodeId, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventId,
-    TaskEventKind, TaskId, TaskStatus, TaskSummary,
+    JSON_WS_VERSION, NodeId, PushToken, ServerMessage, StopOutcome, TargetSummary, TaskEvent,
+    TaskEventId, TaskEventKind, TaskId, TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
     AgentMessageKind, AgentOrigin, CommandEnvelope, CommandId, CommandInput, LiveActivity,
@@ -12,8 +12,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v14_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 14);
+fn json_websocket_v15_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 15);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -26,7 +26,7 @@ fn json_websocket_v14_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 14,
+            "version": 15,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -93,7 +93,7 @@ fn json_websocket_v14_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v14_text_input_carries_context_and_a_guest_author_only_when_present() {
+fn json_websocket_v15_text_input_carries_context_and_a_guest_author_only_when_present() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let submit = ClientMessage::Submit {
@@ -194,7 +194,7 @@ fn json_websocket_v14_text_input_carries_context_and_a_guest_author_only_when_pr
 }
 
 #[test]
-fn json_websocket_v14_encodes_task_discovery() {
+fn json_websocket_v15_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -216,6 +216,7 @@ fn json_websocket_v14_encodes_task_discovery() {
             task_id,
             target: TargetRef::new("workspace:renoa"),
             status: TaskStatus::Working,
+            through_sequence: Some(18),
         }],
     };
     let response_json = json!({
@@ -224,7 +225,8 @@ fn json_websocket_v14_encodes_task_discovery() {
         "tasks": [{
             "taskId": "00000000-0000-0000-0000-000000000001",
             "target": "workspace:renoa",
-            "status": "working"
+            "status": "working",
+            "throughSequence": 18
         }]
     });
     assert_eq!(
@@ -241,7 +243,7 @@ fn json_websocket_v14_encodes_task_discovery() {
 /// directions, so a client written from the document sends and reads these
 /// bytes.
 #[test]
-fn json_websocket_v14_encodes_the_device_key_handshake_and_device_administration() {
+fn json_websocket_v15_encodes_the_device_key_handshake_and_device_administration() {
     let device_id = DeviceId::from_uuid(Uuid::from_u128(0x40));
     let nonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let client_frames = [
@@ -333,7 +335,7 @@ fn json_websocket_v14_encodes_the_device_key_handshake_and_device_administration
 }
 
 #[test]
-fn json_websocket_v14_encodes_target_discovery_and_task_opening() {
+fn json_websocket_v15_encodes_target_discovery_and_task_opening() {
     let node_id = NodeId::from_uuid(Uuid::from_u128(3));
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let cases = [
@@ -405,7 +407,7 @@ fn json_websocket_v14_encodes_target_discovery_and_task_opening() {
 }
 
 #[test]
-fn json_websocket_v14_encodes_harness_neutral_execution_events() {
+fn json_websocket_v15_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {
@@ -524,7 +526,7 @@ fn execute_delivery_contains_only_continuity_data() {
 }
 
 #[test]
-fn json_websocket_v14_attach_says_whether_it_wants_live_activity() {
+fn json_websocket_v15_attach_says_whether_it_wants_live_activity() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let attach = ClientMessage::Attach {
         request_id: 3,
@@ -555,12 +557,12 @@ fn json_websocket_v14_attach_says_whether_it_wants_live_activity() {
             "after_sequence": null
         }))
         .is_err(),
-        "a version 13 attach without `live` is not a version 14 attach"
+        "an attach without `live`, as version 13 sent it, is refused"
     );
 }
 
 #[test]
-fn json_websocket_v14_encodes_stopping_a_command() {
+fn json_websocket_v15_encodes_stopping_a_command() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let ids = json!({
@@ -617,7 +619,7 @@ fn json_websocket_v14_encodes_stopping_a_command() {
 }
 
 #[test]
-fn json_websocket_v14_encodes_live_activity() {
+fn json_websocket_v15_encodes_live_activity() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let published = ClientMessage::PublishLiveActivity {
@@ -666,7 +668,7 @@ fn json_websocket_v14_encodes_live_activity() {
 }
 
 #[test]
-fn json_websocket_v14_encodes_host_control_calls() {
+fn json_websocket_v15_encodes_host_control_calls() {
     let call_id = Uuid::from_u128(9);
     let call = ServerMessage::HostCall {
         call_id,
@@ -735,7 +737,7 @@ fn json_websocket_v14_encodes_host_control_calls() {
 }
 
 #[test]
-fn json_websocket_v14_encodes_an_agent_message_and_its_origin() {
+fn json_websocket_v15_encodes_an_agent_message_and_its_origin() {
     let message = ClientMessage::SendAgentMessage {
         request_id: 21,
         from_command: CommandId::from_uuid(Uuid::from_u128(2)),
@@ -793,4 +795,55 @@ fn json_websocket_v14_encodes_an_agent_message_and_its_origin() {
             }
         })
     );
+}
+
+/// The push-token frames exactly as `docs/rcp-json-ws-v0.md` shows them.
+#[test]
+fn json_websocket_v15_encodes_push_token_registration() {
+    let set = ClientMessage::SetPushToken {
+        request_id: 50,
+        provider: "fcm".to_owned(),
+        token: PushToken::new("fcm-registration-token"),
+    };
+    let set_json = json!({
+        "type": "set_push_token",
+        "request_id": 50,
+        "provider": "fcm",
+        "token": "fcm-registration-token"
+    });
+    assert_eq!(serde_json::to_value(&set).expect("serialize set"), set_json);
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(set_json).expect("deserialize set"),
+        set
+    );
+    assert!(
+        !format!("{set:?}").contains("fcm-registration-token"),
+        "a push token is redacted from Debug"
+    );
+    let clear = ClientMessage::ClearPushToken { request_id: 51 };
+    let clear_json = json!({ "type": "clear_push_token", "request_id": 51 });
+    assert_eq!(
+        serde_json::to_value(&clear).expect("serialize clear"),
+        clear_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(clear_json).expect("deserialize clear"),
+        clear
+    );
+    for (message, expected) in [
+        (
+            ServerMessage::PushTokenSet { request_id: 50 },
+            json!({ "type": "push_token_set", "request_id": 50 }),
+        ),
+        (
+            ServerMessage::PushTokenCleared { request_id: 51 },
+            json!({ "type": "push_token_cleared", "request_id": 51 }),
+        ),
+    ] {
+        assert_eq!(serde_json::to_value(&message).expect("serialize"), expected);
+        assert_eq!(
+            serde_json::from_value::<ServerMessage>(expected).expect("deserialize"),
+            message
+        );
+    }
 }

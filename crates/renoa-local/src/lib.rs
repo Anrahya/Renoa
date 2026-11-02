@@ -9,7 +9,6 @@ mod bash;
 mod capabilities;
 mod code_mode;
 mod compact_invocation;
-mod credential_file;
 mod deadline;
 mod documents;
 mod file_lock;
@@ -56,7 +55,6 @@ pub use agent_model::AgentModelSelection;
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use code_mode::validate_code_mode_worker;
 pub use compact_invocation::{CompactInvocation, compact_invocation};
-pub use credential_file::credential_file_is_private;
 pub use documents::UserProfile;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{

@@ -80,9 +80,7 @@ impl ControlStore {
                 .optional()
                 .map_err(sqlite_error)?
                 .ok_or_else(|| task_not_found(task_id))?;
-            let next_sequence = u64::try_from(next_sequence)
-                .map_err(|_| ControlError::store("negative task sequence"))?;
-            let through_sequence = next_sequence.checked_sub(1);
+            let through_sequence = through_sequence(next_sequence)?;
             if let Some(cursor) = after_sequence
                 && through_sequence.is_none_or(|through| cursor > through)
             {
@@ -129,6 +127,15 @@ impl ControlStore {
         })
         .await
     }
+}
+
+/// The last committed sequence of a task whose next sequence is
+/// `next_sequence`, or `None` for an empty task. `attached` and `task_list`
+/// both report this value.
+pub(crate) fn through_sequence(next_sequence: i64) -> Result<Option<u64>, ControlError> {
+    let next_sequence =
+        u64::try_from(next_sequence).map_err(|_| ControlError::store("negative task sequence"))?;
+    Ok(next_sequence.checked_sub(1))
 }
 
 fn admit_execution_event_batch(
@@ -423,21 +430,28 @@ fn load_source_event(
     .transpose()
 }
 
+/// Appends one record to its task's journal. Every journalled record passes
+/// here, so a record that wakes the owner marks the wake in the same
+/// transaction (`push_wake`).
 pub(crate) fn append_event(
     transaction: &Transaction<'_>,
     task_id: TaskId,
     source_id: &str,
     kind: &TaskEventKind,
 ) -> Result<TaskEvent, ControlError> {
-    let sequence = transaction
+    let (sequence, principal_id) = transaction
         .query_row(
-            "SELECT next_sequence FROM tasks WHERE task_id = ?1",
+            "SELECT next_sequence, principal_id FROM tasks WHERE task_id = ?1",
             [task_id.to_string()],
-            |row| row.get::<_, i64>(0),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )
         .map_err(sqlite_error)?;
     let sequence =
         u64::try_from(sequence).map_err(|_| ControlError::store("negative task sequence"))?;
+    if crate::push_wake::wake_reason(kind).is_some() {
+        let principal_id = PrincipalId::from_uuid(principal_id.parse().map_err(id_error)?);
+        crate::push_wake::record(transaction, principal_id)?;
+    }
     let event = TaskEvent {
         event_id: TaskEventId::new(),
         task_id,

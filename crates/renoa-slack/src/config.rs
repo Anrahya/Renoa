@@ -158,7 +158,7 @@ pub(crate) fn read_token(path: &Path, prefix: &str) -> Result<String, SlackError
         ));
     }
     let credentials_directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
-    if !renoa_local::credential_file_is_private(path, &metadata, credentials_directory.as_deref()) {
+    if !renoa_home::credential_file_is_private(path, &metadata, credentials_directory.as_deref()) {
         return Err(SlackError::Invalid(
             "token files must be private (chmod 600) or supplied by the service credential directory".to_owned(),
         ));

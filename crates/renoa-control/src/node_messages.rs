@@ -222,6 +222,24 @@ async fn publish_execution_events(
         None => None,
     };
     drop(lifecycle);
+    // Only execution records wake the owner, and this is where they commit.
+    // The marker was written by the append; this tells the dispatcher.
+    if let Some(reason) = admission
+        .events
+        .iter()
+        .find_map(|event| crate::push_wake::wake_reason(&event.kind))
+    {
+        control_log::event(
+            "info",
+            "push_wake_recorded",
+            &serde_json::json!({
+                "principal_id": task.principal_id,
+                "task_id": task_id,
+                "reason": reason,
+            }),
+        );
+        state.push_wakes.notify_one();
+    }
     for event in admission.events {
         publish_task_event(state, event).await;
     }

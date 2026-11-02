@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -44,8 +44,34 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     crate::browser_session_schema::initialize(connection)?;
     create_oauth_relay_schema(connection)?;
     create_credential_relay_schema(connection)?;
+    create_push_schema(connection)?;
     connection
-        .execute_batch("PRAGMA user_version = 13;")
+        .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
+        .map_err(sqlite_error)
+}
+
+/// Push wake-ups. A device holds at most one token and a token belongs to one
+/// device; `principal_id` is the device's principal, copied at registration.
+/// A principal holds at most one pending wake, whose `generation` grows with
+/// every record that wakes, so the dispatcher deletes only what it sent.
+fn create_push_schema(connection: &Connection) -> Result<(), ControlError> {
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS push_tokens (
+                device_id TEXT PRIMARY KEY REFERENCES devices(device_id),
+                principal_id TEXT NOT NULL,
+                provider TEXT NOT NULL CHECK (provider IN ('fcm')),
+                token TEXT NOT NULL UNIQUE CHECK (length(token) BETWEEN 1 AND 4096)
+            );
+
+            CREATE INDEX IF NOT EXISTS push_tokens_principal
+                ON push_tokens(principal_id);
+
+            CREATE TABLE IF NOT EXISTS push_wakes (
+                principal_id TEXT PRIMARY KEY,
+                generation INTEGER NOT NULL CHECK (generation >= 1)
+            );",
+        )
         .map_err(sqlite_error)
 }
 

@@ -26,7 +26,9 @@ signed-in apps with `ListDevices` and `RevokeDevice`, from a browser or a device
 that proved its key; devices are not tasks, and these operations grant no task
 authority. From a device that proved its key an owner may call their Host with
 `CallHost`, which the coordinator relays to the node that serves it; a Host
-call is not a task and enters no journal. An operator may also create a task directly. The node's owner can
+call is not a task and enters no journal. A device may register its push token
+with `SetPushToken` and remove it with `ClearPushToken`; registration is
+device state, not a task operation, and grants no task authority. An operator may also create a task directly. The node's owner can
 open a task remotely with `OpenTask`, but only against a target its online node
 currently advertises, and delete one of its tasks with `DeleteTask`.
 
@@ -34,8 +36,9 @@ After authentication, the session identity fixes the peer's role:
 
 - a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`,
   `StopCommand`, and `DeleteTask`; a surface connected by a browser ticket or a
-  proven device key may also `ListDevices` and `RevokeDevice`, and one connected
-  by a proven device key may `CallHost`;
+  proven device key may also `ListDevices` and `RevokeDevice`, one connected
+  by a proven device key may `CallHost`, and one connected by any device
+  credential may `SetPushToken` and `ClearPushToken`;
 - a node may `AdvertiseTargets`, `ListTargets`, `SendAgentMessage`,
   `AcknowledgeExecution`, `PublishExecutionEvents`, `AcknowledgeStop`,
   `PublishLiveActivity`, `ServeHostControl`, and `CompleteHostCall`;
@@ -77,7 +80,10 @@ Each current summary contains only:
 
 - `task_id`: the durable identity needed by later operations;
 - `target`: the existing target reference used to distinguish tasks;
-- `status`: what the task is doing, derived from its latest command.
+- `status`: what the task is doing, derived from its latest command;
+- `through_sequence`: the task's last committed sequence, the value `Attach`
+  reports as its replay high-water mark, or none for an empty task. A surface
+  woken by a push attaches only to the tasks whose value passed its own cursor.
 
 The status is `working` while the latest command's execution has not
 terminated, `idle` once it completed or was cancelled, and `failed` once it
@@ -293,7 +299,8 @@ Inputs:
 
 - `device_id`: a signed-in app of the authenticated principal.
 
-In one transaction the coordinator marks the device revoked. Only then does it
+In one transaction the coordinator marks the device revoked and deletes its push
+token. Only then does it
 return `DeviceRevoked` and end the device's open connections; a later
 authentication of its credential fails. Revoking a device the principal already
 revoked returns `DeviceRevoked` again, so a retry converges. Another
@@ -318,6 +325,38 @@ answer. A browser ticket connection, a surface that authenticated with a bearer
 credential alone, and a principal that owns no node are refused with
 `InvalidRole`. When no node or two nodes serve the Host, or the node does not
 answer, the call returns `NodeOffline` and its outcome is unknown.
+
+### `SetPushToken`
+
+Inputs:
+
+- `provider`: the push service that issued the token; only `fcm` exists;
+- `token`: the token, opaque to RCP: 1 to 4,096 bytes of printable ASCII
+  without spaces.
+
+Only a connection authenticated with a device credential may register; a
+browser ticket connection is refused with `InvalidRole`, and a node with
+`InvalidRole` by its role. In one transaction the coordinator checks that the
+device is not revoked and stores the token for it, with the principal the
+device was enrolled for, replacing any token the device held. A token belongs
+to one device: one held by another device of the same principal moves to this
+one, and one held by another principal's device is a `Conflict` that leaves
+that registration intact. Only then does it return `PushTokenSet`. A malformed
+registration is `InvalidMessage`, and no error repeats the token.
+
+A wake is a hint outside the journal. When a record that the owner would be
+shown commits (an assistant message with text, or a failed execution), the same
+transaction marks a wake as owed to its principal; the coordinator later sends
+each of the principal's registered devices a message that carries no task,
+principal, agent or text, and the app reads what changed with `ListTasks` and
+`Attach`. Wakes coalesce, and a wake lost to the push service is not sent again:
+the journal stays the only record of what happened.
+
+### `ClearPushToken`
+
+`ClearPushToken` has no semantic input. The coordinator deletes the device's
+token, if it holds one, and returns `PushTokenCleared`. The same connections as
+for `SetPushToken` may clear.
 
 ## Executor delivery and node operations
 
@@ -535,7 +574,9 @@ task sequence. A timestamp never determines order.
 | `ExecutionEventsAccepted` | New task records and the node's accepted source cursor |
 | `TaskDeleted` | Removal of the task and everything the coordinator held for it |
 | `DeviceList` | No mutation; the returned devices were selected by authenticated principal |
-| `DeviceRevoked` | The device's revocation |
+| `DeviceRevoked` | The device's revocation and the deletion of its push token |
+| `PushTokenSet` | The device's token, and its removal from another device of the principal that held it |
+| `PushTokenCleared` | Removal of the device's token |
 
 None of these outcomes means that an external side effect happened exactly
 once.
@@ -573,6 +614,8 @@ correlation value is a binding concern.
 | `DeleteTask` | task ID | Returns `TaskDeleted` whether or not the task still exists |
 | `ListDevices` | No durable identity; request correlation is transport-local | Returns the current signed-in apps |
 | `RevokeDevice` | device ID | Returns `DeviceRevoked` whether or not this call revoked it |
+| `SetPushToken` | device plus token | Returns `PushTokenSet` without another row |
+| `ClearPushToken` | device | Returns `PushTokenCleared` whether or not a token was held |
 | `CallHost` | The Host operation's own `operation_id`, for a change | The Host answers a repeated change from its receipt; the coordinator never retries |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |

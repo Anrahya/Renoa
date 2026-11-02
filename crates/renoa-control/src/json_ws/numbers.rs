@@ -30,6 +30,8 @@ impl ClientMessage {
             | Self::StopCommand { request_id, .. }
             | Self::DeleteTask { request_id, .. }
             | Self::CallHost { request_id, .. }
+            | Self::SetPushToken { request_id, .. }
+            | Self::ClearPushToken { request_id }
             | Self::SendAgentMessage { request_id, .. } => interoperable(*request_id),
             Self::Attach {
                 request_id,
@@ -56,14 +58,21 @@ impl ServerMessage {
             | Self::Execute { .. }
             | Self::Stop { .. }
             | Self::HostCall { .. } => true,
-            Self::TaskList { request_id, .. }
-            | Self::TargetList { request_id, .. }
+            Self::TaskList { request_id, tasks } => {
+                interoperable(*request_id)
+                    && tasks
+                        .iter()
+                        .all(|task| task.through_sequence.is_none_or(interoperable))
+            }
+            Self::TargetList { request_id, .. }
             | Self::DeviceRevoked { request_id, .. }
             | Self::TaskOpened { request_id, .. }
             | Self::CommandAccepted { request_id, .. }
             | Self::StopAccepted { request_id, .. }
             | Self::TaskDeleted { request_id, .. }
-            | Self::HostAnswer { request_id, .. } => interoperable(*request_id),
+            | Self::HostAnswer { request_id, .. }
+            | Self::PushTokenSet { request_id }
+            | Self::PushTokenCleared { request_id } => interoperable(*request_id),
             Self::DeviceList {
                 request_id,
                 devices,

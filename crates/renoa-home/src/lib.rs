@@ -1,5 +1,9 @@
 //! One installation root owns Host data, credentials, plugins, and runtime files.
 
+mod credential_file;
+
+pub use credential_file::credential_file_is_private;
+
 use std::{
     env, fmt, fs, io,
     path::{Component, Path, PathBuf},

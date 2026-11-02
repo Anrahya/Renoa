@@ -342,7 +342,7 @@ async fn a_schema_12_database_upgrades_in_place_and_keeps_its_devices() {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     let device = upgraded
         .authenticate_device(credentials)
         .await
@@ -352,4 +352,41 @@ async fn a_schema_12_database_upgrades_in_place_and_keeps_its_devices() {
         .list_devices(owner, None)
         .await
         .expect("the new tables are usable");
+}
+
+/// The owner's revocation over RCP deletes the device's push token in the
+/// transaction that revokes it, as the operator's revocation does.
+#[tokio::test]
+async fn revoking_a_signed_in_app_deletes_its_push_token() {
+    let fixture = Fixture::new();
+    let owner = principal(1);
+    let device_id = fixture
+        .sign_in(owner, "android", &registration(1))
+        .expect("sign in")
+        .credentials
+        .device_id;
+    let tokens = || -> i64 {
+        open_connection(&fixture.store.path)
+            .expect("open control database")
+            .query_row("SELECT count(*) FROM push_tokens", [], |row| row.get(0))
+            .expect("count push tokens")
+    };
+    open_connection(&fixture.store.path)
+        .expect("open control database")
+        .execute(
+            "INSERT INTO push_tokens (device_id, principal_id, provider, token)
+             VALUES (?1, ?2, 'fcm', 'fcm-token')",
+            [device_id.to_string(), owner.to_string()],
+        )
+        .expect("register a token");
+    assert_eq!(tokens(), 1);
+
+    assert!(
+        fixture
+            .store
+            .revoke_owned_device(owner, device_id)
+            .await
+            .expect("revoke")
+    );
+    assert_eq!(tokens(), 0, "a revoked device keeps no push token");
 }

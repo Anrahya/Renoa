@@ -1,4 +1,4 @@
-export const RCP_VERSION = 14;
+export const RCP_VERSION = 15;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -14,6 +14,11 @@ export interface TaskSummary {
   readonly taskId: string;
   readonly target: string;
   readonly status: TaskStatus;
+  /**
+   * The task's last committed sequence, as `attached` reports it; `null` for
+   * an empty task. A surface attaches only where it passed its own cursor.
+   */
+  readonly throughSequence: number | null;
 }
 
 /**
@@ -337,6 +342,10 @@ function parseTask(value: unknown): TaskSummary {
     taskId: uuid(task.taskId, "taskId"),
     target: string(task.target, "target"),
     status: taskStatus(task.status),
+    throughSequence:
+      task.throughSequence === null
+        ? null
+        : safeUnsignedInteger(task.throughSequence, "throughSequence"),
   };
 }
 

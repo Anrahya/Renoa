@@ -1,6 +1,7 @@
 use std::{fs::Metadata, path::Path};
 
-/// Checks a regular credential file against the local Host's private-file rules.
+/// Checks a regular credential file against Renoa's private-file rules, which
+/// every Renoa process that reads a credential file shares.
 ///
 /// On Unix, accept owner-only files or a read-only `0440` credential directly
 /// inside the launcher's trusted credential directory (`0500` or `0550`) with
