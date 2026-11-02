@@ -878,7 +878,10 @@ plugin is on for it.
 later of the person's last message and the agent's last output; the person's
 characters since its last completed pass, counted once per command; where
 its range begins, a time and the notebook's length; and when to ask Mnem
-again. `host_memory_passes` keeps each pass: frozen with its message under a
+again. A conversation that already had turns when the pass began to follow
+it, such as one from before the upgrade, has its range begin at the person's
+first followed message, since the pass cannot tell which earlier text the
+agent already noted. `host_memory_passes` keeps each pass: frozen with its message under a
 derived command id before that command is admitted, and settled once as
 completed, cancelled or failed with the count of notes it wrote. A person's
 last pass and passes in `pass::day(now)` count completed passes only, in any
@@ -895,19 +898,27 @@ asked again until new activity; one a turn held, or one the person
 cancelled, is asked again a quiet spell later; and a conversation still due
 after the run is cleared and logged, so the timer never comes back at once.
 
-A pass claims its conversation (`agent_session::claim`): it never opens one
-a surface of the same Host process holds, so it never runs while a turn there
-does, and Mnem decides again under the claim. Only the node admits a
+A pass claims its conversation (`agent_session::claim`) for its review, and
+a surface claims it for each turn, compaction or configuration change, not
+for as long as it keeps the session open: the Host process keeps one open
+instance per session, which every opener shares, so a surface that caches a
+session, as Telegram, Slack and ACP do, leaves its conversation passable
+between turns. A pass never starts while a surface's operation holds the
+claim, and Mnem decides again under the claim. Only the node admits a
 person's message, so only conversations it serves get a pass; a session
 another process holds fails to open, and that conversation waits for new
 activity. The pass is a receipted prompt in the conversation's own
 session, with the turn's system prompt and tool list byte for byte, so the
 cached prefix holds; its armed list is the agent's enabled automations and
-its ended list the automations whose latest run finished in the pass day.
-During the pass the Host refuses every tool call but `memory_note`,
-`memory_recall`, `agent_documents` for `USER.md`, and `automation_manage`
-`list` or `get`, directly or through `tool_execute`; each refusal says what
-to do instead. The pass's text is discarded: the loop marks a receipted
+its ended list the automations whose latest run finished in the pass day,
+the one the nightly sweep ends included; a deletion removes an automation's
+runs and name, so a deleted one is not listed. During the pass the Host
+refuses every tool call but `memory_note`, `memory_recall`, `agent_documents`
+for `USER.md`, and `automation_manage` `list` or `get`; all but `memory_note`
+also run through `tool_execute`. `memory_note` runs only when called
+directly: Code Mode reaches plugins only through `tool_execute` and keeps no
+plugin result's details, so a note written there would be missing from the
+receipt. Each refusal says what to do instead. The pass's text is discarded: the loop marks a receipted
 prompt's operation, and every later request shows its exchange as one user
 message, its receipt, which the Host renders from the notes the exchange
 wrote: `memory pass: noted #41, #42`, `memory pass: nothing new`, or `memory
@@ -917,17 +928,26 @@ a surface replays leaves the exchange out.
 
 The person's message cancels a pass: their surface's claim cancels the
 pass's command, which aborts an in-flight model call, and waits for the pass
-to settle before it opens the conversation; the pass's outcome is recorded
-before its claim is released, unless its command could not run or the record
-failed, and then the pass is closed before the person's message. Notes the pass wrote stay, and a cancelled pass does not
-count. A pass a stopped process left is closed, never resumed: before the
+to settle, at most 20 seconds; past that the message is refused with nothing
+run, to be sent again. The pass's outcome is recorded before its claim is
+released, unless its command could not run or the record failed, and then
+the pass is closed before the person's message. Inspecting a conversation's
+history and deleting it claim it the same way, so a pass reviewing it is
+cancelled and waited for first; a deletion removes what the pass kept of the
+conversation in the catalog transaction that deletes its session, so a
+refused deletion removes neither. A draining node, as a deploy
+stops it, stops the Host's memory runs: the running pass is cancelled and
+settles before the node stops, no pass and no further nightly job starts,
+and the run is left unrecorded for the next node to resume. Notes the pass wrote stay, and
+a cancelled pass does not count. A pass a stopped process left is closed, never resumed: before the
 person's next message, or by the next timer or nightly run, its command is
 driven with its cancellation requested, so a model call is not made again and
 a `memory_note` whose call had begun is not run twice; it counts only if its
 command had completed. Closing drives the command with the runtime it was
-admitted with, so a pass a release upgrade interrupted cannot close under a
-changed runtime, and the kernel then refuses the conversation's next
-message, as for any operation left unfinished across an upgrade. A
+admitted with, so a pass a crash left cannot close under a changed runtime,
+and the kernel then refuses the conversation's next message, as for any
+operation left unfinished across an upgrade; the deploy refuses to switch
+while one is. A
 conversation whose pass cannot close or open is logged
 (`memory_pass_unclosed`, `memory_pass_unopened`) and the run goes on to the
 next. A completed pass ends its range; a cancelled or failed

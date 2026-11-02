@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use super::{
     Kind, event,
-    settle::Settled,
-    store::{Conversation, Outcome},
+    settle::{Outcome, Settled},
+    store::Conversation,
 };
 
 /// What a run's passes did, by outcome, never by what they noted.

@@ -23,8 +23,8 @@ use super::{
     Kind, catalog_call, event, input,
     report::{Tally, trace_decision, trouble},
     schedule::{self, decide, ending_day, follow, zone_and_time},
-    settle::{Ran, Settled, close_stale},
-    store::{self, Conversation, Outcome},
+    settle::{Outcome, Ran, Settled, close_stale},
+    store::{self, Conversation},
 };
 use crate::{
     AutomationRun, LocalHost, LocalHostError, RunStatus, plugins::PluginError,
@@ -278,7 +278,12 @@ impl<'a> Review<'a> {
                 }
                 Visit::Busy => {
                     self.tally.busy += 1;
-                    self.trace(&conversation, decision, Some("a turn holds it"));
+                    let reason = if self.host.memory_runs_stopped() {
+                        "the Host is stopping"
+                    } else {
+                        "a turn holds it"
+                    };
+                    self.trace(&conversation, decision, Some(reason));
                     // The turn's end asks again; this covers one that ended
                     // before the claim was tried.
                     self.later()
@@ -397,7 +402,8 @@ impl<'a> Review<'a> {
         let data_directory = at.data_directory.clone();
         let frozen = catalog_call(self.database(), move |db| {
             let (zone, now) = zone_and_time(db, now_ms)?;
-            let prompt = input::message(db, &data_directory, agent, &conversation, &zone, now)?;
+            let prompt =
+                input::message(db, &data_directory, agent, &conversation, &zone, (day, now))?;
             let command = store::freeze(
                 db,
                 run,
@@ -437,7 +443,11 @@ impl<'a> Review<'a> {
             }
         };
         if settled.outcome == Outcome::Cancelled {
-            ran.cancelled("the person came back");
+            ran.cancelled(if self.host.memory_runs_stopped() {
+                "the Host is stopping"
+            } else {
+                "the person came back"
+            });
         }
         drop(session);
         Ok(Visit::Settled(settled))

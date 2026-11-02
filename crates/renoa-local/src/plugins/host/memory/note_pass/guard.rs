@@ -1,7 +1,8 @@
 //! The tools a note pass may call. The pass offers every tool a normal turn
 //! offers, under the same definitions, so the prompt prefix stays cached; the
-//! Host refuses every call but the four the pass needs, and each refusal says
-//! what to do instead.
+//! Host refuses every call but the four the pass needs, and `memory_note`
+//! called through the plugin executor rather than directly; each refusal
+//! says what to do instead.
 
 use std::sync::Arc;
 
@@ -78,6 +79,12 @@ fn refusal(name: &str, arguments: &Value) -> Option<String> {
             let empty = Value::Null;
             let inner_arguments = arguments.get("arguments").unwrap_or(&empty);
             match inner {
+                // Code Mode reaches plugins only through the executor, and its
+                // result keeps no plugin result's details, so a note written
+                // there would be missing from the pass's receipt.
+                Some(NOTE) => Some(format!(
+                    "{ONLY} Call memory_note directly, not through code_mode or tool_execute, so the note is in the pass's receipt."
+                )),
                 Some(inner) if reference.is_some_and(|reference| reference.starts_with("host:")) => {
                     refusal(inner, inner_arguments)
                 }
@@ -136,6 +143,11 @@ mod tests {
                 "tool_execute",
                 json!({"reference": "mcp:github:create_issue", "arguments": {}}),
                 "do not run during the pass",
+            ),
+            (
+                "tool_execute",
+                json!({"reference": "host:renoa.memory:v3:memory_note", "arguments": {"text": "Likes tea"}}),
+                "Call memory_note directly",
             ),
         ] {
             let refused = refusal(name, &arguments).unwrap_or_else(|| panic!("{name} runs"));

@@ -8,12 +8,30 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::{
-    Kind, SessionRef, catalog_call, event, input, now_ms, receipt,
-    store::{self, Outcome},
-    unavailable,
-};
+use super::{Kind, SessionRef, catalog_call, event, input, now_ms, receipt, store, unavailable};
 use crate::{AgentSession, LocalTurnOutcome, plugins::PluginError};
+
+/// How a pass ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    /// The model finished the pass; it counts.
+    Completed,
+    /// The person came back, the Host stopped, or a restart found it
+    /// unsettled; notes stay.
+    Cancelled,
+    /// The model call or the turn failed; notes stay.
+    Failed,
+}
+
+impl Outcome {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+}
 
 /// Closes the pass a stopped process left in `session`, if any, without
 /// resuming it: its command is cancelled, so a model call is not made again

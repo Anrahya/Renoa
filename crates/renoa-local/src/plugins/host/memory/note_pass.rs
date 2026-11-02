@@ -78,10 +78,22 @@ pub(crate) struct SessionRef {
     pub(crate) workspace: PathBuf,
 }
 
+/// Whether a message in `at` would be the first of the conversation the pass
+/// follows: it is the main agent's, and the pass does not follow it yet.
+///
+/// # Errors
+///
+/// As [`message`].
+pub(crate) fn first_followed(at: &SessionRef) -> Result<bool, PluginError> {
+    let db = catalog::open_verified(&at.database)?;
+    Ok(driver(&db)? == Some(at.agent) && !store::follows(&db, at.session)?)
+}
+
 /// The person's message `command`, with `content`, admitted at `at_ms` in the
 /// main agent's conversation `at`: counts its characters toward the
 /// conversation's unreviewed text, once per command, and asks again when a
-/// pass is due. Nothing for any other agent.
+/// pass is due. A conversation the pass begins to follow with turns
+/// `earlier` is reviewed from this message on. Nothing for any other agent.
 ///
 /// # Errors
 ///
@@ -93,6 +105,7 @@ pub(crate) fn message(
     command: Uuid,
     content: &[ContentBlock],
     at_ms: i64,
+    earlier: bool,
 ) -> Result<(), PluginError> {
     let db = catalog::open_verified(&at.database)?;
     if driver(&db)? != Some(at.agent) {
@@ -116,6 +129,7 @@ pub(crate) fn message(
             chars,
             at_ms,
             notes: input::notes(&at.data_directory, principal)?,
+            earlier,
         },
     )?;
     schedule::reschedule(&db, at.session, at_ms)?;

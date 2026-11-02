@@ -13,8 +13,12 @@
 //!
 //! The Host decides whether a due occurrence is too late to run; a skipped
 //! one is only reported here. A run of a compiled plugin's trigger is not a
-//! message to the agent: the Host runs it in this process, and this loop only
-//! waits for it and records how it ended. While it owns the schedule, the scheduler
+//! message to the agent: the Host runs it in this process, beside this loop,
+//! which goes on submitting agents' due runs meanwhile and runs one plugin
+//! run at a time. A draining node stops admitting runs, stops the Host's note
+//! passes, and waits for the plugin run in flight, so it is not left
+//! unfinished under the runtime a deploy replaces; shutdown drops it, and the
+//! next scheduler resumes it. While it owns the schedule, the scheduler
 //! writes a heartbeat so Host observation can tell it is alive.
 
 use std::{
@@ -28,6 +32,9 @@ use renoa_protocol::{CommandId, CommandInput, ExecutionTerminal};
 use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
 
+mod plugin_run;
+
+use self::plugin_run::PluginTask;
 use crate::{
     agent_targets, automation_cleanup,
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
@@ -48,20 +55,33 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 pub(crate) struct AutomationLink {
     pub(crate) endpoint: String,
     pub(crate) credentials: DeviceCredentials,
-    pub(crate) scheduler: AutomationScheduler,
+    pub(crate) scheduler: Arc<AutomationScheduler>,
 }
 
-/// Runs the schedule until shutdown, reconnecting the surface link with
-/// bounded backoff, and writes the heartbeat throughout, since a lost
+/// Runs the schedule until shutdown or `drain`, reconnecting the surface link
+/// with bounded backoff, and writes the heartbeat throughout, since a lost
 /// coordinator link does not stop the scheduler. Only socket loss is retried.
+/// At `drain` it stops the Host's note passes and returns once the plugin run
+/// in flight ended, or at shutdown, which drops it.
 pub(crate) async fn run(
     runtime: Arc<NodeRuntime>,
     link: AutomationLink,
     shutdown: CancellationToken,
+    drain: CancellationToken,
 ) -> Result<(), NodeError> {
-    tokio::select! {
-        result = schedule(&runtime, &link, &shutdown) => result,
+    let mut plugin = None;
+    let scheduled = tokio::select! {
+        result = schedule(&runtime, &link, &shutdown, &mut plugin) => result,
         result = heartbeat(&link.scheduler, &shutdown) => result,
+        () = drain.cancelled() => Ok(()),
+    };
+    scheduled?;
+    match plugin {
+        Some(task) if drain.is_cancelled() => tokio::select! {
+            result = plugin_run::drain(&runtime, task, &shutdown) => result,
+            result = heartbeat(&link.scheduler, &shutdown) => result,
+        },
+        _ => Ok(()),
     }
 }
 
@@ -86,9 +106,10 @@ async fn heartbeat(
 }
 
 async fn schedule(
-    runtime: &NodeRuntime,
+    runtime: &Arc<NodeRuntime>,
     link: &AutomationLink,
     shutdown: &CancellationToken,
+    plugin: &mut Option<PluginTask>,
 ) -> Result<(), NodeError> {
     let mut backoff = ReconnectBackoff::new();
     loop {
@@ -101,7 +122,7 @@ async fn schedule(
             // No task is attached, so the event stream carries nothing.
             Ok((connection, _events)) => {
                 connected_at = Some(Instant::now());
-                serve(runtime, &link.scheduler, &connection, shutdown).await
+                serve(runtime, &link.scheduler, &connection, shutdown, plugin).await
             }
             Err(error) => Err(error.into()),
         };
@@ -128,15 +149,17 @@ async fn schedule(
 }
 
 async fn serve(
-    runtime: &NodeRuntime,
-    scheduler: &AutomationScheduler,
+    runtime: &Arc<NodeRuntime>,
+    scheduler: &Arc<AutomationScheduler>,
     connection: &Connection,
     shutdown: &CancellationToken,
+    plugin: &mut Option<PluginTask>,
 ) -> Result<(), NodeError> {
     let mut next_cleanup = Instant::now();
     loop {
+        plugin_run::reap(plugin).await?;
         let Some(due) = scheduler
-            .next_run(now_ms()?)
+            .next_run(now_ms()?, plugin.is_some())
             .await
             .map_err(|error| host_error(&error))?
         else {
@@ -175,30 +198,8 @@ async fn serve(
             );
             continue;
         }
-        if let Some(plugin) = due.plugin {
-            // A plugin's run stays admitted when shutdown drops it, and the
-            // next scheduler resumes it.
-            let finished = tokio::select! {
-                () = shutdown.cancelled() => return Ok(()),
-                finished = scheduler.run_for_plugin(&runtime.host, &due, now_ms()?) => {
-                    finished.map_err(|error| host_error(&error))?
-                }
-            };
-            let status = finished.status();
-            scheduler
-                .finish_plugin_run(finished, now_ms()?)
-                .await
-                .map_err(|error| host_error(&error))?;
-            node_log::event(
-                "info",
-                "automation_finished",
-                &serde_json::json!({
-                    "automation_id": due.run.automation_id,
-                    "run_id": due.run.id,
-                    "plugin": plugin,
-                    "status": status,
-                }),
-            );
+        if let Some(owner) = due.plugin {
+            *plugin = Some(plugin_run::start(runtime, scheduler, due, owner)?);
             continue;
         }
         let Some(outcome) = deliver(runtime, connection, &due, shutdown).await? else {

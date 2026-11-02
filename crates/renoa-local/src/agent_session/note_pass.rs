@@ -94,9 +94,20 @@ impl AgentSession {
         principal: Uuid,
     ) {
         let at = self.pass_ref();
+        let first = tokio::task::spawn_blocking(move || note_pass::first_followed(&at)).await;
+        // Read only for the first message the pass follows; one that cannot be
+        // read counts as earlier turns, so nothing is noted twice.
+        let earlier = match first {
+            Ok(Ok(first)) => first && !self.kernel.history().is_ok_and(|turns| turns.is_empty()),
+            unread => {
+                self.log_unrecorded(unread.map(|first| first.map(drop)));
+                return;
+            }
+        };
+        let at = self.pass_ref();
         let content = content.to_vec();
         let recorded = tokio::task::spawn_blocking(move || {
-            note_pass::message(&at, principal, request_id, &content, at_ms)
+            note_pass::message(&at, principal, request_id, &content, at_ms, earlier)
         })
         .await;
         self.log_unrecorded(recorded);

@@ -381,9 +381,11 @@ plus the nightly sweep, which runs before compaction. Its timer shows in
 inventory as `renoa.memory note pass`, each pass logs a `memory_pass` line
 (`memory_pass_decision` and `memory_pass_cancelled` too), and inspection's
 `memory_passes` shows each person's passes today. A pass is an operation of
-the conversation it reviews, so drain it like a turn: stop the node while no
-`renoa.memory note pass` run is in flight, or that conversation refuses
-messages under the new runtime. `renoa.time`
+the conversation it reviews: a draining node cancels the running pass, which
+settles as not run with its notes kept, starts no other pass and no further
+nightly memory job, and waits for the run, which the next node resumes, so a
+deploy that drains within the stop timeout leaves no pass unfinished; one a crash left is an
+unfinished operation like a turn, and the deploy names its session. `renoa.time`
 shows the time in an agent's `timezone` setting, or else in the zone `TZ` sets
 for the service that runs the Host (`renoa-node.service` sets `Asia/Kolkata`).
 Drain active turns before the upgrade: the plugin API, the `agent_manage`

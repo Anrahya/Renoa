@@ -4,7 +4,11 @@
 
 use std::path::Path;
 
-use jiff::{Timestamp, civil::DateTime, tz::TimeZone};
+use jiff::{
+    Timestamp,
+    civil::{Date, DateTime},
+    tz::TimeZone,
+};
 use mnem::{
     memory::Memory,
     pass::{self, PassInput, PassTools, Scheduled},
@@ -18,17 +22,19 @@ use super::{
 };
 use crate::plugins::{PluginError, host::triggers::PLUGIN_OWNED};
 
-/// The pass message for `conversation` of `agent` at `now` in `zone`.
+/// The pass message for `conversation` of `agent` at `now` in `zone`, in
+/// the pass day `day`: the one ending at the nightly sweep, which runs in
+/// the next.
 pub(super) fn message(
     db: &Connection,
     data_directory: &Path,
     agent: AgentId,
     conversation: &Conversation,
     zone: &TimeZone,
-    now: DateTime,
+    (day, now): (Date, DateTime),
 ) -> Result<String, PluginError> {
     let armed = armed(db, agent, zone)?;
-    let ended = ended(db, agent, zone, now)?;
+    let ended = ended(db, agent, zone, day)?;
     let since = conversation
         .range_since_ms
         .map(|at| Ok::<_, PluginError>(local_time(zone, instant(at)?)))
@@ -102,16 +108,17 @@ fn armed(db: &Connection, agent: AgentId, zone: &TimeZone) -> Result<Vec<Schedul
         .collect()
 }
 
-/// The agent's own automations whose latest run finished in the pass day of
-/// `now`, with how it ended. A deleted automation's runs go with it once none
-/// is in flight (see `retention::purge_deleted`), so a deletion is not listed.
+/// The agent's own automations whose latest run finished since the pass day
+/// `day` began, with how it ended. A deleted automation's runs go with it
+/// once none is in flight (see `retention::purge_deleted`), so a deletion is
+/// not listed.
 fn ended(
     db: &Connection,
     agent: AgentId,
     zone: &TimeZone,
-    now: DateTime,
+    day: Date,
 ) -> Result<Vec<Scheduled>, PluginError> {
-    let start = pass::day(now)
+    let start = day
         .at(pass::DAY_START_HOUR, 0, 0, 0)
         .to_zoned(zone.clone())
         .map_err(|error| PluginError::Invalid(format!("the pass day's start: {error}")))?

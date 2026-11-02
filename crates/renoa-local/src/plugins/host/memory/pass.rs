@@ -117,6 +117,9 @@ impl<'a> Pass<'a> {
     /// Refuses to start a job once `renoa.memory` stopped running for this
     /// agent.
     pub(super) async fn gate(&self) -> Result<(), Halt> {
+        if self.host.memory_runs_stopped() {
+            return Err(Halt::Failed("the Host is stopping".to_owned()));
+        }
         let database = self.database.clone();
         let driver = tokio::task::spawn_blocking(move || {
             super::nightly::driver(&catalog::open_verified(&database)?)

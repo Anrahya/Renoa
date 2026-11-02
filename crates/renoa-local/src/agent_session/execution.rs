@@ -144,6 +144,7 @@ impl AgentSession {
         cancellation: CancellationToken,
         speaker: Speaker,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
+        let _claim = self.host.claims.surface(self.id).await?;
         self.close_stale_note_pass().await;
         let person = speaker.principal();
         if let Some(principal) = person {
@@ -201,6 +202,7 @@ impl AgentSession {
         events: Arc<dyn AgentEventSink>,
         cancellation: CancellationToken,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
+        let _claim = self.host.claims.surface(self.id).await?;
         self.close_stale_note_pass().await;
         self.execute(request_id, SessionCommand::Compact, events, cancellation)
             .await

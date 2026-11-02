@@ -566,7 +566,11 @@ with `AgentCreationOrigin::AgentTool`; owner management is `Principal` with
 `ensure_agent_session` binds an exact caller-supplied Session ID to an existing
 Agent. Several sessions may share that Agent while retaining independent
 workspaces, model selections, histories, and exclusive execution ownership.
-Deleting a session does not delete its Agent definition.
+Within one Host process every opener of a session shares its one open
+instance; each turn, compaction or configuration change claims the session for
+itself, so a `renoa.memory` note pass never starts during one, and a
+surface's claim cancels a running pass (see `agent_session::claim`). Deleting a session does not delete its
+Agent definition.
 
 A session manifest is `{version: 4, agent_id, session_id, workspace}`. Published
 manifests remain authoritative for their Agent, Session, and workspace binding;
@@ -703,7 +707,8 @@ library, MCP catalog, skill library, and credential resolution boundary.
 
 `LocalHost::inspect_session` opens existing durable history without provider
 catalog discovery, saved-model validation, or runtime construction. Its
-`AgentSessionHistory` handle retains exclusive kernel ownership and exposes a
+`AgentSessionHistory` handle retains exclusive kernel ownership, and the
+session's claim, cancelling a note pass reviewing it first, and exposes a
 separate diagnostic-store error without hiding intact history. Inspection checks
 the stored agent definition, exact session/Agent identity, canonical workspace binding,
 and authoritative data integrity. It cannot execute or recover a turn; callers
@@ -1646,7 +1651,12 @@ the node ledger holds the command's terminal event, the node records the result
 on the run: the final answer, or the failure or cancellation reason, with a
 status and the number of tool calls that returned an error. A completed
 execution succeeded even when some of its tool calls failed; the count shows
-them. A failed or cancelled execution failed. A run the coordinator refuses, for
+them. A failed or cancelled execution failed. A run of a compiled plugin's
+trigger runs on the node beside the schedule, one at a time, so an agent's run
+due meanwhile is submitted on time, and its result reaches surfaces while the
+plugin run is unfinished. A draining node stops the Host's memory runs and
+waits for the plugin run in flight, leaving one stopped part way unrecorded;
+shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its
 result. An execution that fails in a conversation's task appears in that
 conversation; a refused or skipped run, and any failure of an automation with a

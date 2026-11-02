@@ -8,7 +8,7 @@ use renoa_kernel::AgentId;
 use rusqlite::{Connection, OptionalExtension as _, params};
 use uuid::Uuid;
 
-use super::Kind;
+use super::{Kind, settle::Outcome};
 use crate::host::catalog::HostCatalogError;
 
 /// One row per conversation of the main agent with a person. `user_chars`
@@ -79,27 +79,6 @@ pub(super) struct Frozen {
     pub(super) prompt: String,
 }
 
-/// How a pass ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Outcome {
-    /// The model finished the pass; it counts.
-    Completed,
-    /// The person came back, or a restart found it unsettled; notes stay.
-    Cancelled,
-    /// The model call or the turn failed; notes stay.
-    Failed,
-}
-
-impl Outcome {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Completed => "completed",
-            Self::Cancelled => "cancelled",
-            Self::Failed => "failed",
-        }
-    }
-}
-
 /// A person's message in a main-agent conversation, as the pass counts it.
 pub(super) struct Said<'a> {
     pub(super) agent: AgentId,
@@ -111,6 +90,19 @@ pub(super) struct Said<'a> {
     pub(super) at_ms: i64,
     /// The notebook's length now, where a new conversation's range begins.
     pub(super) notes: u64,
+    /// Whether the conversation had turns before the pass followed it. Its
+    /// range then begins at this message, since the pass cannot tell what
+    /// of the earlier text the agent already noted.
+    pub(super) earlier: bool,
+}
+
+/// Whether the pass follows `session` already.
+pub(super) fn follows(db: &Connection, session: Uuid) -> Result<bool, HostCatalogError> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM host_memory_conversations WHERE session_id = ?1)",
+        [session.to_string()],
+        |row| row.get(0),
+    )?)
 }
 
 /// Records `said`: its characters, once per command, and activity at its
@@ -122,8 +114,8 @@ pub(super) fn message(db: &Connection, said: &Said<'_>) -> Result<(), HostCatalo
         .ok_or_else(|| HostCatalogError::Invalid("a workspace path is not UTF-8".to_owned()))?;
     db.execute(
         "INSERT INTO host_memory_conversations(session_id, agent_id, principal_id, workspace,
-            last_activity_ms, user_chars, counted_command, range_since_note)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            last_activity_ms, user_chars, counted_command, range_since_note, range_since_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(session_id) DO UPDATE SET
             agent_id = excluded.agent_id,
             principal_id = excluded.principal_id,
@@ -141,7 +133,26 @@ pub(super) fn message(db: &Connection, said: &Said<'_>) -> Result<(), HostCatalo
             count(said.chars)?,
             said.command.to_string(),
             count(said.notes)?,
+            said.earlier.then_some(said.at_ms),
         ],
+    )?;
+    Ok(())
+}
+
+/// Removes what the pass keeps of `session`, in the transaction that
+/// deletes it.
+pub(crate) fn forget(
+    transaction: &rusqlite::Transaction<'_>,
+    session: Uuid,
+) -> Result<(), HostCatalogError> {
+    let session = session.to_string();
+    transaction.execute(
+        "DELETE FROM host_memory_passes WHERE session_id = ?1",
+        [&session],
+    )?;
+    transaction.execute(
+        "DELETE FROM host_memory_conversations WHERE session_id = ?1",
+        [&session],
     )?;
     Ok(())
 }

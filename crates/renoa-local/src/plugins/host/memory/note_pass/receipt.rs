@@ -14,7 +14,8 @@ use super::super::tools::NOTE_DETAIL_KIND;
 pub(crate) const REVISION: &str = "renoa.memory.pass-receipt.v1";
 
 /// The ids of the notes `messages` wrote, in order: each `memory_note` result
-/// that succeeded, called directly or through the plugin executor.
+/// that succeeded. The pass runs `memory_note` only when called directly (see
+/// `guard`), so every note it wrote is here.
 pub(crate) fn noted(messages: &[Message]) -> Vec<u64> {
     messages
         .iter()

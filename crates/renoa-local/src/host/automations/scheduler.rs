@@ -79,13 +79,20 @@ impl AutomationScheduler {
     /// scheduler that restarts hands the same run on again instead of a new one.
     /// An occurrence too late for its schedule comes back already skipped:
     /// its status is set, it is not to be executed, and the next call moves on.
+    /// While `plugin_running`, the caller is running a plugin's run beside
+    /// the schedule, and only an agent's run comes back, so an agent's due
+    /// run fires on time during a long plugin run.
     ///
     /// # Errors
     /// Returns catalog and stored-data failures.
-    pub async fn next_run(&self, now_ms: i64) -> Result<Option<ScheduledRun>, LocalHostError> {
+    pub async fn next_run(
+        &self,
+        now_ms: i64,
+        plugin_running: bool,
+    ) -> Result<Option<ScheduledRun>, LocalHostError> {
         let database = self.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
-            let Some(run) = runs::next(&database, now_ms)? else {
+            let Some(run) = runs::next(&database, now_ms, plugin_running)? else {
                 return Ok(None);
             };
             let db = catalog::open_verified(&database)?;

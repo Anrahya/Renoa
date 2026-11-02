@@ -38,9 +38,6 @@ pub struct AgentSession {
     trace: TraceStore,
     state: Mutex<SessionState>,
     idle: tokio::sync::Notify,
-    /// Released after every field above, the kernel handle included, so the
-    /// next holder opens a closed session.
-    _claim: claim::Claim,
 }
 
 /// Durable resources belonging to one assembled Agent session.
@@ -51,8 +48,6 @@ pub(crate) struct AgentSessionStorage {
     /// Where the session context of its latest pinned command is kept.
     pub(crate) session_context_pin: PathBuf,
     pub(crate) trace: TraceStore,
-    /// The claim it was opened under; see [`claim`].
-    pub(crate) claim: claim::Claim,
 }
 
 struct SessionState {
@@ -108,7 +103,6 @@ impl AgentSession {
                 activity: Activity::Idle,
             }),
             idle: tokio::sync::Notify::new(),
-            _claim: storage.claim,
         }
     }
 
@@ -120,6 +114,17 @@ impl AgentSession {
     #[must_use]
     pub const fn agent_id(&self) -> AgentId {
         self.agent
+    }
+
+    /// The workspace this session is bound to.
+    pub(crate) fn workspace(&self) -> &std::path::Path {
+        &self.workspace
+    }
+
+    /// Whether it still takes work: not closed by
+    /// [`Self::close_and_wait_until_idle`].
+    pub(crate) fn accepts_work(&self) -> bool {
+        self.state().is_ok_and(|state| state.accepting_work)
     }
 
     /// Returns the kernel-backed transcript for a loading surface, a note
@@ -154,6 +159,7 @@ impl AgentSession {
     /// Rejects concurrent work and preserves the previous catalog if discovery or
     /// validation fails.
     pub async fn refresh_configuration(&self) -> Result<AgentSessionConfiguration, LocalHostError> {
+        let _claim = self.host.claims.surface(self.id).await?;
         let guard = self.begin_configuration()?;
         let (provider, model_id, reasoning) = {
             let state = self.state()?;
@@ -233,6 +239,7 @@ impl AgentSession {
     ///
     /// Rejects unsupported or concurrent changes and preserves the prior selection on failure.
     pub async fn set_reasoning(&self, reasoning: ReasoningLevel) -> Result<(), LocalHostError> {
+        let _claim = self.host.claims.surface(self.id).await?;
         let guard = self.begin_configuration()?;
         let (model, current) = {
             let state = self.state()?;
@@ -264,6 +271,7 @@ impl AgentSession {
     ///
     /// Rejects unknown or concurrent changes and preserves the prior selection on failure.
     pub async fn set_model(&self, model_id: &str) -> Result<(), LocalHostError> {
+        let _claim = self.host.claims.surface(self.id).await?;
         let guard = self.begin_configuration()?;
         let (current_selection, current_reasoning) = {
             let state = self.state()?;

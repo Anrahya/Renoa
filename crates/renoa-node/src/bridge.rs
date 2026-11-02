@@ -127,16 +127,17 @@ impl RenoaNode {
         self.automations = Some(AutomationLink {
             endpoint: self.endpoint.clone(),
             credentials,
-            scheduler,
+            scheduler: Arc::new(scheduler),
         });
         Ok(self)
     }
 
     /// Drains the node once `drain` is cancelled: it takes no new command, so
     /// the coordinator keeps each one queued for the next node that connects,
-    /// finishes every command it already took, and then [`Self::run`] returns.
-    /// A deploy stops the node this way, so no turn is left unfinished under
-    /// the runtime it replaces.
+    /// finishes every command it already took and the Host plugin's run in
+    /// flight, its note passes cancelled, and then [`Self::run`] returns.
+    /// A deploy stops the node this way, so no turn or note pass is left
+    /// unfinished under the runtime it replaces.
     #[must_use]
     pub fn with_drain(mut self, drain: CancellationToken) -> Self {
         self.drain = drain;
@@ -161,16 +162,16 @@ impl RenoaNode {
                 Arc::clone(&self.runtime),
                 link,
                 shutdown.clone(),
+                self.drain.clone(),
             ))
         });
         let connections =
             self.run_connections(&shutdown, &mut commits, &mut tasks, &mut running_tasks);
+        // Each ends at shutdown; a draining node waits for both, its taken
+        // turns and its plugin run in flight, and the first error stops both.
         let result = match schedule {
             None => connections.await,
-            Some(schedule) => tokio::select! {
-                result = connections => result,
-                result = schedule => result,
-            },
+            Some(schedule) => tokio::try_join!(connections, schedule).map(drop),
         };
 
         tasks.abort_all();

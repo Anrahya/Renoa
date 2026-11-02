@@ -115,22 +115,7 @@ impl Fixture {
         fs::write(root.join("model.mjs"), MODEL).expect("model");
         fs::write(root.join("auth.sqlite"), "").expect("auth boundary");
         fs::create_dir_all(root.join("workspace")).expect("workspace");
-        let host = LocalHost::assemble(HostInitialization {
-            data_directory: root.join("data"),
-            bridge: root.join("model.mjs"),
-            providers: vec![ModelProvider::Xai],
-            initial_provider: ModelProvider::Xai,
-            initial_model: "fixture".to_owned(),
-            initial_reasoning: None,
-            credential_store: root.join("auth.sqlite"),
-            mcp_adapter: None,
-            mcp_registry_adapter: None,
-            shared_plugin_registry: None,
-            global_skill_source: None,
-            oauth_relay: None,
-            code_mode: None,
-        })
-        .expect("host");
+        let host = assemble(&root);
         let main = agent(&host, "Arcee").await;
         settings::configure(
             &host.config.database,
@@ -140,6 +125,36 @@ impl Fixture {
             "zone",
         )
         .expect("the main agent's zone");
+        let scheduler = host.automation_scheduler().expect("scheduler");
+        Self {
+            _directory: directory,
+            root,
+            host,
+            scheduler,
+            main,
+        }
+    }
+
+    /// This fixture's Host stopped and assembled again on its data, with the
+    /// model's spec changed, so every runtime it resolves differs from the
+    /// stopped Host's: a deploy.
+    fn redeployed(self) -> Self {
+        let Self {
+            _directory: directory,
+            root,
+            host,
+            scheduler,
+            main,
+        } = self;
+        drop(scheduler);
+        drop(host);
+        let model = MODEL.replace(
+            r#"JSON.stringify({id:"fixture"})"#,
+            r#"JSON.stringify({id:"fixture",revision:2})"#,
+        );
+        assert_ne!(model, MODEL);
+        fs::write(root.join("model.mjs"), model).expect("model");
+        let host = assemble(&root);
         let scheduler = host.automation_scheduler().expect("scheduler");
         Self {
             _directory: directory,
@@ -189,7 +204,11 @@ impl Fixture {
 
     /// Admits the plugin run due at `now`, if any, runs it and records it.
     async fn run(&self, now: i64) -> Option<(ScheduledRun, RunStatus)> {
-        let due = self.scheduler.next_run(now).await.expect("next run")?;
+        let due = self
+            .scheduler
+            .next_run(now, false)
+            .await
+            .expect("next run")?;
         assert_eq!(due.plugin, Some("renoa.memory"));
         let finished = self
             .scheduler
@@ -215,6 +234,30 @@ impl Fixture {
         Some((due, status))
     }
 
+    /// Runs the agent's automation due at `at`, as the node does, and returns
+    /// which automation it was.
+    async fn agent_run(&self, at: i64) -> Uuid {
+        let due = self
+            .scheduler
+            .next_run(at, false)
+            .await
+            .expect("next run")
+            .expect("a run is due");
+        assert_eq!(due.plugin, None, "the agent's, not a plugin's");
+        self.scheduler
+            .finish_run(
+                due.run.id,
+                crate::RunOutcome::Succeeded {
+                    answer: "Done.".to_owned(),
+                    failed_tool_calls: 0,
+                },
+                at,
+            )
+            .await
+            .expect("record the run");
+        due.run.automation_id
+    }
+
     /// The note pass timer's run due at `now`.
     async fn timer(&self, now: i64) -> Option<RunStatus> {
         let (due, status) = self.run(now).await?;
@@ -231,7 +274,7 @@ impl Fixture {
     async fn timer_due(&self, now: i64) -> Option<i64> {
         assert!(
             self.scheduler
-                .next_run(now)
+                .next_run(now, false)
                 .await
                 .expect("next run")
                 .is_none(),
@@ -332,6 +375,47 @@ impl Fixture {
     }
 }
 
+fn assemble(root: &Path) -> LocalHost {
+    LocalHost::assemble(HostInitialization {
+        data_directory: root.join("data"),
+        bridge: root.join("model.mjs"),
+        providers: vec![ModelProvider::Xai],
+        initial_provider: ModelProvider::Xai,
+        initial_model: "fixture".to_owned(),
+        initial_reasoning: None,
+        credential_store: root.join("auth.sqlite"),
+        mcp_adapter: None,
+        mcp_registry_adapter: None,
+        shared_plugin_registry: None,
+        global_skill_source: None,
+        oauth_relay: None,
+        code_mode: None,
+    })
+    .expect("host")
+}
+
+/// `agent`'s automation `name`, once at `at`.
+async fn once(host: &LocalHost, agent: AgentId, name: &str, at: &str) -> Uuid {
+    host.manage_automation(
+        agent,
+        Uuid::new_v4(),
+        crate::AutomationMutation::Create {
+            spec: crate::AutomationSpec {
+                agent_id: agent,
+                name: name.to_owned(),
+                prompt: format!("Remind them: {name}"),
+                schedule: crate::AutomationSchedule::Once { at: at.to_owned() },
+                enabled: true,
+            },
+        },
+        ms(NOON),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("an automation")
+    .id
+}
+
 async fn agent(host: &LocalHost, name: &str) -> AgentId {
     host.create_agent(
         AgentCreator::System {
@@ -420,6 +504,13 @@ async fn a_quiet_conversation_gets_a_pass_that_notes_and_later_turns_see_only_it
         .collect();
     assert_eq!(kinds, ["turn", "pass", "pass", "turn"]);
     let (before, pass, after) = (&calls[0], &calls[1], &calls[3]);
+    assert!(
+        pass["prompt"]
+            .as_str()
+            .expect("prompt")
+            .contains("Review the whole conversation."),
+        "a conversation the pass followed from its start is reviewed whole"
+    );
     assert_eq!(pass["system"], before["system"], "the cached prefix holds");
     assert_eq!(pass["tools"], before["tools"]);
     assert_eq!(after["system"], before["system"]);
@@ -478,14 +569,21 @@ async fn no_pass_runs_in_a_turn_within_the_gap_or_for_too_little_text() {
     fixture
         .say(session, person, noon + 6 * MINUTE, ENOUGH)
         .await;
-    let held = fixture.open(fixture.main, session).await;
+    // A turn running in the conversation holds its claim.
+    let held = fixture
+        .host
+        .config
+        .claims
+        .surface(session)
+        .await
+        .expect("a turn's claim");
     assert_eq!(
         fixture.timer(noon + 21 * MINUTE).await,
         Some(RunStatus::Succeeded)
     );
     assert!(
         fixture.calls_of("pass").is_empty(),
-        "no pass while a surface holds it"
+        "no pass while a turn holds it"
     );
     let waited = fixture.events("memory_pass_decision");
     assert_eq!(
@@ -528,6 +626,13 @@ async fn the_daytime_cap_leaves_the_last_pass_of_the_day_to_the_sweep_before_dre
     let (late, other) = (Uuid::new_v4(), Uuid::new_v4());
     let noon = ms(NOON);
     fixture.notebook(person, 5);
+    let call = once(
+        &fixture.host,
+        fixture.main,
+        "Call mom",
+        "2026-11-02T19:00:00+05:30",
+    )
+    .await;
     for pass in 0..4 {
         let at = noon + pass * 2 * 60 * MINUTE;
         fixture.say(session, person, at, ENOUGH).await;
@@ -537,6 +642,8 @@ async fn the_daytime_cap_leaves_the_last_pass_of_the_day_to_the_sweep_before_dre
         );
     }
     assert_eq!(fixture.calls_of("pass").len(), 4);
+    // The promised call is made at 19:00, in the day the sweep ends.
+    assert_eq!(fixture.agent_run(ms("2026-11-02T13:30:00Z")).await, call);
     // 02:00 on the next morning is still the same pass day.
     fixture
         .say(session, person, ms(NIGHT) - 2 * 60 * MINUTE, ENOUGH)
@@ -574,6 +681,17 @@ async fn the_daytime_cap_leaves_the_last_pass_of_the_day_to_the_sweep_before_dre
         .position(|kind| kind == "dream")
         .expect("a dream");
     assert!(sweep < dream, "the sweep runs before Dream: {kinds:?}");
+    let swept = fixture.calls()[sweep]["prompt"]
+        .as_str()
+        .expect("prompt")
+        .to_owned();
+    let (_, ended) = swept
+        .split_once("Finished or deleted since 04:00:")
+        .expect("the ended automations");
+    assert!(
+        ended.contains("· Call mom ·"),
+        "the sweep lists what ended in its day: {ended}"
+    );
     let passes = fixture.passes();
     assert_eq!(passes.len(), 5);
     assert!(
@@ -813,7 +931,7 @@ async fn schema_45_adds_the_note_pass_tables_to_a_schema_44_catalog() {
     assert!(
         fixture
             .scheduler
-            .next_run(ms(NOON))
+            .next_run(ms(NOON), false)
             .await
             .expect("next")
             .is_none()
@@ -840,4 +958,303 @@ async fn schema_45_adds_the_note_pass_tables_to_a_schema_44_catalog() {
         "the conversation and pass tables are in place"
     );
     assert_eq!(fixture.notes(person), 1);
+}
+
+#[tokio::test]
+async fn a_conversation_a_surface_keeps_open_between_turns_gets_its_pass() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    // Kept open, as a surface's cache keeps it.
+    let kept = fixture.open(fixture.main, session).await;
+    fixture.say(session, person, noon, ENOUGH).await;
+    assert!(
+        Arc::ptr_eq(&kept, &fixture.open(fixture.main, session).await),
+        "every opener shares the one open instance"
+    );
+    fixture.script(&["note:Picks up her sister on Friday", "say:#0"]);
+    assert_eq!(
+        fixture.timer(noon + 15 * MINUTE).await,
+        Some(RunStatus::Succeeded)
+    );
+    assert_eq!(
+        fixture.passes(),
+        [(
+            session,
+            Some("completed".to_owned()),
+            Some(1),
+            "2026-11-02".to_owned()
+        )],
+        "the pass ran while the surface kept the conversation open"
+    );
+    let outcome = kept
+        .execute_turn_observed_with_cancellation(
+            Uuid::new_v4(),
+            vec![ContentBlock::text("Thanks.")],
+            TurnObservation::from_unix_milliseconds(noon + 20 * MINUTE).expect("observation"),
+            Arc::new(Quiet),
+            CancellationToken::new(),
+            Speaker::Principal(person),
+        )
+        .await
+        .expect("the kept instance takes the next turn");
+    assert!(matches!(outcome, LocalTurnOutcome::Completed { .. }));
+}
+
+#[tokio::test]
+async fn a_stopping_host_settles_its_pass_so_the_redeployed_one_takes_the_next_message() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    fixture.script(&["note:Picks up her sister on Friday", "hang"]);
+    let started = fixture.root.join("started");
+    let stop = async {
+        while !started.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        fixture.host.stop_memory_runs();
+    };
+    let (status, ()) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async { tokio::join!(fixture.timer(noon + 15 * MINUTE), stop) }),
+    )
+    .await
+    .expect("stopping ends the pass and its run");
+    assert_eq!(status, Some(RunStatus::Succeeded));
+    assert_eq!(
+        fixture.passes(),
+        [(
+            session,
+            Some("cancelled".to_owned()),
+            Some(1),
+            "2026-11-02".to_owned()
+        )],
+        "settled as not run, its note kept"
+    );
+    let cancelled = fixture.events("memory_pass_cancelled");
+    assert_eq!(
+        cancelled.last().expect("a cancellation")["reason"],
+        "the Host is stopping"
+    );
+
+    let fixture = fixture.redeployed();
+    fixture
+        .say(session, person, noon + 20 * MINUTE, "I'm back.")
+        .await;
+    assert_eq!(fixture.notes(person), 1);
+    assert_eq!(fixture.snapshot().await.memory_passes[0].passes_today, 0);
+}
+
+#[tokio::test]
+async fn an_agents_due_run_is_handed_on_while_a_pass_runs() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    let call = once(
+        &fixture.host,
+        fixture.main,
+        "Call mom",
+        "2026-11-02T12:16:00+05:30",
+    )
+    .await;
+    fixture.script(&["hang"]);
+    let now = noon + 16 * MINUTE;
+    let pass = fixture
+        .scheduler
+        .next_run(now, false)
+        .await
+        .expect("next run")
+        .expect("the timer is due first");
+    assert_eq!(pass.plugin, Some("renoa.memory"));
+    let started = fixture.root.join("started");
+    let beside = async {
+        while !started.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let due = fixture
+            .scheduler
+            .next_run(now, true)
+            .await
+            .expect("next run");
+        let reported = match &due {
+            Some(due) => {
+                fixture
+                    .scheduler
+                    .finish_run(
+                        due.run.id,
+                        crate::RunOutcome::Succeeded {
+                            answer: "Reminded.".to_owned(),
+                            failed_tool_calls: 0,
+                        },
+                        now,
+                    )
+                    .await
+                    .expect("record the call");
+                fixture
+                    .host
+                    .completed_automation_runs(0)
+                    .await
+                    .expect("completed runs")
+                    .iter()
+                    .any(|run| run.id == due.run.id)
+            }
+            None => false,
+        };
+        fixture.host.stop_memory_runs();
+        (due, reported)
+    };
+    let (finished, (due, reported)) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async {
+            tokio::join!(
+                fixture.scheduler.run_for_plugin(&fixture.host, &pass, now),
+                beside
+            )
+        }),
+    )
+    .await
+    .expect("the pass ends");
+    fixture
+        .scheduler
+        .finish_plugin_run(finished.expect("the pass's run ends"), now)
+        .await
+        .expect("record the pass's run");
+    let due = due.expect("the call is handed on while the pass runs");
+    assert_eq!((due.run.automation_id, due.plugin), (call, None));
+    assert!(
+        reported,
+        "its result reaches surfaces while the pass is unfinished"
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_conversation_during_its_pass_cancels_it_and_leaves_nothing_of_it() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    let scout = agent(&fixture.host, "Scout").await;
+    assert!(
+        fixture.host.delete_session(scout, session).await.is_err(),
+        "only its own agent deletes it"
+    );
+    assert_eq!(rows(&fixture), (1, 0), "a refused deletion removes nothing");
+    fixture.script(&["note:Picks up her sister on Friday", "hang"]);
+    let started = fixture.root.join("started");
+    let delete = async {
+        while !started.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(fixture.host.delete_session(scout, session).await.is_err());
+        assert_eq!(
+            fixture.passes()[0].1,
+            None,
+            "a refused deletion leaves the pass running"
+        );
+        fixture.host.delete_session(fixture.main, session).await
+    };
+    let (status, deleted) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async { tokio::join!(fixture.timer(noon + 15 * MINUTE), delete) }),
+    )
+    .await
+    .expect("the deletion cancels the pass");
+    assert_eq!(status, Some(RunStatus::Succeeded));
+    deleted.expect("deleted once the pass settled");
+    assert!(!fixture.host.has_session(session).expect("sessions"));
+    assert_eq!(rows(&fixture), (0, 0), "nothing of it is left");
+    assert_eq!(fixture.notes(person), 1, "the person's note stays theirs");
+}
+
+#[tokio::test]
+async fn a_conversation_with_turns_before_the_pass_followed_it_is_reviewed_from_then() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture
+        .open(fixture.main, session)
+        .await
+        .execute_turn(
+            Uuid::new_v4(),
+            vec![ContentBlock::text("We spoke before the pass was here.")],
+            Arc::new(Quiet),
+        )
+        .await
+        .expect("an earlier turn");
+    fixture.say(session, person, noon, ENOUGH).await;
+    assert_eq!(
+        fixture.timer(noon + 15 * MINUTE).await,
+        Some(RunStatus::Succeeded)
+    );
+    let prompt = fixture.calls_of("pass")[0]["prompt"]
+        .as_str()
+        .expect("prompt")
+        .to_owned();
+    assert!(
+        prompt.contains("Review the conversation after the last memory-pass receipt (since")
+            && !prompt.contains("Review the whole conversation."),
+        "{prompt}"
+    );
+}
+
+/// How many conversations and passes the note pass keeps.
+fn rows(fixture: &Fixture) -> (i64, i64) {
+    let db = rusqlite::Connection::open(fixture.database()).expect("catalog");
+    let count = |table: &str| {
+        db.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .expect("count")
+    };
+    (
+        count("host_memory_conversations"),
+        count("host_memory_passes"),
+    )
+}
+
+#[tokio::test]
+async fn inspecting_a_conversation_during_its_pass_cancels_the_pass_first() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    fixture.script(&["hang"]);
+    let started = fixture.root.join("started");
+    let inspect = async {
+        while !started.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        fixture
+            .host
+            .inspect_session(fixture.main, session, &fixture.root.join("workspace"))
+            .await
+            .map(|history| history.history().expect("history").len())
+    };
+    let (status, inspected) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async { tokio::join!(fixture.timer(noon + 15 * MINUTE), inspect) }),
+    )
+    .await
+    .expect("the inspection cancels the pass");
+    assert_eq!(status, Some(RunStatus::Succeeded));
+    assert_eq!(inspected.expect("inspected"), 2, "the turn, not the pass");
+    assert_eq!(fixture.passes()[0].1.as_deref(), Some("cancelled"));
+}
+
+#[tokio::test]
+async fn a_stopping_host_starts_no_job_of_a_nightly_run() {
+    let fixture = Fixture::new().await;
+    let person = Uuid::new_v4();
+    fixture.notebook(person, 5);
+    // Scheduled for 04:00 at noon.
+    assert_eq!(fixture.timer_due(ms(NOON)).await, None);
+    fixture.host.stop_memory_runs();
+    let (_, status) = fixture.run(ms(NIGHT)).await.expect("the nightly run");
+    assert_eq!(status, RunStatus::Failed, "stopped part way");
+    assert!(
+        fixture.calls().is_empty(),
+        "no compaction or Dream starts once the Host is stopping"
+    );
 }

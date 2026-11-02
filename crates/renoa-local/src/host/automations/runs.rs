@@ -102,14 +102,20 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
 /// advancing the clock commit together; unfinished runs retain their command
 /// ID. An occurrence admitted later than its schedule allows is recorded as
 /// skipped in the same transaction and returned finished, so the scheduler
-/// reports it and asks again.
-pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, AutomationError> {
+/// reports it and asks again. While `plugin_running`, a plugin's run is in
+/// flight beside the scheduler, so no plugin's run is handed on or admitted:
+/// one plugin run at a time, and an agent's due run is not held up by it.
+pub(super) fn next(
+    path: &Path,
+    now_ms: i64,
+    plugin_running: bool,
+) -> Result<Option<AutomationRun>, AutomationError> {
     let mut db = catalog::open_verified(path)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let pending = tx
         .query_row(
-            &format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE output IS NULL ORDER BY sequence LIMIT 1"),
-            [],
+            &format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE output IS NULL AND NOT (?1 AND automation_id IN ({PLUGIN_OWNED})) ORDER BY sequence LIMIT 1"),
+            [plugin_running],
             run,
         )
         .optional()?;
@@ -117,7 +123,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
         return Ok(pending);
     }
     super::owned::converge(&tx, now_ms)?;
-    let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) ORDER BY next_due_ms,id LIMIT 1",[now_ms],store::record).optional()?;
+    let due=tx.query_row(&format!("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND NOT (?2 AND id IN ({PLUGIN_OWNED})) ORDER BY next_due_ms,id LIMIT 1"),params![now_ms, plugin_running],store::record).optional()?;
     let Some(mut r) = due else {
         // The converged triggers stand whether or not a run is due.
         tx.commit()?;
@@ -219,7 +225,7 @@ fn record(
 
 pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, AutomationError> {
     let db = catalog::open_verified(path)?;
-    let mut q=db.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND automation_id NOT IN ({PLUGIN_OWNED}) AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL) ORDER BY sequence LIMIT 20"))?;
+    let mut q=db.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND automation_id NOT IN ({PLUGIN_OWNED}) AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL AND earlier.automation_id NOT IN ({PLUGIN_OWNED})) ORDER BY sequence LIMIT 20"))?;
     Ok(q.query_map([after], run)?.collect::<Result<Vec<_>, _>>()?)
 }
 
