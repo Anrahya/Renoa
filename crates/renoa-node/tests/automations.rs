@@ -722,7 +722,6 @@ async fn a_catalog_busy_past_its_timeout_delays_the_schedule_without_ending_it()
     .expect("busy catalog test timed out");
 }
 
-/// Starts a node that owns the automation schedule.
 #[tokio::test]
 async fn a_reminder_whose_conversation_is_not_on_this_node_fails_rather_than_run_elsewhere() {
     timeout(Duration::from_secs(20), async {
@@ -821,6 +820,7 @@ fn deletion_marks(fixture: &HostFixture) -> i64 {
         .expect("read deletion marks")
 }
 
+/// Starts a node that owns the automation schedule.
 async fn start_node(
     host: Arc<LocalHost>,
     system: &TestSystem,
