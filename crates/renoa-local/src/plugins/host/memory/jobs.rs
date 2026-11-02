@@ -2,9 +2,15 @@
 //! prompt and time stored, before its command is admitted to the memory
 //! session, so a retry reuses them and never asks Mnem again; and each is
 //! closed by a receipt keyed by that command once its answer is applied, or
-//! once it is known it will not be. A Dream job is marked before its answer is
-//! applied, because Mnem counts a declined or rejected answer each time it is
-//! applied: a restart that finds the mark never applies it again.
+//! once it is known it will not be.
+//!
+//! Dream counts a declined answer, and a draft it rejects (an `Ok` outcome of
+//! `Rejected`), toward giving up each time either is applied; it refuses an
+//! answer with an error only for a stale job, a busy notebook, or a notebook
+//! it cannot read or write, and counts none of those. So a Dream job is
+//! marked before its answer is applied, and a restart that finds the mark
+//! never applies it again. A job whose command cannot run is counted once per
+//! run that tried it, and abandoned after `ATTEMPTS` (see `pass`).
 
 use std::path::Path;
 
@@ -31,7 +37,8 @@ pub(crate) const JOBS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_memory_jobs
         frozen_at_ms INTEGER NOT NULL,
         local_time TEXT NOT NULL,
         applying INTEGER NOT NULL DEFAULT 0 CHECK (applying IN (0, 1)),
-        receipt TEXT CHECK (receipt IN ('saved','settled','retried','dreamed','declined','rejected','conflict','invalid','busy','failed','unanswered','interrupted')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        receipt TEXT CHECK (receipt IN ('saved','settled','retried','dreamed','declined','rejected','conflict','invalid','busy','failed','unanswered','interrupted','abandoned')),
         CHECK ((prompt IS NULL) = (receipt IS NOT NULL)),
         UNIQUE (run_id, position)
     ) STRICT;
@@ -148,7 +155,8 @@ pub(super) enum Receipt {
     Rejected,
     /// The job was stale: the notebook moved on since it was made.
     Conflict,
-    /// The answer cannot be applied, such as one that repeats the prompt.
+    /// Compaction cannot use the answer, such as one that repeats the prompt.
+    /// Dream never refuses an answer this way: it rejects a bad draft.
     Invalid,
     /// Another dream held the notebook.
     Busy,
@@ -159,10 +167,13 @@ pub(super) enum Receipt {
     /// A restart found this Dream answer's apply begun and its receipt
     /// unwritten, so it is not applied again.
     Interrupted,
+    /// Its command could not run on `ATTEMPTS` runs, so it was closed without
+    /// an answer, and the agent moved to a new memory session.
+    Abandoned,
 }
 
 impl Receipt {
-    pub(super) const ALL: [Self; 12] = [
+    pub(super) const ALL: [Self; 13] = [
         Self::Saved,
         Self::Settled,
         Self::Retried,
@@ -175,6 +186,7 @@ impl Receipt {
         Self::Failed,
         Self::Unanswered,
         Self::Interrupted,
+        Self::Abandoned,
     ];
 
     /// The stored name, the same as the serialized one.
@@ -192,6 +204,7 @@ impl Receipt {
             Self::Failed => "failed",
             Self::Unanswered => "unanswered",
             Self::Interrupted => "interrupted",
+            Self::Abandoned => "abandoned",
         }
     }
 
@@ -348,6 +361,29 @@ pub(super) fn mark_applying(database: &Path, command: Uuid) -> Result<(), HostCa
     exactly_one(marked, command)
 }
 
+/// Counts one more run whose attempt at the unsettled job of `command` could
+/// not run its command, and returns how many have.
+pub(super) fn failed_attempt(database: &Path, command: Uuid) -> Result<u32, HostCatalogError> {
+    let connection = catalog::open_verified(database)?;
+    let attempts: Option<i64> = connection
+        .query_row(
+            &format!(
+                "UPDATE host_memory_jobs SET attempts = attempts + 1
+                 WHERE command_id = ?1 AND {UNSETTLED} RETURNING attempts"
+            ),
+            [command.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let attempts = attempts.ok_or_else(|| {
+        HostCatalogError::Invalid(format!(
+            "memory job {command} is unknown or settled already"
+        ))
+    })?;
+    u32::try_from(attempts)
+        .map_err(|error| HostCatalogError::Invalid(format!("memory job attempts: {error}")))
+}
+
 /// Closes the job of `command` with `receipt` and drops its prompt. A job
 /// settles once: a second receipt is refused.
 pub(super) fn settle(
@@ -355,7 +391,15 @@ pub(super) fn settle(
     command: Uuid,
     receipt: Receipt,
 ) -> Result<(), HostCatalogError> {
-    let connection = catalog::open_verified(database)?;
+    settle_in(&catalog::open_verified(database)?, command, receipt)
+}
+
+/// [`settle`] on `connection`, inside a caller's transaction.
+pub(super) fn settle_in(
+    connection: &rusqlite::Connection,
+    command: Uuid,
+    receipt: Receipt,
+) -> Result<(), HostCatalogError> {
     let settled = connection.execute(
         &format!(
             "UPDATE host_memory_jobs SET receipt = ?2, prompt = NULL

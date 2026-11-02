@@ -28,10 +28,13 @@ use crate::LocalTurnOutcome;
 /// too long, and what went wrong, for the trace only.
 pub(super) type Verdict = (Receipt, Option<SummaryJob>, Option<String>);
 
-/// The answer a memory job's turn gave Mnem. Only a turn the model ended
-/// itself answers: with text, a reply; with none, a decline. A turn that
-/// failed, stopped at its output limit, or was cancelled never reached an
-/// answer, so nothing is applied and Mnem's give-up rule does not count it.
+/// The answer a memory job's turn gave Mnem. A turn the model ended itself
+/// answers: with text, a reply; with none, a decline. A reply cut at the
+/// output limit, or stopped for a tool it was never offered, goes to Mnem as
+/// it is: Dream rejects a draft without its closing tag and counts it, and
+/// compaction asks again for a line that does not fit, so the notebook alone
+/// carries it. A turn that failed or was cancelled never reached an answer,
+/// so nothing is applied and Mnem's give-up rule does not count it.
 pub(super) fn answer(outcome: LocalTurnOutcome) -> Result<Answer, String> {
     match outcome {
         LocalTurnOutcome::Completed {
@@ -43,9 +46,9 @@ pub(super) fn answer(outcome: LocalTurnOutcome) -> Result<Answer, String> {
             Answer::Reply(output)
         }),
         LocalTurnOutcome::Completed {
-            stop_reason: stop_reason @ (StopReason::Length | StopReason::ToolUse),
-            ..
-        } => Err(format!("the answer stopped early ({stop_reason:?})")),
+            output,
+            stop_reason: StopReason::Length | StopReason::ToolUse,
+        } => Ok(Answer::Reply(output)),
         LocalTurnOutcome::Failed { reason } => Err(reason),
         LocalTurnOutcome::Cancelled => Err("the job was cancelled".to_owned()),
         LocalTurnOutcome::WaitingForInput => Err("the job waited for input".to_owned()),
@@ -88,7 +91,8 @@ pub(super) fn apply(
     }
 }
 
-/// Why a job with `receipt` stops its notebook or ends the run, if it does.
+/// Why a job with `receipt` stops its notebook or ends the run, if it does:
+/// only a model that failed ends it.
 pub(super) fn halt(receipt: Receipt, kind: JobKind) -> Option<Halt> {
     let kind = kind.as_str();
     match receipt {
@@ -109,12 +113,13 @@ pub(super) fn halt(receipt: Receipt, kind: JobKind) -> Option<Halt> {
         | Receipt::Declined
         | Receipt::Rejected
         | Receipt::Conflict
-        | Receipt::Interrupted => None,
+        | Receipt::Interrupted
+        | Receipt::Abandoned => None,
     }
 }
 
 /// Mnem refused to make a job.
-pub(super) fn refusal(error: MemoryError) -> Halt {
+pub(in crate::plugins::host::memory) fn refusal(error: MemoryError) -> Halt {
     match error {
         MemoryError::Busy { .. } => Halt::Busy,
         MemoryError::Invalid { message } | MemoryError::Conflict { message } => {
@@ -164,8 +169,18 @@ pub(super) fn trace(fields: &serde_json::Value, halted: bool) {
     renoa_telemetry::event(PLUGIN_ID, level, "memory_job", fields);
 }
 
-/// The receipts of one run, counted, then why it stopped.
-pub(super) fn summary(done: &[Done], halt: Option<&Halt>) -> String {
+/// Logs that the compaction bound stopped a notebook with work still due.
+pub(super) fn trace_bound(fields: &serde_json::Value) {
+    renoa_telemetry::event(PLUGIN_ID, "info", "memory_compaction_bounded", fields);
+}
+
+/// The receipts of one run, counted, the notebooks the compaction bound
+/// stopped with summaries still due, then why it stopped.
+pub(in crate::plugins::host::memory) fn summary(
+    done: &[Done],
+    bounded: usize,
+    halt: Option<&Halt>,
+) -> String {
     let mut parts = Vec::new();
     for kind in [JobKind::Compaction, JobKind::Dream] {
         let counted: Vec<String> = Receipt::ALL
@@ -187,13 +202,27 @@ pub(super) fn summary(done: &[Done], halt: Option<&Halt>) -> String {
     } else {
         format!("{}.", parts.join("; "))
     };
+    match bounded {
+        0 => {}
+        1 => summary.push_str(" Compaction reached its bound on 1 notebook with more due."),
+        count => {
+            summary.push_str(" Compaction reached its bound on ");
+            summary.push_str(&count.to_string());
+            summary.push_str(" notebooks with more due.");
+        }
+    }
     match halt {
         None => {}
         Some(Halt::Off) => summary.push_str(
             " Stopped: renoa.memory is off for this agent, or it is no longer the Host's main agent.",
         ),
         Some(Halt::Busy) => summary.push_str(" Stopped: another dream held a notebook."),
-        Some(Halt::Notebook(reason) | Halt::Failed(reason)) => {
+        Some(
+            Halt::Notebook(reason)
+            | Halt::Unopened(reason)
+            | Halt::Stalled(reason)
+            | Halt::Failed(reason),
+        ) => {
             summary.push_str(" Stopped: ");
             summary.push_str(reason);
         }

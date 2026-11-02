@@ -359,13 +359,18 @@ shared-registry synchronization, gives finished automation runs a status, and
 moves automations to cron schedules, bounds automation run history, and moves
 each agent's turn timing onto the `renoa.time` plugin, marks the Host's main
 agent, admits the `renoa.memory` plugin, on by default for every agent, and
-adds the tables for plugin-owned triggers and `renoa.memory`'s job receipts; it
+adds the tables for plugin-owned triggers and `renoa.memory`'s job receipts and
+memory session generations; it
 refuses to upgrade while a daily or interval automation remains. The first
 scheduler pass then creates `renoa.memory`'s nightly run: 04:00 in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
 notebook and writing their `MIND.md`. It runs in the main agent's memory
 session, apart from its conversations; inventory shows its next due time and the last
-run's summary, and each job logs a `memory_job` telemetry line. `renoa.time`
+run's summary, and each job logs a `memory_job` telemetry line. A job that
+cannot run on three nights is abandoned and the agent moves to a new memory
+session (`memory_session_moved` in the log, the reason in
+`host_memory_sessions`); the earlier session directory stays under
+`sessions/`. `renoa.time`
 shows the time in an agent's `timezone` setting, or else in the zone `TZ` sets
 for the service that runs the Host (`renoa-node.service` sets `Asia/Kolkata`).
 Drain active turns before the upgrade: the plugin API, the `agent_manage`

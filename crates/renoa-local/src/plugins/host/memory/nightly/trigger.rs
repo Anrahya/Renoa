@@ -1,6 +1,7 @@
 //! When the nightly run is due and for whom: the trigger `renoa.memory`
 //! contributes, which the scheduler keeps converged.
 
+use jiff::{Timestamp, tz::TimeZone};
 use renoa_kernel::AgentId;
 use rusqlite::Connection;
 
@@ -16,8 +17,8 @@ use crate::{
 
 const NAME: &str = "renoa.memory nightly";
 const TASK: &str = "Compact every notebook on this Host, then dream: write each person's MIND.md from what was noted since the last dream.";
-/// 04:00 in the notebook zone, when the person is least likely to be talking.
-const EXPRESSION: &str = "0 4 * * *";
+/// 04:00, when the person is least likely to be talking.
+const HOUR: i32 = 4;
 
 /// The agent whose memory session drives every notebook: the Host's main
 /// agent, while `renoa.memory` is on for it. One driver per notebook, so the
@@ -29,21 +30,117 @@ pub(crate) fn driver(db: &Connection) -> Result<Option<AgentId>, PluginError> {
     Ok(state::enabled_in(db, agent, HostPluginId::Memory)?.then_some(agent))
 }
 
-/// The nightly trigger, for the [`driver`] and in the notebook zone. A zone
-/// without an IANA name, which a cron schedule needs, keeps 04:00 in UTC.
-pub(crate) fn wanted(db: &Connection) -> Result<Option<AutomationSpec>, PluginError> {
+/// The nightly trigger, for the [`driver`], at 04:00 in the notebook zone as
+/// of `now_ms`.
+pub(crate) fn wanted(db: &Connection, now_ms: i64) -> Result<Option<AutomationSpec>, PluginError> {
     let Some(agent) = driver(db)? else {
         return Ok(None);
     };
-    let zone = notebook_zone(db)?;
+    let at = Timestamp::from_millisecond(now_ms)
+        .map_err(|error| PluginError::Invalid(format!("the scheduler's time: {error}")))?;
     Ok(Some(AutomationSpec {
         agent_id: agent,
         name: NAME.to_owned(),
         prompt: TASK.to_owned(),
-        schedule: AutomationSchedule::Cron {
-            expression: EXPRESSION.to_owned(),
-            timezone: zone.iana_name().unwrap_or("UTC").to_owned(),
-        },
+        schedule: schedule(&notebook_zone(db)?, at),
         enabled: true,
     }))
+}
+
+/// 04:00 every day in `zone`. A cron schedule names an IANA zone, so a zone
+/// without one, a fixed offset or a `TZ` rule, is scheduled in UTC at the
+/// minute its offset at `at` reads 04:00: the minute Dream's `Now:` shows,
+/// which reads the same zone. The trigger converges as time passes, so a
+/// rule's change of offset moves it.
+fn schedule(zone: &TimeZone, at: Timestamp) -> AutomationSchedule {
+    if let Some(name) = zone.iana_name() {
+        return AutomationSchedule::Cron {
+            expression: format!("0 {HOUR} * * *"),
+            timezone: name.to_owned(),
+        };
+    }
+    let utc = (HOUR * 3600 - zone.to_offset(at).seconds())
+        .div_euclid(60)
+        .rem_euclid(24 * 60);
+    AutomationSchedule::Cron {
+        expression: format!("{} {} * * *", utc % 60, utc / 60),
+        timezone: "UTC".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jiff::{
+        Timestamp,
+        civil::time,
+        tz::{Offset, TimeZone},
+    };
+
+    use super::schedule;
+    use crate::{AutomationSchedule, plugins::host::memory::local_time};
+
+    /// The trigger's expression as of `at`, and the wall time in `zone` at the
+    /// minute it names on `at`'s day, in the schedule's own zone.
+    fn next_in(zone: &TimeZone, at: &str) -> (String, jiff::civil::Time) {
+        let at: Timestamp = at.parse().expect("time");
+        let AutomationSchedule::Cron {
+            expression,
+            timezone,
+        } = schedule(zone, at)
+        else {
+            panic!("a cron schedule");
+        };
+        let fields: Vec<i8> = expression
+            .split(' ')
+            .take(2)
+            .map(|field| field.parse().expect("a fixed minute and hour"))
+            .collect();
+        let named = TimeZone::get(&timezone).expect("an IANA zone");
+        let fires = at
+            .to_zoned(named.clone())
+            .date()
+            .at(fields[1], fields[0], 0, 0)
+            .to_zoned(named)
+            .expect("the minute")
+            .timestamp();
+        (expression, local_time(zone, fires).time())
+    }
+
+    #[test]
+    fn a_zone_without_a_name_runs_at_four_in_its_own_offset() {
+        let four = time(4, 0, 0, 0);
+        for (zone, at, expression) in [
+            (
+                TimeZone::fixed(Offset::from_seconds(19_800).expect("offset")),
+                "2026-11-02T12:00:00Z",
+                "30 22 * * *",
+            ),
+            (
+                TimeZone::fixed(Offset::from_seconds(-10_800).expect("offset")),
+                "2026-11-02T12:00:00Z",
+                "0 7 * * *",
+            ),
+            (
+                TimeZone::posix("EST5EDT,M3.2.0,M11.1.0").expect("rule"),
+                "2026-07-01T12:00:00Z",
+                "0 8 * * *",
+            ),
+            (
+                TimeZone::posix("EST5EDT,M3.2.0,M11.1.0").expect("rule"),
+                "2026-12-01T12:00:00Z",
+                "0 9 * * *",
+            ),
+            (
+                TimeZone::get("Asia/Kolkata").expect("zone"),
+                "2026-11-02T12:00:00Z",
+                "0 4 * * *",
+            ),
+        ] {
+            assert_eq!(
+                next_in(&zone, at),
+                (expression.to_owned(), four),
+                "{zone:?}"
+            );
+        }
+    }
 }

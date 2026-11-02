@@ -40,14 +40,15 @@ pub(crate) fn initialize(transaction: &rusqlite::Transaction<'_>) -> rusqlite::R
     transaction.execute_batch(TRIGGERS_TABLE)
 }
 
-/// What `plugin`'s trigger should be now: the automation it runs, enabled,
-/// for one agent; `None` while it runs for no agent.
+/// What `plugin`'s trigger should be as of `now_ms`: the automation it runs,
+/// enabled, for one agent; `None` while it runs for no agent.
 pub(crate) fn wanted(
     plugin: HostPluginId,
     db: &Connection,
+    now_ms: i64,
 ) -> Result<Option<AutomationSpec>, PluginError> {
     match plugin {
-        HostPluginId::Memory => memory::nightly::wanted(db),
+        HostPluginId::Memory => memory::nightly::wanted(db, now_ms),
         HostPluginId::Agents
         | HostPluginId::Automations
         | HostPluginId::Documents

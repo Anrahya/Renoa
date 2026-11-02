@@ -37,7 +37,7 @@ pub(super) fn converge(tx: &Transaction<'_>, now_ms: i64) -> Result<(), Automati
 fn reconcile(tx: &Transaction<'_>, now_ms: i64) -> Result<(), AutomationError> {
     let owned = triggers::owned(tx).map_err(|error| plugin_error(&error))?;
     for plugin in HostPluginId::ALL {
-        let wanted = triggers::wanted(plugin, tx).map_err(|error| plugin_error(&error))?;
+        let wanted = triggers::wanted(plugin, tx, now_ms).map_err(|error| plugin_error(&error))?;
         let target = wanted
             .as_ref()
             .map(|spec| triggers::automation_id(plugin, spec.agent_id));

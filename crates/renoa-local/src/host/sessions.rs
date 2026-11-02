@@ -54,6 +54,14 @@ impl LocalHost {
             .await
     }
 
+    /// Whether a session with this id is stored.
+    pub(crate) fn has_session(&self, session_uuid: Uuid) -> std::io::Result<bool> {
+        self.config
+            .sessions
+            .join(SessionId::from_uuid(session_uuid).to_string())
+            .try_exists()
+    }
+
     async fn create_session_for_definition(
         &self,
         definition: &ResolvedAgentDefinition,

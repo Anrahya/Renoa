@@ -21,7 +21,7 @@ use crate::{
     host::{HostInitialization, LocalHost},
     plugins::host::{
         HostPluginId,
-        memory::{fixtures, nightly},
+        memory::{fixtures, pass, sessions},
         settings, state,
     },
     runtime::MEMORY_JOB_INSTRUCTIONS,
@@ -29,13 +29,17 @@ use crate::{
 
 /// Answers a compaction with a line and a dream with a `MIND.md` citing the
 /// first new note, unless `script.json` beside it holds steps, which it
-/// takes in order: `say:<text>`, `silent` (no text), `echo` (the prompt
-/// back) or `fail` (a provider error). Every call is logged to `calls.jsonl`.
+/// takes in order: `say:<text>`, `cut:<text>` (stopped at the output limit),
+/// `silent` (no text), `echo` (the prompt back) or `fail` (a provider error).
+/// While a `broken` file is beside it, the model cannot be listed or loaded.
+/// Every call is logged to `calls.jsonl`.
 const MODEL: &str = r#"
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const spec = JSON.stringify({id:"fixture"});
-if (process.env.RENOA_MODEL_ACTION === "catalog") {
+if (process.env.RENOA_MODEL_ACTION !== "stream" && existsSync(new URL("./broken", import.meta.url))) {
+  console.log(JSON.stringify({ok:false,error:"the model is gone"}));
+} else if (process.env.RENOA_MODEL_ACTION === "catalog") {
   console.log(JSON.stringify({ok:true,response:{models:[{id:"fixture",name:"Fixture",reasoning_levels:["high"],context_window_tokens:500000,model_spec:{id:"fixture"}}]}}));
 } else if (process.env.RENOA_MODEL_ACTION === "describe") {
   console.log(JSON.stringify({ok:true,response:{context_window_tokens:500000,max_output_tokens:32768,model_spec:spec,model_binding_id:createHash("sha256").update(spec).digest("hex"),reasoning_level:"high"}}));
@@ -54,11 +58,12 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   const steps=existsSync(script)?JSON.parse(readFileSync(script,"utf8")):[];
   const step=steps.shift();
   writeFileSync(script, JSON.stringify(steps));
-  const say=text=>console.log(JSON.stringify({event:"completed",response:{content:text===""?[]:[{type:"text",text}],stop_reason:"stop",usage:{input:10,output:1,cache_read:0,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}}));
+  const say=(text,stop_reason="stop")=>console.log(JSON.stringify({event:"completed",response:{content:text===""?[]:[{type:"text",text}],stop_reason,usage:{input:10,output:1,cache_read:0,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}}));
   if (step==="fail") console.log(JSON.stringify({event:"error",error:"the provider is unreachable",error_kind:"invalid_request",inference_outcome:"known_not_started"}));
   else if (step==="silent") say("");
   else if (step==="echo") say(prompt);
   else if (step?.startsWith("say:")) say(step.slice(4));
+  else if (step?.startsWith("cut:")) say(step.slice(4), "length");
   else if (kind==="compaction") say("Walks the dog at dawn");
   else if (kind==="dream") {
     const [first]=prompt.match(/Notes #(\d+) to/).slice(1);
@@ -375,7 +380,7 @@ async fn a_nightly_run_compacts_then_dreams_then_writes_mind_and_moves_the_water
 /// Crashes the first night's run at `point`, with the model taking `steps`,
 /// restarts it, and returns the fixture, the run and its notebook.
 async fn crash_and_restart(
-    point: nightly::fault::Point,
+    point: pass::fault::Point,
     steps: &[&str],
 ) -> (Fixture, ScheduledRun, Memory) {
     let fixture = Fixture::new().await;
@@ -383,7 +388,7 @@ async fn crash_and_restart(
     fixture.script(steps);
     assert!(fixture.next(ms(NOON)).await.is_none());
     let due = fixture.next(ms(FIRST_NIGHT)).await.expect("due");
-    nightly::fault::arm(due.run.id, point);
+    pass::fault::arm(due.run.id, point);
     assert!(
         fixture
             .scheduler
@@ -410,7 +415,7 @@ async fn crash_and_restart(
 #[tokio::test]
 async fn a_crash_between_the_answer_and_its_apply_applies_it_once_after_a_restart() {
     use crate::plugins::host::memory::jobs::JobKind;
-    use nightly::fault::Point;
+    use pass::fault::Point;
 
     let (fixture, due, memory) = crash_and_restart(Point::Answered(JobKind::Compaction), &[]).await;
     assert_eq!(
@@ -477,7 +482,7 @@ async fn a_crash_between_the_answer_and_its_apply_applies_it_once_after_a_restar
 #[tokio::test]
 async fn a_stale_dream_is_asked_again_in_the_same_run() {
     use crate::plugins::host::memory::jobs::JobKind;
-    use nightly::fault::Point;
+    use pass::fault::Point;
 
     let fixture = Fixture::new().await;
     let memory = fixture.notebook(Uuid::new_v4(), 4);
@@ -491,7 +496,7 @@ async fn a_stale_dream_is_asked_again_in_the_same_run() {
     let due = fixture.next(ms(FIRST_NIGHT)).await.expect("due");
     // It lands while this run's dream is frozen, and more notes follow.
     let directory = memory.dir().to_path_buf();
-    nightly::fault::on(due.run.id, Point::Frozen(JobKind::Dream), move || {
+    pass::fault::on(due.run.id, Point::Frozen(JobKind::Dream), move || {
         let memory = Memory::open(&directory).expect("the notebook");
         memory
             .apply_dream(&other.id, mind_citing(0), at("2026-11-02T23:00"))
@@ -575,7 +580,7 @@ async fn a_busy_notebook_ends_the_run() {
 #[tokio::test]
 async fn a_notebook_another_dream_takes_before_the_apply_ends_the_run() {
     use crate::plugins::host::memory::jobs::JobKind;
-    use nightly::fault::Point;
+    use pass::fault::Point;
     use std::sync::{Arc, Mutex};
 
     let fixture = Fixture::new().await;
@@ -585,7 +590,7 @@ async fn a_notebook_another_dream_takes_before_the_apply_ends_the_run() {
     let due = fixture.next(ms(FIRST_NIGHT)).await.expect("due");
     let held = Arc::new(Mutex::new(None));
     let (holder, lock) = (Arc::clone(&held), first.dir().join(".dream.lock"));
-    nightly::fault::on(due.run.id, Point::Answered(JobKind::Dream), move || {
+    pass::fault::on(due.run.id, Point::Answered(JobKind::Dream), move || {
         let file = fs::OpenOptions::new()
             .append(true)
             .create(true)
@@ -654,7 +659,7 @@ async fn a_failed_model_call_applies_nothing_and_a_decline_counts() {
 }
 
 #[tokio::test]
-async fn an_invalid_answer_stops_its_notebook_and_the_run_goes_on() {
+async fn an_invalid_answer_stops_its_compaction_and_the_run_goes_on() {
     let fixture = Fixture::new().await;
     let first = fixture.notebook(Uuid::from_u128(1), 5);
     let second = fixture.notebook(Uuid::from_u128(2), 5);
@@ -666,17 +671,19 @@ async fn an_invalid_answer_stops_its_notebook_and_the_run_goes_on() {
         fixture.kinds(),
         [
             "compaction",
+            "dream",
             "compaction",
             "compaction",
             "compaction",
             "dream"
         ],
-        "nothing more for the first notebook; the second is untouched by it"
+        "the first notebook's compaction stops, its Dream still runs, and the second is untouched"
     );
     assert_eq!(
         fixture.receipts(due.run.id),
         [
             receipt("compaction", "invalid"),
+            receipt("dream", "dreamed"),
             receipt("compaction", "saved"),
             receipt("compaction", "saved"),
             receipt("compaction", "saved"),
@@ -690,7 +697,7 @@ async fn an_invalid_answer_stops_its_notebook_and_the_run_goes_on() {
             .map(|job| job.id.attempt),
         Some(0)
     );
-    assert_eq!(dream::read_watermark(first.dir()).expect("watermark"), 0);
+    assert_eq!(dream::read_watermark(first.dir()).expect("watermark"), 5);
     assert_eq!(dream::read_watermark(second.dir()).expect("watermark"), 5);
     assert!(
         fixture
@@ -701,6 +708,72 @@ async fn an_invalid_answer_stops_its_notebook_and_the_run_goes_on() {
             .expect("summary")
             .ends_with("Stopped: Mnem refused a compaction answer as invalid")
     );
+}
+
+#[tokio::test]
+async fn a_notebook_that_cannot_be_opened_is_skipped_whole() {
+    let fixture = Fixture::new().await;
+    let first = fixture.notebook(Uuid::from_u128(1), 5);
+    let second = fixture.notebook(Uuid::from_u128(2), 5);
+    fs::remove_dir_all(first.dir()).expect("remove the notebook");
+    fs::write(first.dir(), "not a notebook").expect("a file in its place");
+    assert!(fixture.next(ms(NOON)).await.is_none());
+    let (due, status) = fixture.night(ms(FIRST_NIGHT)).await;
+    assert_eq!(status, RunStatus::Failed);
+    assert_eq!(
+        fixture.receipts(due.run.id).len(),
+        4,
+        "the second notebook goes on"
+    );
+    assert_eq!(dream::read_watermark(second.dir()).expect("watermark"), 5);
+    let summary = fixture
+        .trigger()
+        .await
+        .last_run
+        .and_then(|run| run.summary)
+        .expect("summary");
+    assert_eq!(
+        summary.matches("not a plain directory").count(),
+        1,
+        "its Dream is not tried: {summary}"
+    );
+}
+
+#[tokio::test]
+async fn a_reply_cut_at_the_output_limit_stays_with_its_notebook() {
+    let fixture = Fixture::new().await;
+    let first = fixture.notebook(Uuid::from_u128(1), 5);
+    let second = fixture.notebook(Uuid::from_u128(2), 5);
+    fixture.script(&[
+        "cut:Walks the dog at da",
+        "say:Walks the dog",
+        "say:Walks the dog",
+        "cut:<mind>\n## Durable\n- Walks the d",
+    ]);
+    assert!(fixture.next(ms(NOON)).await.is_none());
+    let (due, status) = fixture.night(ms(FIRST_NIGHT)).await;
+    assert_eq!(status, RunStatus::Succeeded, "a cut reply is no failure");
+    assert_eq!(
+        fixture.receipts(due.run.id),
+        [
+            receipt("compaction", "saved"),
+            receipt("compaction", "saved"),
+            receipt("compaction", "saved"),
+            receipt("dream", "rejected"),
+            receipt("compaction", "saved"),
+            receipt("compaction", "saved"),
+            receipt("compaction", "saved"),
+            receipt("dream", "dreamed"),
+        ],
+        "Mnem takes the cut line, rejects the cut draft, and the second notebook goes on"
+    );
+    assert!(
+        dream_log(&first).contains("rejected the draft"),
+        "{}",
+        dream_log(&first)
+    );
+    assert_eq!(dream::read_watermark(first.dir()).expect("watermark"), 0);
+    assert_eq!(dream::read_watermark(second.dir()).expect("watermark"), 5);
 }
 
 #[tokio::test]
@@ -790,13 +863,13 @@ async fn no_agent_lists_reads_changes_or_runs_the_trigger() {
 #[tokio::test]
 async fn a_job_a_crash_left_waits_while_the_plugin_is_off() {
     use crate::plugins::host::memory::jobs::JobKind;
-    use nightly::fault::Point;
+    use pass::fault::Point;
 
     let fixture = Fixture::new().await;
     fixture.notebook(Uuid::new_v4(), 5);
     assert!(fixture.next(ms(NOON)).await.is_none());
     let due = fixture.next(ms(FIRST_NIGHT)).await.expect("due");
-    nightly::fault::arm(due.run.id, Point::Frozen(JobKind::Compaction));
+    pass::fault::arm(due.run.id, Point::Frozen(JobKind::Compaction));
     assert!(
         fixture
             .scheduler
@@ -939,6 +1012,11 @@ async fn schema_44_adds_the_trigger_and_job_tables_to_a_schema_43_catalog() {
     crate::host::catalog::initialize(&database).expect("reopen the upgraded catalog");
     assert!(fixture.next(ms(NOON)).await.is_none());
     assert_eq!(fixture.trigger().await.next_due_ms, ms(FIRST_NIGHT));
+    assert_eq!(
+        fixture.night(ms(FIRST_NIGHT)).await.1,
+        RunStatus::Succeeded,
+        "the job and session tables are in place"
+    );
 }
 
 #[tokio::test]
@@ -963,5 +1041,170 @@ async fn a_trigger_that_cannot_converge_never_stops_the_scheduler() {
         (kept.revision, kept.next_due_ms),
         (trigger.revision, trigger.next_due_ms),
         "the stored trigger is kept as it was"
+    );
+}
+
+/// The current memory session generation of `agent`, and why it moved.
+fn generation(fixture: &Fixture) -> (u32, Option<String>) {
+    let connection = rusqlite::Connection::open(fixture.database()).expect("catalog");
+    let current = sessions::current(&connection, fixture.main).expect("generation");
+    let reason = connection
+        .query_row(
+            "SELECT reason FROM host_memory_sessions WHERE agent_id = ?1 AND generation = ?2",
+            rusqlite::params![fixture.main.to_string(), current],
+            |row| row.get(0),
+        )
+        .ok();
+    (current, reason)
+}
+
+fn session_stored(fixture: &Fixture, generation: u32) -> bool {
+    fixture
+        .host
+        .has_session(sessions::session_id(fixture.main, generation))
+        .expect("sessions")
+}
+
+#[tokio::test]
+async fn a_job_that_cannot_run_for_three_nights_is_abandoned_and_the_fourth_goes_on() {
+    use crate::plugins::host::memory::jobs::JobKind;
+    use pass::fault::Point;
+
+    let fixture = Fixture::new().await;
+    let memory = fixture.notebook(Uuid::new_v4(), 5);
+    assert!(fixture.next(ms(NOON)).await.is_none());
+    let due = fixture.next(ms(FIRST_NIGHT)).await.expect("due");
+    // The model goes away once the first job is frozen.
+    let broken = fixture.root.join("broken");
+    let marker = broken.clone();
+    pass::fault::on(due.run.id, Point::Frozen(JobKind::Compaction), move || {
+        fs::write(marker, "").expect("break the model");
+    });
+    assert_eq!(
+        fixture.finish(&due, ms(FIRST_NIGHT)).await,
+        RunStatus::Failed
+    );
+    let first = due.run.id;
+    let nights = ["2026-11-03T22:30:00Z", "2026-11-04T22:30:00Z"];
+    for (tried, night) in [2, 3].into_iter().zip(nights) {
+        let (_, status) = fixture.night(ms(night)).await;
+        assert_eq!(status, RunStatus::Failed);
+        let summary = fixture.trigger().await.last_run.and_then(|run| run.summary);
+        let summary = summary.expect("summary");
+        if tried < 3 {
+            assert!(summary.contains("(2 of 3 tries)"), "{summary}");
+            assert_eq!(fixture.receipts(first), [("compaction".to_owned(), None)]);
+        } else {
+            assert!(summary.contains("could not run on 3 runs"), "{summary}");
+        }
+    }
+    assert_eq!(
+        fixture.receipts(first),
+        [receipt("compaction", "abandoned")],
+        "abandoned on the third night"
+    );
+    let (moved, reason) = generation(&fixture);
+    assert_eq!(moved, 1);
+    assert!(
+        reason
+            .as_deref()
+            .is_some_and(|why| why.contains("could not run on 3 runs")),
+        "{reason:?}"
+    );
+    assert!(
+        fixture.calls().is_empty(),
+        "the abandoned job was never answered"
+    );
+
+    fs::remove_file(&broken).expect("the model is back");
+    let (due, status) = fixture.night(ms("2026-11-05T22:30:00Z")).await;
+    assert_eq!(status, RunStatus::Succeeded);
+    assert_eq!(
+        fixture.kinds(),
+        ["compaction", "compaction", "compaction", "dream"]
+    );
+    assert_eq!(
+        fixture.receipts(due.run.id),
+        [
+            receipt("compaction", "saved"),
+            receipt("compaction", "saved"),
+            receipt("compaction", "saved"),
+            receipt("dream", "dreamed"),
+        ]
+    );
+    assert_eq!(dream::read_watermark(memory.dir()).expect("watermark"), 5);
+    assert!(
+        session_stored(&fixture, 0),
+        "the old session stays readable"
+    );
+    assert!(
+        session_stored(&fixture, 1),
+        "the fourth night ran in the new one"
+    );
+}
+
+#[tokio::test]
+async fn a_stored_session_that_cannot_open_moves_the_agent_on() {
+    let fixture = Fixture::new().await;
+    let memory = fixture.notebook(Uuid::new_v4(), 5);
+    assert!(fixture.next(ms(NOON)).await.is_none());
+    assert_eq!(fixture.night(ms(FIRST_NIGHT)).await.1, RunStatus::Succeeded);
+    fs::write(fixture.root.join("broken"), "").expect("break the model");
+    add_notes(&memory, 4);
+    assert_eq!(
+        fixture.night(ms("2026-11-03T22:30:00Z")).await.1,
+        RunStatus::Failed
+    );
+    assert_eq!(generation(&fixture).0, 1, "nothing in it was unfinished");
+
+    // A session that was never stored is not moved past: a new one would
+    // fail the same way.
+    assert_eq!(
+        fixture.night(ms("2026-11-04T22:30:00Z")).await.1,
+        RunStatus::Failed
+    );
+    assert_eq!(generation(&fixture).0, 1);
+
+    fs::remove_file(fixture.root.join("broken")).expect("the model is back");
+    assert_eq!(
+        fixture.night(ms("2026-11-05T22:30:00Z")).await.1,
+        RunStatus::Succeeded
+    );
+    assert!(session_stored(&fixture, 1));
+    assert_eq!(dream::read_watermark(memory.dir()).expect("watermark"), 9);
+}
+
+#[tokio::test]
+async fn compaction_stops_at_its_bound_and_the_rest_waits_for_the_next_night() {
+    let fixture = Fixture::new().await;
+    let memory = fixture.notebook(Uuid::new_v4(), 40);
+    assert!(fixture.next(ms(NOON)).await.is_none());
+    let (_, status) = fixture.night(ms(FIRST_NIGHT)).await;
+    assert_eq!(status, RunStatus::Succeeded);
+    let kinds = fixture.kinds();
+    assert_eq!(
+        kinds.iter().filter(|kind| *kind == "compaction").count(),
+        pass::COMPACTION_TURNS
+    );
+    assert_eq!(
+        kinds.last().map(String::as_str),
+        Some("dream"),
+        "Dream still runs"
+    );
+    assert!(
+        fixture
+            .trigger()
+            .await
+            .last_run
+            .and_then(|run| run.summary)
+            .expect("summary")
+            .ends_with("Compaction reached its bound on 1 notebook with more due."),
+    );
+    assert!(memory.compaction_job().expect("job").is_some());
+
+    fixture.night(ms("2026-11-03T22:30:00Z")).await;
+    assert!(
+        fixture.kinds().len() > kinds.len(),
+        "the next night goes on"
     );
 }

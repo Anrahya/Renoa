@@ -1,19 +1,23 @@
 //! Schema 44 gives compiled plugins triggers, and `renoa.memory` the
-//! receipts of its nightly jobs.
+//! receipts of its nightly jobs and its memory session generations.
 //!
-//! Both tables start empty: the scheduler creates the main agent's nightly
+//! All three start empty: the scheduler creates the main agent's nightly
 //! trigger the first time it looks for due work, and no job has run yet.
 
 use rusqlite::Transaction;
 
 use super::HostCatalogError;
-use crate::plugins::host::{memory::jobs, triggers};
+use crate::plugins::host::{
+    memory::{jobs, sessions},
+    triggers,
+};
 
 pub(super) fn add_triggers_and_memory_jobs(
     transaction: &Transaction<'_>,
 ) -> Result<(), HostCatalogError> {
     triggers::initialize(transaction)?;
     jobs::initialize(transaction)?;
+    sessions::initialize(transaction)?;
     Ok(())
 }
 
@@ -23,7 +27,8 @@ pub(super) fn add_triggers_and_memory_jobs(
 pub(crate) fn restore_schema_43(connection: &rusqlite::Connection) {
     connection
         .execute_batch(
-            "DROP TABLE host_memory_jobs;
+            "DROP TABLE host_memory_sessions;
+             DROP TABLE host_memory_jobs;
              DELETE FROM host_automation_runs
                 WHERE automation_id IN (SELECT automation_id FROM host_plugin_triggers);
              CREATE TEMP TABLE plugin_owned AS SELECT automation_id FROM host_plugin_triggers;

@@ -1268,8 +1268,9 @@ marker on its earliest-created agent, ties broken by agent id; a Host with no
 agent stays unmarked until its first creation. Every catalog below schema 43
 admits `renoa.memory` in its compiled-plugin table, keeping every stored
 activation, so every existing agent has the plugin at its default, on. Every
-catalog below schema 44 gains the plugin-trigger owner table and
-`renoa.memory`'s job receipts, both empty; the scheduler creates
+catalog below schema 44 gains the plugin-trigger owner table,
+`renoa.memory`'s job receipts and its memory session generations, all
+empty; the scheduler creates
 `renoa.memory`'s nightly trigger at its first pass. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and

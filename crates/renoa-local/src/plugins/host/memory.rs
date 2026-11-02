@@ -31,6 +31,8 @@ mod context;
 pub(crate) mod fixtures;
 pub(crate) mod jobs;
 pub(crate) mod nightly;
+pub(crate) mod pass;
+pub(crate) mod sessions;
 mod tools;
 
 pub(crate) use context::{SESSION_BLOCK_MAX, message_entry, notebook_zone, session_block};
