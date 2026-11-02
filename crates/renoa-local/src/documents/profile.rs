@@ -189,6 +189,40 @@ pub(crate) fn existing_person_directory(
     Ok(person.exists()?.then_some(person.directory))
 }
 
+/// Every person a private directory is kept for, in id order. An entry of
+/// `users/` that is not named by a principal id is no person's and is left
+/// out; a link or another file in its place is too, since it is never followed.
+///
+/// # Errors
+///
+/// Returns an error when the data directory cannot be resolved, `users/` is a
+/// link or another file, or it cannot be listed.
+pub(crate) fn people(data_directory: &Path) -> Result<Vec<Uuid>, AgentDefinitionError> {
+    let users = canonical_data_directory(data_directory)?.join(PROFILE_DIRECTORY);
+    if !plain_directory(&users)? {
+        return Ok(Vec::new());
+    }
+    let listing = |source| document_io("list user profile directories", &users, source);
+    let mut people = Vec::new();
+    for entry in fs::read_dir(&users).map_err(listing)? {
+        let entry = entry.map_err(listing)?;
+        let name = entry.file_name();
+        // Only the spelling `PersonProfile::new` gives an id names its directory.
+        let Some(principal) = name.to_str().and_then(|name| {
+            Uuid::parse_str(name)
+                .ok()
+                .filter(|principal| principal.to_string() == name)
+        }) else {
+            continue;
+        };
+        if entry.file_type().map_err(listing)?.is_dir() {
+            people.push(principal);
+        }
+    }
+    people.sort_unstable();
+    Ok(people)
+}
+
 /// Creates the private directory kept for `principal`, as a first profile edit
 /// does, and reports what it created so a write that is then refused can
 /// withdraw it.

@@ -1255,7 +1255,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 43
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 44
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1267,7 +1267,10 @@ gives its runs a status. Every catalog below schema 42 gains the main-agent
 marker on its earliest-created agent, ties broken by agent id; a Host with no
 agent stays unmarked until its first creation. Every catalog below schema 43
 admits `renoa.memory` in its compiled-plugin table, keeping every stored
-activation, so every existing agent has the plugin at its default, on. Live selections
+activation, so every existing agent has the plugin at its default, on. Every
+catalog below schema 44 gains the plugin-trigger owner table and
+`renoa.memory`'s job receipts, both empty; the scheduler creates
+`renoa.memory`'s nightly trigger at its first pass. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1532,6 +1535,10 @@ management policy; selecting machine tools
 and account connections remains independent. List returns bounded pages with exact
 automation IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
 complete automation for inspection or editing.
+An automation a compiled plugin owns, such as `renoa.memory`'s nightly run, is
+outside these operations: no agent lists, reads, changes or runs it, and its
+results are not listed (see the triggers point in
+[`renoa-extensions-north-star.md`](renoa-extensions-north-star.md)).
 Pausing sets enabled=false; it leaves an already admitted occurrence intact.
 `delete` requires the current revision and records a durable deletion marker in
 Host schema 19 while disabling the automation and incrementing its revision. Deleted

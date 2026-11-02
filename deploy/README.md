@@ -350,7 +350,7 @@ The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and
 `POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
-This release requires Host schema 43. A schema 28–42 catalog upgrades in place
+This release requires Host schema 44. A schema 28–43 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
@@ -358,8 +358,14 @@ automation runs onto RCP tasks (see
 shared-registry synchronization, gives finished automation runs a status, and
 moves automations to cron schedules, bounds automation run history, and moves
 each agent's turn timing onto the `renoa.time` plugin, marks the Host's main
-agent, and admits the `renoa.memory` plugin, on by default for every agent; it
-refuses to upgrade while a daily or interval automation remains. `renoa.time`
+agent, admits the `renoa.memory` plugin, on by default for every agent, and
+adds the tables for plugin-owned triggers and `renoa.memory`'s job receipts; it
+refuses to upgrade while a daily or interval automation remains. The first
+scheduler pass then creates `renoa.memory`'s nightly run: 04:00 in the main
+agent's `renoa.time` zone, or else the Host's, compacting each person's
+notebook and writing their `MIND.md`. It runs in the main agent's memory
+session, apart from its conversations; inventory shows its next due time and the last
+run's summary, and each job logs a `memory_job` telemetry line. `renoa.time`
 shows the time in an agent's `timezone` setting, or else in the zone `TZ` sets
 for the service that runs the Host (`renoa-node.service` sets `Asia/Kolkata`).
 Drain active turns before the upgrade: the plugin API, the `agent_manage`
@@ -958,7 +964,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the node, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 43. Install the new binaries
+root before the new Host brings it to schema 44. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must

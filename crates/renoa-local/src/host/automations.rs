@@ -6,6 +6,7 @@ use super::{LocalHost, LocalHostError};
 
 mod control;
 mod cron;
+mod owned;
 mod receipts;
 pub(crate) mod result_tool;
 mod results;
@@ -15,7 +16,7 @@ pub use control::{AutomationEnablement, HostAutomationControl};
 pub use results::AutomationResultSummary;
 mod schedule;
 mod scheduler;
-pub use scheduler::{AutomationScheduler, ScheduledRun};
+pub use scheduler::{AutomationScheduler, PluginRun, ScheduledRun};
 pub(super) mod store;
 #[cfg(test)]
 mod tests;

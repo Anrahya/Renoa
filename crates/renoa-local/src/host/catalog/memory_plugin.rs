@@ -27,6 +27,7 @@ pub(super) fn admit_memory_plugin(transaction: &Transaction<'_>) -> Result<(), H
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_42(connection: &rusqlite::Connection) {
+    super::restore_schema_43(connection);
     connection
         .execute_batch(
             "DELETE FROM host_agent_builtin_plugins WHERE plugin_id = 'renoa.memory';

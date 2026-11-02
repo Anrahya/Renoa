@@ -12,7 +12,9 @@
 //! copy, and the ledger re-drives an execution the restart interrupted.
 //!
 //! The Host decides whether a due occurrence is too late to run; a skipped
-//! one is only reported here. While it owns the schedule, the scheduler
+//! one is only reported here. A run of a compiled plugin's trigger is not a
+//! message to the agent: the Host runs it in this process, and this loop only
+//! waits for it and records how it ended. While it owns the schedule, the scheduler
 //! writes a heartbeat so Host observation can tell it is alive.
 
 use std::{
@@ -169,6 +171,32 @@ async fn serve(
                     "run_id": due.run.id,
                     "due_ms": due.run.due_ms,
                     "late_ms": due.run.admitted_at_ms.saturating_sub(due.run.due_ms),
+                }),
+            );
+            continue;
+        }
+        if let Some(plugin) = due.plugin {
+            // A plugin's run stays admitted when shutdown drops it, and the
+            // next scheduler resumes it.
+            let finished = tokio::select! {
+                () = shutdown.cancelled() => return Ok(()),
+                finished = scheduler.run_for_plugin(&runtime.host, &due, now_ms()?) => {
+                    finished.map_err(|error| host_error(&error))?
+                }
+            };
+            let status = finished.status();
+            scheduler
+                .finish_plugin_run(finished, now_ms()?)
+                .await
+                .map_err(|error| host_error(&error))?;
+            node_log::event(
+                "info",
+                "automation_finished",
+                &serde_json::json!({
+                    "automation_id": due.run.automation_id,
+                    "run_id": due.run.id,
+                    "plugin": plugin,
+                    "status": status,
                 }),
             );
             continue;

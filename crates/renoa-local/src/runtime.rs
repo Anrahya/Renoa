@@ -4,11 +4,12 @@ use std::{
     sync::Arc,
 };
 
+use renoa_agent::Message;
 use renoa_agent_loop::{
     AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CodeModeBinding,
     CompactingContextStrategy, CompactionLimits, CompactionLimitsError, ContextBinding,
-    ContextSizer, ModelBinding, build_runtime as build_agent_runtime,
-    build_runtime_with_code_mode as build_code_mode_runtime,
+    ContextInput, ContextSizer, ContextStrategy, ContextStrategyError, ModelBinding,
+    build_runtime as build_agent_runtime, build_runtime_with_code_mode as build_code_mode_runtime,
     build_runtime_with_code_mode_and_events as build_observed_code_mode_runtime,
     build_runtime_with_events as build_observed_agent_runtime,
 };
@@ -196,13 +197,7 @@ async fn build_local_runtime_inner(
         resolved.automatic_compaction,
         None,
     )?;
-    let model_revision = format!(
-        "renoa-model-provider-node/v1/{}/{}/{}/reasoning-{}",
-        resolved.provider,
-        resolved.model_id,
-        resolved.model.binding_id(),
-        resolved.model.reasoning().as_str()
-    );
+    let model_revision = model_revision(&resolved.provider, &resolved.model_id, &resolved.model);
     let config = AgentLoopConfig::new(resolved.instructions, MODEL_ROUND_LIMIT, TOOL_CALL_LIMIT);
     let model = ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay);
     let mut tools = tool_access
@@ -219,6 +214,94 @@ async fn build_local_runtime_inner(
         (None, None) => build_agent_runtime(config, context, model, tools),
     }
     .map_err(Into::into)
+}
+
+/// The revision a model binding is frozen under: the adapter, the provider's
+/// model and its binding, and the reasoning level.
+fn model_revision(provider: &str, model_id: &str, model: &BridgeModel) -> String {
+    format!(
+        "renoa-model-provider-node/v1/{provider}/{model_id}/{}/reasoning-{}",
+        model.binding_id(),
+        model.reasoning().as_str()
+    )
+}
+
+/// What the model of a memory job is told besides the job. Mnem's job prompt
+/// carries its whole task and material, and this prompt never changes, so a
+/// recovered job rebuilds the manifest it was admitted with.
+pub(crate) const MEMORY_JOB_INSTRUCTIONS: &str = "You keep a person's memory notebook in the background. Each message is one task that carries all of its material. Do what it asks and reply with the answer alone. You have no tools.";
+
+/// The context revision of a memory job: the model sees its own job alone.
+const MEMORY_JOB_CONTEXT_REVISION: &str = "renoa.context.memory-job.v1";
+
+/// One model call answers a memory job: with no tools, the first answer ends it.
+const MEMORY_JOB_MODEL_ROUNDS: NonZeroU32 = NonZeroU32::MIN;
+
+/// The runtime of one job in an agent's memory session: the agent's model
+/// with [`MEMORY_JOB_INSTRUCTIONS`], no tools, and a context of the job's own
+/// messages.
+///
+/// No tool is offered, rather than every tool refused: a refused list would
+/// follow the agent's tools into each manifest, so a tool added between a
+/// crash and its recovery would fail the recovered job. The session holds no
+/// tool call, so an empty list stays valid for every provider.
+///
+/// # Errors
+///
+/// Returns an error when the model cannot be loaded.
+pub(crate) async fn build_memory_job_runtime(
+    bridge: PathBuf,
+    credential_store: PathBuf,
+    model: &ModelChoice,
+    reasoning: ReasoningLevel,
+    session_id: renoa_kernel::SessionId,
+    events: Arc<dyn renoa_agent::AgentEventSink>,
+) -> Result<Runtime, LocalRuntimeError> {
+    let provider = model.provider().as_str();
+    let loaded = Arc::new(
+        BridgeModel::load_with_spec(
+            bridge,
+            provider,
+            model.id(),
+            credential_store,
+            Some(model.encoded_spec()),
+            Some(reasoning),
+            MAX_OUTPUT_TOKENS,
+        )
+        .await?
+        .with_session(Some(session_id)),
+    );
+    let revision = model_revision(provider, model.id(), &loaded);
+    let config = AgentLoopConfig::new(
+        MEMORY_JOB_INSTRUCTIONS,
+        MEMORY_JOB_MODEL_ROUNDS,
+        TOOL_CALL_LIMIT,
+    );
+    let context = ContextBinding::new(MEMORY_JOB_CONTEXT_REVISION, Arc::new(OwnJobOnly));
+    let model = ModelBinding::new(revision, loaded, EffectRecovery::SafeToReplay);
+    Ok(build_observed_agent_runtime(
+        config,
+        context,
+        model,
+        Vec::new(),
+        events,
+    )?)
+}
+
+/// Shows the model the messages of the operation it prepares and nothing
+/// earlier: each memory job is self-contained, while the session journal
+/// keeps every earlier one.
+struct OwnJobOnly;
+
+impl ContextStrategy for OwnJobOnly {
+    fn project(&self, input: ContextInput) -> Result<Vec<Message>, ContextStrategyError> {
+        let active = input.active_operation_id();
+        Ok(input
+            .entries()
+            .filter(|entry| entry.operation_id() == active)
+            .map(|entry| entry.message().clone())
+            .collect())
+    }
 }
 
 struct ResolvedModel {

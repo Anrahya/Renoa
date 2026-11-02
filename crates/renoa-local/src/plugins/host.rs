@@ -1,8 +1,9 @@
 //! Compiled Host capabilities use the same discovery and invocation boundary as MCP plugins.
 //! Imported manifests cannot register implementations or grant machine access.
 //! A compiled plugin contributes tools, per-message context, session context,
-//! or a mix of them, and may keep some of its tools resident in the agent's own
-//! tool list; see [`resident`].
+//! a trigger the scheduler runs for it, or a mix of them, and may keep some of
+//! its tools resident in the agent's own tool list; see [`resident`] and
+//! [`triggers`].
 
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
@@ -19,6 +20,7 @@ pub(crate) mod session_context;
 pub(crate) mod settings;
 pub(crate) mod state;
 pub(crate) mod time;
+pub(crate) mod triggers;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum HostPluginId {

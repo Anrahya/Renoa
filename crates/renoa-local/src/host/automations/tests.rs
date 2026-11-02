@@ -104,6 +104,17 @@ async fn provisioned(h: &LocalHost) -> (AgentId, AgentId) {
         .await
         .expect("operator")
         .id;
+    // The first agent is the Host's main agent, whose `renoa.memory` nightly
+    // run would be due beside these agents' own automations; it has its own
+    // tests.
+    crate::plugins::host::state::change(
+        &h.config.database,
+        parent,
+        crate::plugins::host::HostPluginId::Memory,
+        false,
+        "no-nightly-memory",
+    )
+    .expect("turn the main agent's memory off");
     let child = h
         .create_agent(
             creator,

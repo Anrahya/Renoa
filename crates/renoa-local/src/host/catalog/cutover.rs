@@ -84,6 +84,7 @@ fn migrate(
             retire_agent_owners(&transaction)?;
             crate::host::definition::schema::initialize(&transaction)?;
             crate::host::automations::initialize(&transaction)?;
+            super::memory_dream::add_triggers_and_memory_jobs(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(

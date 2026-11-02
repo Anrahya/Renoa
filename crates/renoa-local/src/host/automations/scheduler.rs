@@ -1,17 +1,22 @@
 //! The Host side of automation scheduling: admitting due runs and recording
-//! their results. The Host does not execute runs; its scheduler hands each one
-//! to an execution node and records the result the node reports.
+//! their results. The Host does not execute an agent's runs; its scheduler
+//! hands each one to an execution node and records the result the node
+//! reports. A run of a plugin's trigger is the plugin's, and the Host runs it.
 
 use std::path::PathBuf;
 
 use uuid::Uuid;
 
 use super::{
-    AutomationError, AutomationRun, LocalHost, LocalHostError, RunOutcome, retention, runs, store,
+    AutomationError, AutomationRun, LocalHost, LocalHostError, RunOutcome, RunStatus, retention,
+    runs, store,
 };
-use crate::host::{catalog, lease::ExecutionLease};
+use crate::{
+    host::{catalog, lease::ExecutionLease},
+    plugins::host::{HostPluginId, triggers},
+};
 
-/// One admitted run and the conversation it returns to.
+/// One admitted run and where it goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScheduledRun {
     pub run: AutomationRun,
@@ -19,6 +24,25 @@ pub struct ScheduledRun {
     /// created it from one. `None` runs in a conversation of the automation's
     /// own.
     pub origin_session_id: Option<Uuid>,
+    /// The compiled plugin whose trigger this is. Its run is not sent to the
+    /// agent: [`AutomationScheduler::run_for_plugin`] runs it on the Host.
+    pub plugin: Option<&'static str>,
+}
+
+/// How a run of a plugin's trigger ended, to be recorded with
+/// [`AutomationScheduler::finish_plugin_run`].
+#[derive(Debug)]
+#[must_use]
+pub struct PluginRun {
+    run: Uuid,
+    ended: triggers::Ended,
+}
+
+impl PluginRun {
+    #[must_use]
+    pub const fn status(&self) -> RunStatus {
+        self.ended.status
+    }
 }
 
 /// Exclusive ownership of a Host's automation schedule. Dropping it releases
@@ -66,10 +90,64 @@ impl AutomationScheduler {
             };
             let db = catalog::open_verified(&database)?;
             let origin_session_id = store::origin(&db, run.automation_id)?;
+            let plugin = triggers::owner(&db, run.automation_id)
+                .map_err(|error| AutomationError::Invalid(error.to_string()))?
+                .map(HostPluginId::id);
             Ok::<_, AutomationError>(Some(ScheduledRun {
                 run,
                 origin_session_id,
+                plugin,
             }))
+        })
+        .await??)
+    }
+
+    /// Runs one admitted run of a plugin's trigger on `host`, as of
+    /// `now_ms`. Every ending the plugin decides comes back to be recorded;
+    /// a run that stops part way, by a crash or by dropping this future, is
+    /// handed on again by [`Self::next_run`] and resumes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a run no plugin owns.
+    pub async fn run_for_plugin(
+        &self,
+        host: &LocalHost,
+        due: &ScheduledRun,
+        now_ms: i64,
+    ) -> Result<PluginRun, LocalHostError> {
+        let plugin = due.plugin.and_then(HostPluginId::parse).ok_or_else(|| {
+            LocalHostError::InvalidRequest(
+                "an agent's automation run is sent to the agent, not run on the Host".to_owned(),
+            )
+        })?;
+        Ok(PluginRun {
+            run: due.run.id,
+            ended: triggers::run(host, plugin, &due.run, now_ms).await?,
+        })
+    }
+
+    /// Records how a plugin's run ended, which ends it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflict for a run that already has a result.
+    pub async fn finish_plugin_run(
+        &self,
+        finished: PluginRun,
+        now_ms: i64,
+    ) -> Result<(), LocalHostError> {
+        let database = self.database.clone();
+        let PluginRun { run, ended } = finished;
+        Ok(tokio::task::spawn_blocking(move || {
+            runs::end(
+                &database,
+                run,
+                ended.status,
+                &ended.output,
+                ended.failed_tool_calls,
+                now_ms,
+            )
         })
         .await??)
     }

@@ -2,55 +2,56 @@ use std::sync::Arc;
 
 use renoa_agent::{AgentEventSink, ContentBlock};
 use renoa_agent_loop::AgentCommand;
-use renoa_kernel::{CancellationId, CommandId};
+use renoa_kernel::{CancellationId, CommandId, Runtime};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
     AgentSession,
     context::{MESSAGE_CONTEXT_TRACE, SESSION_CONTEXT_TRACE, record_skipped},
+    memory_job::MemoryJob,
 };
 use crate::{
     LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, Speaker, TurnObservation,
     agent_trace::finish_trace,
     host::{RuntimeRequest, resolve_runtime},
-    plugins::host::message_context,
+    plugins::host::{Skipped, message_context},
     session::PromptAdmission,
     speaker::ToolAccess,
     trace::{ObservedEventSink, TraceRun},
 };
 
-enum SessionCommand {
+pub(super) enum SessionCommand {
     Prompt(Prompt),
     Compact,
+    MemoryJob(MemoryJob),
 }
 
 /// One user message, with when and where it was received and who sent it.
-struct Prompt {
+pub(super) struct Prompt {
     content: Vec<ContentBlock>,
     observation: TurnObservation,
     speaker: Speaker,
 }
 
 impl SessionCommand {
-    /// The person this turn talks to, whose `USER.md` it reads and may edit.
-    const fn principal(&self) -> Option<Uuid> {
+    /// For a command of the agent's conversation, the person its turn talks
+    /// to, whose `USER.md` it reads and may edit, and whether its tool calls
+    /// run. A memory job is no conversation: its runtime is its own.
+    const fn conversation(&self) -> Option<(Option<Uuid>, ToolAccess)> {
         match self {
-            Self::Prompt(prompt) => prompt.speaker.principal(),
-            Self::Compact => None,
-        }
-    }
-
-    const fn tool_access(&self) -> ToolAccess {
-        match self {
-            Self::Prompt(prompt) => prompt.speaker.tool_access(),
-            Self::Compact => ToolAccess::Granted,
+            Self::Prompt(prompt) => {
+                Some((prompt.speaker.principal(), prompt.speaker.tool_access()))
+            }
+            Self::Compact => Some((None, ToolAccess::Granted)),
+            Self::MemoryJob(_) => None,
         }
     }
 
     fn content(&self) -> Option<&[ContentBlock]> {
         match self {
             Self::Prompt(prompt) => Some(&prompt.content),
+            Self::MemoryJob(job) => Some(&job.content),
             Self::Compact => None,
         }
     }
@@ -59,6 +60,7 @@ impl SessionCommand {
         match self {
             Self::Prompt(_) => "prompt",
             Self::Compact => "compact",
+            Self::MemoryJob(_) => "memory_job",
         }
     }
 }
@@ -232,7 +234,7 @@ impl AgentSession {
         )?)
     }
 
-    async fn execute(
+    pub(super) async fn execute(
         &self,
         request_id: Uuid,
         command: SessionCommand,
@@ -246,10 +248,7 @@ impl AgentSession {
             return Ok(outcome);
         }
         let compact_trace = [ContentBlock::text("/compact")];
-        let trace_content = match &command {
-            SessionCommand::Prompt(prompt) => prompt.content.as_slice(),
-            SessionCommand::Compact => compact_trace.as_slice(),
-        };
+        let trace_content = command.content().unwrap_or(compact_trace.as_slice());
         let trace = match self
             .trace
             .start_run(
@@ -321,11 +320,9 @@ impl AgentSession {
                 .cancelled_outcome(request_id, &command, &cancellation)?
                 .ok_or_else(|| error.into());
         }
-        let replay = match &command {
-            SessionCommand::Prompt(prompt) => self
-                .kernel
-                .replay_settled_turn(command_id, &prompt.content)?,
-            SessionCommand::Compact => self.kernel.replay_settled_compaction(command_id)?,
+        let replay = match command.content() {
+            Some(content) => self.kernel.replay_settled_turn(command_id, content)?,
+            None => self.kernel.replay_settled_compaction(command_id)?,
         };
         if let Some(outcome) = replay {
             trace
@@ -340,33 +337,16 @@ impl AgentSession {
         if let Some(outcome) = self.cancelled_outcome(request_id, &command, &cancellation)? {
             return Ok(outcome);
         }
-        let resolved = async {
-            let workspace = LocalWorkspace::open(&self.workspace)?;
-            let (session_context, context_skipped) = self
-                .session_context(command_id, command.principal())
-                .await?;
-            let definition = self
-                .definition()
-                .await?
-                .with_principal(command.principal())
-                .with_session_context(session_context);
-            let runtime = resolve_runtime(
-                &self.host,
-                RuntimeRequest {
-                    definition: &definition,
-                    session_id: renoa_kernel::SessionId::from_uuid(self.id),
-                    command_id: Some(command_id),
-                    model: &model,
-                    reasoning,
-                    workspace: &workspace,
-                    events: Some(events),
-                    tools: command.tool_access(),
-                },
-            )
-            .await?;
-            Ok((runtime, context_skipped))
-        }
-        .await;
+        let resolved = match command.conversation() {
+            None => self
+                .memory_job_runtime(&model, reasoning, events)
+                .await
+                .map(|runtime| (runtime, Vec::new())),
+            Some((principal, tools)) => {
+                self.conversation_runtime(command_id, principal, tools, &model, reasoning, events)
+                    .await
+            }
+        };
         let runtime = match resolved {
             Ok((runtime, context_skipped)) => {
                 record_skipped(trace, SESSION_CONTEXT_TRACE, command_id, &context_skipped).await;
@@ -390,7 +370,48 @@ impl AgentSession {
                 .kernel
                 .execute_compaction(command_id, &runtime, cancellation)
                 .await?),
+            SessionCommand::MemoryJob(job) => {
+                self.admit_memory_job(command_id, job, &runtime, cancellation)
+                    .await
+            }
         }
+    }
+
+    /// The runtime a command of the agent's conversation runs with: its
+    /// definition, with the person it talks to and their session context, and
+    /// the tools `tools` grants.
+    async fn conversation_runtime(
+        &self,
+        command_id: CommandId,
+        principal: Option<Uuid>,
+        tools: ToolAccess,
+        model: &ModelChoice,
+        reasoning: crate::ReasoningLevel,
+        events: Arc<dyn AgentEventSink>,
+    ) -> Result<(Runtime, Vec<Skipped>), LocalHostError> {
+        let workspace = LocalWorkspace::open(&self.workspace)?;
+        let (session_context, context_skipped) =
+            self.session_context(command_id, principal).await?;
+        let definition = self
+            .definition()
+            .await?
+            .with_principal(principal)
+            .with_session_context(session_context);
+        let runtime = resolve_runtime(
+            &self.host,
+            RuntimeRequest {
+                definition: &definition,
+                session_id: renoa_kernel::SessionId::from_uuid(self.id),
+                command_id: Some(command_id),
+                model,
+                reasoning,
+                workspace: &workspace,
+                events: Some(events),
+                tools,
+            },
+        )
+        .await?;
+        Ok((runtime, context_skipped))
     }
 
     /// Admits a prompt with the context its surface and enabled plugins

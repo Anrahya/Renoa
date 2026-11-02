@@ -2,7 +2,7 @@ use super::{
     AutomationError, AutomationMutation, AutomationRecord, AutomationSchedule, AutomationSpec,
     receipts::AutomationActor,
 };
-use crate::host::catalog;
+use crate::{host::catalog, plugins::host::triggers::PLUGIN_OWNED};
 use renoa_kernel::AgentId;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use std::path::Path;
@@ -154,7 +154,7 @@ pub(super) fn mutate(
     Ok(record)
 }
 
-fn updated_record(
+pub(super) fn updated_record(
     old: &AutomationRecord,
     expected_revision: i64,
     spec: AutomationSpec,
@@ -296,15 +296,24 @@ fn json_column<T: serde::de::DeserializeOwned>(
         rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(e))
     })
 }
+/// One automation an agent or the owner may read and change: not deleted,
+/// and not a plugin's.
 pub(super) fn get(db: &Connection, id: Uuid) -> Result<AutomationRecord, AutomationError> {
-    db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id)",[id.to_string()],record).optional()?.ok_or(AutomationError::NotFound)
+    db.query_row(&format!("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND id NOT IN ({PLUGIN_OWNED})"),[id.to_string()],record).optional()?.ok_or(AutomationError::NotFound)
+}
+/// Any stored automation, a plugin's included.
+pub(super) fn stored(
+    db: &Connection,
+    id: Uuid,
+) -> Result<Option<AutomationRecord>, AutomationError> {
+    Ok(db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE id=?1",[id.to_string()],record).optional()?)
 }
 pub(super) fn list(
     db: &Connection,
     agent: AgentId,
     after: Option<Uuid>,
 ) -> Result<Vec<AutomationRecord>, AutomationError> {
-    let mut query=db.prepare("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE agent_id=?1 AND id>?2 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) ORDER BY id LIMIT 20")?;
+    let mut query=db.prepare(&format!("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE agent_id=?1 AND id>?2 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND id NOT IN ({PLUGIN_OWNED}) ORDER BY id LIMIT 20"))?;
     Ok(query
         .query_map(
             params![
