@@ -1,5 +1,5 @@
 use super::{AutomationError, AutomationRun, LocalHost, LocalHostError, RunStatus, runs, store};
-use crate::host::catalog;
+use crate::{host::catalog, plugins::host::triggers::PLUGIN_OWNED};
 use renoa_kernel::AgentId;
 use rusqlite::{OptionalExtension as _, params};
 use serde::Serialize;
@@ -33,7 +33,7 @@ impl LocalHost {
         Ok(tokio::task::spawn_blocking(move || {
             let db = catalog::open_verified(&path)?;
             store::authorize(&db, actor, agent)?;
-            let mut q = db.prepare("SELECT sequence,id,automation_id,due_ms,substr(submission,1,240),status,failed_tool_calls FROM host_automation_runs WHERE agent_id=?1 AND output IS NOT NULL AND (?2 IS NULL OR sequence<?2) ORDER BY sequence DESC LIMIT 20")?;
+            let mut q = db.prepare(&format!("SELECT sequence,id,automation_id,due_ms,substr(submission,1,240),status,failed_tool_calls FROM host_automation_runs WHERE agent_id=?1 AND output IS NOT NULL AND (?2 IS NULL OR sequence<?2) AND automation_id NOT IN ({PLUGIN_OWNED}) ORDER BY sequence DESC LIMIT 20"))?;
             let records = q.query_map(params![agent.to_string(),before], |r| Ok(AutomationResultSummary {
                 sequence:r.get(0)?, id:store::parse(r,1)?, automation_id:store::parse(r,2)?, due_ms:r.get(3)?, task_excerpt:r.get(4)?,
                 status:r.get(5)?, failed_tool_calls:r.get(6)?,
@@ -56,7 +56,7 @@ impl LocalHost {
             let run = db
                 .query_row(
                     &format!(
-                        "SELECT {} FROM host_automation_runs WHERE id=?1",
+                        "SELECT {} FROM host_automation_runs WHERE id=?1 AND automation_id NOT IN ({PLUGIN_OWNED})",
                         runs::RUN_COLUMNS
                     ),
                     [id.to_string()],

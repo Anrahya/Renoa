@@ -11,7 +11,7 @@ use super::{
     AutomationError, AutomationRecord, AutomationRun, RunOutcome, RunResult, RunStatus, retention,
     store,
 };
-use crate::host::catalog;
+use crate::{host::catalog, plugins::host::triggers::PLUGIN_OWNED};
 
 /// Every read of a run selects these columns, in the order [`run`] maps them.
 pub(super) const RUN_COLUMNS: &str = "sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,submission,output,status,failed_tool_calls,finished_at_ms";
@@ -97,7 +97,8 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
 }
 
 /// Called only while holding the Host scheduler process lease. Returns the
-/// oldest unfinished run, or admits the next due occurrence. Admission and
+/// oldest unfinished run, or converges every plugin's trigger and admits the
+/// next due occurrence. Admission and
 /// advancing the clock commit together; unfinished runs retain their command
 /// ID. An occurrence admitted later than its schedule allows is recorded as
 /// skipped in the same transaction and returned finished, so the scheduler
@@ -115,8 +116,13 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
     if pending.is_some() {
         return Ok(pending);
     }
+    super::owned::converge(&tx, now_ms)?;
     let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) ORDER BY next_due_ms,id LIMIT 1",[now_ms],store::record).optional()?;
-    let Some(mut r) = due else { return Ok(None) };
+    let Some(mut r) = due else {
+        // The converged triggers stand whether or not a run is due.
+        tx.commit()?;
+        return Ok(None);
+    };
     let id = crate::stable_id::stable_id(&format!(
         "renoa.automation.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
@@ -149,8 +155,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
     Ok(Some(admitted))
 }
 
-/// Records an executed run's outcome, which ends it, then applies its
-/// automation's retention: the run limit, and the purge a deletion waited for.
+/// Records an executed run's outcome, which ends it; see [`end`].
 pub(super) fn finish(
     path: &Path,
     id: Uuid,
@@ -159,16 +164,31 @@ pub(super) fn finish(
 ) -> Result<(), AutomationError> {
     let (RunOutcome::Succeeded { answer: output, .. } | RunOutcome::Failed { reason: output, .. }) =
         outcome;
-    let mut db = catalog::open_verified(path)?;
-    let tx = db.transaction()?;
-    let automation = record(
-        &tx,
+    end(
+        path,
         id,
         outcome.status(),
         output,
         Some(outcome.failed_tool_calls()),
         now_ms,
-    )?;
+    )
+}
+
+/// Ends an unfinished run with `status`, then applies its automation's
+/// retention: the run limit, and the purge a deletion waited for. Only the
+/// Host skips: an executor reports through [`finish`], and a plugin that owns
+/// the run decides its status itself.
+pub(super) fn end(
+    path: &Path,
+    id: Uuid,
+    status: RunStatus,
+    output: &str,
+    failed_tool_calls: Option<u32>,
+    now_ms: i64,
+) -> Result<(), AutomationError> {
+    let mut db = catalog::open_verified(path)?;
+    let tx = db.transaction()?;
+    let automation = record(&tx, id, status, output, failed_tool_calls, now_ms)?;
     let removed = [
         retention::keep_newest(&tx, automation)?,
         retention::purge_deleted(&tx, automation)?,
@@ -199,7 +219,7 @@ fn record(
 
 pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, AutomationError> {
     let db = catalog::open_verified(path)?;
-    let mut q=db.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL) ORDER BY sequence LIMIT 20"))?;
+    let mut q=db.prepare(&format!("SELECT {RUN_COLUMNS} FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND automation_id NOT IN ({PLUGIN_OWNED}) AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL) ORDER BY sequence LIMIT 20"))?;
     Ok(q.query_map([after], run)?.collect::<Result<Vec<_>, _>>()?)
 }
 

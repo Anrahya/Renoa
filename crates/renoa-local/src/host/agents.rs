@@ -36,6 +36,11 @@ impl LocalHost {
         &self.config.home
     }
 
+    /// The Host catalog this Host reads and writes.
+    pub(crate) fn database(&self) -> &std::path::Path {
+        &self.config.database
+    }
+
     /// Returns the durable identity of this Host data root.
     ///
     /// # Errors

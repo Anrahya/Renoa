@@ -22,6 +22,7 @@ use crate::{
 
 mod context;
 mod execution;
+mod memory_job;
 
 /// One durable Agent session assembled from one canonical agent definition.
 pub struct AgentSession {

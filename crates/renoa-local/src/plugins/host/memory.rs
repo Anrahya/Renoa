@@ -29,6 +29,10 @@ use crate::documents::{existing_person_directory, prepare_person_directory, prof
 mod context;
 #[cfg(test)]
 pub(crate) mod fixtures;
+pub(crate) mod jobs;
+pub(crate) mod nightly;
+pub(crate) mod pass;
+pub(crate) mod sessions;
 mod tools;
 
 pub(crate) use context::{SESSION_BLOCK_MAX, message_entry, notebook_zone, session_block};
@@ -156,6 +160,23 @@ pub(crate) fn mind(data_directory: &Path, principal: Uuid) -> Result<Option<Mind
 /// The person's notebook opened for reading, which creates nothing; `None`
 /// when they have none.
 fn read_only(data_directory: &Path, principal: Uuid) -> Result<Option<Memory>, ToolError> {
+    existing(data_directory, principal, Memory::open_read_only)
+}
+
+/// The person's notebook opened for its compaction and Dream jobs, which
+/// creates nothing; `None` when they have none.
+pub(crate) fn for_jobs(
+    data_directory: &Path,
+    principal: Uuid,
+) -> Result<Option<Memory>, ToolError> {
+    existing(data_directory, principal, Memory::open)
+}
+
+fn existing(
+    data_directory: &Path,
+    principal: Uuid,
+    open: fn(&Path) -> Result<Memory, MemoryError>,
+) -> Result<Option<Memory>, ToolError> {
     let Some(person) = existing_person_directory(data_directory, principal)
         .map_err(|error| profile_error(&error))?
     else {
@@ -164,7 +185,7 @@ fn read_only(data_directory: &Path, principal: Uuid) -> Result<Option<Memory>, T
     let Some(notebook) = notebook_in(&person)? else {
         return Ok(None);
     };
-    match Memory::open_read_only(&notebook) {
+    match open(&notebook) {
         Ok(memory) => Ok(Some(memory)),
         // A directory without a log is not a notebook yet.
         Err(MemoryError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => Ok(None),

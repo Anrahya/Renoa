@@ -34,7 +34,7 @@ use files::{
 use profile::PersonProfile;
 pub use profile::UserProfile;
 pub(crate) use profile::{
-    existing_person_directory, prepare_person_directory, profile_error, read_user_profile,
+    existing_person_directory, people, prepare_person_directory, profile_error, read_user_profile,
     replace_user_profile,
 };
 pub(crate) use publication::SoulPublication;

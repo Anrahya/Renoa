@@ -580,7 +580,8 @@ grants remain owner-controlled and cannot be added to the caller by plugin
 management. Every created agent receives the plugin protocol regardless of its
 machine selection. Schema 32 owns these activation records alongside external
 plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings, and
-schema 43 adds `renoa.memory`.
+schema 43 adds `renoa.memory`, and schema 44 adds plugin-owned triggers and
+`renoa.memory`'s job receipts and memory session generations.
 
 ## Contribution model
 
@@ -605,9 +606,10 @@ field on every plugin.
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
 | `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
+| `triggers`: an automation a compiled plugin owns and keeps converged | implemented, for `renoa.memory` |
 | `delivery`: private owner channels offered by surfaces | planned, for #104 and #86 |
 
-Other points (triggers, views) are named only as direction.
+Other points (views) are named only as direction.
 They get no type, table, or field until a consumer and a test prove their
 shape.
 
@@ -750,8 +752,109 @@ person's long-term profile, the facts unlikely to change soon; anything else
 worth knowing next time, such as habits and preferences that can shift, plans,
 and dated events, goes to the notebook.
 Surfaces that admit messages as an unidentified speaker, Telegram and Slack
-today, have no notebook. Mnem's compaction, Dream, agenda and heartbeat are
-later steps and do not run yet.
+today, have no notebook. Mnem's agenda and heartbeat are later steps and do
+not run yet.
+
+### Triggers
+
+A trigger is an automation a compiled plugin owns. Each plugin has one owner
+function that says which automation it wants from the catalog's current
+state; the scheduler converges the stored automation to it before it looks
+for a due run, in the same transaction, creating, updating or disabling it.
+Its id is derived from the plugin and the agent, so convergence never
+duplicates it. `host_plugin_triggers` records the owner. No agent creates,
+lists, reads, changes or runs a plugin-owned automation through
+`automation_manage` or `automation_results`, and its runs are not agent
+work: the node hands a due run to its plugin instead of submitting a turn.
+Inventory shows each automation's owning plugin, its next due time, and the
+last run's summary, which names job kinds and outcomes and never note text.
+
+### `renoa.memory`'s nightly run
+
+`renoa.memory` wants one trigger: Mnem's pass day start, 11:00, every day in the notebook zone, for
+the Host's main agent while the plugin is on for it. When the main agent
+changes, the next convergence disables the old agent's trigger and creates
+the new one's; when the plugin is turned off, the trigger is disabled, and a
+run already started stops before its next job. A cron schedule names an IANA
+zone, so a notebook zone without one, such as a fixed offset, a `TZ` rule, or
+a zone file with no name such as a copied `/etc/localtime`, is scheduled in
+UTC at the minute its own offset reads 11:00, the minute the Dream's `Now:`
+shows; convergence moves it when that offset changes, so a rule zone still
+runs once a night at 11:00 on each side of a daylight-saving change. A Host
+down across both the change and the old fire time skips that night under
+this fallback, since the moved schedule is due again only from when it comes
+back; an IANA zone's missed night catches up instead.
+
+A run works through every person's notebook in turn: compaction while Mnem
+has a summary due, then one nightly Dream with the person's `USER.md`, asked
+again after a stale job. A job is stale only when another dream moved the
+watermark first, or the notebook shrank below the job's end; new notes do
+not make it stale. Compaction spends at most 32 turns on a notebook and
+Dream at most 3; a notebook the compaction bound stops with summaries still
+due is logged and named in the run's summary, and the rest waits for the next
+night. The compaction of a pass takes the pass's own run id, so a later pass
+can run it outside the nightly run.
+
+Each job runs in the main agent's memory session, a Host-owned session
+apart from its conversations. The Host freezes the job's Mnem id, prompt and
+wall time in `host_memory_jobs` under a derived command id before the
+command is admitted, so a retry reuses the stored command and the Dream's
+prompt keeps its time. The turn has no tools and a fixed system prompt, and
+sees only its own job: the prompt Mnem wrote carries every fact it needs,
+the person's previous `MIND.md` and `USER.md` included for a Dream, and
+nothing from a conversation or another job enters it. A Host step after the
+turn applies the answer to the notebook with the frozen time and writes the
+job's receipt. The next run settles a job a stopped run left before it
+starts another. Mnem settles a compaction answer applied twice, so that
+answer is applied again. Dream counts a declined answer and a draft it
+rejects toward giving up each time either is applied, and counts none of
+its errors (a stale job, a busy notebook, one it cannot read or write); so a
+Dream job is marked before its apply, and a marked job is closed as
+interrupted instead of applied again.
+
+A job whose command cannot run, say because the session's model is gone or
+its stored runtime no longer matches after an upgrade, stays for the next
+run, which resumes it in the same session. It counts once per distinct run
+that failed it in `host_memory_jobs`, however often that run tried, a run
+resumed after a restart included; once three runs have, it is closed as
+abandoned, without an answer, so Mnem never applies or counts it, and the
+agent moves to a new memory session generation, recorded with why in
+`host_memory_sessions`. The move compares the generation the run observed
+and changes nothing when the agent already moved past it. A session's id
+derives from the agent and its generation, and earlier sessions stay stored
+and readable. A stored session that cannot open with no job pending counts
+the same way, on its generation, and moves the agent on after three runs;
+one that was never stored, or whose storage cannot be read, is not moved
+past, since a new one would fail the same way.
+
+A turn the model ended itself answers: with text, a reply; with none, a
+decline. A reply stopped at the output limit, or for a tool it was never
+offered, is incomplete. A Dream takes its text as a reply, and Mnem rejects
+a draft without its closing tag and counts it: three cut Dream nights in a
+row make Mnem give up on that batch, so those notes stay in the notebook but
+never reach `MIND.md`. Each such turn emits a warn-level `memory_turn_cut`
+event to catch that before the third night. Compaction declines a cut line,
+so Mnem saves a mechanical cut of the block rather than half a line. A cut
+turn with no text at all is recorded as `truncated`, applies nothing, counts
+toward nothing, and stops only that person's notebook. A turn that failed or
+was cancelled is recorded as unanswered and applies nothing. A provider
+refusal reaches Renoa as a failed turn, or, from a provider that sends it as
+text, as a reply, so it is never recorded as a decline. Mnem's verdict
+decides what comes next: a saved, settled or retried summary continues, and
+a stale Dream is asked again. An invalid answer, or a notebook that cannot
+be read or written, stops that job's kind for the person; a failed
+compaction still lets their Dream run, since Dream reads the notes after its
+watermark with an overview of the notebook that includes summaries, so
+missing summaries only thin the overview, and a notebook that cannot be
+opened at all is skipped. The run goes on to the next person and ends
+failed, naming one cause once when both of a person's jobs stopped for it.
+Only a model that failed ends the run failed, and a notebook another dream
+holds ends it. Each job emits a `memory_job` telemetry event with its kind,
+outcome and duration, and as its detail how a compaction summary was written
+(`ByModel`, `CutReply` or `CutInput`) or why a Dream draft was rejected; a
+job that could not settle emits one as `unsettled`, a compaction bound
+reached emits `memory_compaction_bounded`, and a move to a new session emits
+`memory_session_moved`.
 
 ### What stays closed
 

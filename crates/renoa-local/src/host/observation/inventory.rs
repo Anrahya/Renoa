@@ -3,7 +3,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::{HostCatalogError, parse_id};
-use crate::{AutomationSchedule, RunStatus};
+use crate::{AutomationSchedule, RunStatus, plugins::host::triggers::PLUGIN_OWNED};
 
 #[derive(Debug, Serialize)]
 pub struct ObservedAgent {
@@ -18,6 +18,9 @@ pub struct ObservedAgent {
 pub struct ObservedAutomation {
     pub id: Uuid,
     pub agent_id: Uuid,
+    /// The compiled plugin whose trigger this is, which no agent sees; null
+    /// for an automation an agent or the owner made.
+    pub plugin: Option<String>,
     pub name: String,
     pub schedule: AutomationSchedule,
     pub enabled: bool,
@@ -41,6 +44,10 @@ pub struct ObservedRun {
     pub finished_at_ms: Option<i64>,
     /// `None` for a skipped run and for runs recorded before schema 37.
     pub failed_tool_calls: Option<u32>,
+    /// How a plugin's run went, in the words of the Host, which never quote
+    /// a note or an answer; null for an agent's run, whose result is the
+    /// agent's own text and stays out of inspection.
+    pub summary: Option<String>,
 }
 
 /// The process owning the automation schedule records a heartbeat
@@ -120,7 +127,8 @@ pub(super) fn automations(db: &Connection) -> Result<Vec<ObservedAutomation>, Ho
         (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.output IS NULL),
         (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.output IS NOT NULL),
         (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.status='failed'),
-        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.status='skipped')
+        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.status='skipped'),
+        (SELECT t.plugin_id FROM host_plugin_triggers t WHERE t.automation_id=r.id)
         FROM host_automations r WHERE NOT EXISTS (SELECT 1 FROM host_automation_deletions d WHERE d.automation_id=r.id)
         ORDER BY r.id")?;
     let mut rows = q.query([])?;
@@ -129,6 +137,7 @@ pub(super) fn automations(db: &Connection) -> Result<Vec<ObservedAutomation>, Ho
         items.push(ObservedAutomation {
             id: parse_id(&row.get::<_, String>(0)?)?,
             agent_id: parse_id(&row.get::<_, String>(1)?)?,
+            plugin: row.get(11)?,
             name: row.get(2)?,
             schedule: serde_json::from_str(&row.get::<_, String>(3)?)
                 .map_err(|e| HostCatalogError::Invalid(format!("invalid schedule: {e}")))?,
@@ -150,8 +159,12 @@ pub(super) fn automations(db: &Connection) -> Result<Vec<ObservedAutomation>, Ho
 
 fn last_run(db: &Connection, automation: Uuid) -> Result<Option<ObservedRun>, HostCatalogError> {
     db.query_row(
-        "SELECT id,status,due_ms,finished_at_ms,failed_tool_calls FROM host_automation_runs
-         WHERE automation_id=?1 AND output IS NOT NULL ORDER BY sequence DESC LIMIT 1",
+        &format!(
+            "SELECT id,status,due_ms,finished_at_ms,failed_tool_calls,
+                CASE WHEN automation_id IN ({PLUGIN_OWNED}) THEN output END
+             FROM host_automation_runs
+             WHERE automation_id=?1 AND output IS NOT NULL ORDER BY sequence DESC LIMIT 1"
+        ),
         [automation.to_string()],
         |row| {
             Ok((
@@ -160,19 +173,23 @@ fn last_run(db: &Connection, automation: Uuid) -> Result<Option<ObservedRun>, Ho
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
             ))
         },
     )
     .optional()?
-    .map(|(id, status, due_ms, finished_at_ms, failed_tool_calls)| {
-        Ok(ObservedRun {
-            id: parse_id(&id)?,
-            status,
-            due_ms,
-            finished_at_ms,
-            failed_tool_calls,
-        })
-    })
+    .map(
+        |(id, status, due_ms, finished_at_ms, failed_tool_calls, summary)| {
+            Ok(ObservedRun {
+                id: parse_id(&id)?,
+                status,
+                due_ms,
+                finished_at_ms,
+                failed_tool_calls,
+                summary,
+            })
+        },
+    )
     .transpose()
 }
 
