@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use super::protocol_bindings;
 use crate::plugins::host::HostPluginId;
+use crate::speaker::ToolAccess;
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
     LocalHost, LocalHostAdapters, LocalModelConfiguration, LocalTurnOutcome, ModelProvider,
@@ -113,6 +114,7 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         &workspace,
         SessionId::from_uuid(Uuid::new_v4()),
         None,
+        ToolAccess::Granted,
         Vec::new(),
     )
     .expect("protocol");
@@ -213,6 +215,7 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             &workspace,
             SessionId::from_uuid(Uuid::new_v4()),
             None,
+            ToolAccess::Granted,
             Vec::new()
         )
         .unwrap()

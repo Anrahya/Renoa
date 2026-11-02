@@ -18,11 +18,11 @@ use crate::{
 /// Renoa's built-in coding agent seed.
 pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v3";
 /// Renoa's personal operator agent seed.
-pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v4";
+pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v5";
 /// The seed general purpose agents can use.
 pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 /// The seed for the everyday helpers people make in the app.
-pub(crate) const APP_PRESET_ID: &str = "renoa.app.v2";
+pub(crate) const APP_PRESET_ID: &str = "renoa.app.v3";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
@@ -258,11 +258,11 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "582f5205341d48cda19c066d113cbf678017e7ab187ec9420349840bd16329c4",
+            "c4a4c66b6ab84ac904e6ba8cc9eed1fc481fc96beb2105f1dbc47f7698c17b41",
         ),
         (
             ARCEE_PRESET_ID,
-            "9723236d71767a2bc28799d2009433403add63c6bb09550b67f8f3234eae76ca",
+            "6bc02c9e1151d06b4b53bb41e9155d0d2672084bcf086342b3af41aad30fb066",
         ),
         (
             GENERAL_PRESET_ID,
@@ -343,18 +343,28 @@ mod tests {
         ));
     }
 
-    /// A preset that keeps USER.md says what it holds the way `agent_documents`
-    /// does: lasting facts there, time-bound things in the notebook.
+    /// A preset that keeps USER.md draws its line the way `agent_documents`
+    /// does: what is unlikely to change soon there, anything else worth
+    /// knowing in the notebook.
     #[test]
-    fn a_preset_with_user_md_sends_time_bound_things_to_memory_note() {
+    fn a_preset_with_user_md_sends_everything_else_to_memory_note() {
         for preset in super::catalog() {
             let seed = preset.seed();
             if !seed.documents.is_some_and(|documents| documents.user) {
                 continue;
             }
             let id = preset.id().as_str();
-            assert!(seed.instructions.contains("memory_note"), "{id}");
-            for retired in ["goals, commitments", "schedule information"] {
+            for owned in [
+                "unlikely to change soon",
+                "anything else worth knowing next time with memory_note",
+            ] {
+                assert!(seed.instructions.contains(owned), "{id}: {owned}");
+            }
+            for retired in [
+                "goals, commitments",
+                "schedule information",
+                "rarely change",
+            ] {
                 assert!(!seed.instructions.contains(retired), "{id}: {retired}");
             }
         }

@@ -6,7 +6,7 @@ const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")
 const example: HostSnapshot = {
   host_id: id(1),
   agents: [
-    { id: id(2), name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v4" },
+    { id: id(2), name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v5" },
     { id: id(3), name: "X Desk", created_by: id(2), preset_id: "renoa.coding.alpha.v3" },
     { id: id(4), name: "Soundwave", created_by: id(2), preset_id: "renoa.general.v1" },
   ],

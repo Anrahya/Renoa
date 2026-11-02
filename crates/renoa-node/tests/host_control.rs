@@ -639,12 +639,12 @@ async fn an_app_agent_speaks_from_its_soul_and_keeps_the_owners_profile() {
         let f = Fixture::serving().await;
         let body = json!({
             "operation_id": Uuid::new_v4(),
-            "preset_id": "renoa.app.v2",
+            "preset_id": "renoa.app.v3",
             "name": "Kcal",
             "purpose": "Count my calories.",
         });
         let (id, record) = make_agent(&f, &body).await;
-        assert_eq!(record["preset_id"], "renoa.app.v2");
+        assert_eq!(record["preset_id"], "renoa.app.v3");
         assert_eq!(
             record["operational"]["documents"],
             json!({"soul": true, "user": true})
@@ -759,7 +759,7 @@ async fn a_served_general_agent_moves_onto_the_app_preset_between_turns() {
 
         let moved = f
             .host
-            .move_agent_to_preset(id, AgentPresetId::new("renoa.app.v2").expect("preset id"))
+            .move_agent_to_preset(id, AgentPresetId::new("renoa.app.v3").expect("preset id"))
             .await
             .expect("move");
         assert!(moved.changed);
@@ -777,7 +777,7 @@ async fn a_served_general_agent_moves_onto_the_app_preset_between_turns() {
         );
         let definition = f.browser.json_of(&format!("/v1/host/agents/{id}")).await;
         assert_eq!(definition["name"], "Renoa");
-        assert_eq!(definition["preset_id"], "renoa.app.v2");
+        assert_eq!(definition["preset_id"], "renoa.app.v3");
         assert_eq!(definition["tool_selection"], record["tool_selection"]);
         f.close().await;
     }))
@@ -840,7 +840,7 @@ async fn seed_automation(host: &LocalHost) -> AutomationRecord {
         .create_agent(
             creator(),
             AgentCreationOrigin::Provisioning,
-            provision("renoa.personal.arcee.v4", "Arcee"),
+            provision("renoa.personal.arcee.v5", "Arcee"),
             CancellationToken::new(),
         )
         .await

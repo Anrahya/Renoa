@@ -299,7 +299,9 @@ async fn an_unreadable_soul_fails_closed() {
 async fn an_agent_on_a_retired_preset_id_moves_onto_its_successor() {
     for (retired, current) in [
         ("renoa.app.v1", APP_PRESET_ID),
+        ("renoa.app.v2", APP_PRESET_ID),
         ("renoa.personal.arcee.v3", ARCEE_PRESET_ID),
+        ("renoa.personal.arcee.v4", ARCEE_PRESET_ID),
     ] {
         let (directory, host) = fixture();
         let (creator, origin) = system("test");
