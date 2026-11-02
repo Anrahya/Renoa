@@ -266,7 +266,7 @@ pub(in crate::host) fn insert_first_automation(
 }
 
 pub(super) fn save(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     r: &AutomationRecord,
     create: bool,
 ) -> Result<(), AutomationError> {

@@ -59,6 +59,34 @@ pub enum HostCatalogError {
     Invalid(String),
 }
 
+impl crate::LocalHostError {
+    /// Whether this failure is SQLite finding the database busy or locked:
+    /// another writer held it past the busy timeout, so a later attempt may
+    /// succeed. Every other failure would happen again.
+    #[must_use]
+    pub fn catalog_busy(&self) -> bool {
+        let mut next: Option<&(dyn std::error::Error + 'static)> = Some(self);
+        while let Some(error) = next {
+            let code = error
+                .downcast_ref::<rusqlite::Error>()
+                .and_then(rusqlite::Error::sqlite_error_code)
+                .or_else(|| {
+                    error
+                        .downcast_ref::<rusqlite::ffi::Error>()
+                        .map(|error| error.code)
+                });
+            if matches!(
+                code,
+                Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+            ) {
+                return true;
+            }
+            next = error.source();
+        }
+        false
+    }
+}
+
 const SCHEMA: &str = "
     CREATE TABLE host_metadata (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

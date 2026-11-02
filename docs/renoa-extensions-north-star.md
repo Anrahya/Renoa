@@ -933,14 +933,18 @@ The person's message cancels a pass: their surface's claim cancels the
 pass's command, which aborts an in-flight model call, and waits for the pass
 to settle, at most 20 seconds; past that the message is refused with nothing
 run, to be sent again. An agent's automation run the scheduler is
-delivering waits again instead, under the run's own command id, so a pass
-slow to stop never fails a reminder. Cancelling the turn while it waits, by
-ACP's cancel or the caller's own cancellation, ends it with nothing run; a
-command the kernel had already admitted is refused instead, to be sent
-again, since only the claim settles it. A command cancelled while its
-runtime resolves is not admitted. A surface
-that opens a session a pass is still loading cancels the pass first and
-waits for the load no longer than for the claim. The pass's outcome is
+delivering waits again instead, under the run's own command id, and so does
+any command when the catalog cannot say whether it is one, so a pass slow to
+stop does not fail a reminder. Cancelling the turn while it waits, by ACP's
+cancel or the caller's own cancellation, ends it with nothing run; a command
+the kernel had already admitted waits on uncancelled, since only the claim
+settles it, and is then settled as cancelled, so it is not left unfinished.
+A command cancelled while its runtime resolves is not admitted. Opening a
+session claims nothing and cancels no pass, since a load does not watch
+cancellation and a surface may open a session, as ACP's `load_session`
+does, without sending anything; it waits for another opener's load no
+longer than for the claim, and is then refused, to be sent again. The
+pass's outcome is
 recorded before its claim is released, unless its command could not run or
 the record failed, and then the pass is closed before the person's message.
 Inspecting a conversation's history and deleting it claim it the same way,

@@ -840,3 +840,37 @@ fn schema_39_records_the_conversations_of_automations_it_already_purged() {
         "a live automation keeps its conversation"
     );
 }
+
+#[test]
+fn only_a_busy_or_locked_catalog_is_busy() {
+    use crate::{LocalHostError, host::automations::AutomationError};
+
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    initialize(&database).expect("initialize current catalog");
+    let holder = open_verified(&database).expect("open the holder");
+    let waiting = open_verified(&database).expect("open the waiter");
+    holder
+        .execute_batch("BEGIN EXCLUSIVE")
+        .expect("hold the catalog");
+    waiting
+        .busy_timeout(std::time::Duration::ZERO)
+        .expect("no busy wait");
+    let busy = || {
+        waiting
+            .execute_batch("BEGIN IMMEDIATE")
+            .expect_err("the catalog is held")
+    };
+    let wrapped = [
+        LocalHostError::HostCatalog(HostCatalogError::Database(busy())),
+        LocalHostError::Automation(AutomationError::Database(busy())),
+        LocalHostError::Automation(AutomationError::Catalog(HostCatalogError::Database(busy()))),
+    ];
+    for error in &wrapped {
+        assert!(error.catalog_busy(), "{error:?}");
+    }
+    let missing = waiting
+        .execute_batch("SELECT * FROM no_such_table")
+        .expect_err("no such table");
+    assert!(!LocalHostError::HostCatalog(HostCatalogError::Database(missing)).catalog_busy());
+}

@@ -65,8 +65,8 @@ async fn a_surface_gives_up_on_a_pass_that_does_not_let_go_and_claims_nothing() 
     assert_eq!(refused.err(), Some(Waited::TimedOut));
     assert_eq!(started.elapsed(), SURFACE_WAIT);
     assert!(matches!(
-        LocalHostError::from(Waited::TimedOut),
-        LocalHostError::PassStillRunning
+        claims.surface_uncancelled(session).await.err(),
+        Some(LocalHostError::PassStillRunning)
     ));
     drop(held);
     assert!(
@@ -97,51 +97,13 @@ async fn a_surface_cancelled_while_it_waits_stops_waiting_and_claims_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_surface_opening_a_session_a_pass_is_loading_cancels_the_pass_first() {
+async fn a_surface_opening_a_session_a_pass_loads_waits_no_longer_than_the_bound_and_cancels_nothing()
+ {
     let claims = Arc::new(Claims::default());
     let session = Uuid::new_v4();
     let pass = CancellationToken::new();
     let held = claims.note_pass(session, &pass).expect("a free session");
-    // The pass is loading the session: it holds the slot until cancelled.
-    let loading = tokio::spawn({
-        let (claims, pass) = (Arc::clone(&claims), pass.clone());
-        async move {
-            claims
-                .open(session, async move {
-                    pass.cancelled().await;
-                    Err::<Arc<AgentSession>, _>(LocalHostError::InvalidRequest(
-                        "the pass's load".to_owned(),
-                    ))
-                })
-                .await
-                .err()
-        }
-    });
-    tokio::task::yield_now().await;
-    let opened = tokio::time::timeout(
-        SURFACE_WAIT / 2,
-        claims.open_for_surface(session, async {
-            Err::<Arc<AgentSession>, _>(LocalHostError::InvalidRequest(
-                "the surface's load".to_owned(),
-            ))
-        }),
-    )
-    .await
-    .expect("the surface does not wait out the pass's load");
-    assert!(pass.is_cancelled());
-    assert!(
-        opened
-            .err()
-            .is_some_and(|error| error.to_string().contains("the surface's load"))
-    );
-    assert!(loading.await.expect("the pass's load").is_some());
-    drop(held);
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_surface_waits_for_a_load_no_longer_than_the_bound() {
-    let claims = Arc::new(Claims::default());
-    let session = Uuid::new_v4();
+    // The pass is loading the session, and its load does not end.
     let _loading = tokio::spawn({
         let claims = Arc::clone(&claims);
         async move {
@@ -154,13 +116,21 @@ async fn a_surface_waits_for_a_load_no_longer_than_the_bound() {
         }
     });
     tokio::task::yield_now().await;
+    let started = tokio::time::Instant::now();
     let opened = tokio::time::timeout(
         SURFACE_WAIT * 2,
         claims.open_for_surface(session, std::future::pending()),
     )
     .await
     .expect("the surface gives up by itself");
-    assert!(matches!(opened, Err(LocalHostError::PassStillRunning)));
+    assert_eq!(started.elapsed(), SURFACE_WAIT);
+    assert!(
+        matches!(opened, Err(LocalHostError::SessionStillOpening)),
+        "{:?}",
+        opened.err()
+    );
+    assert!(!pass.is_cancelled(), "opening alone cancels no pass");
+    drop(held);
 }
 
 #[tokio::test]

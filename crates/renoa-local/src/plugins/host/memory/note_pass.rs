@@ -217,13 +217,23 @@ fn event(level: &'static str, name: &'static str, fields: &serde_json::Value) {
     super::pass::event(level, name, fields);
 }
 
-/// Logs that the scheduler's run `request` waits again for a pass in
-/// `session` that has not let go.
-pub(crate) fn delays_run(session: Uuid, request: Uuid) {
+/// Logs that the command `request`, `why` it is not refused, waits again for
+/// a pass in `session` that has not let go.
+pub(crate) fn delays_command(session: Uuid, request: Uuid, why: &'static str) {
     event(
         "warn",
-        "memory_pass_delays_run",
-        &serde_json::json!({ "session_id": session, "run_id": request }),
+        "memory_pass_delays_command",
+        &json!({"session_id": session, "command_id": request, "why": why}),
+    );
+}
+
+/// Logs that whether the command `request` is an automation run being
+/// delivered could not be read, so it waits for the pass in `session` again.
+pub(crate) fn delivery_unread(session: Uuid, request: Uuid, error: &crate::LocalHostError) {
+    event(
+        "warn",
+        "memory_pass_delivery_unread",
+        &json!({"session_id": session, "command_id": request, "error": error.to_string()}),
     );
 }
 

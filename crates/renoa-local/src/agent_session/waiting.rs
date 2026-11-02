@@ -1,6 +1,7 @@
 //! A surface's turn or compaction waiting for its claim on the session while a
 //! `renoa.memory` note pass lets go of it (see [`claim`](super::claim)).
 
+use renoa_kernel::CommandId;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -13,53 +14,67 @@ use crate::{LocalHostError, host::automations, plugins::host::memory::note_pass}
 impl AgentSession {
     /// Claims this session for the surface operation `request`, cancelling a
     /// note pass that holds it and waiting for the pass to let go. While it
-    /// waits, [`Self::cancel_active_turn`] cancels `cancellation` too; `None`
-    /// when it was cancelled, with nothing claimed or run, for a command the
-    /// kernel never admitted. An agent's
-    /// automation run the scheduler is delivering waits again each time the
-    /// bound passes, under its own identity, so a pass slow to stop does not
-    /// lose it; any other operation is refused, to be sent again.
+    /// waits, [`Self::cancel_active_turn`] cancels `cancellation` too.
+    ///
+    /// Cancelled while it waits, a command the kernel never admitted returns
+    /// `None`, with nothing claimed or run. One the kernel admitted settles
+    /// only under the claim, so it waits on, uncancelled, and the caller
+    /// settles it as cancelled. An agent's automation run the scheduler is
+    /// delivering waits again each time the bound passes, under its own
+    /// identity, and so does one whose delivery cannot be read, so a pass
+    /// slow to stop does not fail it; any other operation is refused, to be
+    /// sent again.
     ///
     /// # Errors
     ///
     /// Returns [`LocalHostError::PassStillRunning`] past the bound, or a
-    /// catalog failure.
+    /// journal failure.
     pub(super) async fn surface_claim(
         &self,
         request: Uuid,
         cancellation: &CancellationToken,
     ) -> Result<Option<Claim>, LocalHostError> {
         let _waiting = Waiting::register(self, cancellation)?;
+        let uncancelled = CancellationToken::new();
+        let mut settling = false;
         loop {
-            match self.host.claims.surface(self.id, cancellation).await {
+            let watched = if settling { &uncancelled } else { cancellation };
+            match self.host.claims.surface(self.id, watched).await {
                 Ok(claim) => return Ok(Some(claim)),
-                // Cancelled with nothing run: honest only for a command the
-                // kernel never admitted. One it did is settled only under
-                // the claim, so it is refused, to be sent again.
-                Err(Waited::Cancelled) => {
-                    let command = renoa_kernel::CommandId::from_uuid(request);
-                    return if self.kernel.command_standing(command)?.admitted {
-                        Err(LocalHostError::PassStillRunning)
-                    } else {
-                        Ok(None)
-                    };
+                Err(Waited::Cancelled) if self.admitted(request)? => settling = true,
+                Err(Waited::Cancelled) => return Ok(None),
+                Err(Waited::TimedOut) if settling => {
+                    note_pass::delays_command(self.id, request, "cancelled after admission");
                 }
-                Err(Waited::TimedOut) if self.delivering(request).await? => {
-                    note_pass::delays_run(self.id, request);
+                Err(Waited::TimedOut) if self.delivering(request).await => {
+                    note_pass::delays_command(self.id, request, "automation run");
                 }
                 Err(Waited::TimedOut) => return Err(LocalHostError::PassStillRunning),
             }
         }
     }
 
+    /// Whether the kernel admitted `request`.
+    fn admitted(&self, request: Uuid) -> Result<bool, LocalHostError> {
+        Ok(self
+            .kernel
+            .command_standing(CommandId::from_uuid(request))?
+            .admitted)
+    }
+
     /// Whether `request` is an agent's automation run the scheduler is
-    /// delivering.
-    async fn delivering(&self, request: Uuid) -> Result<bool, LocalHostError> {
+    /// delivering. A catalog that cannot be read counts as delivering, and
+    /// is logged, so a reminder is not failed for it.
+    async fn delivering(&self, request: Uuid) -> bool {
         let database = self.host.database.clone();
-        Ok(
-            tokio::task::spawn_blocking(move || automations::delivering(&database, request))
-                .await??,
-        )
+        let read = tokio::task::spawn_blocking(move || automations::delivering(&database, request))
+            .await
+            .map_err(LocalHostError::from)
+            .and_then(|read| read.map_err(LocalHostError::from));
+        read.unwrap_or_else(|error| {
+            note_pass::delivery_unread(self.id, request, &error);
+            true
+        })
     }
 }
 

@@ -380,8 +380,9 @@ minutes with enough new text, a pass reviews it, two hours apart and at most fou
 plus the nightly sweep, which runs before compaction. Its timer shows in
 inventory as `renoa.memory note pass`, each pass logs a `memory_pass` line
 (`memory_pass_decision` and `memory_pass_cancelled` too, and
-`memory_pass_delays_run` while an automation run waits for a pass slow to
-stop), and inspection's
+`memory_pass_delays_command` while an automation run, or a cancelled
+command the kernel admitted, waits for a pass slow to stop), and
+inspection's
 `memory_passes` shows each person's passes today. A pass is an operation of
 the conversation it reviews: a draining node cancels the running pass, which
 settles as not run with its notes kept, starts no other pass and no further
@@ -606,8 +607,11 @@ and the Control Room, with a status: succeeded, failed, or skipped. A recurring
 run more than half its period late is skipped without executing, and the node
 logs `automation_skipped`. A run stays admitted until its result is recorded,
 so a restart submits the same command again and the coordinator keeps one
-copy. A busy or failing Host catalog does not stop the schedule: the node logs
-`automation_schedule_unavailable` and asks again a second later. While the
+copy. A busy Host catalog does not stop the schedule: the node logs
+`automation_schedule_unavailable` and asks again a second later. Five other
+Host failures in a row end the node, so systemd restarts it and the failure
+shows in its log; one automation whose row cannot be read is skipped and
+logged as `automation_unschedulable`. While the
 node owns the schedule it writes a heartbeat every 30 seconds, which Host
 observation reports.
 

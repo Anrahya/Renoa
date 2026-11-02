@@ -223,6 +223,8 @@ pub enum LocalHostError {
         "a memory pass in this conversation did not stop in time; nothing was run, so send it again"
     )]
     PassStillRunning,
+    #[error("another request is still opening this session; nothing was run, so send it again")]
+    SessionStillOpening,
     #[error("agent {0} is already bound to different creation fields")]
     AgentConflict(renoa_kernel::AgentId),
     #[error("agent {0} is not registered with this Host")]

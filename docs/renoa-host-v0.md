@@ -1662,10 +1662,19 @@ result. An execution that fails in a conversation's task appears in that
 conversation; a refused or skipped run, and any failure of an automation with a
 task of its own, is visible through `automation_results`, the Control Room, and the node's
 `automation_finished` and `automation_skipped` log events. A Host failure the
-schedule meets, such as a catalog another writer holds past its busy timeout,
-is logged as `automation_schedule_unavailable` and asked again a second later:
-a run whose result could not be recorded stays admitted and is submitted
-again under its own identity. While it owns the
+schedule meets is logged as `automation_schedule_unavailable` and asked again
+a second later; a run whose result could not be recorded stays admitted and
+is submitted again under its own identity. A catalog another writer holds
+past its busy timeout is asked again for as long as it stays busy. Any other
+Host failure ends the scheduler, and with it the node, at the fifth in a
+row, so systemd restarts it and the failure shows rather than every
+reminder silently stopping; a tick that schedules or finds nothing due
+starts the count again. A due automation whose row does not parse or whose
+schedule cannot be computed is left as it is and logged as
+`automation_unschedulable` on every tick, and the others run. A compiled
+plugin's run that fails or panics stays admitted and is held back two
+seconds after its first failure in a row, doubling to at most five minutes,
+logged as `automation_plugin_run_failed` with the count. While it owns the
 schedule, the node writes a heartbeat every 30 seconds, which Host observation
 reports, so a stopped scheduler is visible. Credential and OAuth links reach the owner privately,
 as for any other command.

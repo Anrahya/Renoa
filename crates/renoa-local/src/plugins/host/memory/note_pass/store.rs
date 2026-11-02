@@ -152,7 +152,12 @@ pub(crate) fn forget(
 ) -> Result<(), HostCatalogError> {
     let session = session.to_string();
     transaction.execute(
-        &format!("DELETE FROM host_memory_passes WHERE session_id = ?1 AND NOT ({COUNTS})"),
+        // An unsettled pass has no outcome, which `NOT ({COUNTS})` alone
+        // would read as unknown and keep.
+        &format!(
+            "DELETE FROM host_memory_passes
+             WHERE session_id = ?1 AND (outcome IS NULL OR NOT ({COUNTS}))"
+        ),
         [&session],
     )?;
     transaction.execute(

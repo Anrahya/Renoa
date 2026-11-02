@@ -694,3 +694,94 @@ fn completed(events: &[TaskEvent]) -> bool {
             })
     )
 }
+
+#[tokio::test]
+async fn a_catalog_the_schedule_keeps_failing_on_ends_the_scheduler() {
+    timeout(Duration::from_secs(40), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        // Every scheduling attempt now fails, and would fail again.
+        rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
+            .expect("open Host catalog")
+            .execute_batch("ALTER TABLE host_automation_runs RENAME TO host_automation_runs_gone")
+            .expect("break the schedule");
+        let ended = timeout(Duration::from_secs(20), node_task)
+            .await
+            .expect("the scheduler gives up")
+            .expect("node task");
+        let error = ended
+            .expect_err("the node ends with the failure")
+            .to_string();
+        assert!(error.contains("host_automation_runs"), "{error}");
+        shutdown.cancel();
+        system.stop().await;
+    })
+    .await
+    .expect("failing schedule test timed out");
+}
+
+#[tokio::test]
+async fn an_automation_whose_row_cannot_be_read_does_not_stop_the_others() {
+    use rusqlite::OptionalExtension as _;
+
+    timeout(Duration::from_secs(30), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let now = now_ms();
+        let broken = armed(&host, fixture.agent_id, "Broken.", now).await;
+        let working = armed(&host, fixture.agent_id, "Write the digest.", now).await;
+        // Both are due; the broken one first, and its schedule does not parse.
+        let db = rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
+            .expect("open Host catalog");
+        db.execute(
+            "UPDATE host_automations SET schedule_json = '{\"kind\":\"nope\"}', next_due_ms = ?2
+             WHERE id = ?1",
+            rusqlite::params![broken.id.to_string(), now - 2_000],
+        )
+        .expect("break one automation");
+        db.execute(
+            "UPDATE host_automations SET next_due_ms = ?2 WHERE id = ?1",
+            rusqlite::params![working.id.to_string(), now - 1_000],
+        )
+        .expect("make the other due");
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        let output = loop {
+            let finished: Option<String> = db
+                .query_row(
+                    "SELECT output FROM host_automation_runs
+                     WHERE automation_id = ?1 AND output IS NOT NULL",
+                    [working.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .expect("the working one's run");
+            if let Some(output) = finished {
+                break output;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(
+            output, "Digest written.",
+            "the working automation ran past the broken one"
+        );
+        let left: i64 = db
+            .query_row(
+                "SELECT count(*) FROM host_automation_runs WHERE automation_id = ?1",
+                [broken.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("the broken one's runs");
+        assert_eq!(left, 0, "the broken one is left as it is");
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("broken automation test timed out");
+}

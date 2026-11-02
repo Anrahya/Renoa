@@ -11,7 +11,8 @@
 //! surface that claims a session a pass holds cancels the pass and waits for
 //! it, at most [`SURFACE_WAIT`] or until its own cancellation, then fails
 //! without running anything; an automation run the scheduler delivers waits
-//! again ([`waiting`](super::waiting)). A pass
+//! again ([`waiting`](super::waiting)). Opening a session claims nothing and
+//! cancels no pass. A pass
 //! never takes a session a surface holds, and none once passes are stopped.
 //! Claims do not reach another process: there the kernel's own lock refuses
 //! the second opener.
@@ -45,17 +46,6 @@ pub(crate) enum Waited {
     TimedOut,
     /// The surface's own cancellation came first.
     Cancelled,
-}
-
-impl From<Waited> for LocalHostError {
-    fn from(waited: Waited) -> Self {
-        match waited {
-            Waited::TimedOut => Self::PassStillRunning,
-            Waited::Cancelled => {
-                Self::InvalidRequest("cancelled while a memory pass let go".to_owned())
-            }
-        }
-    }
 }
 
 /// The claims and open instances of one Host's sessions.
@@ -120,16 +110,13 @@ impl Claims {
     ///
     /// # Errors
     ///
-    /// As [`Self::surface`].
+    /// Returns [`LocalHostError::PassStillRunning`] when the pass has not let
+    /// go within [`SURFACE_WAIT`].
     pub(crate) async fn surface_uncancelled(&self, session: Uuid) -> Result<Claim, LocalHostError> {
-        Ok(self.surface(session, &CancellationToken::new()).await?)
-    }
-
-    /// Cancels the pass holding `session`, if one does, without claiming it.
-    fn cancel_pass(&self, session: Uuid) {
-        if let Some(Holder::NotePass(cancellation)) = self.inner.held().holders.get(&session) {
-            cancellation.cancel();
-        }
+        // Nothing cancels the token, so only the bound ends the wait.
+        self.surface(session, &CancellationToken::new())
+            .await
+            .map_err(|_| LocalHostError::PassStillRunning)
     }
 
     /// Whether an instance of `session` is open here for anyone but a note
@@ -234,22 +221,25 @@ impl Claims {
         Self::open_in(slot.lock().await, load).await
     }
 
-    /// [`Self::open`] for a surface: a pass loading the session is cancelled
-    /// first, and the wait for its load is bounded by [`SURFACE_WAIT`].
+    /// [`Self::open`] for a surface, which waits for another opener's load,
+    /// a pass's or a surface's, no longer than [`SURFACE_WAIT`]. It cancels
+    /// no pass: a load does not watch cancellation, so cancelling would not
+    /// shorten the wait, and a surface that only opens the session, as ACP's
+    /// `load_session` does, leaves a pass to finish. Its turn's claim cancels
+    /// the pass.
     ///
     /// # Errors
     ///
-    /// Returns what `load` returns, or a timeout.
+    /// Returns what `load` returns, or [`LocalHostError::SessionStillOpening`].
     pub(crate) async fn open_for_surface(
         &self,
         session: Uuid,
         load: impl Future<Output = Result<Arc<AgentSession>, LocalHostError>>,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
-        self.cancel_pass(session);
         let slot = self.slot(session);
         let held = tokio::time::timeout(SURFACE_WAIT, slot.lock())
             .await
-            .map_err(|_| LocalHostError::PassStillRunning)?;
+            .map_err(|_| LocalHostError::SessionStillOpening)?;
         Self::open_in(held, load).await
     }
 

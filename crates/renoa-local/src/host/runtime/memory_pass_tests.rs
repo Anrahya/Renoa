@@ -29,7 +29,8 @@ use crate::{
     },
 };
 
-/// A conversation turn answers `ok`; compaction and Dream answer as in the
+/// A conversation turn answers `ok`, or, for a message with [`HANG`] in it,
+/// writes `started` and never answers; compaction and Dream answer as in the
 /// nightly tests. A pass takes the steps in `script.json` beside it, in
 /// order: `note:<text>` calls `memory_note`, `call:<name> <json>` calls that
 /// tool, `say:<text>` answers, and `hang` writes `started` and never answers;
@@ -41,6 +42,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const spec = JSON.stringify({id:"fixture"});
 const here = name => new URL("./" + name, import.meta.url);
+const HANG = "Hang on forever, please.";
 if (process.env.RENOA_MODEL_ACTION !== "stream" && existsSync(here("broken"))) {
   console.log(JSON.stringify({ok:false,error:"the model is gone"}));
 } else if (process.env.RENOA_MODEL_ACTION === "catalog") {
@@ -62,6 +64,8 @@ if (process.env.RENOA_MODEL_ACTION !== "stream" && existsSync(here("broken"))) {
   else if (kind==="dream") {
     const [first]=prompt.match(/Notes #(\d+) to/).slice(1);
     say(`<reflection>Nothing new.</reflection>\n<mind>\n## Durable\n## Active\n- Walks the dog at dawn (#${first})\n## Hunches\n## Nudges\n</mind>\n`);
+  } else if (kind==="turn" && JSON.stringify(request.messages[index]).includes(HANG)) {
+    writeFileSync(here("started"), ""); setInterval(()=>{}, 1000);
   } else if (kind==="turn") say("ok");
   else {
     const steps=existsSync(here("script.json"))?JSON.parse(readFileSync(here("script.json"),"utf8")):[];
@@ -89,6 +93,8 @@ const MINUTE: i64 = 60_000;
 const ENOUGH: &str =
     "My sister lands on Friday at ten and I promised to pick her up from the airport.";
 const TIMER: &str = "renoa.memory note pass";
+/// A message whose turn the model never answers.
+const HANG: &str = "Hang on forever, please.";
 
 fn ms(at: &str) -> i64 {
     at.parse::<Timestamp>()
@@ -1408,7 +1414,7 @@ async fn a_pass_that_does_not_let_go_refuses_a_message_and_holds_an_automation_r
         .expect("events")
         .iter()
         .filter(|(_, event, fields)| {
-            *event == "memory_pass_delays_run" && fields["run_id"] == json!(due.run.id)
+            *event == "memory_pass_delays_command" && fields["command_id"] == json!(due.run.id)
         })
         .count();
     assert!(delayed >= 2, "it waited past the bound: {delayed}");
@@ -1476,20 +1482,19 @@ async fn cancelling_a_turn_that_waits_for_a_pass_runs_nothing() {
         matches!(outcome, Ok(LocalTurnOutcome::Cancelled)),
         "{outcome:?}"
     );
-    // A message the kernel already admitted is not reported cancelled: it
-    // settles only under the claim, so it is refused, to be sent again.
+    // A message the kernel already admitted settles only under the claim:
+    // cancelled, it waits on past the bound and is settled as the kernel
+    // has it, here replayed.
     let token = CancellationToken::new();
     let waiting = send(&opened, first, (person, noon), ENOUGH, token.clone());
-    let cancel = async {
+    let cancel_then_release = async {
         tokio::time::sleep(SURFACE_WAIT / 4).await;
         token.cancel();
+        tokio::time::sleep(SURFACE_WAIT * 2).await;
+        drop(held);
     };
-    let (outcome, ()) = tokio::join!(waiting, cancel);
-    assert!(
-        matches!(outcome, Err(LocalHostError::PassStillRunning)),
-        "{outcome:?}"
-    );
-    drop(held);
+    let (outcome, ()) = tokio::join!(waiting, cancel_then_release);
+    assert!(answered(&outcome), "{outcome:?}");
     // With no pass holding it, a cancelled caller still takes the claim, and
     // the kernel answers for a message it already settled.
     let token = CancellationToken::new();
@@ -1567,4 +1572,143 @@ async fn deleting_a_conversation_a_surface_holds_open_is_refused_without_cancell
     deleted.expect("deleted once the surface let go");
     assert_eq!(status, Some(RunStatus::Succeeded));
     assert!(!fixture.host.has_session(session).expect("sessions"));
+}
+
+#[tokio::test]
+async fn deleting_a_conversation_whose_pass_a_crash_left_removes_the_pass_and_its_message() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    fixture.script(&["hang"]);
+    let started = fixture.root.join("started");
+    let crash = async {
+        while !started.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::select! {
+        _ = fixture.timer(noon + 15 * MINUTE) => panic!("the pass hangs"),
+        () = crash => {}
+        () = tokio::time::sleep(Duration::from_secs(60)) => panic!("the pass never started"),
+    }
+    assert_eq!(fixture.passes()[0].1, None, "the pass is unsettled");
+    fixture
+        .host
+        .delete_session(fixture.main, session)
+        .await
+        .expect("deleted");
+    assert_eq!(
+        rows(&fixture),
+        (0, 0),
+        "an unsettled pass goes with its conversation, frozen message and all"
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_message_the_kernel_admitted_waits_for_the_pass_and_settles() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    let opened = fixture.open(fixture.main, session).await;
+    let request = Uuid::new_v4();
+    // Admitted, then left unfinished, as a stopped process leaves a turn.
+    let started = fixture.root.join("started");
+    let admitted = async {
+        while !started.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::select! {
+        _ = send(&opened, request, (person, noon + MINUTE), HANG, CancellationToken::new()) => {
+            panic!("the turn hangs")
+        }
+        () = admitted => {}
+        () = tokio::time::sleep(Duration::from_secs(60)) => panic!("the turn never started"),
+    }
+    let held = fixture
+        .host
+        .config
+        .claims
+        .note_pass(session, &CancellationToken::new())
+        .expect("a free conversation");
+    let token = CancellationToken::new();
+    let waiting = send(
+        &opened,
+        request,
+        (person, noon + MINUTE),
+        HANG,
+        token.clone(),
+    );
+    let cancel_then_release = async {
+        tokio::time::sleep(SURFACE_WAIT / 4).await;
+        token.cancel();
+        tokio::time::sleep(SURFACE_WAIT * 2).await;
+        drop(held);
+    };
+    let (outcome, ()) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async { tokio::join!(waiting, cancel_then_release) }),
+    )
+    .await
+    .expect("the command settles once the pass lets go");
+    assert!(
+        matches!(outcome, Ok(LocalTurnOutcome::Cancelled)),
+        "{outcome:?}"
+    );
+    drop(opened);
+    // Nothing is left unfinished, so the next message is admitted.
+    fixture
+        .say(session, person, noon + 2 * MINUTE, "Hello again.")
+        .await;
+}
+
+#[tokio::test]
+async fn a_message_whose_delivery_cannot_be_read_waits_for_the_pass() {
+    let fixture = Fixture::new().await;
+    let (session, person) = (Uuid::new_v4(), Uuid::new_v4());
+    let noon = ms(NOON);
+    fixture.say(session, person, noon, ENOUGH).await;
+    let opened = fixture.open(fixture.main, session).await;
+    let held = fixture
+        .host
+        .config
+        .claims
+        .note_pass(session, &CancellationToken::new())
+        .expect("a free conversation");
+    // Whether a command is a run being delivered cannot be read.
+    let db = rusqlite::Connection::open(fixture.database()).expect("catalog");
+    db.execute_batch("ALTER TABLE host_automation_runs RENAME TO host_automation_runs_gone")
+        .expect("hide the runs");
+    let waiting = send(
+        &opened,
+        Uuid::new_v4(),
+        (person, noon + MINUTE),
+        "I'm back.",
+        CancellationToken::new(),
+    );
+    let release = async {
+        tokio::time::sleep(SURFACE_WAIT * 5 / 2).await;
+        // In one step, so the waiting turn runs with the runs back.
+        drop(held);
+        db.execute_batch("ALTER TABLE host_automation_runs_gone RENAME TO host_automation_runs")
+            .expect("restore the runs");
+    };
+    let (outcome, ()) = tokio::time::timeout(
+        Duration::from_secs(60),
+        Box::pin(async { tokio::join!(waiting, release) }),
+    )
+    .await
+    .expect("the message runs once the pass lets go");
+    assert!(answered(&outcome), "{outcome:?}");
+    let unread = pass::EVENTS
+        .lock()
+        .expect("events")
+        .iter()
+        .filter(|(_, event, fields)| {
+            *event == "memory_pass_delivery_unread" && fields["session_id"] == json!(session)
+        })
+        .count();
+    assert!(unread >= 2, "each lap is logged: {unread}");
 }

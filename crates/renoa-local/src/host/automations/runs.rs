@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use renoa_kernel::AgentId;
-use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use uuid::Uuid;
 
 use super::{
@@ -31,7 +31,7 @@ const LATE_NOTE_AFTER_MS: i64 = 5 * 60_000;
 /// Admits a run of `r`. A scheduled run has the time it was `due`; a run
 /// requested with `run_now` has none and is due when admitted.
 pub(super) fn insert_run(
-    tx: &Transaction<'_>,
+    tx: &Connection,
     r: &AutomationRecord,
     id: Uuid,
     due: Option<i64>,
@@ -104,14 +104,17 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
 /// skipped in the same transaction and returned finished, so the scheduler
 /// reports it and asks again. While `plugin_running`, a plugin's run is in
 /// flight beside the scheduler, so no plugin's run is handed on or admitted:
-/// one plugin run at a time, and an agent's due run is not held up by it.
+/// one plugin run at a time, and an agent's due run is not held up by it. A
+/// due automation whose row does not parse or whose schedule cannot be
+/// computed is left unchanged and logged as `automation_unschedulable`, and
+/// the next due one is admitted, so one bad row does not stop the others.
 pub(super) fn next(
     path: &Path,
     now_ms: i64,
     plugin_running: bool,
 ) -> Result<Option<AutomationRun>, AutomationError> {
     let mut db = catalog::open_verified(path)?;
-    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let pending = tx
         .query_row(
             &format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE output IS NULL AND NOT (?1 AND automation_id IN ({PLUGIN_OWNED})) ORDER BY sequence LIMIT 1"),
@@ -123,17 +126,50 @@ pub(super) fn next(
         return Ok(pending);
     }
     super::owned::converge(&tx, now_ms)?;
-    let due=tx.query_row(&format!("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND NOT (?2 AND id IN ({PLUGIN_OWNED})) ORDER BY next_due_ms,id LIMIT 1"),params![now_ms, plugin_running],store::record).optional()?;
-    let Some(mut r) = due else {
-        // The converged triggers stand whether or not a run is due.
-        tx.commit()?;
-        return Ok(None);
-    };
+    let due = tx
+        .prepare(&format!("SELECT id FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) AND NOT (?2 AND id IN ({PLUGIN_OWNED})) ORDER BY next_due_ms,id"))?
+        .query_map(params![now_ms, plugin_running], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    // One automation whose row cannot be read or scheduled is left as it is
+    // and logged, so it does not hold up the others.
+    for automation in due {
+        let mut attempt = tx.savepoint()?;
+        match admit(&attempt, &automation, now_ms) {
+            Ok((admitted, pruned)) => {
+                attempt.commit()?;
+                tx.commit()?;
+                retention::report(pruned);
+                return Ok(Some(admitted));
+            }
+            Err(error) if of_its_row(&error) => {
+                attempt.rollback()?;
+                unschedulable(&automation, &error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    // The converged triggers stand whether or not a run is due.
+    tx.commit()?;
+    Ok(None)
+}
+
+/// Admits the due occurrence of `automation`, as [`next`] describes, and
+/// returns the run with the runs retention removed.
+fn admit(
+    tx: &Connection,
+    automation: &str,
+    now_ms: i64,
+) -> Result<(AutomationRun, Option<retention::Removed>), AutomationError> {
+    let mut r = tx.query_row(
+        "SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE id=?1",
+        [automation],
+        store::record,
+    )?;
     let id = crate::stable_id::stable_id(&format!(
         "renoa.automation.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
     ));
-    insert_run(&tx, &r, id, Some(r.next_due_ms), now_ms)?;
+    insert_run(tx, &r, id, Some(r.next_due_ms), now_ms)?;
     let late = now_ms.saturating_sub(r.next_due_ms);
     if let Some(limit) = r.spec.schedule.skip_after_ms(r.next_due_ms)?
         && late > limit
@@ -143,22 +179,48 @@ pub(super) fn next(
             duration(late),
             duration(limit)
         );
-        record(&tx, id, RunStatus::Skipped, &reason, None, now_ms)?;
+        record(tx, id, RunStatus::Skipped, &reason, None, now_ms)?;
     }
-    let pruned = retention::keep_newest(&tx, r.id)?;
+    let pruned = retention::keep_newest(tx, r.id)?;
     // Coalesce missed times into one occurrence, then resume from the current clock.
     if !store::disarm_once(&mut r)? {
         r.next_due_ms = r.spec.schedule.next_after(now_ms)?;
     }
-    store::save(&tx, &r, false)?;
+    store::save(tx, &r, false)?;
     let admitted = tx.query_row(
         &format!("SELECT {RUN_COLUMNS} FROM host_automation_runs WHERE id=?1"),
         [id.to_string()],
         run,
     )?;
-    tx.commit()?;
-    retention::report(pruned);
-    Ok(Some(admitted))
+    Ok((admitted, pruned))
+}
+
+/// Whether `error` is about one automation's stored row rather than the
+/// catalog: its row does not parse, or its schedule cannot be computed.
+fn of_its_row(error: &AutomationError) -> bool {
+    match error {
+        AutomationError::Database(rusqlite::Error::FromSqlConversionFailure(..))
+        | AutomationError::Invalid(_)
+        | AutomationError::Json(_)
+        | AutomationError::Time(_) => true,
+        AutomationError::Database(_)
+        | AutomationError::Conflict
+        | AutomationError::NotFound
+        | AutomationError::Busy
+        | AutomationError::Cancelled
+        | AutomationError::Forbidden
+        | AutomationError::Catalog(_) => false,
+    }
+}
+
+/// Logs a due automation left unscheduled for its row.
+fn unschedulable(automation: &str, error: &AutomationError) {
+    renoa_telemetry::event(
+        "renoa.host",
+        "warn",
+        "automation_unschedulable",
+        &serde_json::json!({ "automation_id": automation, "error": error.to_string() }),
+    );
 }
 
 /// Records an executed run's outcome, which ends it; see [`end`].

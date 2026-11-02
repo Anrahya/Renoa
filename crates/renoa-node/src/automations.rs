@@ -32,9 +32,13 @@ use renoa_protocol::{CommandId, CommandInput, ExecutionTerminal};
 use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
 
+mod failures;
 mod plugin_run;
 
-use self::plugin_run::PluginTask;
+use self::{
+    failures::{Failures, busy},
+    plugin_run::{PluginTask, Retry},
+};
 use crate::{
     agent_targets, automation_cleanup,
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
@@ -60,24 +64,33 @@ pub(crate) struct AutomationLink {
 
 /// Runs the schedule until shutdown or `drain`, reconnecting the surface link
 /// with bounded backoff, and writes the heartbeat throughout, since a lost
-/// coordinator link does not stop the scheduler. Socket loss reconnects; a
-/// Host failure, such as a catalog busy past its timeout, is logged and asked
-/// again on the next tick. Any other failure ends the scheduler. At `drain` it stops the Host's note passes and returns once the plugin run
-/// in flight ended, or at shutdown, which drops it.
+/// coordinator link does not stop the scheduler.
+///
+/// Socket loss reconnects. A catalog busy past its timeout is logged and
+/// asked again on the next tick, for as long as it stays busy. Any other
+/// Host failure is logged and asked again too, but the
+/// [`failures::FAILURES`]th in a row ends the scheduler, and with it the
+/// node, so systemd restarts it and the failure shows instead of every
+/// reminder silently stopping. A plugin run that failed is held back longer
+/// after each failure in a row. Any other failure ends the scheduler at
+/// once.
+///
+/// At `drain` it stops the Host's note passes and returns once the plugin
+/// run in flight ended, or at shutdown, which drops it.
 pub(crate) async fn run(
     runtime: Arc<NodeRuntime>,
     link: AutomationLink,
     shutdown: CancellationToken,
     drain: CancellationToken,
 ) -> Result<(), NodeError> {
-    let mut plugin = None;
+    let mut plugin = (None, Retry::default());
     let scheduled = tokio::select! {
         result = schedule(&runtime, &link, &shutdown, &mut plugin) => result,
         result = heartbeat(&link.scheduler, &shutdown) => result,
         () = drain.cancelled() => Ok(()),
     };
     scheduled?;
-    match plugin {
+    match plugin.0 {
         Some(task) if drain.is_cancelled() => tokio::select! {
             result = plugin_run::drain(&runtime, task, &shutdown) => result,
             result = heartbeat(&link.scheduler, &shutdown) => result,
@@ -110,7 +123,7 @@ async fn schedule(
     runtime: &Arc<NodeRuntime>,
     link: &AutomationLink,
     shutdown: &CancellationToken,
-    plugin: &mut Option<PluginTask>,
+    plugin: &mut Plugin,
 ) -> Result<(), NodeError> {
     let mut backoff = ReconnectBackoff::new();
     loop {
@@ -154,18 +167,21 @@ async fn serve(
     scheduler: &Arc<AutomationScheduler>,
     connection: &Connection,
     shutdown: &CancellationToken,
-    plugin: &mut Option<PluginTask>,
+    (plugin, retry): &mut Plugin,
 ) -> Result<(), NodeError> {
     let mut next_cleanup = Instant::now();
+    let mut failures = Failures::default();
     loop {
-        // A plugin's run that failed stays admitted, and a later tick runs
-        // it again.
-        if let Err(error) = plugin_run::reap(plugin).await {
-            unavailable(&error);
+        // A plugin's run that failed stays admitted, and is handed out again
+        // once its retry delay passed.
+        if let Some(ended) = plugin_run::reap(plugin).await {
+            retry.ended(ended);
         }
-        let due = match scheduler.next_run(now_ms()?, plugin.is_some()).await {
+        let plugins_held = plugin.is_some() || retry.holds();
+        let due = match scheduler.next_run(now_ms()?, plugins_held).await {
             Ok(Some(due)) => due,
             Ok(None) => {
+                failures = Failures::default();
                 // Deleted automations' conversations go while nothing is due.
                 // Stopping part way is safe: every step converges on a retry
                 // and the Host's mark goes last.
@@ -184,7 +200,7 @@ async fn serve(
                 continue;
             }
             Err(error) => {
-                unavailable(&host_error(&error));
+                failures.met(&error)?;
                 if !rest(connection, shutdown).await? {
                     return Ok(());
                 }
@@ -202,10 +218,12 @@ async fn serve(
                     "late_ms": due.run.admitted_at_ms.saturating_sub(due.run.due_ms),
                 }),
             );
+            failures = Failures::default();
             continue;
         }
         if let Some(owner) = due.plugin {
             *plugin = Some(plugin_run::start(runtime, scheduler, due, owner)?);
+            failures = Failures::default();
             continue;
         }
         let Some(outcome) = deliver(runtime, connection, &due, shutdown).await? else {
@@ -221,12 +239,13 @@ async fn serve(
         // next tick submits the same command again, and the coordinator and
         // the ledger hand back the outcome it already has.
         if let Err(error) = scheduler.finish_run(due.run.id, outcome, now_ms()?).await {
-            unavailable(&host_error(&error));
+            failures.met(&error)?;
             if !rest(connection, shutdown).await? {
                 return Ok(());
             }
             continue;
         }
+        failures = Failures::default();
         node_log::event("info", "automation_finished", &fields);
     }
 }
@@ -243,15 +262,9 @@ async fn rest(connection: &Connection, shutdown: &CancellationToken) -> Result<b
     }
 }
 
-/// Logs a Host failure the schedule outlives: a catalog another writer holds
-/// past its busy timeout is asked again on the next tick.
-fn unavailable(error: &NodeError) {
-    node_log::event(
-        "warn",
-        "automation_schedule_unavailable",
-        &serde_json::json!({ "error": error.to_string() }),
-    );
-}
+/// The plugin run in flight beside the schedule, and how long plugin runs
+/// are held back after failing.
+type Plugin = (Option<PluginTask>, Retry);
 
 /// Submits one run and waits for its result. Returns `None` at shutdown; the
 /// run stays admitted and is delivered again after the restart.
@@ -358,7 +371,8 @@ async fn task_for(
                         "agent {agent_id} no longer exists"
                     )));
                 }
-                Err(error) => unavailable(&host_error(&error)),
+                Err(error) if error.catalog_busy() => busy(&error),
+                Err(error) => return Err(host_error(&error)),
             },
             _ => {
                 return Ok(Resolution::Refused(format!(
