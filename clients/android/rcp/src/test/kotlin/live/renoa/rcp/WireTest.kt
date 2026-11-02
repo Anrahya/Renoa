@@ -19,12 +19,13 @@ class WireTest {
     private val clientTypes =
         setOf(
             "authenticate", "authenticate_ticket", "device_proof", "list_tasks", "list_targets", "open_task", "attach",
-            "stop_command", "submit", "delete_task", "call_host",
+            "stop_command", "submit", "delete_task", "call_host", "set_push_token", "clear_push_token",
         )
     private val surfaceReceivedTypes =
         setOf(
             "authenticated", "device_challenge", "task_list", "target_list", "task_opened", "attached", "live_activity",
-            "stop_accepted", "command_accepted", "task_deleted", "task_event", "host_answer", "error",
+            "stop_accepted", "command_accepted", "task_deleted", "task_event", "host_answer", "push_token_set",
+            "push_token_cleared", "error",
         )
 
     /** Frames the binding defines that a surface never sends or receives. Listing them forces a decision when the document grows. */
@@ -88,6 +89,21 @@ class WireTest {
     }
 
     @Test
+    fun anEmptyTasksSequenceIsSentAsNullAndKeptAsNull() {
+        val task = "00000000-0000-0000-0000-000000000010"
+        val frame = """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a","status":"idle","throughSequence":null}]}"""
+        val decoded = decodeServerMessage(frame) as ServerMessage.TaskList
+        assertEquals(null, decoded.tasks.single().throughSequence)
+        assertEquals(wireJson.parseToJsonElement(frame), wireJson.encodeToJsonElement(ServerMessage.serializer(), decoded))
+    }
+
+    @Test
+    fun aPushTokenIsNeverPrinted() {
+        val message = ClientMessage.SetPushToken(1, "fcm", "fcm-registration-token")
+        assertTrue("fcm-registration-token" !in message.toString(), message.toString())
+    }
+
+    @Test
     fun aMissingCursorIsSentAsNullAndLiveIsAlwaysSent() {
         val frame = encodeClientMessage(ClientMessage.Attach(7, Uuid.random(), null, live = false))
         assertTrue("\"after_sequence\":null" in frame && "\"live\":false" in frame, frame)
@@ -113,7 +129,7 @@ class WireTest {
 
     @Test
     fun aFrameOutsideTheSurfaceVocabularyEndsTheSession() {
-        for (frame in listOf("""{"type":"execute"}""", """{"type":"host_call"}""", """{"type":"stop"}""", """{"type":"nonsense"}""", "not json", """{"version":14}""")) {
+        for (frame in listOf("""{"type":"execute"}""", """{"type":"host_call"}""", """{"type":"stop"}""", """{"type":"nonsense"}""", "not json", """{"version":15}""")) {
             assertFailsWith<ProtocolViolation>(frame) { decodeServerMessage(frame) }
         }
     }
@@ -141,12 +157,13 @@ class WireTest {
     }
 
     @Test
-    fun anUnknownStatusOutcomeOrActivityAndAMissingVersion14FieldAreRejected() {
+    fun anUnknownStatusOutcomeOrActivityAndAMissingVersion15FieldAreRejected() {
         val task = "00000000-0000-0000-0000-000000000010"
         val frames =
             listOf(
                 """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a","status":"sleeping"}]}""",
                 """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a"}]}""",
+                """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a","status":"idle"}]}""",
                 """{"type":"target_list","request_id":1,"targets":[{"nodeId":"$task","target":"agent:a"}]}""",
                 """{"type":"stop_accepted","request_id":1,"command_id":"$task","outcome":"stopped"}""",
                 """{"type":"live_activity","task_id":"$task","command_id":"$task","activity":{"type":"reasoning_delta","text":"x"}}""",

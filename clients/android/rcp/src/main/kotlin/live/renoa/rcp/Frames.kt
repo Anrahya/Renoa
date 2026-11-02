@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
 /** The binding version this client speaks. The server rejects any other value. */
-const val RCP_BINDING_VERSION = 14
+const val RCP_BINDING_VERSION = 15
 
 /** The largest application message the coordinator accepts, in bytes. */
 const val MAX_FRAME_BYTES = 1 shl 20
@@ -116,6 +116,21 @@ sealed interface ClientMessage {
         val path: String,
         val body: String?,
     ) : ClientMessage
+
+    /** Registers this device's push token. [provider] is `fcm`; the token is opaque and secret. */
+    @Serializable
+    @SerialName("set_push_token")
+    data class SetPushToken(
+        @SerialName("request_id") val requestId: Long,
+        val provider: String,
+        val token: String,
+    ) : ClientMessage {
+        override fun toString(): String = "SetPushToken(requestId=$requestId, provider=$provider, token=<secret>)"
+    }
+
+    @Serializable
+    @SerialName("clear_push_token")
+    data class ClearPushToken(@SerialName("request_id") val requestId: Long) : ClientMessage
 }
 
 /** Frames a surface can receive. Frames only a node receives are deliberately absent. */
@@ -197,6 +212,14 @@ sealed interface ServerMessage {
         val status: Int,
         val body: String,
     ) : ServerMessage
+
+    @Serializable
+    @SerialName("push_token_set")
+    data class PushTokenSet(@SerialName("request_id") val requestId: Long) : ServerMessage
+
+    @Serializable
+    @SerialName("push_token_cleared")
+    data class PushTokenCleared(@SerialName("request_id") val requestId: Long) : ServerMessage
 
     @Serializable
     @SerialName("task_event")

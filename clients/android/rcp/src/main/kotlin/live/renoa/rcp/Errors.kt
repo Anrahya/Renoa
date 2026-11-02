@@ -7,7 +7,7 @@ class RcpException(
     val requestId: Long?,
 ) : Exception("${code.name}: $message")
 
-/** The peer sent something binding 14 does not allow. The session ends. */
+/** The peer sent something binding 15 does not allow. The session ends. */
 class ProtocolViolation(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**

@@ -4,13 +4,13 @@ import type { TaskEvent, TaskSummary } from "@renoa/rcp-client/browser";
 import type { ControlRoomController } from "./use-control-room";
 
 const TASKS: readonly TaskSummary[] = [
-  task(10, "workspace:renoa"),
-  task(11, "workspace:waku"),
-  task(12, "telegram:arcee"),
-  task(13, "service:inbox-triage"),
-  task(14, "workspace:integrations"),
-  task(15, "service:vps-operator"),
-  task(16, "service:news-digest"),
+  task(10, "workspace:renoa", 2),
+  task(11, "workspace:waku", 1),
+  task(12, "telegram:arcee", 1),
+  task(13, "service:inbox-triage", null),
+  task(14, "workspace:integrations", null),
+  task(15, "service:vps-operator", null),
+  task(16, "service:news-digest", null),
 ];
 const ATTACHED: ReadonlySet<string> = new Set(TASKS.map((task) => task.taskId));
 
@@ -56,9 +56,10 @@ export function usePreviewControlRoom(): ControlRoomController {
   };
 }
 
-function task(suffix: number, target: string): TaskSummary {
+/** `throughSequence` is the last sequence of the task's journal in `INITIAL_EVENTS`. */
+function task(suffix: number, target: string, throughSequence: number | null): TaskSummary {
   // The first task's journal ends mid-run; every other task has finished.
-  return { taskId: id(suffix), target, status: suffix === 10 ? "working" : "idle" };
+  return { taskId: id(suffix), target, status: suffix === 10 ? "working" : "idle", throughSequence };
 }
 
 function command(sequence: number, taskSummary: TaskSummary, text: string): TaskEvent {

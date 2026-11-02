@@ -64,7 +64,7 @@ class SessionTest : CoordinatorTest() {
 
     @Test
     fun aCoordinatorThatAnswersWithAnotherBindingVersionIsNotTrusted() = eventually {
-        coordinator.authenticatedVersion = 13
+        coordinator.authenticatedVersion = RCP_BINDING_VERSION - 1
         val surface = client()
         assertIs<ProtocolViolation>(assertFailsWith<ProtocolViolation> { surface.connect() })
     }
