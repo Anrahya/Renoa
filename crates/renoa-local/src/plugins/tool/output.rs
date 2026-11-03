@@ -33,6 +33,7 @@ fn encoded_output(
         content: vec![ContentBlock::text(content)],
         details,
         is_error,
+        closing: None,
     })
 }
 

@@ -21,7 +21,7 @@ use renoa_discord::DiscordControl;
 use renoa_local::{HostObserver, LocalHost};
 use renoa_protocol::PrincipalId;
 
-use crate::bridge::NodeError;
+use crate::{bridge::NodeError, node_store::NodeStore};
 use reply::{METHOD_NOT_ALLOWED, NOT_FOUND, UNAVAILABLE, decode, log};
 
 pub(crate) use reply::Reply;
@@ -35,6 +35,8 @@ pub(crate) struct HostControl {
     host: Arc<LocalHost>,
     observer: HostObserver,
     discord: DiscordControl,
+    /// Which task each Host session is, for the items that name one.
+    tasks: NodeStore,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -125,7 +127,7 @@ impl HostControl {
     ///
     /// Returns an error when the Host's catalog cannot be observed or its
     /// installation root is invalid.
-    pub(crate) fn open(host: Arc<LocalHost>) -> Result<Self, NodeError> {
+    pub(crate) fn open(host: Arc<LocalHost>, tasks: NodeStore) -> Result<Self, NodeError> {
         let root = host.home().path();
         let observer = HostObserver::open(root)
             .map_err(|error| NodeError::Configuration(error.to_string()))?;
@@ -135,6 +137,7 @@ impl HostControl {
             host,
             observer,
             discord,
+            tasks,
         })
     }
 
@@ -219,7 +222,7 @@ impl HostControl {
                 let request = decode(body, BODY_LIMIT, "Send an operation ID as JSON.")?;
                 automations::run_now(host, host_id, principal, &id, request).await
             }
-            Operation::FeedList(before) => feed::list(host, before.as_deref()).await,
+            Operation::FeedList(before) => feed::list(host, &self.tasks, before.as_deref()).await,
             Operation::FeedSee => {
                 let seen = decode(
                     body,

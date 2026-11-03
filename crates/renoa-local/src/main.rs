@@ -96,15 +96,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 fn report(outcome: LocalTurnOutcome) -> Result<(), Box<dyn Error>> {
     match outcome {
-        LocalTurnOutcome::Completed { output, .. } => {
+        LocalTurnOutcome::Completed { output, .. }
+        | LocalTurnOutcome::WaitingForInput { output } => {
             println!("{output}");
             Ok(())
         }
         LocalTurnOutcome::Cancelled => Err(io::Error::other("operation was cancelled").into()),
         LocalTurnOutcome::Failed { reason } => Err(io::Error::other(reason).into()),
-        LocalTurnOutcome::WaitingForInput => {
-            Err(io::Error::other("operation is waiting for more input").into())
-        }
         _ => Err(io::Error::other("the local Host returned an unsupported outcome").into()),
     }
 }

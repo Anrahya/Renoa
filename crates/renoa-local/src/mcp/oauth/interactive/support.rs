@@ -29,6 +29,7 @@ pub(super) async fn emit_redirect(
                 content: vec![ContentBlock::text(encoded)],
                 details: None,
                 is_error: false,
+                closing: None,
             })
             .await;
     }

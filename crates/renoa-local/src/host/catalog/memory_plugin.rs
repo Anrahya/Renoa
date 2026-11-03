@@ -8,18 +8,10 @@
 use rusqlite::Transaction;
 
 use super::HostCatalogError;
-use crate::plugins::host::state::BUILTIN_PLUGINS_TABLE;
+use crate::plugins::host::state::admit_every_plugin;
 
 pub(super) fn admit_memory_plugin(transaction: &Transaction<'_>) -> Result<(), HostCatalogError> {
-    transaction.execute_batch(
-        "ALTER TABLE host_agent_builtin_plugins RENAME TO host_agent_builtin_plugins_v42;",
-    )?;
-    transaction.execute_batch(BUILTIN_PLUGINS_TABLE)?;
-    transaction.execute_batch(
-        "INSERT INTO host_agent_builtin_plugins(agent_id, plugin_id, enabled)
-            SELECT agent_id, plugin_id, enabled FROM host_agent_builtin_plugins_v42;
-         DROP TABLE host_agent_builtin_plugins_v42;",
-    )?;
+    admit_every_plugin(transaction)?;
     Ok(())
 }
 

@@ -19,6 +19,7 @@ pub(super) fn add_reminders(transaction: &Transaction<'_>) -> Result<(), HostCat
 /// no reminders, so their triggers go too.
 #[cfg(test)]
 pub(crate) fn restore_schema_46(connection: &rusqlite::Connection) {
+    super::restore_schema_47(connection);
     connection
         .execute_batch(
             "CREATE TEMP TABLE reminder_triggers AS

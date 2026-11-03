@@ -210,6 +210,7 @@ impl AgentLoop {
         let effects = self.validate_settled_code_batch(&run, calls, &batch)?;
         let mut results = BTreeMap::new();
         let mut result_bytes = 0_usize;
+        let mut closing = None;
         for call in calls.ordered() {
             let identity = run.call_id(call.call_id);
             let effect = effects
@@ -233,6 +234,7 @@ impl AgentLoop {
                     "Code Mode MCP result identity differs from its request",
                 ));
             }
+            closing = closing.or(result.closing.clone());
             let python_value = python_result(&result);
             let encoded_bytes = serde_json::to_vec(&python_value)
                 .map_err(|error| {
@@ -248,6 +250,14 @@ impl AgentLoop {
                 return Self::append_tool_result(model_turns, pending, result);
             }
             results.insert(call.call_id.to_string(), python_value);
+        }
+        // A call that ends the turn stops the run: Python never resumes, and
+        // the model sees every result of the wave before the closing message.
+        if let Some(closing) = closing {
+            let stopped =
+                serde_json::json!({ "stopped": "a call ended the turn", "results": results });
+            let result = model_result(pending.current(), &stopped, false)?;
+            return super::closing::close_turn(&pending, result, closing);
         }
         let request = CodeStepRequest {
             run_id: run.run_id.clone(),

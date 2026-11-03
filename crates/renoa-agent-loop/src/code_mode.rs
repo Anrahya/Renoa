@@ -304,5 +304,6 @@ pub(crate) fn model_result(
         content: vec![ContentBlock::text(content)],
         details: None,
         is_error,
+        closing: None,
     })
 }

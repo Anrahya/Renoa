@@ -108,6 +108,7 @@ fn contribution(
         | HostPluginId::Automations
         | HostPluginId::Documents
         | HostPluginId::Skills
-        | HostPluginId::Git => Ok(None),
+        | HostPluginId::Git
+        | HostPluginId::Owner => Ok(None),
     }
 }

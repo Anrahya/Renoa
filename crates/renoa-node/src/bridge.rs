@@ -92,7 +92,7 @@ impl RenoaNode {
         let (commits, _) = watch::channel(0_u64);
         let link = Arc::new(AgentLink::default());
         host.attach_agent_peers(Arc::new(Peers(Arc::clone(&link))));
-        let host_control = HostControl::open(Arc::clone(&host))?;
+        let host_control = HostControl::open(Arc::clone(&host), state.clone())?;
         let (live, _) = broadcast::channel(LIVE_FRAME_CAPACITY);
         Ok(Self {
             endpoint,

@@ -328,6 +328,7 @@ impl Tool for EndToEndMcpTool {
                 content: vec![ContentBlock::text(reference)],
                 details: None,
                 is_error: false,
+                closing: None,
             })
         })
     }

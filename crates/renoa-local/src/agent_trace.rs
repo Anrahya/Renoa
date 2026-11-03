@@ -42,11 +42,11 @@ pub(crate) async fn finish_trace(
             Some(reason.clone()),
             serde_json::json!({ "outcome": "failed", "reason": reason }),
         ),
-        Ok(LocalTurnOutcome::WaitingForInput) => (
+        Ok(LocalTurnOutcome::WaitingForInput { output }) => (
             "waiting_for_input",
             None,
             None,
-            serde_json::json!({ "outcome": "waiting_for_input" }),
+            serde_json::json!({ "outcome": "waiting_for_input", "output": output }),
         ),
         Err(error) => (
             "failed",

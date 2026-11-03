@@ -15,6 +15,7 @@ use serde::Serialize;
 pub(crate) mod executor;
 pub(crate) mod memory;
 pub(crate) mod message_context;
+pub(crate) mod owner;
 pub(crate) mod resident;
 pub(crate) mod session_context;
 pub(crate) mod settings;
@@ -31,10 +32,11 @@ pub(crate) enum HostPluginId {
     Git,
     Time,
     Memory,
+    Owner,
 }
 
 impl HostPluginId {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Agents,
         Self::Automations,
         Self::Documents,
@@ -42,6 +44,7 @@ impl HostPluginId {
         Self::Git,
         Self::Time,
         Self::Memory,
+        Self::Owner,
     ];
     pub(crate) const fn id(self) -> &'static str {
         match self {
@@ -52,6 +55,7 @@ impl HostPluginId {
             Self::Git => "renoa.git",
             Self::Time => time::PLUGIN_ID,
             Self::Memory => memory::PLUGIN_ID,
+            Self::Owner => owner::PLUGIN_ID,
         }
     }
     pub(crate) fn parse(id: &str) -> Option<Self> {
@@ -67,6 +71,7 @@ impl HostPluginId {
             Self::Git => "Git",
             Self::Time => "Time",
             Self::Memory => "Memory",
+            Self::Owner => "Reach you",
         }
     }
     pub(crate) const fn description(self) -> &'static str {
@@ -84,6 +89,7 @@ impl HostPluginId {
             }
             Self::Time => time::DESCRIPTION,
             Self::Memory => memory::DESCRIPTION,
+            Self::Owner => owner::DESCRIPTION,
         }
     }
     /// The tools this plugin keeps in the agent's own tool list, besides
@@ -98,6 +104,7 @@ impl HostPluginId {
         match self {
             Self::Documents => &[crate::capabilities::AGENT_DOCUMENTS],
             Self::Memory if notebook => &[memory::NOTE, memory::RECALL, memory::ZOOM],
+            Self::Owner => &[owner::ASK, owner::NOTIFY],
             Self::Memory
             | Self::Agents
             | Self::Automations
@@ -114,7 +121,25 @@ impl HostPluginId {
             "skill_search" | "skill_load" => Some(Self::Skills),
             "git_changes" | "git_diff" | "git_show" => Some(Self::Git),
             memory::NOTE | memory::RECALL | memory::ZOOM => Some(Self::Memory),
+            owner::ASK | owner::NOTIFY => Some(Self::Owner),
             _ => None,
+        }
+    }
+    /// What resident `tool` of this plugin says when it is turned off for
+    /// the agent.
+    pub(crate) fn turned_off(self, tool: &str) -> String {
+        match self {
+            Self::Owner => owner::turned_off(tool),
+            Self::Agents
+            | Self::Automations
+            | Self::Documents
+            | Self::Skills
+            | Self::Git
+            | Self::Time
+            | Self::Memory => format!(
+                "{} is turned off for this agent, so {tool} cannot run. Answer without it; if the person wants it back, turn it on with plugin_manage enable_plugin.",
+                self.id()
+            ),
         }
     }
 }

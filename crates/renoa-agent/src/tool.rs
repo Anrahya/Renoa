@@ -75,6 +75,20 @@ pub struct ToolResult {
     /// Durable structured output for Host inspection, excluded from model requests.
     pub details: Option<Value>,
     pub is_error: bool,
+    /// Ends the turn after this result; see [`Closing`]. Absent in results
+    /// stored before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closing: Option<Closing>,
+}
+
+/// How a tool ends the turn it runs in: the loop appends `message` as the
+/// turn's last assistant message and waits for the next input, and every later
+/// call of the same response gets `not_run` as its result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Closing {
+    pub message: String,
+    pub not_run: String,
 }
 
 /// Final or partial output produced by a tool.
@@ -88,6 +102,9 @@ pub struct ToolOutput {
     /// useful ordered error content that must be preserved as its result.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_error: bool,
+    /// Ends the turn after this output; see [`Closing`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closing: Option<Closing>,
 }
 
 /// Bounded progress channel scoped to one tool execution.
@@ -393,6 +410,7 @@ pub async fn invoke_tool(
             content: output.content,
             details: output.details,
             is_error: output.is_error,
+            closing: output.closing,
         }),
         Err(error) => match error.certainty {
             ToolErrorCertainty::Definite => Ok(error_tool_result(&call, &error)),
@@ -419,5 +437,6 @@ pub(crate) fn error_tool_result(call: &ToolCall, error: &ToolError) -> ToolResul
             }
         })),
         is_error: true,
+        closing: None,
     }
 }

@@ -230,6 +230,7 @@ impl Tool for CountingTool {
             content: vec![ContentBlock::text("unexpected")],
             details: None,
             is_error: false,
+            closing: None,
         })))
     }
 }
@@ -255,6 +256,7 @@ impl Tool for CompletedToolError {
             content: self.content.clone(),
             details: Some(self.details.clone()),
             is_error: true,
+            closing: None,
         })))
     }
 }
@@ -288,6 +290,7 @@ impl Tool for ProgressTool {
                     content: vec![ContentBlock::text("first")],
                     details: None,
                     is_error: false,
+                    closing: None,
                 })
                 .await;
             updates
@@ -295,12 +298,14 @@ impl Tool for ProgressTool {
                     content: vec![ContentBlock::text("second")],
                     details: None,
                     is_error: false,
+                    closing: None,
                 })
                 .await;
             Ok(ToolOutput {
                 content: vec![ContentBlock::text("done")],
                 details: None,
                 is_error: false,
+                closing: None,
             })
         })
     }

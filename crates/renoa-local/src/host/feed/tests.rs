@@ -422,3 +422,75 @@ fn schema_46_adds_the_three_feed_tables_empty_to_a_schema_45_catalog() {
         assert_eq!(rows, 0, "{table} starts empty; nothing is backfilled");
     }
 }
+
+/// The owner's next message on a session answers the asks made there before
+/// it, and nothing else: not an ask made after it or in another session, and
+/// not when the message is an automation's run.
+#[test]
+fn a_message_answers_the_asks_before_it_in_its_own_session() {
+    use renoa_kernel::{AgentId, CommandId, SessionId};
+    let store = Store::new();
+    let agent = AgentId::from_uuid(Uuid::parse_str(&store.agent).expect("agent"));
+    let (session, other) = (SessionId::new(), SessionId::new());
+    let ask = |session: SessionId, call: &str, at_ms: i64| {
+        let db = store.db();
+        produce::owner_asked(
+            &db,
+            &produce::ForOwner {
+                agent,
+                session,
+                command: Some(CommandId::new()),
+                call,
+                text: "Book it?",
+                urgency: super::Urgency::Soon,
+            },
+            None,
+        )
+        .expect("ask");
+        db.execute(
+            "UPDATE host_feed_items SET created_at_ms = ?1 WHERE sequence = (SELECT max(sequence) FROM host_feed_items)",
+            [at_ms],
+        )
+        .expect("time");
+    };
+    ask(session, "before", 100);
+    ask(session, "after", 300);
+    ask(other, "elsewhere", 100);
+    let run = Uuid::new_v4();
+    let db = store.db();
+    db.execute_batch(&format!(
+        "INSERT INTO host_automations(id, agent_id, name, prompt, schedule_json, enabled, revision, next_due_ms)
+         VALUES ('{automation}', '{agent}', 'Check', 'Check.', '{{\"kind\":\"once\",\"at\":\"1970-01-01T00:00:00Z\"}}', 1, 1, 100);
+         INSERT INTO host_automation_runs(id, automation_id, agent_id, due_ms, admitted_at_ms, submission)
+         VALUES ('{run}', '{automation}', '{agent}', 1, 1, '{{}}');",
+        automation = Uuid::new_v4(),
+        agent = store.agent,
+    ))
+    .expect("an automation run");
+
+    let answered =
+        |command: CommandId| produce::asks_answered(&db, session, command, 200).expect("answer");
+    assert_eq!(
+        answered(CommandId::from_uuid(run)),
+        0,
+        "a run answers nothing"
+    );
+    assert_eq!(answered(CommandId::new()), 1);
+    let open: Vec<String> = db
+        .prepare("SELECT body FROM host_feed_items WHERE done_at_ms IS NULL ORDER BY sequence")
+        .expect("prepare")
+        .query_map([], |row| row.get(0))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("open");
+    assert_eq!(
+        open.len(),
+        2,
+        "the later ask and the other session's stay open"
+    );
+    assert_eq!(
+        answered(CommandId::new()),
+        0,
+        "answering again changes nothing"
+    );
+}

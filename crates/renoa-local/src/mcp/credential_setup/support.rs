@@ -21,6 +21,7 @@ pub(super) async fn emit_required(
                 content: vec![ContentBlock::text(encoded)],
                 details: None,
                 is_error: false,
+                closing: None,
             })
             .await;
     }

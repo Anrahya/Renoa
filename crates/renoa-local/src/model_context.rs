@@ -300,6 +300,7 @@ mod tests {
                     content: vec![ContentBlock::text("visible")],
                     details: None,
                     is_error: false,
+                    closing: None,
                 },
             }],
             Vec::new(),

@@ -4,10 +4,14 @@ use serde::Serialize;
 
 /// The most characters an item's title holds.
 pub(super) const TITLE_CHARS: usize = 120;
-/// The most characters an item's body holds.
-pub(super) const BODY_CHARS: usize = 240;
+/// The most characters an item's body holds, and so an agent's question or
+/// message to the owner.
+pub(crate) const BODY_CHARS: usize = 240;
 /// The most characters the Today sentence holds.
 pub(super) const TODAY_CHARS: usize = 140;
+/// The fewest and most choices an ask offers, and the most characters each holds.
+pub(crate) const CHOICES: std::ops::RangeInclusive<usize> = 2..=6;
+pub(crate) const CHOICE_CHARS: usize = 40;
 
 /// What an item reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -66,6 +70,32 @@ pub(super) fn needing_owner() -> String {
     )
 }
 
+/// How soon the owner should see an item: an agent picks it for an ask or an
+/// update, a problem is `Soon`, and every other kind is `Whenever`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Urgency {
+    /// Nothing is lost if the owner sees it tomorrow.
+    Whenever,
+    /// The owner should see it within the hour.
+    Soon,
+    /// Waiting costs the owner something within minutes.
+    Now,
+}
+
+impl Urgency {
+    pub(crate) const ALL: [Self; 3] = [Self::Whenever, Self::Soon, Self::Now];
+
+    /// The stored name, the same as the serialized one.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Whenever => "whenever",
+            Self::Soon => "soon",
+            Self::Now => "now",
+        }
+    }
+}
+
 /// What the owner can do about an item, through the operation that owns it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,6 +145,7 @@ macro_rules! stored_name {
 }
 stored_name!(FeedKind, "kind");
 stored_name!(FeedAction, "action");
+stored_name!(Urgency, "urgency");
 
 /// `'a','b'` from names that hold no quote.
 pub(super) fn sql_list(names: impl IntoIterator<Item = &'static str>) -> String {
@@ -140,7 +171,7 @@ pub(super) fn fit(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{BODY_CHARS, FeedAction, FeedKind, TITLE_CHARS, fit};
+    use super::{BODY_CHARS, FeedAction, FeedKind, TITLE_CHARS, Urgency, fit};
 
     #[test]
     fn a_kind_and_an_action_are_stored_under_their_serialized_names() {
@@ -151,6 +182,12 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(action).expect("action"),
                 action.as_str()
+            );
+        }
+        for urgency in Urgency::ALL {
+            assert_eq!(
+                serde_json::to_value(urgency).expect("urgency"),
+                urgency.as_str()
             );
         }
     }

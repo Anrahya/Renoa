@@ -104,6 +104,13 @@ impl AcpEventSink {
         Ok(Some(text_chunk(text.to_owned(), &state.message_id)))
     }
 
+    /// The closing message a turn ended on, such as an `ask_owner` question,
+    /// as an assistant message of its own: the model never streamed it.
+    pub(crate) fn closing_chunk(&self, output: &str) -> Result<Option<ContentChunk>, ServerError> {
+        self.start_assistant_message();
+        self.remaining_chunk(output)
+    }
+
     pub(crate) fn ensure_delivery(&self) -> Result<(), ServerError> {
         let state = self
             .state

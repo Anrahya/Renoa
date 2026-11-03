@@ -79,7 +79,7 @@ fn terminal_event(outcome: LocalTurnOutcome) -> ExecutionEventKind {
     let terminal = match outcome {
         LocalTurnOutcome::Completed { .. }
         | LocalTurnOutcome::Compacted { .. }
-        | LocalTurnOutcome::WaitingForInput => ExecutionTerminal::Completed,
+        | LocalTurnOutcome::WaitingForInput { .. } => ExecutionTerminal::Completed,
         LocalTurnOutcome::Cancelled => ExecutionTerminal::Cancelled {
             reason: "agent turn was cancelled".to_owned(),
         },

@@ -397,6 +397,7 @@ fn text(text: String) -> ToolOutput {
         content: vec![ContentBlock::text(text)],
         details: None,
         is_error: false,
+        closing: None,
     }
 }
 

@@ -1049,9 +1049,11 @@ Work proceeds in this order unless evidence changes the dependency:
    enrollment, per-source throttling, health monitoring, and a
    tested backup-and-restore procedure. Owner listing and revocation of
    signed-in apps are done.
-2. Add a durable harness-initiated interaction flow when a real approval or
-   follow-up consumer exists; RCP transports the interaction while the harness
-   retains permission policy.
+2. Add a durable harness-initiated interaction flow when a real approval
+   consumer exists; RCP transports the interaction while the harness retains
+   permission policy. An agent's question to its owner needs none: `ask_owner`
+   ends the execution with the question as its last assistant message and a
+   Host feed item, and the answer is an ordinary command on the task.
 
 Workspace replication, executor migration, mobile UI, and additional surface
 adapters follow only after the continuity path is reliable. Content-free push

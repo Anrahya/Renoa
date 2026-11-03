@@ -352,7 +352,8 @@ impl ActiveTurn {
 
 fn format_outcome(outcome: LocalTurnOutcome) -> String {
     match outcome {
-        LocalTurnOutcome::Completed { output, .. } => output,
+        LocalTurnOutcome::Completed { output, .. }
+        | LocalTurnOutcome::WaitingForInput { output } => output,
         LocalTurnOutcome::Compacted {
             estimated_input_tokens,
             ..
@@ -361,7 +362,6 @@ fn format_outcome(outcome: LocalTurnOutcome) -> String {
         LocalTurnOutcome::Failed { reason } => {
             format!("Arcee could not complete this turn: {reason}")
         }
-        LocalTurnOutcome::WaitingForInput => "Arcee is waiting for more input.".to_owned(),
         _ => "Arcee returned an outcome this Telegram surface does not support yet.".to_owned(),
     }
 }

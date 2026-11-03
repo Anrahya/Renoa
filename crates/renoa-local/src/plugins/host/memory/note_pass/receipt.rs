@@ -100,6 +100,7 @@ mod tests {
                 content: Vec::new(),
                 details,
                 is_error,
+                closing: None,
             },
         }
     }

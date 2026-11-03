@@ -8,6 +8,7 @@ use renoa_kernel::{
 use thiserror::Error;
 
 mod execution;
+mod outcome;
 pub(crate) use execution::PromptAdmission;
 #[cfg(test)]
 mod timing_tests;
@@ -45,7 +46,11 @@ pub enum LocalTurnOutcome {
     Failed {
         reason: String,
     },
-    WaitingForInput,
+    /// The turn ended on a tool that asked for an answer, such as
+    /// `ask_owner`; `output` is the closing message it ended on.
+    WaitingForInput {
+        output: String,
+    },
 }
 
 /// Failure to admit, drive, or project one local Host turn.

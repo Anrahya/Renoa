@@ -243,6 +243,7 @@ impl PluginSearchTool {
                 content: vec![ContentBlock::text(encoded)],
                 details: None,
                 is_error: false,
+                closing: None,
             });
         }
         let reference = McpToolReference::from_str(encoded)
@@ -266,6 +267,7 @@ impl PluginSearchTool {
             content: vec![ContentBlock::text(encoded)],
             details: None,
             is_error: false,
+            closing: None,
         })
     }
 

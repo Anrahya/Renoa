@@ -107,14 +107,7 @@ impl Tool for Grep {
                 &cancellation,
             )
             .await?;
-            Ok(ToolOutput {
-                content: vec![ContentBlock::text(output.text)],
-                details: Some(json!({
-                    "matches": output.items,
-                    "truncated": output.truncated
-                })),
-                is_error: false,
-            })
+            Ok(output.into_tool_output("matches"))
         })
     }
 }
@@ -196,14 +189,7 @@ impl Tool for Find {
                 &cancellation,
             )
             .await?;
-            Ok(ToolOutput {
-                content: vec![ContentBlock::text(output.text)],
-                details: Some(json!({
-                    "results": output.items,
-                    "truncated": output.truncated
-                })),
-                is_error: false,
-            })
+            Ok(output.into_tool_output("results"))
         })
     }
 }
@@ -212,6 +198,18 @@ struct SearchOutput {
     text: String,
     items: usize,
     truncated: bool,
+}
+
+impl SearchOutput {
+    /// The text for the model; `items` names the count in the details.
+    fn into_tool_output(self, items: &str) -> ToolOutput {
+        ToolOutput {
+            content: vec![ContentBlock::text(self.text)],
+            details: Some(json!({ items: self.items, "truncated": self.truncated })),
+            is_error: false,
+            closing: None,
+        }
+    }
 }
 
 async fn grep(

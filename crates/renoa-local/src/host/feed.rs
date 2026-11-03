@@ -22,8 +22,9 @@ pub(super) mod retention;
 #[cfg(test)]
 mod tests;
 
-pub use item::{FeedAction, FeedKind};
-pub(crate) use produce::{Ability, ability_turned_on};
+pub(crate) use item::{BODY_CHARS, CHOICE_CHARS, CHOICES};
+pub use item::{FeedAction, FeedKind, Urgency};
+pub(crate) use produce::{Ability, ForOwner, ability_turned_on, owner_asked, owner_told};
 pub(super) use produce::{RunEnded, run_ended};
 pub use read::{FeedAgent, FeedItem, FeedPage, FeedSeen};
 
@@ -67,6 +68,37 @@ pub(super) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
         sentence = item::TODAY_CHARS,
     ))?;
     Ok(())
+}
+
+/// Gives every item an urgency and an ask its choices: schema 48. Existing
+/// items keep `whenever`, so an upgrade wakes no phone for them.
+pub(super) fn add_urgency(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
+    tx.execute_batch(&format!(
+        "ALTER TABLE host_feed_items ADD COLUMN urgency TEXT NOT NULL DEFAULT 'whenever'
+            CHECK (urgency IN ({urgencies}));
+         ALTER TABLE host_feed_items ADD COLUMN choices TEXT
+            CHECK (choices IS NULL OR json_valid(choices));",
+        urgencies = item::sql_list(Urgency::ALL.map(Urgency::as_str)),
+    ))?;
+    Ok(())
+}
+
+/// Marks done the open asks a message on `session` answers; see
+/// [`produce::asks_answered`].
+///
+/// # Errors
+/// Returns catalog and stored-data failures.
+pub(crate) fn answer_asks(
+    database: &Path,
+    session: renoa_kernel::SessionId,
+    command: renoa_kernel::CommandId,
+    said_at_ms: i64,
+) -> Result<usize, FeedError> {
+    let mut db = catalog::open_verified(database)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let answered = produce::asks_answered(&tx, session, command, said_at_ms)?;
+    tx.commit()?;
+    Ok(answered)
 }
 
 /// The newest sequence the feed has handed out, pruned or not; 0 before the

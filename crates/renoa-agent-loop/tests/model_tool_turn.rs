@@ -419,6 +419,7 @@ impl Tool for ReplaceValue {
                     content: vec![ContentBlock::text("Replacing value.")],
                     details: None,
                     is_error: false,
+                    closing: None,
                 })
                 .await;
             Ok(ToolOutput {
@@ -429,6 +430,7 @@ impl Tool for ReplaceValue {
                 ))],
                 details: Some(serde_json::json!({"changed": true})),
                 is_error: false,
+                closing: None,
             })
         })
     }

@@ -632,5 +632,7 @@ Task-list pagination, live directory and target updates, user-facing task
 metadata, a waiting-on-owner task status, a next-wake time, steering,
 approvals, task rebinding, executor generations, snapshots, artifact transfer,
 and live activity beyond visible text are not operations yet. Harness provisioning and permission policy stay outside RCP. A generic
-durable interaction flow for approval or follow-up responses remains undefined
-until a harness and surface consume it.
+durable interaction flow for approval responses remains undefined until a
+harness and surface consume it. An agent's question to its owner is not one:
+it ends the execution as its last assistant message, and the answer is an
+ordinary `submit` on the task.

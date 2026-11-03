@@ -7,9 +7,9 @@ use std::{
 
 use futures_util::{StreamExt as _, stream};
 use renoa_agent::{
-    AssistantContent, AssistantMetadata, BoxFuture, ContentBlock, Message, Model, ModelError,
-    ModelEvent, ModelEventStream, ModelRequest, ModelResponse, StopReason, Tool, ToolCall,
-    ToolError, ToolOutput, ToolSpec, ToolUpdates,
+    AssistantContent, AssistantMetadata, BoxFuture, Closing, ContentBlock, Message, Model,
+    ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse, StopReason, Tool,
+    ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::{
     AgentCommand, AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CodeModeBinding,
@@ -430,6 +430,81 @@ async fn oversized_nested_results_are_not_sent_back_into_python() {
     assert_eq!(requests.lock().expect("requests").len(), 2);
 }
 
+#[tokio::test]
+async fn a_nested_call_that_ends_the_turn_stops_python_and_closes_the_turn() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let agent = AgentId::new();
+    let session = SessionId::new();
+    kernel.create_agent(agent).expect("create agent");
+    kernel
+        .create_session(session, agent)
+        .expect("create session");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(ScriptedModel {
+        responses: Mutex::new(VecDeque::from([ModelResponse {
+            content: vec![AssistantContent::tool_call(code_call("outer"))],
+            stop_reason: StopReason::ToolUse,
+            usage: None,
+            metadata: AssistantMetadata::default(),
+        }])),
+        requests: Arc::clone(&requests),
+    });
+    let runtime = runtime(model, Arc::new(ClosingMcpTool), Arc::new(FakeEvaluator));
+    let operation = kernel
+        .submit(
+            session,
+            Command::new(
+                CommandId::new(),
+                serde_json::to_value(AgentCommand::text("Ask before booking.")).expect("command"),
+            ),
+        )
+        .expect("submit")
+        .operation_id;
+    assert_eq!(
+        kernel.drive(session, &runtime).await.expect("drive"),
+        DriveResult::Finished {
+            operation_id: operation,
+            outcome: OperationOutcome::WaitingForInput,
+        }
+    );
+    assert_eq!(
+        kernel.inspect(session).expect("inspect").operations[0]
+            .effect_batches
+            .len(),
+        3,
+        "model, the first Python step and the call wave; Python never resumes"
+    );
+    let messages = kernel
+        .events_after(session, EventCursor::START)
+        .expect("events")
+        .events
+        .into_iter()
+        .map(|event| serde_json::from_value::<Message>(event.payload).expect("message"))
+        .collect::<Vec<_>>();
+    let [
+        _,
+        _,
+        Message::Tool { result },
+        Message::Assistant { content, .. },
+    ] = messages.as_slice()
+    else {
+        panic!("user, call, stopped result, closing: {messages:?}");
+    };
+    let [ContentBlock::Text { text }] = result.content.as_slice() else {
+        panic!("one text block: {result:?}");
+    };
+    assert!(!result.is_error);
+    assert!(
+        text.contains("ended the turn")
+            && text.contains("mcp:first")
+            && text.contains("mcp:second"),
+        "the model sees the whole wave: {text}"
+    );
+    assert_eq!(content, &vec![AssistantContent::text("Book it?")]);
+    assert_eq!(requests.lock().expect("requests").len(), 1);
+}
+
 fn scripted_runtime(
     requests: &Arc<Mutex<Vec<ModelRequest>>>,
     dispatched: &Arc<Mutex<Vec<ToolCall>>>,
@@ -617,6 +692,7 @@ impl Tool for ConcurrentMcpTool {
                 content: vec![ContentBlock::text(reference)],
                 details: Some(json!({"reference": reference})),
                 is_error: false,
+                closing: None,
             })
         })
     }
@@ -649,6 +725,7 @@ impl Tool for UnknownMcpTool {
                     content: vec![ContentBlock::text(reference)],
                     details: None,
                     is_error: false,
+                    closing: None,
                 })
             }
         })
@@ -682,6 +759,7 @@ impl Tool for OversizedMcpTool {
                 content: vec![ContentBlock::text("x".repeat(2 * 1024 * 1024))],
                 details: None,
                 is_error: false,
+                closing: None,
             })
         })
     }
@@ -707,6 +785,45 @@ impl Tool for CancelledMcpTool {
             self.arrival.wait().await;
             cancellation.cancelled().await;
             Err(ToolError::outcome_unknown("cancelled after dispatch"))
+        })
+    }
+}
+
+/// Ends the turn when Python calls `mcp:first`, as `ask_owner` does through
+/// `tool_execute`; any other reference returns plainly.
+struct ClosingMcpTool;
+
+impl Tool for ClosingMcpTool {
+    fn spec(&self) -> &ToolSpec {
+        static SPEC: std::sync::OnceLock<ToolSpec> = std::sync::OnceLock::new();
+        SPEC.get_or_init(|| ToolSpec {
+            name: "tool_execute".to_owned(),
+            description: "Closing plugin fixture".to_owned(),
+            input_schema: json!({"type": "object"}),
+        })
+    }
+
+    fn execute(
+        &self,
+        call: ToolCall,
+        _cancellation: CancellationToken,
+        _updates: ToolUpdates,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let reference = call.arguments["reference"]
+                .as_str()
+                .expect("reference")
+                .to_owned();
+            let closing = (reference == "mcp:first").then(|| Closing {
+                message: "Book it?".to_owned(),
+                not_run: "Not run: the turn ended.".to_owned(),
+            });
+            Ok(ToolOutput {
+                content: vec![ContentBlock::text(reference)],
+                details: None,
+                is_error: false,
+                closing,
+            })
         })
     }
 }

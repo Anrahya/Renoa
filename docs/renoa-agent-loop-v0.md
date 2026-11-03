@@ -245,7 +245,8 @@ compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 15 adds the receipted prompt command and the
+Loop binding revision 16 ends a turn on a tool result that carries a closing
+message. Revision 15 adds the receipted prompt command and the
 `renoa.agent.receipted.v1` marker, and shows a finished marked operation as
 its receipt. Revision 14 gives a context summary its own model effect binding,
 `renoa.agent.compaction`, beside `renoa.agent.model`; both run the same model at
@@ -337,6 +338,14 @@ Definite evaluator or nested-adapter failure, unknown abandonment, and
 cancellation close the outer call and any later top-level calls with error
 results. An unknown MCP child is never replayed by the loop.
 
+A tool result may carry a closing message and a `not_run` text, as
+`ask_owner` does. The loop records the result without them, gives every later
+call of the same response the `not_run` text as an error result, appends the
+closing message as the turn's last assistant message, and ends the operation
+waiting for input; the next command is a new operation that answers it. A
+Code Mode child that carries one stops the run: Python is not resumed, and the
+outer `code_mode` result holds every result of that wave.
+
 Code Mode accepts at most 64 KiB of source, 32 MCP calls in one wave, 128
 calls and 32 waves in one run, a 2 MiB encoded snapshot, 2 MiB of MCP results
 returned to Python per wave, and a 1 MiB final Python value. A result over
@@ -356,6 +365,8 @@ slice:
   effect;
 - calls from a length-stopped response are not executed and receive
   model-visible errors;
+- a tool result with a closing message ends the turn without another model
+  request;
 - empty or duplicate model tool-call identifiers fail the operation before the
   assistant message or any tool effect is committed;
 - model-turn and per-response tool-call limits fail the operation explicitly;

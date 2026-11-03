@@ -9,6 +9,7 @@ use renoa_kernel::{
     SettledEffectBatch,
 };
 
+mod closing;
 mod code_mode;
 mod compaction;
 mod effect_input;
@@ -422,8 +423,11 @@ impl AgentLoop {
     fn append_tool_result(
         model_turns: u32,
         pending: PendingToolCalls,
-        result: ToolResult,
+        mut result: ToolResult,
     ) -> Result<LoopDecision, LoopError> {
+        if let Some(closing) = result.closing.take() {
+            return closing::close_turn(&pending, result, closing);
+        }
         let phase = pending
             .advance()
             .map_or(LoopPhase::NeedModel { model_turns }, |pending| {
@@ -483,5 +487,6 @@ fn unavailable_result(call: &ToolCall, message: &str) -> ToolResult {
         content: vec![ContentBlock::text(message)],
         details: None,
         is_error: true,
+        closing: None,
     }
 }

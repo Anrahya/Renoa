@@ -74,11 +74,9 @@ impl Tool for Resident {
                     ToolError::internal(format!("the plugin state check failed: {error}"))
                 })??;
             if !enabled {
-                return Err(ToolError::not_found(format!(
-                    "{} is turned off for this agent, so {} cannot run. Answer without it; if the person wants it back, turn it on with plugin_manage enable_plugin.",
-                    plugin.id(),
-                    self.tool.spec().name
-                )));
+                return Err(ToolError::not_found(
+                    plugin.turned_off(&self.tool.spec().name),
+                ));
             }
             self.tool.execute(call, cancellation, updates).await
         })

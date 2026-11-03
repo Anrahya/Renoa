@@ -38,7 +38,8 @@ fn validate(plugin: HostPluginId, settings: Value) -> Result<Value, PluginError>
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Memory => Err(PluginError::Invalid(format!(
+        | HostPluginId::Memory
+        | HostPluginId::Owner => Err(PluginError::Invalid(format!(
             "{} has no settings",
             plugin.id()
         ))),

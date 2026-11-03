@@ -38,6 +38,7 @@ fn setup_event(stage: &str) -> AgentEvent {
             )],
             details: None,
             is_error: false,
+            closing: None,
         },
     }
 }

@@ -309,6 +309,7 @@ mod tests {
             content: vec![ContentBlock::text(text)],
             details: None,
             is_error,
+            closing: None,
         }
     }
 }
