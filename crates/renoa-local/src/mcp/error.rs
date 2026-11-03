@@ -31,6 +31,10 @@ pub enum McpHostError {
     OAuth(#[from] McpOAuthError),
     #[error(transparent)]
     Adapter(#[from] McpAdapterError),
+    /// A turn showed the person a setup link and stopped there: the setup is
+    /// saved under its operation, and the Host's setup waits finish it.
+    #[error("the person has a setup link to finish; Renoa completes the setup when they do")]
+    AwaitingPerson { expires_at_ms: Option<i64> },
 }
 
 /// Failure while the Host owns an MCP OAuth lifecycle.

@@ -18,6 +18,7 @@ mod mcp;
 mod models;
 pub(crate) mod observation;
 pub(crate) mod peers;
+pub(crate) mod plugin_setups;
 pub(crate) mod profiles;
 mod reset;
 mod runtime;

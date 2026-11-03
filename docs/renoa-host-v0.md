@@ -999,7 +999,8 @@ back unrelated components.
 Connect accepts no credential, one named Host bearer or exact header
 reference, or Host-owned OAuth, never a raw key. On a configured headless Host,
 a missing named API token or pre-registered OAuth client emits a permanent
-surface link to the encrypted Renoa credential-intake page and waits. The
+surface link to the encrypted Renoa credential-intake page, and the Host's
+saved setups wait for the person (see Host-owned automations). The
 browser encrypts locally; the coordinator cannot read the submitted value. The
 Host stores and validates it before authenticated discovery. OAuth opens an exact loopback
 browser flow on desktop. A configured headless Host instead emits the provider
@@ -1424,7 +1425,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 51
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 52
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1455,7 +1456,8 @@ acknowledged wake, so an open `soon` or `now` item written by schema 48 is
 owed its wake. Every catalog below schema 50 lets every compiled plugin keep
 settings and triggers, keeping every stored setting, trigger and reminder; no
 agent has a heartbeat until it is set. Every catalog below schema 51 gains the
-mark of follow-ups, empty. Live selections
+mark of follow-ups, empty, and every catalog below schema 52 gains the saved
+setups waiting on the person, empty. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1819,6 +1821,22 @@ with `automation_manage`. A follow-up set during a heartbeat comes back to the
 heartbeat's conversation as an ordinary run, not a quiet one, so what it writes
 wakes the owner as a reply does. Each refusal says what was wrong and how to
 fix the call; a call ID reused with other fields is refused and sets nothing.
+
+A `plugin_manage` call that shows the person a setup link ends its turn there
+and comes back the same way, when a setup runner is attached in its process:
+the node that owns the Host's schedule runs it, so one process replays saved
+calls. With no runner, the turn waits for the person as before. Before the
+agent hears it is waiting, the Host saves the call under its operation in
+`host_plugin_setups` (schema 52, an agent-owned table); an operation that
+already holds a different call is refused. The runner replays each saved call
+with no one to show a link to, so it adopts the credential intake or sign-in
+that same operation saved, and waits for the person until 30 seconds past the
+link's expiry, or 16 minutes when the link has none; a sign-in no earlier turn
+showed is refused as needing the person. One transaction then removes the row
+and sends what came of it into the call's conversation as a follow-up due a
+second later, which the 20-waiting limit never refuses. The service's text in
+it is quoted as data. A link that expired comes back saying so. A Host that
+stops keeps its saved calls and replays them on its next run.
 
 `automation_results` exposes finished-run summaries, each with its status
 (succeeded, failed, or skipped) and its failed tool call count, and exact run

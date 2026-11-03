@@ -30,7 +30,7 @@ use crate::{
         tests::{test_agent_id, test_skill_store},
     },
 };
-use recovery::recover_pending;
+use recovery::{duplicate_setup, replay, sign_in_again};
 
 #[tokio::test]
 async fn encrypted_browser_intake_finishes_before_the_connection_is_published() {
@@ -41,7 +41,35 @@ async fn encrypted_browser_intake_finishes_before_the_connection_is_published() 
             "kind": "secret_service_bearer",
             "credential_id": "credential.test"
         }),
-        false,
+        Consent::Given,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_setup_waiting_on_a_link_finishes_when_another_saves_the_credential() {
+    run_credential_setup(
+        "duplicate-credential",
+        "https://mcp.example/duplicate",
+        json!({
+            "kind": "secret_service_bearer",
+            "credential_id": "credential.duplicate"
+        }),
+        Consent::Duplicate,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn without_a_setup_runner_the_turn_waits_for_the_person() {
+    run_credential_setup(
+        "unhanded-credential",
+        "https://mcp.example/unhanded",
+        json!({
+            "kind": "secret_service_bearer",
+            "credential_id": "credential.unhanded"
+        }),
+        Consent::Unhanded,
     )
     .await;
 }
@@ -52,7 +80,29 @@ async fn oauth_setup_is_selected_by_the_host_and_bound_to_the_discovered_issuer(
         "oauth-credential-test",
         "https://mcp.example/oauth-test",
         json!({"kind": "oauth"}),
-        false,
+        Consent::Given,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_sign_in_link_finishes_after_the_turn_that_showed_it_ends() {
+    run_credential_setup(
+        "callback-oauth",
+        "https://mcp.example/callback",
+        json!({"kind": "oauth"}),
+        Consent::Callback,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_refused_sign_in_comes_back_unfinished_and_publishes_nothing() {
+    run_credential_setup(
+        "refused-oauth",
+        "https://mcp.example/refused",
+        json!({"kind": "oauth"}),
+        Consent::Refused,
     )
     .await;
 }
@@ -63,16 +113,45 @@ async fn an_expired_unpublished_connection_restarts_without_another_credential_s
         "pending-oauth",
         "https://mcp.example/pending",
         json!({"kind":"oauth"}),
-        true,
+        Consent::Expires,
     )
     .await;
+}
+
+/// How the person answers the sign-in link.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Consent {
+    /// No setup runner is attached, so the turn waits for the person.
+    Unhanded,
+    /// They ignore the credential link and answer a second setup's.
+    Duplicate,
+    /// The provider signs them in without a link.
+    Given,
+    /// They follow the link after the turn that showed it ended.
+    Callback,
+    /// They refuse it after the turn that showed it ended.
+    Refused,
+    /// They never do, and the link expires.
+    Expires,
+}
+
+/// One setup under test, as the agent and the Host see it.
+struct Run<'a> {
+    tool: &'a ManageTool,
+    sink: &'a CredentialSubmitter,
+    arguments: &'a Value,
+    directory: &'a std::path::Path,
+    database: &'a std::path::Path,
+    connection: &'a str,
+    session: SessionId,
+    command: CommandId,
 }
 
 async fn run_credential_setup(
     connection: &str,
     endpoint: &str,
     credential: Value,
-    expire_first: bool,
+    consent: Consent,
 ) {
     let directory = tempdir().expect("temporary credential setup fixture");
     let relay = CredentialRelayServer::start(&directory).await;
@@ -83,12 +162,96 @@ async fn run_credential_setup(
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let adapter = directory.path().join("credential-adapter.mjs");
     write_credential_adapter(&adapter);
-    if expire_first {
+    if matches!(
+        consent,
+        Consent::Callback | Consent::Refused | Consent::Expires
+    ) {
         fs::write(directory.path().join("wait-for-consent"), "wait").expect("pause authorization");
     }
-    let cancellation = CancellationToken::new();
+    let manager = plugin_manager(&directory, &relay, &mcp, adapter);
+    let (session, command) = (SessionId::new(), CommandId::new());
+    let tool = ManageTool::for_session(
+        test_agent_id(1),
+        manager.clone(),
+        directory.path().to_path_buf(),
+        session,
+        Some(command),
+    );
+    let sink = CredentialSubmitter {
+        http: reqwest::Client::new(),
+        catalog: mcp.clone(),
+        connection: connection.to_owned(),
+        credential_prompts: AtomicUsize::new(0),
+        ignored_prompts: AtomicUsize::new(usize::from(consent == Consent::Duplicate)),
+        sign_in: std::sync::Mutex::default(),
+    };
+    let arguments = json!({
+        "action": "add",
+        "source": {
+            "kind": "mcp",
+            "name": "credential-test",
+            "description": "Credential setup fixture.",
+            "server": "credential-test",
+            "endpoint": endpoint,
+            "documentation": "https://mcp.example/docs"
+        },
+        "credential": credential,
+        "connection": connection
+    });
+    let run = Run {
+        tool: &tool,
+        sink: &sink,
+        arguments: &arguments,
+        directory: directory.path(),
+        database: &database,
+        connection,
+        session,
+        command,
+    };
+    let runner = (consent != Consent::Unhanded).then(|| manager.setups().attach());
+    let result = call(&tool, &sink, "credential-connect", &arguments).await;
+    if runner.is_none() {
+        assert!(text(&result).contains("catalog_loaded"), "{result:?}");
+        assert!(mcp.connection_config(connection).is_ok());
+        relay.stop().await;
+        return;
+    }
+    // The turn ends once the person has the link, with the call saved.
+    assert_waiting(&result);
+    assert!(
+        mcp.connection_config(connection).is_err(),
+        "nothing is published while the person has the link"
+    );
+    let operation = crate::mcp::oauth_operation_id(session, Some(command), "credential-connect");
+    assert_eq!(saved_call(&database, &operation), arguments);
+    // The Host's setup wait replays it, with no one to show a link to.
+    let published = if consent == Consent::Duplicate {
+        Box::pin(duplicate_setup(&run)).await
+    } else if credential["kind"] == "oauth" {
+        let replayed = replay(&run, "credential-connect").await;
+        Box::pin(sign_in_again(&run, consent, replayed)).await
+    } else {
+        let finished = replay(&run, "credential-connect").await;
+        let finished = finished.expect("the replay finishes the setup");
+        assert!(finished.contains("catalog_loaded"), "{finished}");
+        true
+    };
+    assert_eq!(sink.credential_prompts.load(Ordering::SeqCst), 1);
+    let config = mcp.connection_config(connection);
+    assert_eq!(config.is_ok(), published, "published only when finished");
+    assert!(config.is_err() || config.is_ok_and(|config| config.endpoint == endpoint));
+    relay.stop().await;
+}
+
+fn plugin_manager(
+    directory: &tempfile::TempDir,
+    relay: &CredentialRelayServer,
+    mcp: &McpCatalogStore,
+    adapter: std::path::PathBuf,
+) -> PluginManager {
+    let database = directory.path().join("host.sqlite3");
     let authorizations = McpAuthorizationResolver::with_remote_oauth(
-        &mcp,
+        mcp,
         Some(adapter.clone()),
         McpCredentialResolver::default(),
         &relay.origin,
@@ -96,7 +259,7 @@ async fn run_credential_setup(
         &directory.path().join("credentials"),
     )
     .expect("configure credential relay");
-    let manager = PluginManager::initialize_with_authorizations(
+    PluginManager::initialize_with_authorizations(
         database.clone(),
         directory.path().join("installed"),
         mcp.clone(),
@@ -105,61 +268,70 @@ async fn run_credential_setup(
         authorizations,
         test_skill_store(&database, directory.path()),
     )
-    .expect("initialize plugin manager");
-    let tool = ManageTool::for_session(
-        test_agent_id(1),
-        manager,
-        directory.path().to_path_buf(),
-        SessionId::new(),
-        Some(CommandId::new()),
-    );
-    let sink = CredentialSubmitter {
-        http: reqwest::Client::new(),
-        catalog: mcp.clone(),
-        connection: connection.to_owned(),
-        cancel_on_authorization: expire_first.then(|| cancellation.clone()),
-        credential_prompts: AtomicUsize::new(0),
-    };
-    let result = invoke_tool(
-        Some(&tool),
+    .expect("initialize plugin manager")
+}
+
+async fn call(
+    tool: &ManageTool,
+    sink: &CredentialSubmitter,
+    id: &str,
+    arguments: &Value,
+) -> renoa_agent::ToolResult {
+    let called = invoke_tool(
+        Some(tool),
         ToolCall {
-            id: "credential-connect".to_owned(),
+            id: id.to_owned(),
             name: TOOL_NAME.to_owned(),
-            arguments: json!({
-                "action": "add",
-                "source": {
-                    "kind": "mcp",
-                    "name": "credential-test",
-                    "description": "Credential setup fixture.",
-                    "server": "credential-test",
-                    "endpoint": endpoint,
-                    "documentation": "https://mcp.example/docs"
-                },
-                "credential": credential,
-                "connection": connection
-            }),
+            arguments: arguments.clone(),
             thought_signature: None,
             namespace: None,
         },
-        cancellation,
-        Some(&sink),
-    )
-    .await
-    .expect("credential setup has a definite result");
-    if expire_first {
-        assert!(result.is_error);
-        recover_pending(&tool, &sink, directory.path(), &database, connection).await;
-    } else {
-        assert!(!result.is_error, "credential setup failed: {result:?}");
-    }
-    assert_eq!(sink.credential_prompts.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        mcp.connection_config(connection)
-            .expect("connection is published only after setup")
-            .endpoint,
-        endpoint
+        CancellationToken::new(),
+        Some(sink),
     );
-    relay.stop().await;
+    // A call that waited on the person in its turn would hang here.
+    tokio::time::timeout(Duration::from_secs(30), called)
+        .await
+        .expect("plugin_manage returns without waiting on the person")
+        .expect("plugin_manage has a definite result")
+}
+
+/// The arguments of the call saved for the Host's setup wait under `operation`.
+fn saved_call(database: &std::path::Path, operation: &str) -> Value {
+    let saved: String = rusqlite::Connection::open(database)
+        .expect("catalog")
+        .query_row(
+            "SELECT arguments FROM host_plugin_setups WHERE operation_id=?1",
+            [operation],
+            |row| row.get(0),
+        )
+        .expect("the call is saved for the Host's setup wait");
+    serde_json::from_str(&saved).expect("saved call")
+}
+
+/// The call ended its turn with the person holding a setup link.
+fn assert_waiting(result: &renoa_agent::ToolResult) {
+    assert!(!result.is_error, "{result:?}");
+    let waiting: Value = serde_json::from_str(&text(result)).expect("the tool's JSON");
+    assert_eq!(waiting["status"], "waiting_for_person");
+}
+
+fn text(result: &renoa_agent::ToolResult) -> String {
+    let [ContentBlock::Text { text }] = result.content.as_slice() else {
+        panic!("one text block: {result:?}")
+    };
+    text.clone()
+}
+
+fn awaiting_callbacks(database: &std::path::Path, connection: &str) -> i64 {
+    rusqlite::Connection::open(database)
+        .expect("Host database")
+        .query_row(
+            "SELECT count(*) FROM mcp_oauth_flows WHERE connection_id=?1 AND phase='awaiting_callback'",
+            [connection],
+            |row| row.get(0),
+        )
+        .expect("OAuth flows")
 }
 
 struct CredentialRelayServer {
@@ -222,8 +394,12 @@ struct CredentialSubmitter {
     http: reqwest::Client,
     catalog: McpCatalogStore,
     connection: String,
-    cancel_on_authorization: Option<CancellationToken>,
+    /// Credential links the person answered.
     credential_prompts: AtomicUsize,
+    /// Credential links the person leaves unanswered, first ones first.
+    ignored_prompts: AtomicUsize,
+    /// The last sign-in link shown.
+    sign_in: std::sync::Mutex<Option<String>>,
 }
 
 impl AgentEventSink for CredentialSubmitter {
@@ -239,9 +415,8 @@ impl AgentEventSink for CredentialSubmitter {
                 return;
             };
             if value["status"] == "authorization_required" {
-                if let Some(cancellation) = &self.cancel_on_authorization {
-                    cancellation.cancel();
-                }
+                *self.sign_in.lock().expect("sign-in link") =
+                    value["authorization_url"].as_str().map(str::to_owned);
                 return;
             }
             if value["status"] != "credential_required" {
@@ -251,6 +426,14 @@ impl AgentEventSink for CredentialSubmitter {
                 self.catalog.connection_config(&self.connection),
                 Err(McpHostError::NotFound(_))
             ));
+            let ignored =
+                self.ignored_prompts
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                        left.checked_sub(1)
+                    });
+            if ignored.is_ok() {
+                return;
+            }
             self.credential_prompts.fetch_add(1, Ordering::SeqCst);
             submit_encrypted(&self.http, &value).await;
         })
@@ -372,7 +555,18 @@ if (request.action === 'oauth_discover') {
   process.exit(0);
 }
 if (request.action === 'oauth_token') {
+  if (request.oauth_state.access_token !== 'oauth-access') {
+    send({wire_version:9,event:'oauth_refresh_required',oauth_state:request.oauth_state});
+    process.exit(0);
+  }
   send({wire_version:9,event:'oauth_authorized',authorization:{scheme:'bearer',token:'oauth-access'},oauth_state:request.oauth_state});
+  process.exit(0);
+}
+if (request.action === 'oauth_exchange') {
+  if (request.authorization_code !== 'sign-in-code' ||
+      request.registration?.client_id !== 'browser-client' ||
+      request.registration?.client_secret !== 'browser-secret') process.exit(23);
+  send({wire_version:9,event:'oauth_authorized',authorization:{scheme:'bearer',token:'oauth-access'},oauth_state:{...request.oauth_state,access_token:'oauth-access'}});
   process.exit(0);
 }
 if (request.action === 'oauth_begin') {
@@ -400,7 +594,8 @@ if (request.action === 'oauth_begin') {
       schema_version: 1,
       mcp_endpoint: request.endpoint,
       csrf_state: request.csrf_state,
-      redirect_uri: request.redirect_uri
+      redirect_uri: request.redirect_uri,
+      access_token: 'oauth-access'
     }
   });
   process.exit(0);

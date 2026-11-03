@@ -367,7 +367,8 @@ pub(crate) fn plugin_error(error: PluginError, partial_changes_possible: bool) -
             | McpHostError::Database(_)
             | McpHostError::HostCatalog(_)
             | McpHostError::Json(_)
-            | McpHostError::Background(_),
+            | McpHostError::Background(_)
+            | McpHostError::AwaitingPerson { .. },
         ) => ToolError::unavailable(message),
         PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote))) => {
             ToolError::process_failed(remote.to_string(), partial_changes_possible)

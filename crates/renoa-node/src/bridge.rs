@@ -169,6 +169,15 @@ impl RenoaNode {
             Arc::clone(&self.runtime.link),
             shutdown.clone(),
         ));
+        // The setups agents handed to the person, finished by the node that
+        // owns the Host's schedule, so one process replays them; stopped below
+        // with the node, which keeps them for the next run.
+        let setups_stop = shutdown.child_token();
+        let setups = self.automations.as_ref().map(|_| {
+            let host = Arc::clone(&self.runtime.host);
+            let stop = setups_stop.clone();
+            tokio::spawn(async move { host.run_plugin_setups(stop).await })
+        });
         // Boxed: the schedule's future is large and lives as long as the node.
         let schedule = self.automations.take().map(|link| {
             Box::pin(automations::run(
@@ -204,6 +213,17 @@ impl RenoaNode {
         };
 
         wakes.abort();
+        setups_stop.cancel();
+        if let Some(Err(error)) = match setups {
+            Some(setups) => Some(setups.await),
+            None => None,
+        } {
+            node_log::event(
+                "warn",
+                "plugin_setups_ended",
+                &serde_json::json!({ "error": error.to_string() }),
+            );
+        }
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         result

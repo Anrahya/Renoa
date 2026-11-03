@@ -313,6 +313,17 @@ key, and capability; it never creates a second secret prompt for the same tool
 operation. The credential-intake relay is not a credential-sharing service:
 the resulting value belongs only to the requesting Host.
 
+A tool call that shows the person a credential form or a remote sign-in link
+does not wait for them within the turn: it fails with `AwaitingPerson`, and the
+plugin tool hands the call to the Host's saved setups (see the Host document),
+whose replay waits on the intake or callback that operation saved. A
+credential setup also finishes when another setup saves the same credential.
+The plugin layer starts a sign-in only when someone can be shown its link or
+the same operation already showed one, so a replay that needs a new link, such
+as the sign-in after a credential arrives, returns asking the agent to make the
+same call again, which shows it. A local-browser callback still waits within
+the turn, and so does every setup when no runner is attached.
+
 The control origin publicly serves Renoa's non-secret Client ID Metadata
 Document with a `client_id` equal to that document's exact URL and its exact
 callback URI. The Host supplies that document only when

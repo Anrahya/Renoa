@@ -214,6 +214,7 @@ fn host_error(error: McpHostError) -> ToolError {
         | McpHostError::HostCatalog(_)
         | McpHostError::Json(_)
         | McpHostError::Background(_)
+        | McpHostError::AwaitingPerson { .. }
         | McpHostError::OAuth(
             crate::mcp::McpOAuthError::CallbackUnavailable(_)
             | crate::mcp::McpOAuthError::Browser { .. }

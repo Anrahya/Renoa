@@ -20,6 +20,10 @@ pub(crate) struct PluginStore {
 }
 
 impl PluginStore {
+    pub(super) fn database(&self) -> &std::path::Path {
+        &self.database
+    }
+
     pub(super) fn initialize(database: PathBuf, packages: PathBuf) -> Result<Self, PluginError> {
         crate::host::catalog::open_verified(&database)?;
         package_tree::initialize_store(&packages).map_err(PluginError::from_tree)?;

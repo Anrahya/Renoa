@@ -319,6 +319,12 @@ impl OAuthCoordinator {
         .await;
         if receiver.opens_local_browser() {
             browser::open(&self.browser, &authorization_url, &context.cancellation).await?;
+        } else if context.updates.is_some() {
+            // The turn that showed the link ends here; the flow is saved awaiting
+            // its callback, and the Host's setup wait resumes it without the turn.
+            return Err(McpHostError::AwaitingPerson {
+                expires_at_ms: flow.expires_at_ms,
+            });
         }
         let csrf_state = state_string(&bundle.adapter_state, "csrf_state")?;
         let mut callback_result = receiver.receive(csrf_state, &context.cancellation).await?;
