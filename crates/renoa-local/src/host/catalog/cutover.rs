@@ -92,6 +92,7 @@ fn migrate(
             super::memory_reminders::add_reminders(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
+            super::owner_heartbeat::admit_every_plugin_trigger(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],

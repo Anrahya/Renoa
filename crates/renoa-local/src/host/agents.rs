@@ -4,7 +4,17 @@ use renoa_kernel::AgentId;
 use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError, catalog, definition::MAX_AGENT_PAGE};
-use crate::AgentDefinition;
+use crate::{
+    AgentDefinition,
+    plugins::{
+        PluginError,
+        host::{
+            HostPluginId,
+            owner::heartbeat::{self, OwnerSettings},
+            settings,
+        },
+    },
+};
 
 impl LocalHost {
     /// Lists enabled provider models for owner-controlled agent creation.
@@ -94,10 +104,70 @@ impl LocalHost {
         tokio::task::spawn_blocking(move || Ok(home.initialize_agent_workspace(&id.to_string())?))
             .await?
     }
+
+    /// How many hours apart `agent`'s heartbeat runs, from its `renoa.owner`
+    /// setting or the default; 0 is off. `None` for an agent this Host does
+    /// not have.
+    ///
+    /// # Errors
+    /// Returns catalog failures and a stored setting that does not decode.
+    pub async fn heartbeat_hours(&self, agent: AgentId) -> Result<Option<u8>, LocalHostError> {
+        let database = self.config.database.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = catalog::open_verified(&database)?;
+            if !has_agent(&db, agent)? {
+                return Ok(None);
+            }
+            Ok(Some(heartbeat::hours(&db, agent)?))
+        })
+        .await?
+    }
+
+    /// Sets `agent`'s heartbeat `hours` apart, 1 to 24, or off with 0, once
+    /// per `operation`, and returns it as it is now; `None` for an agent this
+    /// Host does not have. The scheduler moves the heartbeat before it next
+    /// admits a run.
+    ///
+    /// # Errors
+    /// Rejects hours above 24 and a reused operation with other hours, and
+    /// returns catalog failures; nothing is stored then.
+    pub async fn set_heartbeat_hours(
+        &self,
+        agent: AgentId,
+        hours: u8,
+        operation: Uuid,
+    ) -> Result<Option<u8>, LocalHostError> {
+        let database = self.config.database.clone();
+        tokio::task::spawn_blocking(move || {
+            if !has_agent(&catalog::open_verified(&database)?, agent)? {
+                return Ok(None);
+            }
+            settings::configure(
+                &database,
+                agent,
+                HostPluginId::Owner,
+                OwnerSettings::with_heartbeat(hours)?,
+                &format!("heartbeat:{operation}"),
+            )?;
+            Ok(Some(heartbeat::hours(
+                &catalog::open_verified(&database)?,
+                agent,
+            )?))
+        })
+        .await?
+    }
 }
 
 fn parse_uuid(value: &str) -> Result<Uuid, LocalHostError> {
     Uuid::parse_str(value).map_err(|error| {
         catalog::HostCatalogError::Invalid(format!("invalid stored identity: {error}")).into()
     })
+}
+
+fn has_agent(db: &rusqlite::Connection, agent: AgentId) -> Result<bool, PluginError> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM host_agents WHERE agent_id = ?1)",
+        [agent.to_string()],
+        |row| row.get(0),
+    )?)
 }

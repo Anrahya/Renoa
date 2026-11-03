@@ -5,10 +5,12 @@
 //! and on what schedule ([`wanted`]); the Host's scheduler converges the
 //! automations to that before it admits due runs, and hands each run of one
 //! back to the plugin ([`run`]) instead of sending it to the agent as a
-//! message. The exception is a `renoa.memory` reminder: its run is delivered
-//! to its agent in the person's conversation, with the submission the
-//! plugin decides when it is admitted ([`delivery`]), and fails rather than
-//! run anywhere else. What a plugin reads or writes outside the catalog for
+//! message. Two kinds are sent to their agent instead. A `renoa.memory`
+//! reminder's run is delivered in the person's conversation, with the
+//! submission the plugin decides when it is admitted ([`delivery`]), and
+//! fails rather than run anywhere else. A `renoa.owner` heartbeat's run is
+//! its standing task, on a task of the trigger's own, and [`quiet`]: what it
+//! writes wakes no one. What a plugin reads or writes outside the catalog for
 //! this it does first, before the scheduler's write transaction opens
 //! ([`prepare`]). The
 //! scheduler's coalescing and lateness rules hold for it as for any
@@ -34,6 +36,7 @@ use super::{
         self,
         reminders::{self, Agendas},
     },
+    owner::heartbeat,
 };
 
 use crate::{
@@ -43,20 +46,27 @@ use crate::{
 pub(crate) use reminders::{Delivery, Reminder};
 
 /// The automations plugins own, each for one agent. A row is kept, disabled,
-/// when its plugin no longer wants it, so its runs stay with it.
-pub(crate) const TRIGGERS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_plugin_triggers (
+/// when its plugin no longer wants it, so its runs stay with it. Its `CHECK`
+/// accepts every [`HostPluginId`]: [`wanted`] decides which keep triggers.
+pub(crate) fn triggers_table() -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS host_plugin_triggers (
         automation_id TEXT PRIMARY KEY REFERENCES host_automations(id),
-        plugin_id TEXT NOT NULL CHECK (plugin_id IN ('renoa.memory'))
-    ) STRICT;";
+        plugin_id TEXT NOT NULL CHECK (plugin_id IN ({}))
+    ) STRICT;",
+        super::state::every_plugin()
+    )
+}
 
 /// The ids of the automations plugins own, for `NOT IN` in every query that
 /// serves an agent.
 pub(crate) const PLUGIN_OWNED: &str = "SELECT automation_id FROM host_plugin_triggers";
 
 /// The ids of the automations plugins own whose runs the Host runs itself:
-/// every one but a reminder, whose runs go to its agent.
+/// every one but a reminder and a heartbeat, whose runs go to their agent.
 pub(crate) const HOST_RUN: &str = "SELECT automation_id FROM host_plugin_triggers
-    WHERE automation_id NOT IN (SELECT automation_id FROM host_memory_reminders)";
+    WHERE plugin_id != 'renoa.owner'
+      AND automation_id NOT IN (SELECT automation_id FROM host_memory_reminders)";
 
 /// What plugins read for their triggers beyond the catalog: the data
 /// directory the notebooks are in, and the agendas `renoa.memory` keeps
@@ -108,7 +118,7 @@ pub(crate) struct Wanted {
 }
 
 pub(crate) fn initialize(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
-    transaction.execute_batch(TRIGGERS_TABLE)
+    transaction.execute_batch(&triggers_table())
 }
 
 /// The triggers `plugin` keeps as of `now_ms`, from the catalog and what
@@ -142,13 +152,20 @@ pub(crate) fn wanted(
                 }))
                 .collect())
         }
+        HostPluginId::Owner => Ok(heartbeat::wanted(db)?
+            .into_iter()
+            .map(|(id, spec)| Wanted {
+                id,
+                spec,
+                reminder: None,
+            })
+            .collect()),
         HostPluginId::Agents
         | HostPluginId::Automations
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Time
-        | HostPluginId::Owner => Ok(Vec::new()),
+        | HostPluginId::Time => Ok(Vec::new()),
     }
 }
 
@@ -182,8 +199,9 @@ pub(crate) fn own(
     })
 }
 
-/// Whether the runs of `automation`, a plugin's trigger, are delivered to its
-/// agent rather than run by its plugin.
+/// Whether the runs of `automation`, a plugin's trigger, go only to their
+/// conversation with a person: a reminder's. A heartbeat's run goes to its
+/// agent too, but on a task of its own, and is never retired.
 pub(crate) fn delivers(db: &Connection, automation: Uuid) -> rusqlite::Result<bool> {
     db.query_row(
         "SELECT EXISTS(SELECT 1 FROM host_memory_reminders WHERE automation_id = ?1)",
@@ -208,6 +226,17 @@ pub(crate) fn delivery(
     let unprepared = reminders::Prepared::default();
     let reminders = prepared.reminders().unwrap_or(&unprepared);
     reminders::delivery(db, reminders, automation, agent)
+}
+
+/// Whether the run of `automation` is quiet: its execution wakes no one, so
+/// only what it asks for itself reaches the owner. A heartbeat's is.
+pub(crate) fn quiet(db: &Connection, automation: Uuid) -> rusqlite::Result<bool> {
+    db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM host_plugin_triggers
+                       WHERE automation_id = ?1 AND plugin_id = ?2)",
+        [automation.to_string(), HostPluginId::Owner.id().to_owned()],
+        |row| row.get(0),
+    )
 }
 
 /// Every automation a plugin owns, with its owner.
@@ -273,7 +302,7 @@ pub(crate) async fn run(
         | HostPluginId::Time
         | HostPluginId::Owner => Ok(Ended {
             status: RunStatus::Failed,
-            output: format!("{} owns no trigger", plugin.id()),
+            output: format!("{} runs no trigger on the Host", plugin.id()),
             failed_tool_calls: None,
         }),
     }
@@ -287,4 +316,16 @@ fn parse_automation(value: &str) -> Result<Uuid, PluginError> {
 fn parse_plugin(value: &str) -> Result<HostPluginId, PluginError> {
     HostPluginId::parse(value)
         .ok_or_else(|| PluginError::Invalid(format!("stored trigger owner `{value}`")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HOST_RUN, HostPluginId};
+
+    /// `HOST_RUN` names the heartbeat's plugin in SQL; a rename of its id
+    /// must move the query with it.
+    #[test]
+    fn the_host_runs_no_heartbeat() {
+        assert!(HOST_RUN.contains(&format!("plugin_id != '{}'", HostPluginId::Owner.id())));
+    }
 }

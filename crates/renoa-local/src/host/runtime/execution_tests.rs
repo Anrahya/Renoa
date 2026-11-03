@@ -129,7 +129,8 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             "plugin_manage",
             "tool_execute",
             "ask_owner",
-            "notify_owner"
+            "notify_owner",
+            "set_today"
         ]
     );
     let browse = value(
@@ -227,8 +228,8 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         )
         .unwrap()
         .len(),
-        5,
-        "the three plugin tools and the two resident owner tools"
+        6,
+        "the three plugin tools and the three resident owner tools"
     );
     assert!(
         invoke(

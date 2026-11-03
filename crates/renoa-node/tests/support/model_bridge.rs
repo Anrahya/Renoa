@@ -47,7 +47,7 @@ const STREAMED_TURN: &str = r#" else if (prompt === "Stream an answer.") {
 /// Creates a paused automation through the Host plugin, discovering its
 /// schema first as a model must, and answers the automation's standing
 /// prompts: one that succeeds, one whose model fails, one whose tool call
-/// fails before it answers, and one that asks the owner.
+/// fails before it answers, one that asks the owner, and the heartbeat's.
 /// "Schedule for <agent>: <standing prompt>" names the automation's agent.
 const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for ")) {
   const [, agent, standing] = prompt.match(/^Schedule for ([^:]+): (.*)$/);
@@ -81,6 +81,23 @@ const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for "))
     question: "Send the digest now?", choices: ["Yes", "No"], urgency: "soon"
   } }];
   stopReason = "tool_use";
+} else if (prompt.startsWith("This is your heartbeat")) {
+  // The first heartbeat has nothing to report but says so anyway; the next
+  // tells the owner one thing, then says it did.
+  const beats = request.messages.filter(message => message.role === "user"
+    && message.content.some(block => block.text?.includes("This is your heartbeat"))).length;
+  const told = request.messages.slice(request.messages.findLastIndex(message => message.role === "user") + 1)
+    .some(message => message.role === "tool");
+  if (beats === 1) {
+    content = [{ type: "text", text: "Nothing to report." }];
+  } else if (!told) {
+    content = [{ type: "tool_call", id: "tell", name: "notify_owner", arguments: {
+      message: "The digest failed twice.", urgency: "soon"
+    } }];
+    stopReason = "tool_use";
+  } else {
+    content = [{ type: "text", text: "Told the owner." }];
+  }
 } else if (prompt === "Fail the digest.") {
   process.stderr.write("the model is unavailable");
   process.exit(4);

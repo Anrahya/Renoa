@@ -10,7 +10,7 @@
 use rusqlite::Transaction;
 
 use super::HostCatalogError;
-use crate::plugins::host::{settings::SETTINGS_TABLE, state::builtin_plugins_table};
+use crate::plugins::host::{settings::settings_table, state::builtin_plugins_table};
 
 pub(super) fn move_turn_timing_to_plugin(
     transaction: &Transaction<'_>,
@@ -39,7 +39,7 @@ pub(super) fn move_turn_timing_to_plugin(
             SET result_json = json_remove(result_json, '$.operational.behavior.turn_timing')
             WHERE json_type(result_json, '$.operational.behavior.turn_timing') IS NOT NULL;",
     )?;
-    transaction.execute_batch(SETTINGS_TABLE)?;
+    transaction.execute_batch(&settings_table())?;
     Ok(())
 }
 

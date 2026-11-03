@@ -209,6 +209,7 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
                 "tool_execute",
                 "ask_owner",
                 "notify_owner",
+                "set_today",
             ]
         );
         let encoded_tools = serde_json::to_string(tools).expect("encode model-visible tools");

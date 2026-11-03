@@ -10,6 +10,7 @@ mod agents;
 mod automations;
 mod discord;
 mod feed;
+mod heartbeat;
 mod main_agent;
 mod profile;
 mod reply;
@@ -45,6 +46,8 @@ enum Operation {
     AgentOptions,
     AgentDefinition(String),
     AgentCreate,
+    HeartbeatRead(String),
+    HeartbeatSet(String),
     ProfileRead,
     ProfileReplace,
     DiscordStatus,
@@ -70,6 +73,10 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         ["agents", "options"] => vec![(Get, Op::AgentOptions)],
         ["agents", id] => vec![(Get, Op::AgentDefinition((*id).to_owned()))],
         ["agents"] => vec![(Post, Op::AgentCreate)],
+        ["agents", id, "heartbeat"] => vec![
+            (Get, Op::HeartbeatRead((*id).to_owned())),
+            (Put, Op::HeartbeatSet((*id).to_owned())),
+        ],
         ["profile"] => vec![(Get, Op::ProfileRead), (Put, Op::ProfileReplace)],
         ["discord"] => vec![(Get, Op::DiscordStatus)],
         ["discord", "inspection"] => vec![(Post, Op::DiscordInspect)],
@@ -186,6 +193,15 @@ impl HostControl {
                     "Send a valid agent creation request.",
                 )?;
                 agents::create(host, host_id, principal, request).await
+            }
+            Operation::HeartbeatRead(id) => heartbeat::read(host, &id).await,
+            Operation::HeartbeatSet(id) => {
+                let change = decode(
+                    body,
+                    BODY_LIMIT,
+                    "Send an operation ID and heartbeat_hours, 0 to 24, as JSON.",
+                )?;
+                heartbeat::set(host, &id, change).await
             }
             Operation::ProfileRead => profile::read(host, principal).await,
             Operation::ProfileReplace => {

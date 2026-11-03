@@ -131,6 +131,7 @@ async fn submit_queued(link: &Link, connection: &Connection) -> Result<(), Disco
                     text: turn.prompt.clone(),
                     context: turn.context.clone(),
                     author: turn.author,
+                    quiet: false,
                 },
             )
             .await

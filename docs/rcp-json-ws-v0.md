@@ -63,7 +63,7 @@ to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
 Version `16` supersedes version `15` by adding a node's wake request
-(`request_wake` answered by `wake_requested`). A version `15` peer is rejected
+(`request_wake` answered by `wake_requested`) and text input's `quiet`. A version `15` peer is rejected
 at authentication.
 
 Version `15` superseded version `14` by adding push-token registration
@@ -633,9 +633,15 @@ and ends the command with one `assistant_message` notice and `completed`;
 `/compact` followed by more words ends `failed`, and a guest's is an ordinary
 message (see `rcp-v0.md`). The Pi node treats all of it as ordinary text.
 
+Text input may also carry `"quiet": true`: nothing the command's execution
+appends wakes its principal's devices, so what it has for them it asks for
+itself with `request_wake`. The Renoa node submits an agent's heartbeat runs
+quiet, and the coordinator makes an agent's message sent from a quiet command,
+and the answer to it, quiet too. It is omitted when false.
+
 `request_id` correlates one connection attempt. `command_id` is the durable
-idempotency identity and must be reused with identical content, `context`
-and `author` included, after an uncertain response.
+idempotency identity and must be reused with identical content, `context`,
+`author` and `quiet` included, after an uncertain response.
 
 ### Task event
 

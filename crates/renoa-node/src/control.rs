@@ -58,6 +58,7 @@ mod tests {
                 text: text.to_owned(),
                 context: None,
                 author,
+                quiet: false,
             },
             origin: None,
         }

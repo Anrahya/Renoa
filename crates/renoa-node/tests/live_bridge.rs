@@ -296,6 +296,7 @@ async fn a_guest_command_reads_no_profile_and_runs_no_tool_while_the_owners_does
                     text: "Read the proof for me.".to_owned(),
                     context: None,
                     author,
+                    quiet: false,
                 },
             )
             .await;

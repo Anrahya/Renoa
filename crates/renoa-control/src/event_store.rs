@@ -432,7 +432,7 @@ fn load_source_event(
 
 /// Appends one record to its task's journal. Every journalled record passes
 /// here, so a record that wakes the owner marks the wake in the same
-/// transaction (`push_wake`).
+/// transaction (`push_wake`), unless its command was submitted quiet.
 pub(crate) fn append_event(
     transaction: &Transaction<'_>,
     task_id: TaskId,
@@ -448,7 +448,9 @@ pub(crate) fn append_event(
         .map_err(sqlite_error)?;
     let sequence =
         u64::try_from(sequence).map_err(|_| ControlError::store("negative task sequence"))?;
-    if crate::push_wake::wake_reason(kind).is_some() {
+    if crate::push_wake::wake_reason(kind).is_some()
+        && !crate::push_wake::of_quiet_command(transaction, kind)?
+    {
         let principal_id = PrincipalId::from_uuid(principal_id.parse().map_err(id_error)?);
         crate::push_wake::record(transaction, principal_id, false)?;
     }

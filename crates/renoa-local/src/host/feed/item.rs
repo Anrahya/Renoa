@@ -8,7 +8,7 @@ pub(super) const TITLE_CHARS: usize = 120;
 /// message to the owner.
 pub(crate) const BODY_CHARS: usize = 240;
 /// The most characters the Today sentence holds.
-pub(super) const TODAY_CHARS: usize = 140;
+pub(crate) const TODAY_CHARS: usize = 140;
 /// The fewest and most choices an ask offers, and the most characters each holds.
 pub(crate) const CHOICES: std::ops::RangeInclusive<usize> = 2..=6;
 pub(crate) const CHOICE_CHARS: usize = 40;

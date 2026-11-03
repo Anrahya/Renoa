@@ -22,8 +22,8 @@ use renoa_control::{
     NodeId, PeerIdentity, PushSettings, PushToken, ServerMessage, TaskId, TaskSpec, WakeUrgency,
 };
 use renoa_protocol::{
-    CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
-    ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
+    Author, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
+    ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
 };
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -750,14 +750,26 @@ struct Run {
 impl Node {
     /// Submits a command from `surface` and admits its execution.
     async fn start(&mut self, surface: &mut Socket, request_id: u64) -> Run {
+        self.start_with(surface, request_id, CommandInput::from_text("what is new?"))
+            .await
+    }
+
+    /// Submits `input` from `surface` and admits its execution.
+    async fn start_with(
+        &mut self,
+        surface: &mut Socket,
+        request_id: u64,
+        input: CommandInput,
+    ) -> Run {
         let command_id = CommandId::new();
+        let quiet = input.quiet();
         send(
             surface,
             &ClientMessage::Submit {
                 request_id,
                 task_id: self.task_id,
                 command_id,
-                input: CommandInput::from_text("what is new?"),
+                input,
             },
         )
         .await;
@@ -772,6 +784,7 @@ impl Node {
             panic!("the node receives the command");
         };
         assert_eq!(command.command_id, command_id);
+        assert_eq!(command.input.quiet(), quiet, "the node hears it as sent");
         send(
             &mut self.socket,
             &ClientMessage::AcknowledgeExecution {
@@ -1241,6 +1254,53 @@ async fn a_failed_run_wakes_the_phone_and_a_quiet_or_cancelled_run_does_not() {
         ],
     )
     .await;
+    let fcm = google.wait_for_fcm(1).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&fcm[0].body).expect("wake JSON"),
+        wake_body("fcm:phone-token")
+    );
+    f.stop().await;
+    google.stop();
+}
+
+/// A heartbeat's run is submitted quiet: neither its text nor its failure
+/// wakes the phone, and the owner's own command on the same task still does.
+#[tokio::test]
+async fn the_records_of_a_quiet_command_wake_no_one() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    let quiet = || CommandInput::Text {
+        text: "This is your heartbeat.".to_owned(),
+        context: None,
+        author: Author::Principal,
+        quiet: true,
+    };
+
+    let mut heartbeat = node.start_with(&mut phone, 2, quiet()).await;
+    node.publish(&mut heartbeat, replying("Nothing to report."))
+        .await;
+    let mut failed = node.start_with(&mut phone, 3, quiet()).await;
+    node.publish(
+        &mut failed,
+        vec![
+            ExecutionEventKind::ExecutionStarted,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Failed {
+                    error: "the model is unavailable".to_owned(),
+                },
+            },
+        ],
+    )
+    .await;
+    assert!(google.settled().await.is_empty(), "nothing of theirs wakes");
+    assert_eq!(f.owed_wakes(), 0, "and none is owed");
+
+    let mut owners = node.start(&mut phone, 4).await;
+    node.publish(&mut owners, replying("Here is what changed."))
+        .await;
     let fcm = google.wait_for_fcm(1).await;
     assert_eq!(
         serde_json::from_str::<Value>(&fcm[0].body).expect("wake JSON"),

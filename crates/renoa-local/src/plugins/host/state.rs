@@ -13,18 +13,24 @@ pub struct HostPluginActivation {
     pub enabled: bool,
 }
 
+/// The `CHECK` list naming every [`HostPluginId`], for the tables keyed by a
+/// compiled plugin.
+pub(crate) fn every_plugin() -> String {
+    HostPluginId::ALL
+        .map(|plugin| format!("'{}'", plugin.id()))
+        .join(",")
+}
+
 /// Which compiled plugins each agent turned on or off; no row is the default, on.
 /// The table, whose `CHECK` accepts every [`HostPluginId`].
 pub(crate) fn builtin_plugins_table() -> String {
-    let ids = HostPluginId::ALL
-        .map(|plugin| format!("'{}'", plugin.id()))
-        .join(",");
     format!(
         "CREATE TABLE IF NOT EXISTS host_agent_builtin_plugins (
         agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-        plugin_id TEXT NOT NULL CHECK(plugin_id IN ({ids})),
+        plugin_id TEXT NOT NULL CHECK(plugin_id IN ({})),
         enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), PRIMARY KEY(agent_id,plugin_id)
-    ) STRICT;"
+    ) STRICT;",
+        every_plugin()
     )
 }
 
@@ -32,15 +38,24 @@ pub(crate) fn builtin_plugins_table() -> String {
 /// every stored activation unchanged. No row is added: an agent without one
 /// has a plugin's default, on.
 pub(crate) fn admit_every_plugin(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
-    tx.execute_batch(
-        "ALTER TABLE host_agent_builtin_plugins RENAME TO host_agent_builtin_plugins_previous;",
-    )?;
-    tx.execute_batch(&builtin_plugins_table())?;
-    tx.execute_batch(
-        "INSERT INTO host_agent_builtin_plugins(agent_id, plugin_id, enabled)
-            SELECT agent_id, plugin_id, enabled FROM host_agent_builtin_plugins_previous;
-         DROP TABLE host_agent_builtin_plugins_previous;",
-    )
+    rebuild(tx, "host_agent_builtin_plugins", &builtin_plugins_table())
+}
+
+/// Rebuilds `table` as `create` defines it now, copying every row unchanged;
+/// the columns stay as they were. A table that refers to `table` must be set
+/// aside first: the rename makes it refer to the old copy, and dropping that
+/// copy deletes its rows.
+pub(crate) fn rebuild(
+    tx: &rusqlite::Transaction<'_>,
+    table: &str,
+    create: &str,
+) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!("ALTER TABLE {table} RENAME TO {table}_previous;"))?;
+    tx.execute_batch(create)?;
+    tx.execute_batch(&format!(
+        "INSERT INTO {table} SELECT * FROM {table}_previous;
+         DROP TABLE {table}_previous;"
+    ))
 }
 
 pub(crate) fn initialize(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
@@ -50,7 +65,7 @@ pub(crate) fn initialize(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()>
         request_json TEXT NOT NULL CHECK(json_valid(request_json)), result_json TEXT NOT NULL CHECK(json_valid(result_json)),
         PRIMARY KEY(agent_id,operation_id)
     ) STRICT;")?;
-    tx.execute_batch(super::settings::SETTINGS_TABLE)
+    tx.execute_batch(&super::settings::settings_table())
 }
 
 pub(crate) fn enabled(

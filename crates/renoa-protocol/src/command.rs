@@ -93,7 +93,20 @@ pub enum CommandInput {
         /// Who wrote the text, as the submitting surface knows them.
         #[serde(default, skip_serializing_if = "Author::is_principal")]
         author: Author,
+        /// Whether what the command's execution writes wakes no one, so only
+        /// what it asks for itself, with `request_wake`, reaches the owner. A
+        /// heartbeat's run is quiet. Omitted on the wire when it is not.
+        #[serde(default, skip_serializing_if = "is_loud")]
+        quiet: bool,
     },
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde passes the field by reference"
+)]
+const fn is_loud(quiet: &bool) -> bool {
+    !*quiet
 }
 
 /// Who wrote a command's text. The coordinator authenticates only the
@@ -126,6 +139,7 @@ impl CommandInput {
             text: text.into(),
             context: None,
             author: Author::Principal,
+            quiet: false,
         }
     }
 
@@ -148,6 +162,22 @@ impl CommandInput {
         match self {
             Self::Text { author, .. } => *author,
         }
+    }
+
+    #[must_use]
+    pub const fn quiet(&self) -> bool {
+        match self {
+            Self::Text { quiet, .. } => *quiet,
+        }
+    }
+
+    /// This input, submitted quiet when `quiet` is.
+    #[must_use]
+    pub fn quiet_if(mut self, quiet: bool) -> Self {
+        match &mut self {
+            Self::Text { quiet: input, .. } => *input = quiet,
+        }
+        self
     }
 }
 

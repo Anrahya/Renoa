@@ -23,9 +23,11 @@ pub(super) mod retention;
 mod tests;
 mod wakes;
 
-pub(crate) use item::{BODY_CHARS, CHOICE_CHARS, CHOICES};
+pub(crate) use item::{BODY_CHARS, CHOICE_CHARS, CHOICES, TODAY_CHARS};
 pub use item::{FeedAction, FeedKind, Urgency};
-pub(crate) use produce::{Ability, ForOwner, ability_turned_on, owner_asked, owner_told};
+pub(crate) use produce::{
+    Ability, ForOwner, ability_turned_on, owner_asked, owner_told, today_set,
+};
 pub(super) use produce::{RunEnded, run_ended};
 pub use read::{FeedAgent, FeedItem, FeedPage, FeedSeen};
 pub use wakes::FeedWake;
@@ -116,7 +118,7 @@ pub(crate) fn answer_asks(
 
 /// The newest sequence the feed has handed out, pruned or not; 0 before the
 /// first item.
-fn newest(db: &rusqlite::Connection) -> rusqlite::Result<i64> {
+pub(super) fn newest(db: &rusqlite::Connection) -> rusqlite::Result<i64> {
     db.query_row(
         "SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name = 'host_feed_items'), 0)",
         [],

@@ -265,7 +265,9 @@ fn admit_in(
         principal_id,
         surface: SurfaceRef::new(AGENT_SURFACE),
         target: message.to_target.clone(),
-        input: CommandInput::from_text(message.text.clone()),
+        // A message from a quiet command is quiet, so a heartbeat's
+        // conversation with another agent wakes no one either.
+        input: CommandInput::from_text(message.text.clone()).quiet_if(source_command.input.quiet()),
         origin: Some(AgentOrigin {
             from_command: message.from_command,
             from: source.target.clone(),

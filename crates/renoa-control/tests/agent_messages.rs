@@ -182,6 +182,11 @@ struct World {
 
 impl World {
     async fn start() -> Self {
+        Self::start_with(CommandInput::from_text("Find out the answer.")).await
+    }
+
+    /// A world whose chat command, the one the desk asks from, is `asked`.
+    async fn start_with(asked_input: CommandInput) -> Self {
         let system = System::start().await;
         let desk_node = NodeId::new();
         let research_node = NodeId::new();
@@ -196,7 +201,7 @@ impl World {
         let chat = TaskId::new();
         system.create_task(chat, desk_node, DESK).await;
         let asked = CommandId::new();
-        submit(&mut surface, chat, asked, "Find out the answer.").await;
+        submit_input(&mut surface, chat, asked, asked_input).await;
         let ServerMessage::Execute { .. } = receive(&mut desk).await else {
             panic!("the desk node should receive the command");
         };
@@ -940,6 +945,51 @@ async fn the_answer_returns_to_the_askers_task_once() {
     }
 }
 
+/// A heartbeat's run is quiet, and so is the conversation it starts: its
+/// question to another agent and the answer that comes back wake no one.
+/// A question from an ordinary command is not quiet.
+#[tokio::test]
+async fn a_quiet_commands_question_and_its_answer_are_quiet() {
+    // Whether a wake was ever marked; the fixture settles the ones it owes.
+    const MARKED: &str = "SELECT coalesce(max(generation), 0) FROM push_wakes";
+    for quiet in [true, false] {
+        let mut world =
+            World::start_with(CommandInput::from_text("This is your heartbeat.").quiet_if(quiet))
+                .await;
+        let request = CommandId::new();
+        world
+            .message_research(world.asked, request, "Anything new?")
+            .await;
+        let ServerMessage::Execute { task_id, command } = receive(&mut world.research).await else {
+            panic!("Research should receive the message");
+        };
+        assert_eq!(command.input.quiet(), quiet, "the question");
+        acknowledge(&mut world.research, task_id, request).await;
+        publish(
+            &mut world.research,
+            task_id,
+            request,
+            transcript(
+                vec![ExecutionEventKind::AssistantMessage {
+                    text: "Nothing new.".to_owned(),
+                }],
+                ExecutionTerminal::Completed,
+            ),
+        )
+        .await;
+        let ServerMessage::Execute { command, .. } = receive(&mut world.desk).await else {
+            panic!("the asker's node should receive the answer");
+        };
+        assert_eq!(command.input.quiet(), quiet, "the answer");
+        assert_eq!(
+            world.system.count(MARKED) > 0,
+            !quiet,
+            "Research's text marks a wake only for a loud question"
+        );
+        world.system.stop().await;
+    }
+}
+
 #[tokio::test]
 async fn an_oversized_answer_is_cut_to_the_size_of_a_request() {
     let mut world = World::start().await;
@@ -1197,13 +1247,22 @@ async fn wait_for_targets(surface: &mut Socket, expected: usize) {
 }
 
 async fn submit(surface: &mut Socket, task_id: TaskId, command_id: CommandId, text: &str) {
+    submit_input(surface, task_id, command_id, CommandInput::from_text(text)).await;
+}
+
+async fn submit_input(
+    surface: &mut Socket,
+    task_id: TaskId,
+    command_id: CommandId,
+    input: CommandInput,
+) {
     send(
         surface,
         &ClientMessage::Submit {
             request_id: 2,
             task_id,
             command_id,
-            input: CommandInput::from_text(text),
+            input,
         },
     )
     .await;

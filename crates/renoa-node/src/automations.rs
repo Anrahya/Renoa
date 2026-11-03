@@ -11,6 +11,9 @@
 //! the scheduler submits the same command again: the coordinator keeps one
 //! copy, and the ledger re-drives an execution the restart interrupted.
 //!
+//! A heartbeat's run is submitted quiet, so what it writes on its task wakes
+//! no one: only the items its tools write for the owner do.
+//!
 //! The Host decides whether a due occurrence is too late to run; a skipped
 //! one is only reported here. A run of a compiled plugin's trigger is not a
 //! message to the agent: the Host runs it in this process, beside this loop,
@@ -321,11 +324,7 @@ async fn deliver(
     };
     loop {
         match connection
-            .submit(
-                task_id,
-                command_id,
-                CommandInput::from_text(run.submission.clone()),
-            )
+            .submit(task_id, command_id, submission(due))
             .await
         {
             Ok(()) => break,
@@ -355,6 +354,11 @@ async fn deliver(
     Ok(wait_for_outcome(runtime, command_id, shutdown)
         .await?
         .map(|outcome| finished(outcome, run, task_id)))
+}
+
+/// The run's command input: its submission, quiet for a heartbeat's run.
+fn submission(due: &ScheduledRun) -> CommandInput {
+    CommandInput::from_text(due.run.submission.clone()).quiet_if(due.quiet)
 }
 
 enum Resolution {

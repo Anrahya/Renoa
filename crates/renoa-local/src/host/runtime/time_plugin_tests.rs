@@ -491,6 +491,10 @@ async fn every_compiled_plugin_fits_its_tables_and_configure_replays_its_receipt
     let agent = agent(&host, crate::presets::GENERAL_PRESET_ID).await;
     let database = &host.config.database;
     let connection = rusqlite::Connection::open(database).expect("catalog");
+    // A probe trigger has no automation of its own.
+    connection
+        .execute_batch("PRAGMA foreign_keys = OFF;")
+        .expect("probe without foreign keys");
     for plugin in HostPluginId::ALL {
         connection
             .execute(
@@ -499,21 +503,31 @@ async fn every_compiled_plugin_fits_its_tables_and_configure_replays_its_receipt
                 rusqlite::params![agent.to_string(), plugin.id()],
             )
             .unwrap_or_else(|error| panic!("{} is missing from the CHECK: {error}", plugin.id()));
-        let stored = connection.execute(
-            "INSERT OR REPLACE INTO host_agent_plugin_settings(agent_id, plugin_id, settings_json)
-             VALUES (?1, ?2, '{}')",
-            rusqlite::params![agent.to_string(), plugin.id()],
-        );
-        assert_eq!(
-            stored.is_ok(),
-            settings::configurable(plugin),
-            "the settings CHECK and the plugin's validator disagree on {}",
-            plugin.id()
-        );
+        // The validator, not the table, decides which plugins take settings
+        // and which keep triggers.
+        connection
+            .execute(
+                "INSERT OR REPLACE INTO host_agent_plugin_settings(agent_id, plugin_id, settings_json)
+                 VALUES (?1, ?2, '{}')",
+                rusqlite::params![agent.to_string(), plugin.id()],
+            )
+            .unwrap_or_else(|error| panic!("{} is missing from the settings CHECK: {error}", plugin.id()));
+        connection
+            .execute(
+                "INSERT INTO host_plugin_triggers(automation_id, plugin_id) VALUES (?1, ?2)",
+                rusqlite::params![Uuid::new_v4().to_string(), plugin.id()],
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{} is missing from the triggers CHECK: {error}",
+                    plugin.id()
+                )
+            });
     }
     connection
         .execute_batch(
-            "DELETE FROM host_agent_plugin_settings; DELETE FROM host_agent_builtin_plugins;",
+            "DELETE FROM host_agent_plugin_settings; DELETE FROM host_agent_builtin_plugins;
+             DELETE FROM host_plugin_triggers;",
         )
         .expect("clear the probe rows");
     drop(connection);

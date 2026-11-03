@@ -74,6 +74,7 @@ async fn a_lagging_surface_is_told_to_replay() {
             text: "fill the live buffer".to_owned(),
             context: None,
             author: renoa_protocol::Author::Principal,
+            quiet: false,
         },
         origin: None,
     };
@@ -588,6 +589,7 @@ fn write_command(principal_id: PrincipalId, target: TargetRef) -> CommandEnvelop
             text: "write something".to_owned(),
             context: None,
             author: renoa_protocol::Author::Principal,
+            quiet: false,
         },
         origin: None,
     }

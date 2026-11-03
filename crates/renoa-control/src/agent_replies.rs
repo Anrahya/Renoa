@@ -110,15 +110,15 @@ pub(crate) fn admit_reply(
     let Some(origin) = command.origin.filter(|origin| origin.kind.expects_reply()) else {
         return Ok(None);
     };
-    let asker_task = transaction
+    let asker = transaction
         .query_row(
-            "SELECT task_id FROM commands WHERE command_id = ?1",
+            "SELECT task_id, command_json FROM commands WHERE command_id = ?1",
             [origin.from_command.to_string()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
         .map_err(sqlite_error)?;
-    let Some(asker_task) = asker_task else {
+    let Some((asker_task, asking_json)) = asker else {
         control_log::event(
             "warn",
             "agent_reply_dropped",
@@ -132,6 +132,8 @@ pub(crate) fn admit_reply(
         return Ok(None);
     };
     let asker_task = TaskId::from_uuid(asker_task.parse().map_err(id_error)?);
+    // The answer to a quiet command is quiet, as its question was.
+    let asking: CommandEnvelope = serde_json::from_str(&asking_json).map_err(json_error)?;
     // Only the batch that first records the terminal event reaches here, so
     // the derived identity is used once per request.
     let reply_id = CommandId::from_uuid(derived_id(&format!("renoa.agent.reply.v1:{command_id}")));
@@ -158,7 +160,7 @@ pub(crate) fn admit_reply(
         principal_id: asker.principal_id,
         surface: SurfaceRef::new(AGENT_SURFACE),
         target: asker.target,
-        input: CommandInput::from_text(text),
+        input: CommandInput::from_text(text).quiet_if(asking.input.quiet()),
         origin: Some(AgentOrigin {
             from_command: command_id,
             from: replier_target,

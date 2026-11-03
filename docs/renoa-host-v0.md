@@ -404,8 +404,9 @@ it; a crash between leaves an open item.
 line of 1 to 140 characters with the sequence it was written through, while no
 open `ask` or `problem` is newer than that sequence; otherwise it is the Host's
 line from the count of open items that need the owner ("2 things need you.",
-or "All quiet."). Nothing writes a sentence yet: its writer and who may call it
-come with the heartbeat, so today only the Host's line exists.
+or "All quiet."). Only `set_today`, in a heartbeat's run, writes a sentence
+(see "Reaching the owner"); it stands through the newest sequence the feed held
+when it was written.
 
 An item is kept 30 days from its creation, and the feed keeps its newest 200;
 an open item that needs the owner, an `ask` or a `problem`, is exempt from
@@ -418,10 +419,10 @@ its items, counted in `automation_runs_pruned` and `automation_purged`.
 
 ### Reaching the owner
 
-The compiled plugin `renoa.owner` ("Reach you") keeps `ask_owner` and
-`notify_owner` resident in every agent's tool list, also while the owner has
-turned it off for the agent, when each call is refused with "nothing was
-sent". A guest's turn refuses them as it refuses every tool. Both take a flat
+The compiled plugin `renoa.owner` ("Reach you") keeps `ask_owner`,
+`notify_owner` and `set_today` resident in every agent's tool list, also while
+the owner has turned it off for the agent, when each call is refused with
+"nothing was sent". A guest's turn refuses them as it refuses every tool. Both take a flat
 object and a required `urgency`: `ask_owner` a `question` of at most 240
 characters and 2 to 6 optional `choices` of at most 40, `notify_owner` a
 `message` of at most 240. A refused call names the field, what was sent and
@@ -442,6 +443,28 @@ automation run answer nothing. A mark that fails is logged as
 `owner_asks_unanswered`, and the person's next message closes it. Deleting a
 conversation removes the asks and updates made in it.
 `notify_owner` does not end the turn.
+
+An agent's heartbeat is `renoa.owner`'s trigger: a check-in of its own at
+minute 0 every `heartbeat_hours` from 08:00 to 22:00 in the agent's
+`renoa.time` zone, or in UTC for a zone without an IANA name. The setting is
+`renoa.owner`'s, `{"heartbeat_hours": n}` with `n` from 0 to 24; it is absent,
+and the heartbeat off, until the owner sets it with
+`PUT /v1/host/agents/{id}/heartbeat` (`{operation_id, heartbeat_hours}`, which
+returns `{heartbeat_hours}`, as `GET` does), or the agent sets it with
+`plugin_manage` when the owner asks it to check in. No heartbeat runs while
+the plugin is off for the agent; the scheduler converges a change before it
+next admits a run, and keeps a heartbeat it no longer wants disabled. Unlike
+`renoa.memory`'s triggers, a heartbeat's run is sent to its agent: its standing
+task, owned by `renoa.owner`, on a task of the trigger's own, submitted
+quiet, so nothing its execution writes wakes the owner, nor what another agent
+it asks writes, nor that agent's answer (see `rcp-v0.md`, "Push wakes"). An
+agent whose settings cannot be read, such as a zone the Host no longer knows,
+has no heartbeat and is logged as `heartbeat_unschedulable`. It makes no feed item of its own, as no plugin's run does: only what
+its `notify_owner` and `ask_owner` calls write reaches the owner. `set_today`
+takes one `sentence`, one line of at most 140 characters, and refuses any turn
+that is not a run of the calling agent's heartbeat, which it knows by the
+run's id being the command's. The scheduler's liveness heartbeat is a
+different thing.
 
 An open item whose urgency is `soon` or `now` is owed a wake of the owner's
 phone; `whenever` never wakes it, and an item answered or dismissed first is
@@ -729,7 +752,8 @@ machine-tool selections. Beside them, each compiled plugin binds its resident
 tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
 `renoa.memory` for a turn that talks to a person or comes from a guest,
 `agent_documents` from `renoa.documents` for an agent that keeps documents,
-and `ask_owner` and `notify_owner` from `renoa.owner` for every agent.
+and `ask_owner`, `notify_owner` and `set_today` from `renoa.owner` for every
+agent.
 The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
@@ -1395,7 +1419,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 49
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 50
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1423,7 +1447,9 @@ its compiled-plugin table, keeping every stored activation, and gives every
 feed item an urgency, `whenever` for those it holds, and an ask its choices.
 Every catalog below schema 49 gives every feed item an empty record of its
 acknowledged wake, so an open `soon` or `now` item written by schema 48 is
-owed its wake. Live selections
+owed its wake. Every catalog below schema 50 lets every compiled plugin keep
+settings and triggers, keeping every stored setting, trigger and reminder; no
+agent has a heartbeat until it is set. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1801,7 +1827,9 @@ plugin run is unfinished. A `renoa.memory` reminder, though its plugin owns
 it, runs as an agent's run: its submission is Mnem's message for the item,
 chosen when the run is admitted, and it goes to the conversation the plugin
 chose then; a node with no task for that conversation fails the run instead
-of opening the automation's own task. A draining node stops the Host's memory runs and
+of opening the automation's own task. A `renoa.owner` heartbeat runs as an
+agent's run too, with its standing task on the automation's own task, and is
+submitted quiet. A draining node stops the Host's memory runs and
 waits for the plugin run in flight, leaving one stopped part way unrecorded;
 shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its

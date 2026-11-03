@@ -804,6 +804,7 @@ pub(crate) async fn submit_placed_when_node_is_online(
             text: text.to_owned(),
             context: context.map(str::to_owned),
             author: Author::Principal,
+            quiet: false,
         },
     )
     .await;

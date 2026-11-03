@@ -368,6 +368,7 @@ mod security_behaviors {
                     text: "continue".to_owned(),
                     context: None,
                     author: renoa_protocol::Author::Principal,
+                    quiet: false,
                 },
             },
         )
@@ -788,6 +789,7 @@ mod security_behaviors {
                     text: "steal this task".to_owned(),
                     context: None,
                     author: renoa_protocol::Author::Principal,
+                    quiet: false,
                 },
             },
         )
