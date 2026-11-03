@@ -3,18 +3,15 @@ package live.renoa.app.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.requiredSize
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.colorResource
-import androidx.compose.ui.res.painterResource
-import live.renoa.app.R
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -26,16 +23,19 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import live.renoa.app.badge.hexPath
-import live.renoa.app.theme.LocalMotionClock
-import live.renoa.app.theme.LocalReducedMotion
-import live.renoa.app.theme.RenoaEasing
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
+import live.renoa.app.R
+import live.renoa.app.badge.hexPath
+import live.renoa.app.theme.LocalMotionClock
+import live.renoa.app.theme.LocalReducedMotion
+import live.renoa.app.theme.RenoaEasing
 
 /** Parses SVG path data once per distinct string. */
 @Composable
@@ -85,8 +85,9 @@ object Glyphs {
 @Composable
 fun RenoaIcon(size: Dp, modifier: Modifier = Modifier) {
     Box(modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(colorResource(R.color.ic_launcher_background)), contentAlignment = Alignment.Center) {
-        // The launcher shows the middle 72 of the icon's 108 units.
-        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.requiredSize(size * 1.5f))
+        // The launcher shows the middle 72 of the icon's 108 units, and the art fills 0.8 of that safe
+        // for round masks; a square has no such corners to clear, so the art fills it.
+        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.requiredSize(size * 1.5f / 0.8f))
     }
 }
 
