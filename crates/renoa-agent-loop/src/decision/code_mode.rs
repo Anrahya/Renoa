@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use renoa_agent::{Message, ToolCall, ToolResult};
 use renoa_kernel::{
     CancellationInput, CancellationTransition, EffectBatchFacts, EffectFact, EffectOutcome,
-    EffectRecovery, EffectRequest, LoopDecision, LoopError, OperationId, SemanticEvent,
+    EffectRecovery, EffectRequest, LoopDecision, LoopError, LoopInput, OperationId, SemanticEvent,
     SettledEffect, SettledEffectBatch, UnknownEffectAbandonment, UnknownEffectInput,
 };
 
@@ -203,10 +203,10 @@ impl AgentLoop {
         run: CodeRun,
         snapshot: String,
         calls: &CodeCallBatch,
-        events: &[SemanticEvent],
-        effect_batch: Option<SettledEffectBatch>,
+        input: LoopInput,
     ) -> Result<LoopDecision, LoopError> {
-        let batch = effect_batch
+        let batch = input
+            .effect_batch
             .ok_or_else(|| LoopError::new("Code Mode MCP checkpoint has no settled batch"))?;
         let effects = self.validate_settled_code_batch(&run, calls, &batch)?;
         let mut results = BTreeMap::new();
@@ -257,7 +257,7 @@ impl AgentLoop {
             results.insert(call.call_id.to_string(), python_value);
         }
         if !closings.is_empty() {
-            return super::closing::stop_code_run(&pending, &seen, closings, events);
+            return super::closing::stop_code_run(&pending, &seen, closings, &input.events);
         }
         let request = CodeStepRequest {
             run_id: run.run_id.clone(),

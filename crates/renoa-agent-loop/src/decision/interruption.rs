@@ -53,15 +53,7 @@ impl LoopPlugin for AgentLoop {
                 run,
                 snapshot,
                 calls,
-            } => self.settle_code_calls(
-                model_turns,
-                pending,
-                run,
-                snapshot,
-                &calls,
-                &input.events,
-                input.effect_batch,
-            ),
+            } => self.settle_code_calls(model_turns, pending, run, snapshot, &calls, input),
             LoopPhase::Terminal => Err(LoopError::new(
                 "a terminal agent checkpoint cannot be driven",
             )),
