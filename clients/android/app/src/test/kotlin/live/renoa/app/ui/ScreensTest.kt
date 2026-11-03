@@ -44,15 +44,13 @@ import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.BadgeFrame.Companion.LIFT
-import live.renoa.app.badge.BadgeFrame.Companion.RADIUS
 import live.renoa.app.badge.HALF
-import live.renoa.app.badge.readSvg
 import androidx.compose.ui.geometry.Offset
-import java.io.File
 import kotlin.math.roundToInt
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.badge.Badge
-import live.renoa.app.badge.PORTRAIT_GROUND
+import live.renoa.app.badge.FACE_INK
+import live.renoa.app.badge.PAPER_SKIN
 import androidx.compose.ui.graphics.toArgb
 import live.renoa.app.chat.ChatScreen
 import android.content.Context
@@ -136,13 +134,13 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun theMainAgentWearsRenoasPortraitInGraphite() = portraitIn(ThemeName.Graphite)
+    fun theMainAgentWearsPaperAndTheOthersTheirColourInGraphite() = facesIn(ThemeName.Graphite)
 
     @Test
-    fun theMainAgentWearsRenoasPortraitInPaper() = portraitIn(ThemeName.Paper)
+    fun theMainAgentWearsPaperAndTheOthersTheirColourInPaper() = facesIn(ThemeName.Paper)
 
-    /** Her eyes land where her portrait rect puts them on the main agent's tile, and another agent keeps its letter. */
-    private fun portraitIn(theme: ThemeName) {
+    /** Each face's eye is ink, and the skin beside it is Paper for the main agent and the agent's own colour for another. */
+    private fun facesIn(theme: ThemeName) {
         val roster = listOf(AgentSummary("renoa", "Renoa", "", AgentState.Resting, primary = true), AgentSummary("tifa", "Tifa", "", AgentState.Resting))
         show(theme) {
             Column(Modifier.background(Renoa.colors.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(40.dp)) {
@@ -151,20 +149,17 @@ class ScreensTest : ScreenTest() {
         }
         val picture = picture()
         val dp = picture.density / 160f
-        // Where the tile's centre is drawn, and how many pixels one unit of the drawing spans.
-        val perTileUnit = 140 * dp / (HALF * 2)
-        val centre = Offset(20 * dp + 70 * dp, 20 * dp + 70 * dp + LIFT * 0.3f * perTileUnit)
-        val crop = readSvg(File("src/main/res/raw/renoa_mascot.svg").readText()).portrait
-        val perUnit = perTileUnit * RADIUS * 2 / crop.width
-        fun at(x: Float, y: Float) = picture.getPixel((centre.x + (x - crop.center.x) * perUnit).roundToInt(), (centre.y + (y - crop.center.y) * perUnit).roundToInt())
-        val iris = 0xFF9A3B2C.toInt()
-        assertEquals(iris, at(82f, 111f), "her left eye")
-        assertEquals(iris, at(118f, 111f), "her right eye")
-
-        val skin = 0xFFF6D9C4.toInt()
-        val below = ((20 + 140 + 20) * dp).roundToInt()
-        assertTrue((0 until picture.width step 2).none { x -> (below until picture.height step 2).any { y -> picture.getPixel(x, y) == skin } }, "another agent keeps its letter")
-        snapshot("badge-portrait-${theme.name.lowercase()}")
+        // How many pixels one unit of the drawing spans, and where each tile's centre is drawn.
+        val perUnit = 140 * dp / (HALF * 2)
+        fun at(tile: Int, x: Float, y: Float): Int {
+            val top = 20 * dp + tile * (140 + 40) * dp
+            return picture.getPixel((20 * dp + 70 * dp + x * perUnit).roundToInt(), (top + 70 * dp + LIFT * 0.3f * perUnit + y * perUnit).roundToInt())
+        }
+        assertEquals(FACE_INK.toArgb(), at(0, -9f, -1f), "Renoa's eye")
+        assertEquals(PAPER_SKIN.toArgb(), at(0, -26f, -6f), "Renoa's skin")
+        assertEquals(FACE_INK.toArgb(), at(1, -9f, -1f), "Tifa's eye")
+        assertEquals(theme.colors.partModel.toArgb(), at(1, -26f, -6f), "Tifa's skin, in clay")
+        snapshot("badge-faces-${theme.name.lowercase()}")
     }
 
     @Test
@@ -179,9 +174,7 @@ class ScreensTest : ScreenTest() {
         // Past the step's own fade-in, so the picture is of the screen at rest.
         compose.mainClock.advanceTimeBy(1_000)
         compose.waitForIdle()
-        // Her dark hair would vanish on Graphite's ground, so she stands on Paper's, as in her tile.
-        val figure = compose.onNodeWithContentDescription("Renoa").fetchSemanticsNode().boundsInRoot
-        assertEquals(PORTRAIT_GROUND.toArgb(), picture().getPixel(figure.left.toInt() + 3, figure.top.toInt() + 3))
+        compose.onNodeWithContentDescription("Renoa, resting, your main agent").assertIsDisplayed()
         snapshot("sign-up-3-graphite")
     }
 

@@ -186,7 +186,7 @@ class AgentEditorViewModelTest {
         assertEquals(AgentHue.of("tifa", repo.agents.value), tifa.state.value.hue)
         assertNotEquals(AgentHue.Ink, tifa.state.value.hue)
         assertTrue(!tifa.state.value.main)
-        assertTrue(renoa.state.value.main, "the main agent wears Renoa's portrait here too")
+        assertTrue(renoa.state.value.main, "the main agent wears Renoa's blush and star here too")
         assertEquals(AgentHue.Ink, renoa.state.value.hue)
     }
 

@@ -5,18 +5,6 @@ import live.renoa.app.agents.AgentState
 import live.renoa.app.theme.RenoaEasing
 import kotlin.math.abs
 
-/** The round status dot. Hex means structure and a circle means live state, so state is only ever a dot. */
-enum class Dot {
-    /** The agent needs the owner: ink, the design system's `state-needs-you`. */
-    Calling,
-
-    /** Something broke: `state-failed`. */
-    Failed,
-
-    /** Work in progress: `state-running`. */
-    Running,
-}
-
 /**
  * One instant of an agent's tile, in tile units (the face has radius [BadgeFrame.RADIUS]).
  * Everything the canvas needs comes from here, so the motion can be checked without a screen.
@@ -26,8 +14,8 @@ data class BadgeFrame(
     val lift: Float = 0f,
     /** A ring leaving the tile, 0 to 1 through its life, or null when none is out. */
     val ring: Float? = null,
-    val dot: Dot? = null,
-    val dotScale: Float = 1f,
+    /** How big the question bubble of an agent that wants the owner is, or null when it asks nothing. */
+    val bubble: Float? = null,
     /** A retiring tile: a muted face with no body, as the landing page draws an old part. */
     val retiring: Boolean = false,
     /** A broken tile: its edge turns `state-failed`. */
@@ -53,7 +41,7 @@ data class BadgeFrame(
 object BadgeMotion {
     const val RING_SECONDS = 1.6f
     private const val HOVER_SECONDS = 3.2f
-    private const val DOT_SECONDS = 1.4f
+    private const val BUBBLE_SECONDS = 1.4f
     private const val ASLEEP_ALPHA = 0.55f
 
     /** Whether a tile in [state] changes over time at all. A still tile needs no frame loop. */
@@ -64,15 +52,15 @@ object BadgeMotion {
     fun frame(state: AgentState, seconds: Float, reducedMotion: Boolean): BadgeFrame =
         when (state) {
             AgentState.Resting -> BadgeFrame()
-            AgentState.Working ->
-                if (reducedMotion) BadgeFrame(dot = Dot.Running) else BadgeFrame(ring = (seconds % RING_SECONDS) / RING_SECONDS, dot = Dot.Running)
+            // Held still, a ring stays partway out.
+            AgentState.Working -> BadgeFrame(ring = if (reducedMotion) 0.35f else (seconds % RING_SECONDS) / RING_SECONDS)
             AgentState.Wants ->
                 if (reducedMotion) {
-                    BadgeFrame(lift = 0.8f, dot = Dot.Calling)
+                    BadgeFrame(lift = 0.8f, bubble = 1f)
                 } else {
-                    BadgeFrame(lift = swing(seconds, HOVER_SECONDS, 0.65f, 0.95f), dot = Dot.Calling, dotScale = swing(seconds, DOT_SECONDS, 1f, 1.3f))
+                    BadgeFrame(lift = swing(seconds, HOVER_SECONDS, 0.65f, 0.95f), bubble = swing(seconds, BUBBLE_SECONDS, 1f, 1.15f))
                 }
-            AgentState.Stuck -> BadgeFrame(dot = Dot.Failed, failed = true)
+            AgentState.Stuck -> BadgeFrame(failed = true)
             AgentState.Asleep -> BadgeFrame(retiring = true, alpha = ASLEEP_ALPHA)
         }
 
@@ -88,6 +76,3 @@ object BadgeMotion {
 fun primarySweep(seconds: Float, reducedMotion: Boolean): Float? = if (reducedMotion) null else (seconds % PRIMARY_SWEEP_SECONDS) / PRIMARY_SWEEP_SECONDS
 
 private const val PRIMARY_SWEEP_SECONDS = 4f
-
-/** The letter on an agent's tile: the first letter or digit of its name, upper-cased, or "?" for none. */
-fun tileLetter(name: String): Char = name.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar() ?: '?'

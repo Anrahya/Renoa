@@ -38,7 +38,7 @@ data class EditorUiState(
     val notice: String? = null,
     /** Set when the agent was made or the edit was kept; the screen then leaves. */
     val finishedAgentId: String? = null,
-    /** The agent being edited wears its hue, and Renoa's portrait if it is the main agent, as on every other screen. */
+    /** The agent being edited wears its hue and its face, and Renoa's blush and star if it is the main agent, as on every other screen. */
     val hue: AgentHue = AgentHue.Ink,
     val main: Boolean = false,
 ) {

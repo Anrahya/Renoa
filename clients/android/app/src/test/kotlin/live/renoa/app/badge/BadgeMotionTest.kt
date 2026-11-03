@@ -25,35 +25,35 @@ class BadgeMotionTest {
     }
 
     @Test
-    fun workingSendsOutARingAndShowsTheRunningDot() {
+    fun workingSendsOutARing() {
         val rings = frames(AgentState.Working).map { it.ring!! }
         assertTrue(rings.all { it in 0f..1f })
         assertTrue(rings.min() < 0.1f && rings.max() > 0.9f, "a ring leaves the tile and fades out")
-        assertTrue(frames(AgentState.Working).all { it.dot == Dot.Running && it.lift == 0f })
+        assertTrue(frames(AgentState.Working).all { it.lift == 0f && it.bubble == null })
     }
 
     @Test
-    fun wantsYouLiftsOffItsSocketWithTheCallingDot() {
+    fun wantsYouLiftsOffItsSocketHoldingUpAQuestion() {
         val wants = frames(AgentState.Wants)
-        assertTrue(wants.all { it.lift in 0.6f..1f && it.dot == Dot.Calling })
+        assertTrue(wants.all { it.lift in 0.6f..1f && it.bubble!! >= 1f })
+        assertEquals(1f, BadgeMotion.frame(AgentState.Wants, 0f, reducedMotion = true).bubble, "held still, it still holds up its question")
         assertNull(frames(AgentState.Wants).first().ring)
     }
 
     @Test
     fun stuckTurnsItsEdgeRedAndAsleepRetires() {
         val stuck = BadgeMotion.frame(AgentState.Stuck, 0f, false)
-        assertTrue(stuck.failed && stuck.dot == Dot.Failed)
+        assertTrue(stuck.failed && stuck.bubble == null)
         val asleep = BadgeMotion.frame(AgentState.Asleep, 0f, false)
-        assertTrue(asleep.retiring && asleep.dot == null && asleep.alpha < 1f)
+        assertTrue(asleep.retiring && asleep.bubble == null && asleep.alpha < 1f)
         assertEquals(BadgeFrame(), BadgeMotion.frame(AgentState.Resting, 3f, false), "resting sits still on its socket")
     }
 
     @Test
-    fun theLetterIsTheFirstLetterOrDigitOrAQuestionMark() {
-        assertEquals('K', tileLetter("  kai'sa"))
-        assertEquals('?', tileLetter(""))
-        assertEquals('?', tileLetter("  !!"))
-        assertEquals('7', tileLetter("7even"))
+    fun aNameAlwaysWearsTheSameTraitAndNamesWearThemAll() {
+        assertEquals(Trait.of("Kaisa"), Trait.of("  kaisa "))
+        val names = listOf("Tifa", "Kaisa", "Nagisa", "Sensei", "Optimus", "Ledger", "Echo", "Arcee")
+        assertEquals(Trait.entries.toSet(), names.map(Trait::of).toSet(), "a handful of agents already wear every trait")
     }
 
     @Test
