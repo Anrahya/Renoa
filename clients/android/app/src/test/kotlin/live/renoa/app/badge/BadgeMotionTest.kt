@@ -36,6 +36,7 @@ class BadgeMotionTest {
     fun wantsYouLiftsOffItsSocketHoldingUpAQuestion() {
         val wants = frames(AgentState.Wants)
         assertTrue(wants.all { it.lift in 0.6f..1f && it.bubble!! >= 1f })
+        assertEquals(1f, BadgeMotion.frame(AgentState.Wants, 0f, reducedMotion = true).bubble, "held still, it still holds up its question")
         assertNull(frames(AgentState.Wants).first().ring)
     }
 
