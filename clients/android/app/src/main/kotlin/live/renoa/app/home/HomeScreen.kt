@@ -51,8 +51,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import live.renoa.app.badge.AgentHue
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaColors
 import live.renoa.app.theme.RenoaType
@@ -64,7 +66,8 @@ import java.time.ZonedDateTime
 
 /**
  * Home is the owner's day with their agents: the day strip on top, then the main agent with what
- * needs the owner, then every agent with something to say, and the quiet ones in a line each.
+ * needs the owner, then every agent with something to say, the quiet ones in a line each, and an
+ * empty seat for someone new. The shelf at the foot opens the pages over Home.
  * Until it is [HomeUiState.known] who is here, Home says it is checking in.
  */
 @Composable
@@ -97,8 +100,8 @@ fun HomeScreen(
         )
     BackHandler(enabled = state.page != null) { viewModel.close() }
 
-    val glow = glowOf(time.hour, colors)
-    Box(Modifier.fillMaxSize().background(colors.background).drawBehind { drawGlow(glow, if (colors.background.luminance() < 0.5f) 0.2f else 0.13f) }) {
+    val glow = hourHue(time.hour).face(colors) ?: colors.foreground
+    Box(Modifier.fillMaxSize().background(colors.background).drawBehind { drawGlow(glow, glowStrength(colors)) }) {
         // Under an open page, Home is hidden from accessibility, so only the page is read.
         Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (state.page != null) Modifier.clearAndSetSemantics { } else Modifier)) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -110,7 +113,7 @@ fun HomeScreen(
                     contentAlignment = Alignment.CenterStart,
                 ) { RenoaIcon(30.dp) }
                 Spacer(Modifier.weight(1f))
-                Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = lerp(colors.mutedForeground, glow, 0.4f))
+                Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = clockInk(colors, glow))
             }
             Text(greeting(time.hour, state.ownerName), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
             LinkLine(state.link, Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp))
@@ -153,7 +156,7 @@ private fun TalkList(state: HomeUiState, now: ZonedDateTime, lit: String?, act: 
                     item(key = "quiet") { Text("QUIET", Modifier.padding(start = 12.dp, top = 8.dp), style = RenoaType.Eyebrow, color = colors.mutedForeground) }
                     items(talks.quiet, key = { it.agent.id }) { QuietRow(it, state.roster, lit == it.agent.id, act) }
                 }
-                item(key = "someone new") { SomeoneNew(onNewAgent) }
+                item(key = "someone new") { MeetSomeoneNew(onNewAgent, socket = 32.dp, inset = 12.dp) }
             }
         }
     }
@@ -186,24 +189,30 @@ private fun Shelf(onPage: (HomePage) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(Modifier.size(width = 36.dp, height = 4.dp).background(colors.border, CircleShape))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             HomePage.entries.forEach { page ->
                 Box(
-                    Modifier.heightIn(min = 48.dp).clickable(role = Role.Button) { onPage(page) }.padding(horizontal = 12.dp),
+                    Modifier.weight(1f).heightIn(min = 48.dp).clickable(role = Role.Button) { onPage(page) }.padding(horizontal = 4.dp),
                     contentAlignment = Alignment.Center,
-                ) { Text(page.title, style = RenoaType.Label, color = colors.foregroundSoft) }
+                ) { Text(page.title, style = RenoaType.Label, color = colors.foregroundSoft, textAlign = TextAlign.Center) }
             }
         }
     }
 }
 
-/** The colour of the hour: ochre in the morning, cobalt through the day and the night, clay in the evening. */
-private fun glowOf(hour: Int, colors: RenoaColors): Color =
+/** The hour's colour on Home: ochre in the morning, clay in the evening, cobalt through the day and the night. */
+internal fun hourHue(hour: Int): AgentHue =
     when (hour) {
-        in 5..10 -> colors.partLoop
-        in 17..21 -> colors.partModel
-        else -> colors.partSkills
+        in 5..10 -> AgentHue.Ochre
+        in 17..21 -> AgentHue.Clay
+        else -> AgentHue.Cobalt
     }
+
+/** How strongly the hour's colour lights the top of Home; light grounds show it more, so it is fainter there. */
+internal fun glowStrength(colors: RenoaColors): Float = if (colors.background.luminance() < 0.5f) 0.2f else 0.13f
+
+/** The clock, leaning a little toward the hour's [glow]. */
+internal fun clockInk(colors: RenoaColors, glow: Color): Color = lerp(colors.mutedForeground, glow, 0.2f)
 
 /** The hour's colour, a faint light from the top corner of the screen. */
 private fun DrawScope.drawGlow(color: Color, strength: Float) {

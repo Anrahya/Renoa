@@ -100,19 +100,20 @@ private fun PersonRow(agent: AgentSummary, roster: List<AgentSummary>, partner: 
     }
 }
 
+/** The empty seat that makes someone new, at the end of Chats and of Home. */
 @Composable
-private fun MeetSomeoneNew(onNewAgent: () -> Unit) {
+internal fun MeetSomeoneNew(onNewAgent: () -> Unit, socket: Dp = 54.dp, inset: Dp = 20.dp) {
     val colors = Renoa.colors
     Row(
         Modifier
             .fillMaxWidth()
             .semantics { contentDescription = "Meet someone new" }
             .clickable(role = Role.Button, onClick = onNewAgent)
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = inset, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        EmptySocket(54.dp, plus = true)
+        EmptySocket(socket, plus = true)
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("Meet someone new", style = RenoaType.Label, color = colors.foreground)
             Text("Give them a name and something to help with", style = RenoaType.Caption, color = colors.mutedForeground)

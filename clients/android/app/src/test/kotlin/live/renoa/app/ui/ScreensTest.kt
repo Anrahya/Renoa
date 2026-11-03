@@ -15,6 +15,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.hasAnyAncestor
@@ -85,7 +86,6 @@ import kotlinx.coroutines.flow.update
 import live.renoa.app.agents.Link
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.home.CHECKING_IN
-import live.renoa.app.home.SOMEONE_NEW
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
@@ -218,7 +218,7 @@ class ScreensTest : ScreenTest() {
         onList(hasText("Three projects are trending on GitHub that fit what you build. I can walk you through them tonight.")).assertIsDisplayed()
         onList(hasText("QUIET")).assertIsDisplayed()
         onList(hasText("\u201cPrices and groceries\u201d didn\u2019t finish")).assertIsDisplayed()
-        onList(hasText(SOMEONE_NEW)).assertIsDisplayed()
+        onList(hasContentDescription("Meet someone new")).assertIsDisplayed()
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToIndex(0)
         snapshot("home")
     }
@@ -251,7 +251,7 @@ class ScreensTest : ScreenTest() {
         onList(hasContentDescription("Echo, asleep")).performClick()
         assertEquals("echo", opened.last())
 
-        onList(hasText(SOMEONE_NEW)).performClick()
+        onList(hasContentDescription("Meet someone new")).performClick()
         assertEquals(1, made)
     }
 
@@ -292,6 +292,7 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
         compose.onNodeWithText("LATER TODAY").assertDoesNotExist()
+        compose.onNodeWithText("Chats").assertIsDisplayed()
     }
 
     @Test
@@ -305,8 +306,7 @@ class ScreensTest : ScreenTest() {
 
         compose.onNodeWithText("Routines").performTouchInput { swipeUp(startY = centerY, endY = centerY - 300f) }
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Back to Home").assertIsDisplayed()
-        compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertDoesNotExist()
+        compose.onNode(hasText("Chats") and isSelected()).assertIsDisplayed()
     }
 
     @Test
