@@ -112,7 +112,7 @@ class RenoaAppTest : ScreenTest() {
         compose.waitForIdle()
 
         compose.onNodeWithText("I'm Renoa.").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Renoa").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Renoa, resting, your main agent").assertIsDisplayed()
         snapshot("sign-up-3")
         compose.onNodeWithText("Go to Home").assertIsEnabled().performClick()
         compose.waitForIdle()
