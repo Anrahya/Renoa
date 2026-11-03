@@ -1,10 +1,13 @@
 package live.renoa.app.home
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -14,15 +17,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.drawText
@@ -55,10 +61,11 @@ private val HOUR_LABELS = listOf(LocalTime.of(6, 0) to "6 AM", LocalTime.NOON to
  * agents left the owner: a question rides high and bobs, a failed routine is a ring in the failure
  * colour, and marks too close to tell apart show as one with a count. Below it, each routine's run:
  * a dot once it ran, a ring while it is to come that fills in its last ten minutes. Dragging along
- * it names the nearest mark in the line underneath and tells [onLit] whose it is.
+ * it names the nearest mark in the line underneath and tells [onLit] whose it is. At rest the line
+ * says what runs next, and a tap on it calls [onRoutines].
  */
 @Composable
-internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -> Unit, modifier: Modifier = Modifier) {
+internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -> Unit, onRoutines: () -> Unit, modifier: Modifier = Modifier) {
     val colors = Renoa.colors
     val clock = LocalMotionClock.current
     val reduced = LocalReducedMotion.current
@@ -131,7 +138,9 @@ internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -
             val nowX = x(now.toLocalTime())
             val thick = 6.dp.toPx()
             drawRoundRect(colors.secondary, Offset(0f, bar - thick / 2), Size(w, thick), CornerRadius(thick / 2))
-            drawRoundRect(colors.input, Offset(0f, bar - thick / 2), Size(nowX, thick), CornerRadius(thick / 2))
+            // The day so far warms from the morning's ochre to the evening's clay.
+            val sofar = Brush.horizontalGradient(listOf(colors.partLoop.copy(alpha = 0.75f), colors.partModel.copy(alpha = 0.9f)), endX = nowX)
+            drawRoundRect(sofar, Offset(0f, bar - thick / 2), Size(nowX, thick), CornerRadius(thick / 2))
             drawLine(colors.border, Offset(0f, runs), Offset(w, runs), 1.5.dp.toPx())
 
             for (mark in marks.filter { !it.kind.left }) {
@@ -166,7 +175,14 @@ internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -
                 drawText(text, topLeft = Offset(left, labels))
             }
         }
-        Text(line, Modifier.padding(top = 6.dp), style = RenoaType.Caption, color = if (scrub == null) colors.mutedForeground else colors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // At rest the line says what runs next, and opens the routines.
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !dragging, onClickLabel = "Open routines", onClick = onRoutines),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(line, Modifier.weight(1f), style = RenoaType.Caption, color = if (scrub == null) colors.mutedForeground else colors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (scrub == null) Text("\u203a", Modifier.padding(start = 8.dp).clearAndSetSemantics { }, style = RenoaType.Label, color = colors.foregroundSoft)
+        }
     }
 }
 

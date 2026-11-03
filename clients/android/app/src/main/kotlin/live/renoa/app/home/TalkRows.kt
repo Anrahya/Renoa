@@ -16,11 +16,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.Note
 import live.renoa.app.agents.clockTime
+import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaShapes
@@ -49,7 +51,7 @@ private fun Talk.time(now: ZonedDateTime): String? =
 internal fun MainCard(talk: Talk, roster: List<AgentSummary>, next: String, now: ZonedDateTime, lit: Boolean, act: TalkActions, modifier: Modifier = Modifier) {
     val colors = Renoa.colors
     val shape = RoundedCornerShape(RenoaShapes.Card)
-    val ground by animateColorAsState(if (lit) colors.secondary else colors.card, label = "lit")
+    val ground by animateColorAsState(if (lit) colors.secondary else lerp(colors.card, colors.partLoop, 0.06f), label = "lit")
     Column(
         modifier
             .fillMaxWidth()
@@ -73,16 +75,17 @@ internal fun MainCard(talk: Talk, roster: List<AgentSummary>, next: String, now:
 @Composable
 internal fun TalkRow(talk: Talk, roster: List<AgentSummary>, now: ZonedDateTime, lit: Boolean, act: TalkActions) {
     val colors = Renoa.colors
-    val ground by animateColorAsState(if (lit) colors.secondary else Color.Transparent, label = "lit")
+    val hue = AgentHue.of(talk.agent.id, roster)
+    val ground by animateColorAsState(if (lit) colors.secondary else hue.wash(colors) ?: Color.Transparent, label = "lit")
     Column(
         Modifier
             .fillMaxWidth()
             .background(ground, RoundedCornerShape(RenoaShapes.Card))
             .clickable(onClickLabel = "Open ${talk.agent.name}") { act.open(talk) }
-            .padding(horizontal = 4.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Header(talk, roster, talk.time(now))
+        Header(talk, roster, talk.time(now), hue.name(colors) ?: colors.foreground)
         talk.line?.let {
             Text(it, style = RenoaType.Body, color = if (talk.needsOwner || talk.agent.glance.unread) colors.foreground else colors.foregroundSoft, maxLines = 4, overflow = TextOverflow.Ellipsis)
         }
@@ -102,7 +105,7 @@ internal fun QuietRow(talk: Talk, roster: List<AgentSummary>, lit: Boolean, act:
             .fillMaxWidth()
             .background(ground, RoundedCornerShape(RenoaShapes.Card))
             .clickable(onClickLabel = "Open ${talk.agent.name}") { act.open(talk) }
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -121,11 +124,11 @@ internal fun QuietRow(talk: Talk, roster: List<AgentSummary>, lit: Boolean, act:
 }
 
 @Composable
-private fun Header(talk: Talk, roster: List<AgentSummary>, aside: String?) {
+private fun Header(talk: Talk, roster: List<AgentSummary>, aside: String?, name: Color = Renoa.colors.foreground) {
     val colors = Renoa.colors
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Badge(talk.agent, roster, 40.dp)
-        Text(talk.agent.name, Modifier.weight(1f), style = RenoaType.Label, color = colors.foreground)
+        Text(talk.agent.name, Modifier.weight(1f), style = RenoaType.Label, color = name)
         aside?.let { Text(it, style = RenoaType.Eyebrow, color = colors.mutedForeground) }
     }
 }
@@ -141,3 +144,4 @@ private fun Failed(talk: Talk, problem: Note, act: TalkActions) {
 private fun RunAgain(noteId: String, act: TalkActions) {
     RenoaButton("Run again", { act.runAgain(noteId) }, kind = ButtonKind.Secondary, size = ButtonSize.Sm)
 }
+
