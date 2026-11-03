@@ -1,6 +1,7 @@
 package live.renoa.app.home
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,18 +10,28 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.Note
 import live.renoa.app.agents.clockTime
+import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaShapes
@@ -30,6 +41,9 @@ import live.renoa.app.ui.ButtonKind
 import live.renoa.app.ui.ButtonSize
 import live.renoa.app.ui.RenoaButton
 import java.time.ZonedDateTime
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** What Home says while it waits to hear who is here. */
 internal const val CHECKING_IN = "Checking in with your agents…"
@@ -49,7 +63,7 @@ private fun Talk.time(now: ZonedDateTime): String? =
 internal fun MainCard(talk: Talk, roster: List<AgentSummary>, next: String, now: ZonedDateTime, lit: Boolean, act: TalkActions, modifier: Modifier = Modifier) {
     val colors = Renoa.colors
     val shape = RoundedCornerShape(RenoaShapes.Card)
-    val ground by animateColorAsState(if (lit) colors.secondary else colors.card, label = "lit")
+    val ground by animateColorAsState(if (lit) colors.secondary else lerp(colors.card, colors.partLoop, 0.06f), label = "lit")
     Column(
         modifier
             .fillMaxWidth()
@@ -73,16 +87,17 @@ internal fun MainCard(talk: Talk, roster: List<AgentSummary>, next: String, now:
 @Composable
 internal fun TalkRow(talk: Talk, roster: List<AgentSummary>, now: ZonedDateTime, lit: Boolean, act: TalkActions) {
     val colors = Renoa.colors
-    val ground by animateColorAsState(if (lit) colors.secondary else Color.Transparent, label = "lit")
+    val hue = AgentHue.of(talk.agent.id, roster)
+    val ground by animateColorAsState(if (lit) colors.secondary else hue.wash(colors) ?: Color.Transparent, label = "lit")
     Column(
         Modifier
             .fillMaxWidth()
             .background(ground, RoundedCornerShape(RenoaShapes.Card))
             .clickable(onClickLabel = "Open ${talk.agent.name}") { act.open(talk) }
-            .padding(horizontal = 4.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Header(talk, roster, talk.time(now))
+        Header(talk, roster, talk.time(now), hue.name(colors) ?: colors.foreground)
         talk.line?.let {
             Text(it, style = RenoaType.Body, color = if (talk.needsOwner || talk.agent.glance.unread) colors.foreground else colors.foregroundSoft, maxLines = 4, overflow = TextOverflow.Ellipsis)
         }
@@ -102,7 +117,7 @@ internal fun QuietRow(talk: Talk, roster: List<AgentSummary>, lit: Boolean, act:
             .fillMaxWidth()
             .background(ground, RoundedCornerShape(RenoaShapes.Card))
             .clickable(onClickLabel = "Open ${talk.agent.name}") { act.open(talk) }
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -121,11 +136,11 @@ internal fun QuietRow(talk: Talk, roster: List<AgentSummary>, lit: Boolean, act:
 }
 
 @Composable
-private fun Header(talk: Talk, roster: List<AgentSummary>, aside: String?) {
+private fun Header(talk: Talk, roster: List<AgentSummary>, aside: String?, name: Color = Renoa.colors.foreground) {
     val colors = Renoa.colors
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Badge(talk.agent, roster, 40.dp)
-        Text(talk.agent.name, Modifier.weight(1f), style = RenoaType.Label, color = colors.foreground)
+        Text(talk.agent.name, Modifier.weight(1f), style = RenoaType.Label, color = name)
         aside?.let { Text(it, style = RenoaType.Eyebrow, color = colors.mutedForeground) }
     }
 }
@@ -141,3 +156,43 @@ private fun Failed(talk: Talk, problem: Note, act: TalkActions) {
 private fun RunAgain(noteId: String, act: TalkActions) {
     RenoaButton("Run again", { act.runAgain(noteId) }, kind = ButtonKind.Secondary, size = ButtonSize.Sm)
 }
+
+/** The last seat on Home, empty and dashed: making a new helper starts here. */
+@Composable
+internal fun SomeoneNew(onNewAgent: () -> Unit) {
+    val colors = Renoa.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(RenoaShapes.Card))
+            .clickable(role = Role.Button, onClick = onNewAgent)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Canvas(Modifier.size(32.dp)) {
+            val r = size.minDimension / 2 - 1.5.dp.toPx()
+            val c = center
+            val hex =
+                Path().apply {
+                    for (i in 0..5) {
+                        val a = PI.toFloat() / 3 * i
+                        val p = Offset(c.x + r * cos(a), c.y + r * sin(a))
+                        if (i == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
+                    }
+                    close()
+                }
+            drawPath(hex, colors.input, style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))))
+            val arm = 5.dp.toPx()
+            drawLine(colors.foregroundSoft, c - Offset(0f, arm), c + Offset(0f, arm), 1.8.dp.toPx(), StrokeCap.Round)
+            drawLine(colors.foregroundSoft, c - Offset(arm, 0f), c + Offset(arm, 0f), 1.8.dp.toPx(), StrokeCap.Round)
+        }
+        Column {
+            Text(SOMEONE_NEW, style = RenoaType.Label, color = colors.foreground)
+            Text("A helper for one part of your life", style = RenoaType.Caption, color = colors.mutedForeground)
+        }
+    }
+}
+
+/** What the empty seat on Home says. */
+internal const val SOMEONE_NEW = "Someone new"

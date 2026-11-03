@@ -148,8 +148,6 @@ class RenoaAppTest : ScreenTest() {
     /** Everyone is in Chats, a page over Home; [description] may need scrolling to. The page stays open after. */
     private fun inChats(description: String): SemanticsNodeInteraction {
         if (compose.onAllNodesWithContentDescription("Back to Home").fetchSemanticsNodes().isEmpty()) {
-            compose.onNodeWithText("Routines").performClick()
-            compose.waitForIdle()
             compose.onNodeWithText("Chats").performClick()
             compose.waitForIdle()
         }

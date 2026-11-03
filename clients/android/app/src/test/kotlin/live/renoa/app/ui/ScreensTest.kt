@@ -85,6 +85,7 @@ import kotlinx.coroutines.flow.update
 import live.renoa.app.agents.Link
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.home.CHECKING_IN
+import live.renoa.app.home.SOMEONE_NEW
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
@@ -96,6 +97,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.swipe
 import live.renoa.app.agents.StreamingReply
 import live.renoa.app.chat.ArrivingReply
@@ -216,7 +218,7 @@ class ScreensTest : ScreenTest() {
         onList(hasText("Three projects are trending on GitHub that fit what you build. I can walk you through them tonight.")).assertIsDisplayed()
         onList(hasText("QUIET")).assertIsDisplayed()
         onList(hasText("\u201cPrices and groceries\u201d didn\u2019t finish")).assertIsDisplayed()
-        compose.onNodeWithText("New helper").assertIsDisplayed()
+        onList(hasText(SOMEONE_NEW)).assertIsDisplayed()
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToIndex(0)
         snapshot("home")
     }
@@ -249,7 +251,7 @@ class ScreensTest : ScreenTest() {
         onList(hasContentDescription("Echo, asleep")).performClick()
         assertEquals("echo", opened.last())
 
-        compose.onNodeWithText("New helper").performClick()
+        onList(hasText(SOMEONE_NEW)).performClick()
         assertEquals(1, made)
     }
 
@@ -288,8 +290,23 @@ class ScreensTest : ScreenTest() {
 
         compose.activity.onBackPressedDispatcher.onBackPressed()
         compose.waitForIdle()
-        compose.onNodeWithText("New helper").assertIsDisplayed()
-        compose.onNodeWithText("Upcoming").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
+        compose.onNodeWithText("LATER TODAY").assertDoesNotExist()
+    }
+
+    @Test
+    fun theStripsLineOpensRoutinesAndASwipeUpTheShelfOpensChats() {
+        home()
+        compose.onNodeWithText("Next: Posts worth a reply at 8 PM \u00b7 2 ran \u00b7 1 didn\u2019t finish").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
+        compose.activity.onBackPressedDispatcher.onBackPressed()
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Routines").performTouchInput { swipeUp(startY = centerY, endY = centerY - 300f) }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Back to Home").assertIsDisplayed()
+        compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertDoesNotExist()
     }
 
     @Test
@@ -318,7 +335,7 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithContentDescription("Today.").assertIsDisplayed()
         compose.onNodeWithText("Make your first agent").assertDoesNotExist()
         compose.onNodeWithText("Nobody is here yet.").assertDoesNotExist()
-        compose.onNodeWithText("New helper").assertDoesNotExist()
+        compose.onNodeWithText("Routines").assertDoesNotExist()
         snapshot("home-connecting")
 
         // Once Renoa says no one is here, Home says so and offers to make someone.
