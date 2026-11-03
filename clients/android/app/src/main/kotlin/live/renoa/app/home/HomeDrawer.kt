@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +59,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import live.renoa.app.agents.Routine
 import live.renoa.app.badge.Badge
@@ -94,10 +95,15 @@ internal fun HomeDrawer(
     val open by rememberUpdatedState(state.page)
     val turn by rememberUpdatedState(onPage)
     // Opened again on another page while it was still closing, the pager turns to it.
-    LaunchedEffect(state.page) { state.page?.let { if (pager.currentPage != it.ordinal) pager.scrollToPage(it.ordinal) } }
+    val pull = rememberPullToClose(onClose, reduced)
+    LaunchedEffect(state.page) {
+        state.page?.let {
+            pull.reset()
+            if (pager.currentPage != it.ordinal) pager.scrollToPage(it.ordinal)
+        }
+    }
     // A page turned by swipe or tab is the page Home reopens on; once closed, a late turn reopens nothing.
     LaunchedEffect(pager) { snapshotFlow { pager.currentPage }.collect { if (open != null) turn(pages[it]) } }
-    val pull = rememberPullToClose(onClose)
 
     // A tap that lands on no control here stops here, not on Home underneath.
     Column(
@@ -220,7 +226,10 @@ private fun RoutineBadge(state: HomeUiState, routine: Routine, size: Dp) {
 
 @Composable
 private fun Empty(words: String) {
-    Text(words, Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp), style = RenoaType.Body, color = Renoa.colors.mutedForeground)
+    // A list of one, so a pull down on an empty page reaches the pages' pull to close.
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { Text(words, Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp), style = RenoaType.Body, color = Renoa.colors.mutedForeground) }
+    }
 }
 
 /** An on/off switch in ink, tapped across 48dp. */
@@ -243,18 +252,42 @@ private fun RoutineSwitch(on: Boolean, label: String, enabled: Boolean, onChange
     }
 }
 
-/** How far the pages are pulled down, and whether letting go closes them. */
-@Stable
-private class PullToClose(private val close: () -> Unit, private val far: Float, private val fast: Float) : NestedScrollConnection {
+/**
+ * How far the pages are pulled down, and whether letting go closes them: pulled past [far], or
+ * flung down faster than [fast] once past [slop]. Short of that they spring back, at once when
+ * motion is reduced; a new pull takes over from a spring-back still running.
+ */
+private class PullToClose(
+    private val close: () -> Unit,
+    private val scope: CoroutineScope,
+    private val reduced: Boolean,
+    private val far: Float,
+    private val fast: Float,
+    private val slop: Float,
+) : NestedScrollConnection {
     var offset by mutableFloatStateOf(0f)
         private set
+    private var back: Job? = null
 
     fun drag(dy: Float) {
+        back?.cancel()
         offset = (offset + dy).coerceAtLeast(0f)
     }
 
-    suspend fun release(velocity: Float) {
-        if (offset > 0f && (offset > far || velocity > fast)) close() else animate(offset, 0f) { value, _ -> offset = value }
+    fun reset() {
+        back?.cancel()
+        offset = 0f
+    }
+
+    fun release(velocity: Float) {
+        if (offset <= 0f) return
+        if (offset > far || (offset > slop && velocity > fast)) {
+            close()
+        } else if (reduced) {
+            offset = 0f
+        } else {
+            back = scope.launch { animate(offset, 0f) { value, _ -> offset = value } }
+        }
     }
 
     // While pulled, a drag up takes the pull back before the page scrolls.
@@ -265,7 +298,7 @@ private class PullToClose(private val close: () -> Unit, private val far: Float,
         return Offset(0f, used)
     }
 
-    // A drag down that the page, already at its top, leaves over pulls the pages.
+    // A drag down that the page, at its top, leaves over pulls the pages.
     override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
         if (available.y <= 0f || source != NestedScrollSource.UserInput) return Offset.Zero
         drag(available.y)
@@ -279,9 +312,13 @@ private class PullToClose(private val close: () -> Unit, private val far: Float,
     }
 }
 
+/** The pages close pulled 120dp, a third of a 360dp phone, or flung faster than 1,200dp a second once pulled 24dp. */
 @Composable
-private fun rememberPullToClose(onClose: () -> Unit): PullToClose {
+private fun rememberPullToClose(onClose: () -> Unit, reduced: Boolean): PullToClose {
     val close by rememberUpdatedState(onClose)
     val density = LocalDensity.current
-    return remember(density) { with(density) { PullToClose({ close() }, far = 120.dp.toPx(), fast = 1_200.dp.toPx()) } }
+    val scope = rememberCoroutineScope()
+    return remember(density, scope, reduced) {
+        with(density) { PullToClose({ close() }, scope, reduced, far = 120.dp.toPx(), fast = 1_200.dp.toPx(), slop = 24.dp.toPx()) }
+    }
 }

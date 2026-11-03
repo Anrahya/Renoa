@@ -15,6 +15,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.onFirst
@@ -315,14 +316,27 @@ class ScreensTest : ScreenTest() {
         home()
         openPages()
         val page = compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM")
+        val close = compose.onNodeWithContentDescription("Back to Home")
+        val top = close.getBoundsInRoot().top
         page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 200f, durationMillis = 800) }
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Back to Home").assertIsDisplayed()
+        assertEquals(top, close.getBoundsInRoot().top, "a short pull springs back to where it started")
 
         page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 900f, durationMillis = 600) }
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
         compose.onNodeWithText("Chats").assertIsDisplayed()
+    }
+
+    @Test
+    fun anEmptyPageStillClosesPulledDown() {
+        val model = HomeViewModel(FakeAgentRepository(scope, now = { EVENING }, routineSeeds = emptyList()))
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
+        compose.waitForIdle()
+        openPages()
+        compose.onNodeWithText("No routines yet", substring = true).performTouchInput { swipeDown(startY = top, endY = top + 900f, durationMillis = 600) }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
     }
 
     @Test
