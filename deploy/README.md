@@ -146,7 +146,7 @@ previous release's consolidated backup as described above.
 ## Discord and owner onboarding
 
 Use one canonical Host home, defaulting to `~/.renoa`; the supplied owner-panel
-and Discord examples use `/home/renoa/.renoa` with the `renoa-arcee` service account.
+and Discord examples use `/home/renoa/.renoa` with the `renoa` service account.
 Point every worker and the panel at that same home and enabled provider set.
 The owner panel's `models` configuration names its existing credential store.
 Keep browser identity storage through a Host reset so login survives.
@@ -170,12 +170,12 @@ Enroll the worker as a surface of the Host's owning principal, the same
 principal that owns the node, and exchange the token once:
 
 ```sh
-install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
+install -d -m 0700 -o renoa -g renoa /run/renoa
 umask 077
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
+sudo -u renoa /usr/local/bin/renoa-coordinator enroll-surface \
   /home/renoa/.renoa <owner-principal-uuid> discord > /run/renoa/discord-enrollment.json
-chown renoa-arcee: /run/renoa/discord-enrollment.json
-sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
+chown renoa: /run/renoa/discord-enrollment.json
+sudo -u renoa /usr/local/bin/renoa-node enroll \
   ws://127.0.0.1:7818/connect \
   /run/renoa/discord-enrollment.json \
   /home/renoa/.renoa/credentials/discord-rcp-device.json
@@ -277,7 +277,7 @@ To inspect the existing personal Host without starting models or acquiring agent
 execution ownership, run the current binary as the Host's OS user:
 
 ```sh
-sudo -u renoa-arcee /usr/local/bin/renoa-host inspect /home/renoa/.renoa
+sudo -u renoa /usr/local/bin/renoa-host inspect /home/renoa/.renoa
 ```
 
 This command emits metadata JSON only; it does not serve a public endpoint or
@@ -446,7 +446,7 @@ was. A pre-upgrade binary cannot open schema 13; any owner-requested recovery
 requires the matching identity snapshot and binary from that same backup. The
 supplied `renoa-coordinator.service` passes the Control Room directory as its
 last argument; reload systemd and restart the coordinator after installing it.
-It runs as the existing Host OS user, `renoa-arcee`; use the actual Host owner
+It runs as the existing Host OS user, `renoa`; use the actual Host owner
 on another machine.
 
 The tunnel needs no panel routes: the coordinator catch-all serves `/`,
@@ -502,7 +502,7 @@ unchanged as bearer-only devices, and a pre-upgrade binary cannot open schema 13
 Android asks the relying party before it offers an app a passkey, and an
 assertion made by an app carries its own origin. To trust an app, copy
 `renoa-android-apps.example.json` to
-`/home/renoa/.renoa/config/android-apps.json`, owned by `renoa-arcee` (the
+`/home/renoa/.renoa/config/android-apps.json`, owned by `renoa` (the
 account the coordinator runs as, which cannot read the root-only `/etc/renoa`)
 with mode `0600`. Replace the package name and list the SHA-256 fingerprint of
 every certificate the app is signed with (`keytool -list -v -keystore
@@ -510,7 +510,7 @@ every certificate the app is signed with (`keytool -list -v -keystore
 it with a drop-in so the packaged unit stays unchanged:
 
 ```sh
-install -m 0600 -o renoa-arcee -g renoa-arcee \
+install -m 0600 -o renoa -g renoa \
   renoa-android-apps.example.json /home/renoa/.renoa/config/android-apps.json
 # edit the package name and fingerprints in that file, then:
 systemctl edit renoa-coordinator.service
@@ -547,7 +547,7 @@ cargo build --locked --release -p renoa-node --bin renoa-node
 install -m 0755 target/release/renoa-node /usr/local/bin/renoa-node
 ```
 
-Create `/home/renoa/.renoa/config/node.json` owned by `renoa-arcee` with mode
+Create `/home/renoa/.renoa/config/node.json` owned by `renoa` with mode
 `0600`. It is local Host configuration, not RCP wire data. Its model and adapter
 settings must match the Host's other services:
 
@@ -632,12 +632,12 @@ only principal that may open new tasks on the node, and exchange the
 five-minute enrollment token once:
 
 ```sh
-install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
+install -d -m 0700 -o renoa -g renoa /run/renoa
 umask 077
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
+sudo -u renoa /usr/local/bin/renoa-coordinator enroll-node \
   /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > /run/renoa/node-enrollment.json
-chown renoa-arcee: /run/renoa/node-enrollment.json
-sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
+chown renoa: /run/renoa/node-enrollment.json
+sudo -u renoa /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
   /run/renoa/node-enrollment.json \
   /home/renoa/.renoa/credentials/node-device.json
@@ -649,12 +649,12 @@ The command prints only `{"status":"enrolled"}`. Enroll the automation surface
 for the same owner the same way:
 
 ```sh
-install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
+install -d -m 0700 -o renoa -g renoa /run/renoa
 umask 077
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
+sudo -u renoa /usr/local/bin/renoa-coordinator enroll-surface \
   /home/renoa/.renoa <owner-principal-uuid> automations > /run/renoa/automations-enrollment.json
-chown renoa-arcee: /run/renoa/automations-enrollment.json
-sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
+chown renoa: /run/renoa/automations-enrollment.json
+sudo -u renoa /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
   /run/renoa/automations-enrollment.json \
   /home/renoa/.renoa/credentials/automations-rcp-device.json
@@ -709,8 +709,8 @@ to `sudo`, `docker`, or service-management groups.
 
 ```sh
 useradd --system --home-dir /var/lib/renoa-telegram \
-  --shell /usr/sbin/nologin renoa-arcee
-install -d -m 0700 -o renoa-arcee -g renoa-arcee /srv/renoa/arcee
+  --shell /usr/sbin/nologin renoa
+install -d -m 0700 -o renoa -g renoa /srv/renoa/arcee
 install -d -m 0700 -o root -g root /etc/renoa
 ```
 
@@ -732,7 +732,7 @@ TZ=Asia/Kolkata
 ```
 
 The model credential store and compiled Node adapter must already exist at
-those paths. The adapter tree must be readable by `renoa-arcee`; the credential
+those paths. The adapter tree must be readable by `renoa`; the credential
 store must be owned by and writable only to that account so OAuth refresh can
 rotate safely. `RENOA_TELEGRAM_AGENT_ID` is required and names the provisioned
 agent Arcee executes: the `id` that the shared Host's provision command
@@ -752,7 +752,7 @@ and consume the short-lived enrollment without printing either secret:
 ```sh
 install -d -m 0700 -o root -g root /run/renoa
 umask 077
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
+sudo -u renoa /usr/local/bin/renoa-coordinator enroll-node \
   /home/renoa/.renoa <oauth-relay-node-uuid> <owner-principal-uuid> \
   > /run/renoa/arcee-oauth-relay-enrollment.json
 /usr/local/bin/renoa-node enroll \
@@ -960,7 +960,7 @@ Create that home with mode `0700`; the service umask keeps SQLite journals
 owner-only. Run local bootstrap commands as that account:
 
 ```sh
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
+sudo -u renoa /usr/local/bin/renoa-coordinator enroll-surface \
   /home/renoa/.renoa <principal-uuid> <surface-name>
 ```
 
@@ -968,7 +968,7 @@ Its JSON output contains a single-use secret that expires after five minutes.
 Create the first browser passkey bootstrap through the same local boundary:
 
 ```sh
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator bootstrap-passkey \
+sudo -u renoa /usr/local/bin/renoa-coordinator bootstrap-passkey \
   /home/renoa/.renoa <principal-uuid>
 ```
 
@@ -986,10 +986,10 @@ cannot be restored by replaying their pairing code.
 Use the same OS account to enroll the execution node and create its task binding:
 
 ```sh
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
+sudo -u renoa /usr/local/bin/renoa-coordinator enroll-node \
   /home/renoa/.renoa <node-uuid> <owner-principal-uuid>
 
-sudo -u renoa-arcee /usr/local/bin/renoa-coordinator create-task \
+sudo -u renoa /usr/local/bin/renoa-coordinator create-task \
   /home/renoa/.renoa \
   <task-uuid> <principal-uuid> <node-uuid> <target>
 ```

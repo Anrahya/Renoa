@@ -126,7 +126,7 @@ A VPS user service needs lingering enabled to remain alive after logout.
 
 Use `deploy/renoa-slack-host.service` as the system service
 `renoa-slack.service` when joining the existing Telegram deployment. It runs as
-the same `renoa-arcee` OS account and uses the existing Host data directory,
+the same `renoa` OS account and uses the existing Host data directory,
 historically named `/var/lib/renoa-telegram`. The directory name does not assign
 ownership to Telegram. Keep all processes opening this Host on compatible
 builds; back up the Host and upgrade its surfaces together when its catalog

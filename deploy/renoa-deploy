@@ -36,7 +36,7 @@ import urllib.request
 from pathlib import Path
 
 REPOSITORY = "Anrahya/Renoa"
-SERVICE_USER = "renoa-arcee"
+SERVICE_USER = "renoa"
 HOME = "/home/renoa/.renoa"
 DATABASES = (
     "state/host.sqlite3",
