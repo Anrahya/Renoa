@@ -1,5 +1,7 @@
 package live.renoa.app.agents
 
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -69,8 +71,7 @@ internal data class FeedPage(val today: String, val items: List<FeedItem>, @Seri
 internal class HostFeed(private val host: HostClient) {
     /**
      * Reads every page: the Host keeps a bounded feed, but an open question or problem it never
-     * prunes can sit past the first page. An older page that cannot be read ends the read with the
-     * pages before it, and a cursor that does not move back ends it too.
+     * prunes can sit past the first page. A cursor that does not move back ends the read.
      */
     suspend fun read(): FeedPage {
         val first = page(null)
@@ -78,12 +79,7 @@ internal class HostFeed(private val host: HostClient) {
         var before = first.nextBefore
         while (before != null) {
             val at: Long = before
-            val older =
-                try {
-                    page(at)
-                } catch (unread: RepositoryException) {
-                    break
-                }
+            val older = page(at)
             items += older.items
             before = older.nextBefore?.takeIf { it < at }
         }
@@ -121,7 +117,7 @@ internal class HeldFeed(private val host: HostFeed, private val changed: () -> U
     private var started = 0L
     private var landed = 0L
 
-    /** Reads the feed again. While the Host cannot be read, the last one stays. */
+    /** Reads the feed again. While the Host cannot be read, any page of it, the last one stays whole. */
     suspend fun read() {
         val ticket = synchronized(lock) { ++started }
         val read =
@@ -158,11 +154,32 @@ internal class HeldFeed(private val host: HostFeed, private val changed: () -> U
     }
 
     /**
+     * Answers [open], or sends [choice] as it is while no question is open. A question asked in
+     * [chatTask] is answered as it is, and the Host marks it answered when it takes the message; one
+     * asked elsewhere is named in the message, then put away. The question is hidden at once and shown
+     * again if the answer is refused. The owner gave the answer, so it goes even if the screen that
+     * took it goes first.
+     */
+    suspend fun answer(open: OpenAsk?, chatTask: Uuid, choice: String, send: suspend (String) -> Unit) {
+        val elsewhere = open?.takeIf { it.taskId != chatTask }
+        open?.let { deal(it.itemId) }
+        withContext(NonCancellable) {
+            try {
+                send(elsewhere?.let { answerFromElsewhere(it.ask.question, choice.trim()) } ?: choice)
+            } catch (refused: RepositoryException) {
+                open?.let { restore(it.itemId) }
+                throw refused
+            }
+            elsewhere?.let { answeredElsewhere(it.itemId) }
+        }
+    }
+
+    /**
      * Puts away a question answered in another task's place: hidden here from now on, and dismissed
      * on the Host if it can be reached. The answer is already sent, so a failure here is no failure
      * of the answer; the question stays hidden while this launch lasts.
      */
-    suspend fun answeredElsewhere(itemId: String) {
+    private suspend fun answeredElsewhere(itemId: String) {
         deal(itemId)
         try {
             host.dismiss(itemId)

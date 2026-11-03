@@ -1669,13 +1669,17 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
-    fun anOlderPageThatCannotBeReadOrACursorThatDoesNotMoveEndsTheRead() = runTest {
+    fun anOlderPageThatCannotBeReadKeepsTheLastFeedAndACursorThatDoesNotMoveEndsTheRead() = runTest {
         val (kcal, _) = hostAgent()
         surface.feedPage = 2
         surface.feed += (1..5).map { item("n$it", "update", kcal, "Note $it.", Uuid.random()) }
-        surface.olderPageFailure = IllegalStateException("dropped")
         val repo = started()
-        assertEquals(listOf("n1", "n2"), repo.feed.value.notes.map { it.id }, "the newest page still shows")
+        surface.feed.add(0, item("new", "update", kcal, "New.", Uuid.random()))
+        surface.olderPageFailure = IllegalStateException("dropped")
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("n1", "n2", "n3", "n4", "n5"), repo.feed.value.notes.map { it.id }, "half a feed would hide what sits further back")
+        surface.feed.removeAt(0)
 
         surface.olderPageFailure = null
         surface.stuckCursor = true
@@ -1687,17 +1691,21 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
-    fun anAnswerNeverSentShowsTheQuestionAgain() = runTest {
+    fun anAnswerGoesEvenIfTheScreenThatTookItGoesFirst() = runTest {
         val (kcal, rosterId) = hostAgent()
-        surface.feed += item("ask", "ask", kcal, "Dinner?", chatTaskId(surface.node, "agent:$kcal"), choices = listOf("Dal"))
+        surface.feed += item("ask", "ask", kcal, "Dinner?", Uuid.random(), choices = listOf("Dal"))
         val repo = started()
-        surface.submitHeld = CompletableDeferred()
+        val held = CompletableDeferred<Unit>()
+        surface.submitHeld = held
         val answering = backgroundScope.launch { repo.answer(rosterId, "Dal") }
         runCurrent()
         assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask, "hidden while it goes")
         answering.cancel()
+        held.complete(Unit)
         runCurrent()
-        assertEquals("Dinner?", repo.agents.value.first { it.id == rosterId }.glance.ask?.question, "as when the screen went before it was sent")
+        assertEquals("About your question \u201cDinner?\u201d: Dal", surface.admitted.last().text)
+        assertEquals(HostMethod.Post to "/v1/host/feed/items/ask/dismissal", surface.feedCalls.last(), "and the question is put away")
+        assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask)
     }
 }
 

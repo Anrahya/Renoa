@@ -393,19 +393,7 @@ class RcpAgentRepository(
 
     override suspend fun answer(agentId: String, choice: String) {
         val room = room(agentId)
-        val open = hostAgentId(agentId)?.let { heldFeed.asks()[it.toString()] }
-        val elsewhere = open?.takeIf { it.taskId != room.taskId }
-        // Hidden at once; shown again if the answer is refused or never sent, as when the screen goes.
-        open?.let { heldFeed.deal(it.itemId) }
-        var sent = false
-        try {
-            send(agentId, elsewhere?.let { answerFromElsewhere(it.ask.question, choice.trim()) } ?: choice)
-            sent = true
-        } finally {
-            if (!sent) open?.let { heldFeed.restore(it.itemId) }
-        }
-        // Asked in this chat, the Host marks it answered when it takes the message; asked elsewhere, it is put away.
-        elsewhere?.let { heldFeed.answeredElsewhere(it.itemId) }
+        heldFeed.answer(hostAgentId(agentId)?.let { heldFeed.asks()[it.toString()] }, room.taskId, choice) { send(agentId, it) }
     }
 
     override suspend fun dismiss(noteId: String) = heldFeed.dismiss(noteId)
