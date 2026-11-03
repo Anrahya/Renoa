@@ -1,6 +1,15 @@
 package live.renoa.app.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
+import live.renoa.app.R
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -72,13 +81,16 @@ object Glyphs {
     const val STOP = "M216,56V200a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V56A16,16,0,0,1,56,40H200A16,16,0,0,1,216,56Z"
 }
 
-/** The Renoa mark: an ink core with six outlined tiles around it, one pulled out as if mid-swap. Never tinted. */
+/** The app icon, [size] across: Renoa waving on clay, as the launcher shows her. */
 @Composable
-fun RenoaMark(foreground: Color, size: Dp, modifier: Modifier = Modifier) {
-    Canvas(modifier.size(size)) { drawRenoaMark(foreground, Offset(this.size.width / 2, this.size.height / 2), this.size.minDimension) }
+fun RenoaIcon(size: Dp, modifier: Modifier = Modifier) {
+    Box(modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(colorResource(R.color.ic_launcher_background)), contentAlignment = Alignment.Center) {
+        // The launcher shows the middle 72 of the icon's 108 units.
+        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.requiredSize(size * 1.5f))
+    }
 }
 
-/** Draws the mark [size] across, centred on [centre]. */
+/** Draws the Renoa mark, an ink core with six outlined tiles around it, one pulled out as if mid-swap, [size] across, centred on [centre]. */
 fun DrawScope.drawRenoaMark(foreground: Color, centre: Offset, size: Float) {
     val s = size / 30f
     withTransform({ translate(centre.x, centre.y); scale(s, s, Offset.Zero) }) {
