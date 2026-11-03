@@ -42,7 +42,8 @@ async fn conversation(h: &LocalHost, agent: AgentId) -> (Arc<AgentSession>, Sess
     (session, SessionId::from_uuid(id))
 }
 
-/// Calls the tool as a turn of `session` would, with call `id`.
+/// Calls the tool as a turn of `session` would, with call `id`, for a
+/// follow-up an hour from now.
 async fn call(
     h: &LocalHost,
     agent: AgentId,
@@ -50,13 +51,24 @@ async fn call(
     command: CommandId,
     id: &str,
 ) -> renoa_agent::ToolResult {
+    call_after(h, agent, session, command, id, 60).await
+}
+
+async fn call_after(
+    h: &LocalHost,
+    agent: AgentId,
+    session: SessionId,
+    command: CommandId,
+    id: &str,
+    minutes: u64,
+) -> renoa_agent::ToolResult {
     let binding = follow_up::binding(Arc::clone(&h.config), agent, session, Some(command));
     renoa_agent::invoke_tool(
         Some(binding.tool().as_ref()),
         ToolCall {
             id: id.to_owned(),
             name: "follow_up".to_owned(),
-            arguments: json!({"note": NOTE, "after_minutes": 60}),
+            arguments: json!({"note": NOTE, "after_minutes": minutes}),
             namespace: None,
             thought_signature: None,
         },
@@ -261,6 +273,12 @@ async fn the_follow_ups_waiting_are_bounded_and_a_replay_sets_none() {
         text(&first),
         "a replay returns what it set"
     );
+    let reused = call_after(&h, parent, session, command, "call-0", 90).await;
+    assert!(reused.is_error);
+    assert_eq!(
+        text(&reused),
+        "This call's id already set a different follow-up, so nothing new was set. Call follow_up again as a new call."
+    );
     for index in 1..follow_up::WAITING_MAX {
         let set = call(&h, parent, session, command, &format!("call-{index}")).await;
         assert!(!set.is_error, "{}", text(&set));
@@ -314,4 +332,53 @@ async fn schema_51_lets_a_schema_50_host_set_follow_ups() {
     let h = host(d.path());
     let set = call(&h, parent, session, CommandId::new(), "call").await;
     assert!(!set.is_error, "{}", text(&set));
+}
+
+/// Only a follow-up goes when its run succeeds: a one-time automation the
+/// agent made from the same conversation stays, disarmed, with its result.
+#[tokio::test]
+async fn a_one_time_automation_that_is_no_follow_up_is_kept_after_its_run() {
+    let (_d, h, parent, _) = fixture().await;
+    let (chat, _) = conversation(&h, parent).await;
+    chat.execute_turn(
+        Uuid::new_v4(),
+        vec![ContentBlock::text(format!(
+            "create once {parent} 2100-01-01T14:00:00+05:30"
+        ))],
+        Arc::new(Quiet),
+    )
+    .await
+    .expect("the model schedules it");
+    let record = h
+        .list_automations(parent, parent, None)
+        .await
+        .expect("listed")
+        .remove(0);
+    let scheduler = h.automation_scheduler().expect("scheduler");
+    let due = scheduler
+        .next_run(record.next_due_ms, false)
+        .await
+        .expect("admit")
+        .expect("due");
+    assert!(
+        due.origin_session_id.is_some(),
+        "it returns to its conversation"
+    );
+    scheduler
+        .finish_run(
+            due.run.id,
+            landed("Digest saved: digest.md", RunLanding::Conversation),
+            record.next_due_ms + 1,
+        )
+        .await
+        .expect("record");
+    let kept = h.automation(parent, record.id).await.expect("kept");
+    assert!(!kept.spec.enabled, "disarmed");
+    assert_eq!(
+        h.automation_results(parent, parent, None)
+            .await
+            .expect("results")
+            .len(),
+        1
+    );
 }

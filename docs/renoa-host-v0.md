@@ -789,7 +789,7 @@ and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 | Plugin | Capabilities |
 | --- | --- |
 | `renoa.agents` | Create, list, rename agents; list and message the owner's other agents |
-| `renoa.automations` | Manage schedules and read retained results |
+| `renoa.automations` | Manage schedules, follow up later in a conversation, and read retained results |
 | `renoa.documents` | Edit this agent's SOUL and the speaking person's USER file |
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
 | `renoa.git` | Inspect local changes, diffs, and commits |
@@ -1810,8 +1810,10 @@ the transaction that records it, through the deletion and purge above. A run
 that failed, or that went to a conversation of its own because its
 conversation was gone, keeps its follow-up, disarmed, with its result and its
 feed item, as any one-time automation; so does a follow-up the agent re-armed
-with `automation_manage`. Each refusal names the field, what was sent and a
-correct call.
+with `automation_manage`. A follow-up set during a heartbeat comes back to the
+heartbeat's conversation as an ordinary run, not a quiet one, so what it writes
+wakes the owner as a reply does. Each refusal says what was wrong and how to
+fix the call; a call ID reused with other fields is refused and sets nothing.
 
 `automation_results` exposes finished-run summaries, each with its status
 (succeeded, failed, or skipped) and its failed tool call count, and exact run

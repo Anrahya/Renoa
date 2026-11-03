@@ -77,7 +77,7 @@ fn spec() -> ToolSpec {
     ToolSpec {
         name: FOLLOW_UP.to_owned(),
         description: format!(
-            "Check back on something later in this conversation. After after_minutes, your note comes back to you here as a new message, and you act on it then. Whenever you tell the person you will check, remind them of, or do something later, call this in the same turn, before you reply. Write the note as an instruction to your future self: what to do, why, and the facts you will need. It runs once and is then removed. For a repeating schedule or an exact date, use {AUTOMATION_MANAGE}."
+            "Check back on something later in this conversation. After after_minutes, your note comes back to you here as a new message, and you act on it then. Whenever you tell the person you will check, remind them of, or do something later, call this in the same turn, before you reply. Write the note as an instruction to your future self: what to do, why, and the facts you will need. It runs once, and once it has run here it is removed. For a repeating schedule or an exact date, use {AUTOMATION_MANAGE}."
         ),
         input_schema: json!({
             "type": "object",
@@ -129,10 +129,8 @@ impl Tool for FollowUp {
             let saved = tokio::task::spawn_blocking(move || {
                 save(
                     &database,
-                    AutomationActor::Agent {
-                        id: actor,
-                        session: Some(session),
-                    },
+                    actor,
+                    session,
                     operation,
                     &request,
                     now_ms,
@@ -157,6 +155,9 @@ impl Tool for FollowUp {
                 }
                 Ok(Saved::Full) => Err(ToolError::invalid_input(format!(
                     "You already have {WAITING_MAX} follow-ups waiting; the limit is {WAITING_MAX}. Let one run, or remove one with {AUTOMATION_MANAGE} (action delete), then try again."
+                ))),
+                Err(AutomationError::Conflict) => Err(ToolError::invalid_input(format!(
+                    "This call's id already set a different follow-up, so nothing new was set. Call {FOLLOW_UP} again as a new call."
                 ))),
                 Err(AutomationError::Cancelled) => Err(ToolError::cancelled(
                     format!("{FOLLOW_UP} was cancelled before anything was set"),
@@ -195,16 +196,16 @@ enum Saved {
 /// check; a replayed operation returns what it created.
 fn save(
     path: &Path,
-    actor: AutomationActor,
+    agent: AgentId,
+    session: SessionId,
     operation: Uuid,
     request: &Request,
     now_ms: i64,
     cancellation: &CancellationToken,
 ) -> Result<Saved, AutomationError> {
-    let AutomationActor::Agent { id: agent, .. } = actor else {
-        return Err(AutomationError::Invalid(
-            "only an agent sets a follow-up".to_owned(),
-        ));
+    let actor = AutomationActor::Agent {
+        id: agent,
+        session: Some(session),
     };
     store::active(cancellation)?;
     let mut db = catalog::open_verified(path)?;
@@ -287,8 +288,8 @@ fn name(note: &str) -> String {
     format!("Follow-up: {name}")
 }
 
-/// The note and minutes a call asks for. Every refusal names what was sent
-/// and shows a correct call.
+/// The note and minutes a call asks for. Every refusal says what was wrong
+/// and how to fix the call.
 fn parse(arguments: &Value) -> Result<Request, ToolError> {
     let invalid = |message: String| Err(ToolError::invalid_input(message));
     let Some(fields) = arguments.as_object() else {
@@ -370,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn every_refusal_names_what_was_sent_and_a_correct_call() {
+    fn every_refusal_says_what_was_wrong_and_how_to_fix_the_call() {
         const EXAMPLE: &str =
             r#"Example: {"note": "Ask whether the table was booked", "after_minutes": 1440}"#;
         assert_eq!(

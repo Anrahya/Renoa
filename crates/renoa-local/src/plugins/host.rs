@@ -79,7 +79,9 @@ impl HostPluginId {
             Self::Agents => {
                 "Create, list, and rename Host agents, and message the owner's other agents."
             }
-            Self::Automations => "Schedule agents and read automation results.",
+            Self::Automations => {
+                "Schedule agents, follow up later in a conversation, and read automation results."
+            }
             Self::Documents => {
                 "Edit this agent's SOUL document and the USER document of the person it talks to."
             }

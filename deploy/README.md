@@ -364,7 +364,8 @@ memory session generations, and its note pass's conversations and passes,
 adds the owner's feed and `renoa.memory`'s reminders, admits the
 `renoa.owner` plugin, gives feed items an urgency, records each item's
 acknowledged wake and lets every compiled plugin keep settings and triggers,
-for `renoa.owner`'s heartbeat, off until set, and marks follow-ups; it refuses to upgrade
+for `renoa.owner`'s heartbeat, off until set, and adds the mark of
+`follow_up`'s automations; it refuses to upgrade
 while a daily or interval automation remains. The first
 scheduler pass then creates `renoa.memory`'s nightly run: 11:00 (Mnem's pass day start) in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
