@@ -469,7 +469,7 @@ div.crow { cursor: default; }
     N: { name: 'Nagisa', does: 'Deals and groceries' },
   };
 
-  // One agent tile in tile units. State is motion and one round dot, as BadgeMotion has it.
+  // One agent tile in tile units. In this sketch state is motion and one round dot; the app shows it in the face.
   function tile(key, state, still) {
     const primary = AG[key].primary;
     let s = `<g class="ag-${key} st-${state}${still ? ' still' : ''}">`;

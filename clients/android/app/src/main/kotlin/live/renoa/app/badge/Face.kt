@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.PathParser
 import live.renoa.app.agents.AgentState
+import live.renoa.app.theme.ThemeName
 
 /**
  * The one thing that makes an agent's face its own. It comes from the agent's name, so the same
@@ -41,16 +42,16 @@ internal class FaceShapes {
     val raised = path("M-18,-15q8,-5 15,-1M3,-16q7,-4 15,1")
     val worried = path("M-18,-12l13,-4M18,-12l-13,-4")
     val glasses = path("M-1,-1h2")
-    val bubble = path("M24,-46h14a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-6l-4,4v-4h-4a4,4 0 0 1 -4,-4v-8a4,4 0 0 1 4,-4z")
+    val bubble = path("M24,-38h14a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-6l-4,4v-4h-4a4,4 0 0 1 -4,-4v-8a4,4 0 0 1 4,-4z")
 
     private fun path(d: String): Path = PathParser().parsePathString(d).toPath()
 }
 
 /** The face's ink: Paper's foreground in either theme, since every face is light enough to carry it. */
-internal val FACE_INK = Color(0xFF14161A)
+internal val FACE_INK = ThemeName.Paper.colors.foreground
 
 /** The main agent's skin: Paper's background in either theme, so she looks the same on both. */
-internal val PAPER_SKIN = Color(0xFFF5F6F3)
+internal val PAPER_SKIN = ThemeName.Paper.colors.background
 
 private val BLUSH = Color(0xFFE9A493)
 

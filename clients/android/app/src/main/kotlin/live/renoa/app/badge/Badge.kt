@@ -132,6 +132,8 @@ private fun DrawScope.drawTile(
     val up = -lift * LIFT
     val skin = if (frame.retiring) colors.muted else pigment ?: PAPER_SKIN
     val edge = pigment ?: FACE_INK
+    // The ring goes out over the page, so a Paper face's ring takes the page's ink, not its own.
+    val ring = pigment ?: colors.foreground
     if (!frame.retiring) {
         // The shadow stays on the socket and softens as the tile rises.
         withTransform({ translate(0f, DEPTH + 3f) }) { drawPath(shapes.face, Color.Black.copy(alpha = 0.32f / (1f + lift))) }
@@ -139,7 +141,7 @@ private fun DrawScope.drawTile(
     frame.ring?.let { p ->
         val r = 1f + 0.38f * p
         withTransform({ translate(0f, up); scale(r, r, Offset.Zero) }) {
-            drawPath(shapes.face, edge.copy(alpha = 0.55f * (1f - p)), style = Stroke(1.6f / r))
+            drawPath(shapes.face, ring.copy(alpha = 0.55f * (1f - p)), style = Stroke(1.6f / r))
         }
     }
     withTransform({ translate(0f, up) }) {
@@ -150,7 +152,7 @@ private fun DrawScope.drawTile(
         drawFace(shapes.features, shapes.face, state, trait, primary, skin, if (frame.retiring) colors.mutedForeground else FACE_INK)
         when {
             frame.retiring -> drawPath(shapes.face, colors.border, style = Stroke(1.25f))
-            frame.failed -> drawPath(shapes.face, colors.stateFailed, style = Stroke(2.5f))
+            frame.failed -> drawPath(shapes.face, colors.stateFailed, style = Stroke(3.5f))
             else -> drawPath(shapes.face, edge, style = Stroke(if (pigment == null) 2.5f else 1.25f))
         }
         if (sweep != null) {
@@ -170,7 +172,8 @@ private fun DrawScope.drawTile(
     }
 }
 
-private val BUBBLE_CENTRE = Offset(33f, -36f)
+/** Low enough on the corner that, lifted and swelling, the bubble stays on the canvas. */
+private val BUBBLE_CENTRE = Offset(33f, -28f)
 
 /** The primary agent's halo: a faint outline round the tile with a light running along it, its head at [sweep] of a turn. */
 private fun DrawScope.drawHalo(halo: Path, ink: Color, sweep: Float) {
