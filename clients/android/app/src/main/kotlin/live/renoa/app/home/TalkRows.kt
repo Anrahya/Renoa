@@ -60,7 +60,11 @@ internal fun MainCard(talk: Talk, roster: List<AgentSummary>, next: String, now:
     ) {
         Header(talk, roster, if (talk.needsOwner) "NEEDS YOU" else talk.time(now)?.uppercase())
         Text(talk.line ?: "Nothing needs you right now.", style = RenoaType.Body, color = colors.foreground, maxLines = 5, overflow = TextOverflow.Ellipsis)
-        talk.ask?.let { ask -> AskChoices(ask.choices, { act.answer(talk.agent.id, it) }) } ?: Text("$next.", style = RenoaType.Caption, color = colors.mutedForeground)
+        when {
+            talk.ask != null -> AskChoices(talk.ask.choices, { act.answer(talk.agent.id, it) })
+            talk.problem != null && talk.line == talk.problem.title -> RunAgain(talk.problem.id, act)
+            else -> Text("$next.", style = RenoaType.Caption, color = colors.mutedForeground)
+        }
     }
 }
 
@@ -82,7 +86,7 @@ internal fun TalkRow(talk: Talk, roster: List<AgentSummary>, now: ZonedDateTime,
             Text(it, style = RenoaType.Body, color = if (talk.needsOwner || talk.agent.glance.unread) colors.foreground else colors.foregroundSoft, maxLines = 4, overflow = TextOverflow.Ellipsis)
         }
         talk.ask?.let { ask -> AskChoices(ask.choices, { act.answer(talk.agent.id, it) }) }
-        talk.problem?.takeIf { talk.ask == null }?.let { RunAgain(it.id, act) }
+        talk.problem?.takeIf { talk.line == it.title }?.let { RunAgain(it.id, act) }
     }
 }
 

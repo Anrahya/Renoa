@@ -133,17 +133,15 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     fun close() = local.update { it.copy(page = null, notice = null) }
 
     /**
-     * Puts away the notes the owner opened, as the row they sat on opens its chat. One that cannot be
+     * Puts away the note the owner opened, as the row it sat on opens its chat. One that cannot be
      * put away shows again, which says so.
      */
-    fun seen(notes: List<String>) {
+    fun seen(note: String) {
         viewModelScope.launch {
-            for (note in notes) {
-                try {
-                    repository.dismiss(note)
-                } catch (unconfirmed: RepositoryException) {
-                    // The note is back on Home; the owner can open it again.
-                }
+            try {
+                repository.dismiss(note)
+            } catch (unconfirmed: RepositoryException) {
+                // The note is back on Home; the owner can open it again.
             }
         }
     }
@@ -161,15 +159,20 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
         }
     }
 
+    /** Agents whose answer is on its way, so a second tap while it goes sends nothing. */
+    private val answering = HashSet<String>()
+
     /** Answers an agent's question right from Home; the agent picks it up from there. */
     fun answer(agentId: String, choice: String) {
+        if (!answering.add(agentId)) return
         local.update { it.copy(notice = null) }
         viewModelScope.launch {
             try {
                 repository.answer(agentId, choice)
             } catch (refused: RepositoryException) {
-                // A conflict means the question was already answered, from here or elsewhere: nothing to retry.
-                if (refused.problem != Problem.Conflict) local.update { it.copy(notice = refused.wordsOr("That answer did not go through. Try again.")) }
+                local.update { it.copy(notice = refused.wordsOr("That answer did not go through. Try again.")) }
+            } finally {
+                answering.remove(agentId)
             }
         }
     }

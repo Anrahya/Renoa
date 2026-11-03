@@ -111,8 +111,7 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
             try {
                 repository.answer(agentId, choice)
             } catch (refused: RepositoryException) {
-                // A conflict means the question was already answered, from here or elsewhere: nothing to retry.
-                if (refused.problem != Problem.Conflict) notice.value = refused.wordsOr("That answer did not go through. Try again.")
+                notice.value = refused.wordsOr("That answer did not go through. Try again.")
             }
         }
     }
@@ -134,23 +133,13 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         inFlight.update { it + 1 }
         viewModelScope.launch {
             try {
-                if (state.value.ask == null) repository.send(agentId, text) else answerOrSend(text)
+                if (state.value.ask == null) repository.send(agentId, text) else repository.answer(agentId, text)
             } catch (refused: RepositoryException) {
                 draft.update { if (it.isEmpty()) text else it }
                 notice.value = refused.wordsOr("That did not go through. Try again.")
             } finally {
                 inFlight.update { it - 1 }
             }
-        }
-    }
-
-    /** Answers the open question with [text]; one answered meanwhile, from here or elsewhere, makes it a plain message. */
-    private suspend fun answerOrSend(text: String) {
-        try {
-            repository.answer(agentId, text)
-        } catch (gone: RepositoryException) {
-            if (gone.problem != Problem.Conflict) throw gone
-            repository.send(agentId, text)
         }
     }
 

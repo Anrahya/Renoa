@@ -10,16 +10,17 @@ import live.renoa.app.badge.mainAgent
 import java.time.Instant
 
 /**
- * One agent's row on Home: what it has to say, newest first. [line] is its question, else its
- * newest note, else what it is doing or last said; [notes] are the feed's notes it shows, which
- * opening the row puts away; [problem] is its newest failed routine, which can run again.
+ * One agent's row on Home. [line] is its question, else its newest note, else its newest failed
+ * routine, else what it is doing or last said; [note] is the note the line shows, which opening the
+ * row puts away, so a note the row does not show stays for later; [problem] is its newest failed
+ * routine, which can run again.
  */
 data class Talk(
     val agent: AgentSummary,
     val line: String?,
     val at: Instant?,
     val ask: Ask?,
-    val notes: List<Note>,
+    val note: Note?,
     val problem: Note?,
 ) {
     /** The owner is the one who has to act: a question, or an agent that cannot go on. */
@@ -44,20 +45,21 @@ fun talks(roster: List<AgentSummary>, feed: Feed): TalkList {
     )
 }
 
-private fun Talk.saysSomething(): Boolean = needsOwner || notes.isNotEmpty() || agent.state == AgentState.Working || agent.glance.unread
+private fun Talk.saysSomething(): Boolean = needsOwner || note != null || agent.state == AgentState.Working || agent.glance.unread
 
 private fun talk(agent: AgentSummary, feed: Feed, today: String?): Talk {
     val mine = feed.notes.filter { it.agentId == agent.id }
     val notes = mine.filter { it.kind != NoteKind.Problem }
     val problem = mine.firstOrNull { it.kind == NoteKind.Problem }
     val glance = agent.glance
+    val note = notes.firstOrNull()?.takeIf { glance.ask == null }
     val line =
         glance.ask?.question
-            ?: notes.firstOrNull()?.body
+            ?: note?.words
+            ?: problem?.title
             ?: today
             ?: (if (agent.state == AgentState.Working) glance.doing?.let { "$it…" } ?: "Working on it…" else null)
-            ?: problem?.title
             ?: glance.line
     val at = listOfNotNull(glance.ask?.at, notes.firstOrNull()?.at).maxOrNull()
-    return Talk(agent, line, at, glance.ask, notes, problem)
+    return Talk(agent, line, at, glance.ask, note, problem)
 }

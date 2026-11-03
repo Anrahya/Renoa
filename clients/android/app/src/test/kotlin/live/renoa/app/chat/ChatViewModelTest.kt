@@ -2,7 +2,6 @@ package live.renoa.app.chat
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -10,7 +9,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import live.renoa.app.MainDispatcherRule
 import live.renoa.app.agents.AgentRepository
-import live.renoa.app.agents.Ask
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.CreateAgent
@@ -109,12 +107,10 @@ class ChatViewModelTest {
     fun whatTheOwnerTypesWhileAQuestionWaitsIsTheAnswer() = runTest {
         val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
         val calls = mutableListOf<String>()
-        var answeredElsewhere = false
         val repo =
             object : AgentRepository by inner {
                 override suspend fun answer(agentId: String, choice: String) {
                     calls += "answer $choice"
-                    if (answeredElsewhere) throw RepositoryException(Problem.Conflict, "already answered")
                     inner.answer(agentId, choice)
                 }
 
@@ -128,30 +124,12 @@ class ChatViewModelTest {
         vm.onDraft("Dal, and some fruit")
         vm.send()
         runCurrent()
-        assertEquals(listOf("answer Dal, and some fruit"), calls)
         assertNull(vm.state.value.ask)
 
         vm.onDraft("Thanks")
         vm.send()
         runCurrent()
         assertEquals(listOf("answer Dal, and some fruit", "send Thanks"), calls, "with no question waiting, a message is a message")
-
-        // The chat still shows a question the Host has since had answered elsewhere.
-        answeredElsewhere = true
-        val stale = inner.agents.value.map { if (it.id == "nagisa") it.copy(glance = it.glance.copy(ask = Ask("Atta?", emptyList()))) else it }
-        val asked =
-            ChatViewModel(
-                object : AgentRepository by repo {
-                    override val agents = MutableStateFlow(stale)
-                },
-                "nagisa",
-            ).also { vm -> backgroundScope.launch { vm.state.collect {} } }
-        runCurrent()
-        asked.onDraft("Yes")
-        asked.send()
-        runCurrent()
-        assertEquals(listOf("answer Yes", "send Yes"), calls.takeLast(2), "a question answered meanwhile makes it a plain message")
-        assertNull(asked.state.value.notice)
     }
 
     @Test

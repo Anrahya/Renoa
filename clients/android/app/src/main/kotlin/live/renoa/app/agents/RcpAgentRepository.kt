@@ -247,8 +247,9 @@ class RcpAgentRepository(
      * from them. It writes under the lock, so an older roster never overwrites a newer one.
      */
     private fun publish() {
-        val asks = heldFeed.asks()
         synchronized(lock) {
+            // Read under the lock too, so a publish holding an ask the owner has since answered never lands last.
+            val asks = heldFeed.asks()
             roster.value =
                 rooms.filterValues { it.attached }.map { (id, room) ->
                     // A question the agent asked, in its chat or elsewhere, is the owner's to answer first.
@@ -393,14 +394,17 @@ class RcpAgentRepository(
     override suspend fun answer(agentId: String, choice: String) {
         val room = room(agentId)
         val open = hostAgentId(agentId)?.let { heldFeed.asks()[it.toString()] }
-        if (open == null || open.taskId == room.taskId) {
-            // Asked in this chat: the Host marks it answered when it takes the message.
-            send(agentId, choice)
-            open?.let { heldFeed.deal(it.itemId) }
-            return
+        val elsewhere = open?.takeIf { it.taskId != room.taskId }
+        // Hidden at once, so a second tap finds no question; shown again if the answer is refused.
+        open?.let { heldFeed.deal(it.itemId) }
+        try {
+            send(agentId, elsewhere?.let { answerFromElsewhere(it.ask.question, choice.trim()) } ?: choice)
+        } catch (refused: RepositoryException) {
+            open?.let { heldFeed.restore(it.itemId) }
+            throw refused
         }
-        send(agentId, answerFromElsewhere(open.ask.question, choice.trim()))
-        heldFeed.answeredElsewhere(open.itemId)
+        // Asked in this chat, the Host marks it answered when it takes the message; asked elsewhere, it is put away.
+        elsewhere?.let { heldFeed.answeredElsewhere(it.itemId) }
     }
 
     override suspend fun dismiss(noteId: String) = heldFeed.dismiss(noteId)

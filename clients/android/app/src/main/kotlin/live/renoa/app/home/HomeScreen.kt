@@ -75,7 +75,7 @@ fun HomeScreen(
     val act =
         TalkActions(
             open = { talk ->
-                viewModel.seen(talk.notes.map { it.id })
+                talk.note?.let { viewModel.seen(it.id) }
                 onOpenChat(talk.agent.id)
             },
             answer = viewModel::answer,

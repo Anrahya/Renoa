@@ -235,16 +235,18 @@ class FakeAgentRepositoryTest {
     }
 
     @Test
-    fun aBlankAnswerOrOneWithNoQuestionIsRefusedAndChangesNothing() = runTest {
+    fun aBlankAnswerIsRefusedAndOneWithNoQuestionIsAPlainMessage() = runTest {
         val repo = repository()
         val glance = repo.glance("tifa")
         val chat = repo.chat("tifa").messages
         assertEquals(Problem.Invalid, assertFailsWith<RepositoryException> { repo.answer("tifa", "  ") }.problem)
-        assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.answer("nagisa", "Yes") }.problem)
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.answer("nobody", "Yes") }.problem)
         assertEquals(glance, repo.glance("tifa"))
         assertEquals(chat, repo.chat("tifa").messages)
         assertEquals(AgentState.Wants, repo.state("tifa"))
+
+        repo.answer("nagisa", "Yes")
+        assertEquals("Yes", repo.chat("nagisa").messages.last().text, "as when the question was answered elsewhere meanwhile")
     }
 
     @Test

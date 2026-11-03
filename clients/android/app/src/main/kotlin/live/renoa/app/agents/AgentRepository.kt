@@ -111,7 +111,8 @@ interface AgentRepository {
     /**
      * Answers the agent's question ([Glance.ask]) with one of its choices or the owner's own words,
      * as the owner's message in the agent's chat. A question asked outside that chat is named in the
-     * message, and put away.
+     * message, and put away. With no question waiting, as when it was answered elsewhere meanwhile,
+     * the words go as a plain message.
      */
     suspend fun answer(agentId: String, choice: String)
 

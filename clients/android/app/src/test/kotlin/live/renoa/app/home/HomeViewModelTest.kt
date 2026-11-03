@@ -137,8 +137,7 @@ class HomeViewModelTest {
         val (vm, _) = model()
         runCurrent()
         val optimus = vm.state.value.talks.talking.first { it.agent.id == "optimus" }
-        assertEquals(listOf("projects"), optimus.notes.map { it.id })
-        vm.seen(optimus.notes.map { it.id })
+        vm.seen(assertNotNull(optimus.note).id)
         runCurrent()
         assertTrue(vm.state.value.feed.notes.none { it.id == "projects" })
 
@@ -152,6 +151,33 @@ class HomeViewModelTest {
         vm.runAgain("prices")
         runCurrent()
         assertNull(vm.state.value.notice)
+    }
+
+    @Test
+    fun aSecondTapWhileTheAnswerGoesSendsNothing() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val release = CompletableDeferred<Unit>()
+        val answers = mutableListOf<String>()
+        val vm =
+            HomeViewModel(
+                object : AgentRepository by inner {
+                    override suspend fun answer(agentId: String, choice: String) {
+                        answers += choice
+                        release.await()
+                        inner.answer(agentId, choice)
+                    }
+                },
+            )
+        backgroundScope.launch { vm.state.collect {} }
+        vm.answer("tifa", "Dal and a salad")
+        vm.answer("tifa", "Dal and a salad")
+        runCurrent()
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("Dal and a salad"), answers)
+        vm.answer("tifa", "Not sure yet")
+        runCurrent()
+        assertEquals(2, answers.size, "once it went, the next answer goes")
     }
 
     @Test

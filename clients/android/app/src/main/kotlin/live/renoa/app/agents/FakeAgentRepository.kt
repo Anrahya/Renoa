@@ -182,7 +182,7 @@ class FakeAgentRepository(
     override suspend fun answer(agentId: String, choice: String) {
         val room = room(agentId)
         synchronized(lock) {
-            summaryLocked(agentId).glance.ask ?: throw RepositoryException(Problem.Conflict, "There is no question waiting.")
+            summaryLocked(agentId)
             if (choice.isBlank()) throw RepositoryException(Problem.Invalid, "An answer needs some words in it.")
             glance(agentId) { it.copy(ask = null, unread = false) }
             keepLocked(agentId, room, choice.trim())

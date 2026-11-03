@@ -108,6 +108,8 @@ import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import live.renoa.app.agents.Feed
+import live.renoa.app.agents.Note
 import live.renoa.app.agents.NoteKind
 
 class ScreensTest : ScreenTest() {
@@ -256,6 +258,19 @@ class ScreensTest : ScreenTest() {
 
         compose.onNodeWithText("New helper").performClick()
         assertEquals(1, made)
+    }
+
+    @Test
+    fun theMainAgentsFailedRoutineRunsAgainFromItsCard() {
+        val failed = Note("brief", "renoa", NoteKind.Problem, "\u201cMorning brief\u201d didn\u2019t finish", "Run it again.", EVENING.toInstant())
+        val repo = FakeAgentRepository(scope, now = { EVENING }, feed = Feed("1 thing needs you.", listOf(failed)))
+        val model = HomeViewModel(repo)
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
+        compose.waitForIdle()
+        compose.onNodeWithText("\u201cMorning brief\u201d didn\u2019t finish").assertIsDisplayed()
+        compose.onAllNodesWithText("Run again").onFirst().performClick()
+        compose.waitForIdle()
+        assertTrue(repo.feed.value.notes.none { it.id == "brief" })
     }
 
     @Test

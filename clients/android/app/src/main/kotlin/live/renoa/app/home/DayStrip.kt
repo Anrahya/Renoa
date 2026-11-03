@@ -62,12 +62,14 @@ internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -
     val colors = Renoa.colors
     val clock = LocalMotionClock.current
     val reduced = LocalReducedMotion.current
-    val lens = DayLens(now.toLocalTime())
-    val marks = stripMarks(state.roster, state.feed, state.routines, now)
+    val lens = remember(now) { DayLens(now.toLocalTime()) }
+    val marks = remember(state.roster, state.feed, state.routines, now) { stripMarks(state.roster, state.feed, state.routines, now) }
     val measurer = rememberTextMeasurer()
-    val inks = state.roster.associate { it.id to AgentHue.of(it.id, state.roster).face(colors) }
+    val inks = remember(state.roster, colors) { state.roster.associate { it.id to AgentHue.of(it.id, state.roster).face(colors) } }
+    val hours = remember(measurer, colors) { HOUR_LABELS.map { (time, label) -> time to measurer.measure(label, RenoaType.Eyebrow.copy(color = colors.mutedForeground)) } }
     var scrub by remember { mutableStateOf<Float?>(null) }
     var released by remember { mutableStateOf(0) }
+    var dragging by remember { mutableStateOf(false) }
     val lit by rememberUpdatedState(onLit)
     val within = 0.04f
     val picked = scrub?.let { nearest(marks, lens, it, within) }
@@ -75,7 +77,8 @@ internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -
     LaunchedEffect(released) {
         if (released > 0) {
             delay(LINGER_MS)
-            scrub = null
+            // A drag begun meanwhile keeps its mark.
+            if (!dragging) scrub = null
         }
     }
     val words =
@@ -100,9 +103,18 @@ internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -
                 .height(66.dp)
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
-                        onDragStart = { scrub = (it.x / size.width).coerceIn(0f, 1f) },
-                        onDragEnd = { released++ },
-                        onDragCancel = { released++ },
+                        onDragStart = {
+                            dragging = true
+                            scrub = (it.x / size.width).coerceIn(0f, 1f)
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            released++
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            released++
+                        },
                     ) { change, _ ->
                         change.consume()
                         scrub = (change.position.x / size.width).coerceIn(0f, 1f)
@@ -149,8 +161,7 @@ internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -
             drawLine(colors.foreground.copy(alpha = breath), Offset(nowX, bar - 10.dp.toPx()), Offset(nowX, runs + 6.dp.toPx()), 2.dp.toPx(), StrokeCap.Round)
             scrub?.let { drawLine(colors.mutedForeground, Offset(w * it, 0f), Offset(w * it, size.height), 1.dp.toPx()) }
 
-            for ((time, label) in HOUR_LABELS) {
-                val text = measurer.measure(label, RenoaType.Eyebrow.copy(color = colors.mutedForeground))
+            for ((time, text) in hours) {
                 val left = (x(time) - text.size.width / 2f).coerceIn(0f, w - text.size.width)
                 drawText(text, topLeft = Offset(left, labels))
             }

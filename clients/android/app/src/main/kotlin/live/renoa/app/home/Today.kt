@@ -136,7 +136,7 @@ fun stripMarks(roster: List<AgentSummary>, feed: Feed, routines: List<Routine>, 
         feed.notes.mapNotNull { note ->
             local(note.at)?.let {
                 val problem = note.kind == NoteKind.Problem
-                val words = if (problem) note.title else listOfNotNull(name(note.agentId), note.body).joinToString(": ")
+                val words = if (problem) note.words else listOfNotNull(name(note.agentId), note.words).joinToString(": ")
                 StripMark(note.id, it, note.agentId, if (problem) MarkKind.Problem else MarkKind.Note, words)
             }
         }

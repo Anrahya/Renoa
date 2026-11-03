@@ -32,7 +32,13 @@ data class Note(
     val title: String,
     val body: String,
     val at: Instant,
-)
+) {
+    /**
+     * What Home shows of it in one line: an update's own words, else its title, which names the
+     * routine that finished or failed or the ability turned on; their bodies are the Host's stock words.
+     */
+    val words: String get() = if (kind == NoteKind.Update) body else title
+}
 
 /** Home's line about the day, and the notes left for the owner, newest first. */
 data class Feed(val today: String? = null, val notes: List<Note> = emptyList())
@@ -55,12 +61,30 @@ internal data class FeedItem(
     val choices: List<String>? = null,
 )
 
+/** One page of the feed, newest first; [nextBefore] starts the next, older page, or is null on the last. */
 @Serializable
-internal data class FeedPage(val today: String, val items: List<FeedItem>)
+internal data class FeedPage(val today: String, val items: List<FeedItem>, @SerialName("next_before") val nextBefore: Long? = null)
 
 /** The owner's feed on the Host: read, dismissed item by item, and a failed routine run again. */
 internal class HostFeed(private val host: HostClient) {
-    suspend fun read(): FeedPage = host.call(HostMethod.Get, "/v1/host/feed", null, FeedPage.serializer())
+    /**
+     * Reads every page: the Host keeps a bounded feed, but an open question or problem it never
+     * prunes can sit past the first page.
+     */
+    suspend fun read(): FeedPage {
+        val first = page(null)
+        val items = first.items.toMutableList()
+        var before = first.nextBefore
+        while (before != null) {
+            val older = page(before)
+            items += older.items
+            before = older.nextBefore
+        }
+        return FeedPage(first.today, items)
+    }
+
+    private suspend fun page(before: Long?): FeedPage =
+        host.call(HostMethod.Get, if (before == null) "/v1/host/feed" else "/v1/host/feed/before/$before", null, FeedPage.serializer())
 
     suspend fun dismiss(itemId: String) {
         host.call(HostMethod.Post, "/v1/host/feed/items/$itemId/dismissal", null, JsonObject.serializer())
@@ -86,8 +110,13 @@ internal class HeldFeed(private val host: HostFeed, private val changed: () -> U
     private var page: FeedPage? = null
     private val dealt = HashSet<String>()
 
+    /** Reads started, and the newest that has landed: a read that answers after a newer one is dropped. */
+    private var started = 0L
+    private var landed = 0L
+
     /** Reads the feed again. While the Host cannot be read, the last one stays. */
     suspend fun read() {
+        val ticket = synchronized(lock) { ++started }
         val read =
             try {
                 host.read()
@@ -95,6 +124,8 @@ internal class HeldFeed(private val host: HostFeed, private val changed: () -> U
                 return
             }
         synchronized(lock) {
+            if (ticket < landed) return
+            landed = ticket
             page = read
             dealt.retainAll(read.items.filter { !it.done }.map { it.id }.toSet())
         }
@@ -114,8 +145,7 @@ internal class HeldFeed(private val host: HostFeed, private val changed: () -> U
             host.dismiss(itemId)
         } catch (refused: RepositoryException) {
             if (refused.problem == Problem.NotFound) return
-            synchronized(lock) { dealt.remove(itemId) }
-            changed()
+            restore(itemId)
             throw refused
         }
     }
@@ -152,6 +182,12 @@ internal class HeldFeed(private val host: HostFeed, private val changed: () -> U
     /** Hides [itemId] here, as answered or dismissed. */
     fun deal(itemId: String) {
         synchronized(lock) { dealt += itemId }
+        changed()
+    }
+
+    /** Shows [itemId] again, as when what dealt with it was refused. */
+    fun restore(itemId: String) {
+        synchronized(lock) { dealt.remove(itemId) }
         changed()
     }
 

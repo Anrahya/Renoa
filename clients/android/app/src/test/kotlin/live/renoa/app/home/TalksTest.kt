@@ -43,13 +43,13 @@ class TalksTest {
         assertEquals("Quiet day.", list.main?.line, "the main agent with nothing else to say says the day's line")
         assertEquals(listOf("tifa", "ledger", "optimus", "kaisa", "echo"), list.talking.map { it.agent.id })
         assertEquals(listOf("Dinner?", "Send the statement again?", "Body of projects.", "Finding posts…", "Read me."), list.talking.map { it.line })
-        assertEquals(listOf("projects"), list.talking.first { it.agent.id == "optimus" }.notes.map { it.id })
-        assertEquals(listOf("menu"), list.talking.first().notes.map { it.id }, "a question comes before a newer note, which still goes when the row opens")
+        assertEquals("projects", list.talking.first { it.agent.id == "optimus" }.note?.id)
+        assertNull(list.talking.first().note, "a question comes before a note, which stays until the row shows it")
         assertEquals(listOf("sensei", "nagisa"), list.quiet.map { it.agent.id }, "the quiet keep Home's order")
         val nagisa = list.quiet.last()
         assertEquals("“prices” didn’t finish", nagisa.line, "a failed routine is a quiet agent's line")
         assertEquals("prices", nagisa.problem?.id)
-        assertEquals(emptyList(), nagisa.notes, "a problem is put away by running it again, not by opening the row")
+        assertNull(nagisa.note, "a problem is put away by running it again, not by opening the row")
         assertEquals("Today's one thing.", list.quiet.first().line)
     }
 
@@ -60,7 +60,19 @@ class TalksTest {
         val noted = Feed("Quiet day.", listOf(note("brief", "renoa", minutesAgo = 5), note("older", "renoa", minutesAgo = 50)))
         val main = talks(roster, noted).main
         assertEquals("Body of brief.", main?.line)
-        assertEquals(listOf("brief", "older"), main?.notes?.map { it.id })
+        assertEquals("brief", main?.note?.id, "only the note it shows goes when it opens")
         assertNull(talks(emptyList(), feed).main)
+
+        val failed = talks(roster, Feed("1 thing needs you.", listOf(note("brief", "renoa", NoteKind.Problem)))).main
+        assertEquals("\u201cbrief\u201d didn\u2019t finish", failed?.line, "its failed routine, over the day's line")
+        assertEquals("brief", failed?.problem?.id)
+    }
+
+    @Test
+    fun aFinishedRoutineAndATurnedOnAbilityReadByTheirTitle() {
+        val result = Note("r", "optimus", NoteKind.Result, "\u201cGitHub check\u201d finished", "Open it to read what it found.", evening)
+        assertEquals("\u201cGitHub check\u201d finished", talks(roster, Feed("", listOf(result))).talking.first { it.agent.id == "optimus" }.line)
+        val ability = Note("a", "optimus", NoteKind.Ability, "Turned on Maps", "It added this to its own abilities. You can turn it off.", evening)
+        assertEquals("Turned on Maps", talks(roster, Feed("", listOf(ability))).talking.first { it.agent.id == "optimus" }.line)
     }
 }
