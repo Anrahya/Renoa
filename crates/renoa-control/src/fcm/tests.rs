@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use super::{Attempt, FcmSender, WakeOutcome, classify};
+use super::{Attempt, FcmSender, WakeKind, WakeOutcome, classify};
 use crate::PushToken;
 
 /// An `FcmError` of `INVALID_ARGUMENT` beside `BadRequest` violations on
@@ -243,7 +243,11 @@ async fn a_refused_access_token_on_the_last_attempt_is_still_retried_with_a_fres
         .with_google_endpoints(origin.join("/token").expect("token endpoint"), origin);
     let sender = FcmSender::new(&settings).expect("build the sender");
     let outcome = sender
-        .wake(&PushToken::new("fcm:phone"), &CancellationToken::new())
+        .wake(
+            &PushToken::new("fcm:phone"),
+            WakeKind::Changed,
+            &CancellationToken::new(),
+        )
         .await;
     assert_eq!(outcome, WakeOutcome::Delivered);
     let send = "/v1/projects/renoa-test/messages:send";

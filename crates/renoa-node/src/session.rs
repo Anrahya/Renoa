@@ -329,7 +329,8 @@ async fn handle_server_message(
             request_id,
             targets,
         } => link.answer(request_id, Answer::Targets(targets))?,
-        ServerMessage::CommandAccepted { request_id, .. } => {
+        ServerMessage::CommandAccepted { request_id, .. }
+        | ServerMessage::WakeRequested { request_id } => {
             link.answer(request_id, Answer::Accepted)?;
         }
         // An error that names a request is that request's refusal; any other

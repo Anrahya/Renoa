@@ -90,6 +90,37 @@ class NoticesTest {
     }
 
     @Test
+    fun aRingSaysOnlyThatRenoaNeedsTheOwnerRingsAsARingtoneAndALaterRingReplacesIt() {
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        Notices.post(app, Notice(chat, "Arcee", null, News.Replied("Dinner is at seven.", 3)))
+        Notices.ring(app)
+        Notices.ring(app)
+        val ring = shown().single { it.channelId == "needs_you" }
+        assertEquals(RING_TITLE, ring.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals(RING_WORDS, ring.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals(2, shown().size, "one ring beside the reply, which it does not replace")
+        val channel = app.getSystemService(NotificationManager::class.java).getNotificationChannel("needs_you")
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, channel.importance)
+        assertEquals(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE, channel.audioAttributes.usage)
+        val tap = shadowOf(ring.contentIntent).savedIntent
+        assertEquals(NoticeTap::class.java.name, tap.component?.className)
+        assertNull(tap.getStringExtra(CHAT), "a ring opens the app, not a chat")
+
+        Notices.cancelRing(app)
+        assertEquals("replies", shown().single().channelId, "opening the app takes back the ring and only the ring")
+    }
+
+    @Test
+    fun aRingStaysQuietWithoutPermissionOrWithNotificationsTurnedOff() {
+        Notices.ring(app)
+        assertTrue(shown().isEmpty(), "Android 13 and later need the owner's permission")
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        manager.setNotificationsEnabled(false)
+        Notices.ring(app)
+        assertTrue(shown().isEmpty(), "the owner turned notifications off")
+    }
+
+    @Test
     fun nothingShowsWithoutPermissionOrWithNotificationsTurnedOff() {
         Notices.post(app, Notice(chat, "Arcee", null, News.Replied("Unseen.", 1)))
         assertTrue(shown().isEmpty(), "Android 13 and later need the owner's permission")
@@ -97,6 +128,7 @@ class NoticesTest {
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         manager.setNotificationsEnabled(false)
         assertFalse(Notices.allowed(app))
+        assertFalse(Notices.wanted(app), "push is not registered when nothing could be shown")
         Notices.post(app, Notice(chat, "Arcee", null, News.Replied("Unseen.", 1)))
         assertTrue(shown().isEmpty())
     }

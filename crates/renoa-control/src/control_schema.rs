@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -45,6 +45,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     create_oauth_relay_schema(connection)?;
     create_credential_relay_schema(connection)?;
     create_push_schema(connection)?;
+    add_push_rings(connection)?;
     connection
         .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
         .map_err(sqlite_error)
@@ -55,7 +56,10 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
 /// A principal holds one wake row, whose `generation` grows with every record
 /// that wakes; a wake is owed while `settled` is below it. The row is kept
 /// once settled, so a generation never restarts and the dispatcher settles
-/// only what it sent.
+/// only what it sent. `ring_generation` is the generation of the latest wake a
+/// node asked to ring with, so a ring is owed while `settled` is below it.
+/// `push_wake_requests` holds the wake ids nodes asked for in the last day,
+/// so a repeated request records nothing.
 fn create_push_schema(connection: &Connection) -> Result<(), ControlError> {
     connection
         .execute_batch(
@@ -73,8 +77,41 @@ fn create_push_schema(connection: &Connection) -> Result<(), ControlError> {
                 principal_id TEXT PRIMARY KEY,
                 generation INTEGER NOT NULL CHECK (generation >= 1),
                 settled INTEGER NOT NULL DEFAULT 0
-                    CHECK (settled >= 0 AND settled <= generation)
+                    CHECK (settled >= 0 AND settled <= generation),
+                ring_generation INTEGER NOT NULL DEFAULT 0
+                    CHECK (ring_generation >= 0 AND ring_generation <= generation)
+            );
+
+            CREATE TABLE IF NOT EXISTS push_wake_requests (
+                principal_id TEXT NOT NULL,
+                wake_id TEXT NOT NULL,
+                received_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (principal_id, wake_id)
             );",
+        )
+        .map_err(sqlite_error)
+}
+
+/// Schema 15: a schema 14 wake row learns which generation rings. Every stored
+/// row rings at none, so the upgrade rings no phone. A table that has the
+/// column already is left alone, so a start that stopped before stamping the
+/// version upgrades again.
+fn add_push_rings(connection: &Connection) -> Result<(), ControlError> {
+    let present: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('push_wakes')
+                WHERE name = 'ring_generation')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error)?;
+    if present {
+        return Ok(());
+    }
+    connection
+        .execute_batch(
+            "ALTER TABLE push_wakes ADD COLUMN ring_generation INTEGER NOT NULL DEFAULT 0
+                CHECK (ring_generation >= 0 AND ring_generation <= generation);",
         )
         .map_err(sqlite_error)
 }

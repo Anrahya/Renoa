@@ -8,6 +8,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,6 +24,10 @@ import kotlin.uuid.Uuid
 
 /** The words a notice shows when the agent's run failed. */
 internal const val STUCK_WORDS = "It got stuck. Open the chat to try again."
+
+/** What a ring says. A ring carries nothing, so it says only that something waits. */
+internal const val RING_TITLE = "Renoa needs you"
+internal const val RING_WORDS = "Something can't wait. Open Renoa to see it."
 
 /** The agent whose chat a tapped notice opens, as [NoticeTap] receives it. */
 internal const val CHAT = "chat"
@@ -57,36 +63,84 @@ class NoticeTap : Activity() {
 
 /**
  * The app's notifications: one per task, replaced by the next notice from the same task, on the
- * replies channel the owner can turn off in the phone's settings.
+ * replies channel, and one ring at a time on the needs-you channel. The owner can turn off either in
+ * the phone's settings.
  */
 internal object Notices {
     private const val REPLIES = "replies"
+    private const val NEEDS_YOU = "needs_you"
     private const val CHECKING = "checking"
     private const val NOTICE = 1
+    private const val RING = "ring"
 
     fun createChannels(context: Context) {
-        NotificationManagerCompat.from(context).createNotificationChannel(
+        val manager = NotificationManagerCompat.from(context)
+        manager.createNotificationChannel(
             NotificationChannelCompat.Builder(REPLIES, NotificationManagerCompat.IMPORTANCE_HIGH)
                 .setName("Replies")
                 .setDescription("When an agent answers you or gets stuck")
                 .build(),
         )
+        manager.createNotificationChannel(
+            NotificationChannelCompat.Builder(NEEDS_YOU, NotificationManagerCompat.IMPORTANCE_HIGH)
+                .setName("Needs you")
+                .setDescription("When an agent needs you and it can't wait")
+                .setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                ).setVibrationEnabled(true)
+                .build(),
+        )
     }
 
     /** Whether the owner lets the app show replies: notifications on for the app and for its replies. */
-    fun allowed(context: Context): Boolean {
+    fun allowed(context: Context): Boolean = allowed(context, REPLIES)
+
+    /** Whether the owner wants any wake-up shown: replies, rings, or both. Push registers while this holds. */
+    fun wanted(context: Context): Boolean = allowed(context, REPLIES) || allowed(context, NEEDS_YOU)
+
+    private fun allowed(context: Context, channel: String): Boolean {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return false
-        return manager.getNotificationChannelCompat(REPLIES)?.importance != NotificationManagerCompat.IMPORTANCE_NONE
+        return manager.getNotificationChannelCompat(channel)?.importance != NotificationManagerCompat.IMPORTANCE_NONE
     }
 
+    /** Whether the app may post at all: Android 13 and later need the owner's permission. */
+    private fun permitted(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Rings for what needs the owner now, with [RING_TITLE] and nothing from the agent; a later ring
+     * replaces it. A tap opens the app. Creates the channels first: a ring can start the app's process
+     * before the owner ever opened it after an update.
+     */
+    fun ring(context: Context) {
+        createChannels(context)
+        if (!allowed(context, NEEDS_YOU) || !permitted(context)) return
+        val tap = Intent(context, NoticeTap::class.java).setData(Uri.fromParts("renoa", RING, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val open = PendingIntent.getActivity(context, 0, tap, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val notification =
+            NotificationCompat.Builder(context, NEEDS_YOU)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(RING_TITLE)
+                .setContentText(RING_WORDS)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+        NotificationManagerCompat.from(context).notify(RING, NOTICE, notification)
+    }
+
+    /** Takes back the ring, as when the owner opens the app. */
+    fun cancelRing(context: Context) = NotificationManagerCompat.from(context).cancel(RING, NOTICE)
+
     fun post(context: Context, notice: Notice) {
-        if (!allowed(context)) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
+        if (!allowed(context) || !permitted(context)) return
         val text =
             when (val news = notice.news) {
                 is News.Replied -> plainText(news.text)

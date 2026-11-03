@@ -350,7 +350,7 @@ The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and
 `POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
-This release requires Host schema 48. A schema 28–47 catalog upgrades in place
+This release requires Host schema 49. A schema 28–48 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
@@ -362,7 +362,8 @@ agent, admits the `renoa.memory` plugin, on by default for every agent, and
 adds the tables for plugin-owned triggers, `renoa.memory`'s job receipts and
 memory session generations, and its note pass's conversations and passes,
 adds the owner's feed and `renoa.memory`'s reminders, admits the
-`renoa.owner` plugin and gives feed items an urgency; it refuses to upgrade
+`renoa.owner` plugin, gives feed items an urgency and records each item's
+acknowledged wake; it refuses to upgrade
 while a daily or interval automation remains. The first
 scheduler pass then creates `renoa.memory`'s nightly run: 11:00 (Mnem's pass day start) in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
@@ -848,6 +849,14 @@ registration and each task's `throughSequence` in the task directory, so the
 coordinator, node, Pi node, Android app and every surface must be upgraded
 together; a peer still on version 14 is refused at authentication.
 
+Coordinator schema 15 gives each wake row the generation of its latest ring and
+adds `push_wake_requests`, the wake identities nodes sent in the last day;
+opening a schema 14 database adds both and rings none of its stored wakes, and
+a pre-upgrade binary cannot open schema 15. RCP binding version 16 adds a
+node's `request_wake`, so the coordinator, node, Pi node, Android app and every
+surface must again be upgraded together; a peer still on version 15 is refused
+at authentication.
+
 Without a service account push is off: apps still register tokens, owed wakes
 are dropped, and the coordinator logs `push_disabled` once. Turning it on later
 needs no app change. Provisioning is manual and outside the repository:
@@ -991,7 +1000,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 15; the recorded version-8 proof establishes only the deployment
+binding version 16; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

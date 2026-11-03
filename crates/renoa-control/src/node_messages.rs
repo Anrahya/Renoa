@@ -56,7 +56,8 @@ pub(crate) async fn handle_node_operation(
     if !node_connection_is_current(state, node_id, connection_id).await {
         // A request names its own id so the sender's wait ends with the reason.
         let request_id = match &operation {
-            NodeOperation::SendAgentMessage { request_id, .. } => Some(*request_id),
+            NodeOperation::SendAgentMessage { request_id, .. }
+            | NodeOperation::RequestWake { request_id, .. } => Some(*request_id),
             _ => None,
         };
         send_error(outgoing, request_id, ErrorCode::InvalidRole, REPLACED).await;
@@ -140,6 +141,13 @@ pub(crate) async fn handle_node_operation(
                 state, outgoing, node_id, request_id, message,
             )
             .await;
+        }
+        NodeOperation::RequestWake {
+            request_id,
+            wake_id,
+            urgency,
+        } => {
+            crate::push_wake::request(state, outgoing, node_id, request_id, wake_id, urgency).await;
         }
     }
 }

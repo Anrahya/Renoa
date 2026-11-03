@@ -200,7 +200,7 @@ class RenoaApplication : Application() {
     private fun pushing(saved: SavedSignIn): Pushing =
         pushing?.takeIf { it.owner == owner(saved) } ?: run {
             val cursors = WakeCursors(wakeFile(), owner(saved))
-            Pushing(owner(saved), cursors, PushRegistration({ firebaseToken(this) }, { Notices.allowed(this) }, cursors)).also { pushing = it }
+            Pushing(owner(saved), cursors, PushRegistration({ firebaseToken(this) }, { Notices.wanted(this) }, cursors)).also { pushing = it }
         }
 
     private fun outboxFile() = File(filesDir, "outbox")
@@ -240,6 +240,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // The owner is here, so the ring has done its work.
+        Notices.cancelRing(this)
         (application as RenoaApplication).run {
             retryNow()
             // Notifications may have been turned on or off in the phone's settings meanwhile.

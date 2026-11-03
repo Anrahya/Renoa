@@ -877,8 +877,9 @@ fn only_a_busy_or_locked_catalog_is_busy() {
     assert!(!LocalHostError::HostCatalog(HostCatalogError::Database(missing)).catalog_busy());
 }
 
-/// A reset from schema 47 reaches schema 48's feed: an item takes an urgency
-/// and an ask's choices, and every compiled plugin can be stored.
+/// A reset from schema 47 reaches the current feed: an item takes an urgency,
+/// an ask's choices and the time its wake was sent, and every compiled plugin
+/// can be stored.
 #[test]
 fn a_reset_from_schema_47_gives_the_feed_its_urgency_and_admits_every_plugin() {
     let directory = tempfile::tempdir().expect("temporary Host catalog");
@@ -903,10 +904,10 @@ fn a_reset_from_schema_47_gives_the_feed_its_urgency_and_admits_every_plugin() {
              VALUES ('00000000-0000-0000-0000-000000000002', 'Fresh', 1,
                 'provisioning', NULL, '{}', 'system', 'migration-test');
              INSERT INTO host_feed_items(id, kind, agent_id, title, body, action, subject_id,
-                urgency, choices, created_at_ms)
+                urgency, choices, created_at_ms, wake_sent_at_ms)
              VALUES ('00000000-0000-0000-0000-0000000000f1', 'ask',
                 '00000000-0000-0000-0000-000000000002', 'Needs your answer', 'Book it?',
-                'reply', 'session', 'now', '[\"Yes\",\"No\"]', 1);",
+                'reply', 'session', 'now', '[\"Yes\",\"No\"]', 1, 2);",
         )
         .expect("a reset feed takes an urgency and choices");
     for plugin in crate::plugins::host::HostPluginId::ALL {

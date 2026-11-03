@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use renoa_control::{ClientMessage, ErrorCode, NodeId, TargetSummary};
+use renoa_control::{ClientMessage, ErrorCode, NodeId, TargetSummary, WakeUrgency};
 use renoa_kernel::AgentId;
 use renoa_local::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 use renoa_protocol::TargetRef;
 use uuid::Uuid;
 
-use super::{AgentLink, Answer, Peers};
+use super::{AgentLink, Answer, Peers, WakeFailure};
 use crate::{agent_targets, bridge::NodeError};
 
 fn summary(node: u128, target: &TargetRef, name: &str) -> TargetSummary {
@@ -277,5 +277,52 @@ async fn an_address_the_node_did_not_issue_is_refused_without_a_request() {
             .await
             .expect_err("a foreign address");
         assert!(matches!(error, PeerError::Refused(_)), "{error:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_wake_carries_its_id_and_urgency_and_a_refusal_comes_back_as_it_is() {
+    let link = Arc::new(AgentLink::default());
+    assert!(
+        matches!(
+            link.request_wake(Uuid::from_u128(5), WakeUrgency::Soon)
+                .await,
+            Err(WakeFailure::Unanswered)
+        ),
+        "no session is open"
+    );
+    let mut session = link.open();
+    for (urgency, refusal) in [
+        (WakeUrgency::Now, None),
+        (
+            WakeUrgency::Soon,
+            Some((ErrorCode::InvalidRole, "node has no owner")),
+        ),
+    ] {
+        let asking = tokio::spawn({
+            let link = Arc::clone(&link);
+            async move { link.request_wake(Uuid::from_u128(5), urgency).await }
+        });
+        let ClientMessage::RequestWake {
+            request_id,
+            wake_id,
+            urgency: sent,
+        } = session.next_message().await
+        else {
+            panic!("expected a wake request");
+        };
+        assert_eq!((wake_id, sent), (Uuid::from_u128(5), urgency));
+        let answer = refusal.map_or(Answer::Accepted, |(code, message)| Answer::Refused {
+            code,
+            message: message.to_owned(),
+        });
+        session.answer(request_id, answer).expect("answer");
+        match (asking.await.expect("task"), refusal) {
+            (Ok(()), None) => {}
+            (Err(WakeFailure::Refused { code, message }), Some((expected, text))) => {
+                assert_eq!((code, message.as_str()), (expected, text));
+            }
+            _ => panic!("the answer for {urgency:?} came back changed"),
+        }
     }
 }

@@ -378,7 +378,8 @@ activations goes through one function, and a test fails on a write anywhere
 else. `ask_owner` and `notify_owner` write `ask` (`reply`) and `update`
 (`open`) items on the Host session they were called in; see "Reaching the
 owner". Nothing is backfilled: runs and activations recorded before schema 46
-make no items, and items stored before schema 48 are `whenever`.
+make no items, and items stored before schema 48 are `whenever`. Schema 49
+records when each item's wake was acknowledged; see "Reaching the owner".
 
 Three relayed owner operations read it. `GET /v1/host/feed`, and
 `GET /v1/host/feed/before/{sequence}` for older pages, return
@@ -440,8 +441,21 @@ settles; a guest's message, another agent's, an unidentified sender's and an
 automation run answer nothing. A mark that fails is logged as
 `owner_asks_unanswered`, and the person's next message closes it. Deleting a
 conversation removes the asks and updates made in it.
-`notify_owner` does not end the turn. Pushing these items to the owner's phone
-by urgency is not built yet.
+`notify_owner` does not end the turn.
+
+An open item whose urgency is `soon` or `now` is owed a wake of the owner's
+phone; `whenever` never wakes it, and an item answered or dismissed first is
+owed nothing. The node that serves the Host reads the owed items every second,
+oldest first, and asks the coordinator for each with `request_wake` under the
+item's id, `now` as a ring and `soon` as the wake a reply sends. The Android
+app shows a ring at once; it does not yet read the feed after a wake, so a
+`soon` item shows on the phone only once Home lists the feed (#146). Once the
+coordinator acknowledges the wake as recorded, the node stores the time on the
+item (`wake_sent_at_ms`), so the item is owed no more; a lost acknowledgement
+leaves it owed, and the coordinator records the repeated id once. A refused
+request is logged as `owner_wake_refused` and holds the node back for a
+minute. A problem is written `soon`, so a failed or skipped run wakes the
+phone too.
 
 ### The main agent
 
@@ -1381,7 +1395,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 48
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 49
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1406,7 +1420,10 @@ removes a deleted automation's items. Every catalog below schema 47 gains
 `renoa.memory`'s reminders, empty: the scheduler creates them when it next
 converges the triggers. Every catalog below schema 48 admits `renoa.owner` in
 its compiled-plugin table, keeping every stored activation, and gives every
-feed item an urgency, `whenever` for those it holds, and an ask its choices. Live selections
+feed item an urgency, `whenever` for those it holds, and an ask its choices.
+Every catalog below schema 49 gives every feed item an empty record of its
+acknowledged wake, so an open `soon` or `now` item written by schema 48 is
+owed its wake. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.

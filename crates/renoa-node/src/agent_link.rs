@@ -1,5 +1,6 @@
-//! The node's two requests on behalf of its agents: who they can message, and
-//! the message itself.
+//! The node's requests over its own coordinator session: on behalf of its
+//! agents, who they can message and the message itself; on behalf of its
+//! Host, a wake for the owner's phone.
 //!
 //! A request travels over the node's own coordinator session, so the
 //! coordinator knows which node speaks. Nothing queues across a reconnect: a
@@ -15,7 +16,7 @@ use std::{
 };
 
 use renoa_agent::BoxFuture;
-use renoa_control::{ClientMessage, ErrorCode, NodeId, TargetSummary};
+use renoa_control::{ClientMessage, ErrorCode, NodeId, TargetSummary, WakeUrgency};
 use renoa_kernel::AgentId;
 use renoa_local::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 use renoa_protocol::{CommandId, TargetRef};
@@ -45,6 +46,21 @@ enum Call {
         node_id: NodeId,
         target: TargetRef,
         text: String,
+    },
+    Wake {
+        wake_id: Uuid,
+        urgency: WakeUrgency,
+    },
+}
+
+/// Why a wake was not acknowledged.
+pub(crate) enum WakeFailure {
+    /// The session is down, or it ended or timed out before an answer. The
+    /// same id may be asked for again.
+    Unanswered,
+    Refused {
+        code: ErrorCode,
+        message: String,
     },
 }
 
@@ -103,6 +119,32 @@ impl AgentLink {
             Err(_) => Err(no_answer(delivers, "no answer came in time")),
         }
     }
+
+    /// Whether a coordinator session accepts requests now.
+    pub(crate) fn is_open(&self) -> bool {
+        self.session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
+    /// Asks the coordinator to wake the owner's phone for `wake_id`, and
+    /// returns once it acknowledged the wake as recorded.
+    pub(crate) async fn request_wake(
+        &self,
+        wake_id: Uuid,
+        urgency: WakeUrgency,
+    ) -> Result<(), WakeFailure> {
+        match self.call(Call::Wake { wake_id, urgency }).await {
+            Ok(Answer::Accepted) => Ok(()),
+            Ok(Answer::Refused { code, message }) => Err(WakeFailure::Refused { code, message }),
+            Ok(Answer::Targets(_)) => Err(WakeFailure::Refused {
+                code: ErrorCode::InvalidMessage,
+                message: "the coordinator answered a wake with a list of agents".to_owned(),
+            }),
+            Err(_) => Err(WakeFailure::Unanswered),
+        }
+    }
 }
 
 /// A request whose answer never came. A message may have been admitted, so
@@ -159,6 +201,11 @@ impl LinkSession {
                     node_id,
                     target,
                     text,
+                },
+                Call::Wake { wake_id, urgency } => ClientMessage::RequestWake {
+                    request_id,
+                    wake_id,
+                    urgency,
                 },
             };
         }

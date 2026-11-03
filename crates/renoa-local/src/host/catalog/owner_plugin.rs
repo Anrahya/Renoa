@@ -16,10 +16,20 @@ pub(super) fn admit_owner_plugin(transaction: &Transaction<'_>) -> Result<(), Ho
     crate::host::feed::add_urgency(transaction)
 }
 
+/// Turns a current catalog back into the schema 48 shape: its items keep no
+/// record of a wake.
+#[cfg(test)]
+pub(crate) fn restore_schema_48(connection: &rusqlite::Connection) {
+    connection
+        .execute_batch("ALTER TABLE host_feed_items DROP COLUMN wake_sent_at_ms;")
+        .expect("restore the schema 48 feed");
+}
+
 /// Turns a current catalog back into the schema 47 shape, so upgrade tests
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_47(connection: &rusqlite::Connection) {
+    restore_schema_48(connection);
     connection
         .execute_batch(
             "DELETE FROM host_agent_builtin_plugins WHERE plugin_id = 'renoa.owner';

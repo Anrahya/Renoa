@@ -88,6 +88,7 @@ fn migrate(
             super::memory_note_pass::add_note_passes(&transaction)?;
             super::feed::add_feed(&transaction)?;
             crate::host::feed::add_urgency(&transaction)?;
+            crate::host::feed::add_wakes(&transaction)?;
             super::memory_reminders::add_reminders(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;

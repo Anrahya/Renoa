@@ -40,8 +40,9 @@ After authentication, the session identity fixes the peer's role:
   by a proven device key may `CallHost`, and one connected by any device
   credential may `SetPushToken` and `ClearPushToken`;
 - a node may `AdvertiseTargets`, `ListTargets`, `SendAgentMessage`,
-  `AcknowledgeExecution`, `PublishExecutionEvents`, `AcknowledgeStop`,
-  `PublishLiveActivity`, `ServeHostControl`, and `CompleteHostCall`;
+  `RequestWake`, `AcknowledgeExecution`, `PublishExecutionEvents`,
+  `AcknowledgeStop`, `PublishLiveActivity`, `ServeHostControl`, and
+  `CompleteHostCall`;
 - the coordinator may deliver `Execute`, `Stop`, and `HostCall` to a node, and
   `TaskEvent` records and `LiveActivity` frames to an attached surface.
 
@@ -457,6 +458,25 @@ pending delivery while the asker's node is offline. An answer is not itself
 answered and is not refused for depth. If the asking command no longer exists,
 no answer is admitted.
 
+### `RequestWake`
+
+Inputs:
+
+- `wake_id`: a stable identity of what the wake is for, generated before the
+  first send;
+- `urgency`: `soon` or `now`.
+
+A node asks for a wake of its owner's phone for something its Host has for the
+owner that no task record carries, such as an agent's question in the Host's
+feed. The request names no principal, task or text: the wake is for the node's
+owner, and a node without one is refused with `InvalidRole`. In one
+transaction the coordinator forgets the wake identities it received more than a
+day ago, and, unless this node's owner already sent `wake_id`, records it and
+owes the owner a wake, as a journal record that wakes does. `now` makes that
+wake ring: the ring stays owed through any wake that follows until every device
+of the owner was sent one. It returns `WakeRequested` once the transaction
+commits.
+
 ### `AcknowledgeExecution`
 
 Inputs:
@@ -580,6 +600,7 @@ task sequence. A timestamp never determines order.
 | `DeviceRevoked` | The device's revocation and the deletion of its push token |
 | `PushTokenSet` | The device's token, and its removal from another device of the principal that held it |
 | `PushTokenCleared` | Removal of the device's token |
+| `WakeRequested` | The wake identity and the wake it owes the node's owner, or the same identity received within the last day |
 
 None of these outcomes means that an external side effect happened exactly
 once.
@@ -611,6 +632,7 @@ correlation value is a binding concern.
 | `OpenTask` | task ID plus identical node and target | Returns the existing opening without another task |
 | `AdvertiseTargets` | None; each advertisement replaces the connection's targets | The latest advertisement wins |
 | `SendAgentMessage` | message ID plus identical content | Returns the existing admission without another task or record |
+| `RequestWake` | wake ID | Within a day, returns `WakeRequested` without another wake; later, one more wake |
 | `Attach` | task ID plus last applied sequence | Reconstructs the same suffix, then resumes live delivery |
 | `Submit` | command ID plus identical content | Returns the existing admission without another task record |
 | `StopCommand` | task ID plus command ID | Returns the original answer without another stop record |

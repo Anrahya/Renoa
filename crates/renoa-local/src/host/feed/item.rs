@@ -86,6 +86,23 @@ pub enum Urgency {
 impl Urgency {
     pub(crate) const ALL: [Self; 3] = [Self::Whenever, Self::Soon, Self::Now];
 
+    /// Whether an open item of this urgency wakes the owner's phone. The one
+    /// place this is decided: the owed wakes read it through [`waking`].
+    pub(super) const fn wakes(self) -> bool {
+        match self {
+            Self::Whenever => false,
+            Self::Soon | Self::Now => true,
+        }
+    }
+
+    /// Whether the wake rings rather than buzzes.
+    pub(super) const fn rings(self) -> bool {
+        match self {
+            Self::Whenever | Self::Soon => false,
+            Self::Now => true,
+        }
+    }
+
     /// The stored name, the same as the serialized one.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -94,6 +111,16 @@ impl Urgency {
             Self::Now => "now",
         }
     }
+}
+
+/// The urgencies that wake the owner's phone, as an SQL list.
+pub(super) fn waking() -> String {
+    sql_list(
+        Urgency::ALL
+            .into_iter()
+            .filter(|urgency| urgency.wakes())
+            .map(Urgency::as_str),
+    )
 }
 
 /// What the owner can do about an item, through the operation that owns it.
