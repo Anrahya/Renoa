@@ -6,9 +6,10 @@ use super::{LocalHost, LocalHostError};
 
 mod control;
 mod cron;
+pub(crate) mod follow_up;
 mod owned;
 mod receipts;
-pub(crate) mod result_tool;
+mod result_tool;
 mod results;
 mod retention;
 mod runs;
@@ -20,7 +21,7 @@ pub use scheduler::{AutomationScheduler, PluginRun, ScheduledRun};
 pub(super) mod store;
 #[cfg(test)]
 mod tests;
-pub(crate) mod tool;
+mod tool;
 
 /// Host-owned timing: one absolute time, or a cron expression read in a named
 /// timezone.
@@ -40,7 +41,7 @@ pub enum AutomationSchedule {
     },
 }
 
-/// A standing task for a persistent agent. Results belong to the agent's Host inbox.
+/// A standing task for a persistent agent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AutomationSpec {
@@ -325,9 +326,25 @@ impl LocalHost {
     }
 }
 
+/// Schema 51: the mark that makes a one-time automation a follow-up.
+pub(super) use follow_up::initialize as add_follow_ups;
 pub(super) use retention::{
     CONVERSATION_DELETIONS, RUN_INDEXES, Removed, purge_all_deleted, report as report_removed,
 };
 pub(super) use runs::SCHEDULER_TABLE;
 pub(crate) use runs::{Throttle, delivering};
 pub(super) use store::initialize;
+
+/// `renoa.automations`' tools for one turn of `agent` in `session`.
+pub(super) fn bindings(
+    host: &std::sync::Arc<super::HostConfig>,
+    agent: AgentId,
+    session: renoa_kernel::SessionId,
+    command: Option<renoa_kernel::CommandId>,
+) -> [renoa_agent_loop::AgentToolBinding; 3] {
+    [
+        result_tool::binding(std::sync::Arc::clone(host), agent),
+        tool::binding(std::sync::Arc::clone(host), agent, session, command),
+        follow_up::binding(std::sync::Arc::clone(host), agent, session, command),
+    ]
+}

@@ -752,8 +752,8 @@ machine-tool selections. Beside them, each compiled plugin binds its resident
 tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
 `renoa.memory` for a turn that talks to a person or comes from a guest,
 `agent_documents` from `renoa.documents` for an agent that keeps documents,
-and `ask_owner`, `notify_owner` and `set_today` from `renoa.owner` for every
-agent.
+`ask_owner`, `notify_owner` and `set_today` from `renoa.owner` for every
+agent, and `follow_up` from `renoa.automations` for every agent.
 The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
@@ -789,7 +789,7 @@ and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 | Plugin | Capabilities |
 | --- | --- |
 | `renoa.agents` | Create, list, rename agents; list and message the owner's other agents |
-| `renoa.automations` | Manage schedules and read retained results |
+| `renoa.automations` | Manage schedules, follow up later in a conversation, and read retained results |
 | `renoa.documents` | Edit this agent's SOUL and the speaking person's USER file |
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
 | `renoa.git` | Inspect local changes, diffs, and commits |
@@ -1419,7 +1419,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 50
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 51
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1449,7 +1449,8 @@ Every catalog below schema 49 gives every feed item an empty record of its
 acknowledged wake, so an open `soon` or `now` item written by schema 48 is
 owed its wake. Every catalog below schema 50 lets every compiled plugin keep
 settings and triggers, keeping every stored setting, trigger and reminder; no
-agent has a heartbeat until it is set. Live selections
+agent has a heartbeat until it is set. Every catalog below schema 51 gains the
+mark of follow-ups, empty. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1748,7 +1749,8 @@ command, and tool call.
 Replaying a management operation returns its original result even after a later edit;
 conflicting input and stale revisions fail. Creation targets an existing Host
 agent, not a Slack channel. No surface identifiers or credentials appear in
-automation records. Results belong to the agent's durable Host inbox.
+automation records. Each run's result is kept with the run and read through
+`automation_results`.
 
 The execution node (`renoa-node`) owns one scheduler lease per Host directory.
 It admits one occurrence at a time and hands it on until its result is recorded.
@@ -1793,6 +1795,25 @@ limits below.
 a fresh explicit `run_now` may run a disabled task again. Pausing and editing an
 unchanged overdue task are allowed. Re-arming requires a future timestamp and the
 current revision; admitted work is unaffected by subsequent edits.
+
+`follow_up` is the short way for an agent to check back on something:
+`{"note": "Ask whether the table was booked", "after_minutes": 1440}`. It
+creates a one-time automation of the calling agent, due `after_minutes` (5 to
+43200) from now, from the conversation it was called in, so the note comes
+back there as the run's standing task; it is named `Follow-up: ` and the note's
+first line, and marked in `host_automation_follow_ups`. Its operation ID comes
+from the session, command and tool call, and its receipt keeps the call's own
+fields, so a replay returns the follow-up it created. An agent may have 20
+follow-ups waiting, enabled and not yet run; the 21st is refused with how to
+make room. A run that succeeded in its conversation deletes its follow-up in
+the transaction that records it, through the deletion and purge above. A run
+that failed, or that went to a conversation of its own because its
+conversation was gone, keeps its follow-up, disarmed, with its result and its
+feed item, as any one-time automation; so does a follow-up the agent re-armed
+with `automation_manage`. A follow-up set during a heartbeat comes back to the
+heartbeat's conversation as an ordinary run, not a quiet one, so what it writes
+wakes the owner as a reply does. Each refusal says what was wrong and how to
+fix the call; a call ID reused with other fields is refused and sets nothing.
 
 `automation_results` exposes finished-run summaries, each with its status
 (succeeded, failed, or skipped) and its failed tool call count, and exact run

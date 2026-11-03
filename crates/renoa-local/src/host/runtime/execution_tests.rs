@@ -128,6 +128,7 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             "plugin_search",
             "plugin_manage",
             "tool_execute",
+            "follow_up",
             "ask_owner",
             "notify_owner",
             "set_today"
@@ -228,8 +229,8 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         )
         .unwrap()
         .len(),
-        6,
-        "the three plugin tools and the three resident owner tools"
+        7,
+        "the three plugin tools, the three resident owner tools and follow_up"
     );
     assert!(
         invoke(

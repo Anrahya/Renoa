@@ -207,6 +207,7 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
                 "plugin_search",
                 "plugin_manage",
                 "tool_execute",
+                "follow_up",
                 "ask_owner",
                 "notify_owner",
                 "set_today",

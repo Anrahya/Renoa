@@ -33,10 +33,11 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     tx.execute_batch(super::runs::SCHEDULER_TABLE)?;
     tx.execute_batch(super::retention::RUN_INDEXES)?;
     tx.execute_batch(super::retention::CONVERSATION_DELETIONS)?;
+    super::follow_up::initialize(tx)?;
     super::receipts::initialize(tx)
 }
 
-fn active(cancellation: &CancellationToken) -> Result<(), AutomationError> {
+pub(super) fn active(cancellation: &CancellationToken) -> Result<(), AutomationError> {
     if cancellation.is_cancelled() {
         Err(AutomationError::Cancelled)
     } else {
@@ -62,25 +63,7 @@ pub(super) fn mutate(
     }
     let deleting = matches!(mutation, AutomationMutation::Delete { .. });
     let record = match mutation {
-        AutomationMutation::Create { spec } => {
-            spec.validate(now_ms)?;
-            actor.authorize(&tx, spec.agent_id)?;
-            let origin = actor.origin_for(spec.agent_id);
-            let record = AutomationRecord {
-                id: operation,
-                revision: 1,
-                next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
-                spec,
-            };
-            save(&tx, &record, true)?;
-            if let Some(session) = origin {
-                tx.execute(
-                    "UPDATE host_automations SET origin_session_id=?2 WHERE id=?1",
-                    params![record.id.to_string(), session.to_string()],
-                )?;
-            }
-            record
-        }
+        AutomationMutation::Create { spec } => create(&tx, actor, operation, spec, now_ms)?,
         AutomationMutation::Update {
             id,
             expected_revision,
@@ -151,6 +134,34 @@ pub(super) fn mutate(
     let purged = purged.transpose()?.flatten();
     tx.commit()?;
     super::retention::report(purged);
+    Ok(record)
+}
+
+/// Creates `spec` as automation `operation`, returning to the conversation
+/// `actor` created it from when it is the actor's own.
+pub(super) fn create(
+    tx: &Transaction<'_>,
+    actor: AutomationActor,
+    operation: Uuid,
+    spec: AutomationSpec,
+    now_ms: i64,
+) -> Result<AutomationRecord, AutomationError> {
+    spec.validate(now_ms)?;
+    actor.authorize(tx, spec.agent_id)?;
+    let origin = actor.origin_for(spec.agent_id);
+    let record = AutomationRecord {
+        id: operation,
+        revision: 1,
+        next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
+        spec,
+    };
+    save(tx, &record, true)?;
+    if let Some(session) = origin {
+        tx.execute(
+            "UPDATE host_automations SET origin_session_id=?2 WHERE id=?1",
+            params![record.id.to_string(), session.to_string()],
+        )?;
+    }
     Ok(record)
 }
 

@@ -286,7 +286,7 @@ async fn a_guest_or_unidentified_turn_has_no_notebook_and_no_mind() {
     );
 }
 
-const RESIDENT_TOOLS: &str = "agent_documents,ask_owner,memory_note,memory_recall,memory_zoom,notify_owner,plugin_manage,plugin_search,set_today,tool_execute";
+const RESIDENT_TOOLS: &str = "agent_documents,ask_owner,follow_up,memory_note,memory_recall,memory_zoom,notify_owner,plugin_manage,plugin_search,set_today,tool_execute";
 
 /// An app agent sees the memory tools and `agent_documents` in its own tool
 /// list, so it notes what a person says without searching first; the note
@@ -397,6 +397,7 @@ async fn resident_bindings_keep_their_recovery_and_ignore_the_plugin_switch() {
     assert_eq!(
         recovery,
         [
+            ("follow_up", EffectRecovery::SafeToReplay),
             ("agent_documents", EffectRecovery::SafeToReplay),
             ("memory_note", EffectRecovery::NeverReplay),
             ("memory_recall", EffectRecovery::SafeToReplay),
@@ -465,7 +466,7 @@ async fn a_turn_with_no_person_lists_no_memory_tool_and_a_guest_is_refused() {
     .await;
     assert_eq!(
         say(&renoa, Speaker::Unidentified, "tools").await,
-        "agent_documents,ask_owner,notify_owner,plugin_manage,plugin_search,set_today,tool_execute"
+        "agent_documents,ask_owner,follow_up,notify_owner,plugin_manage,plugin_search,set_today,tool_execute"
     );
     assert_eq!(say(&renoa, Speaker::Guest, "tools").await, RESIDENT_TOOLS);
     let refused = say(&renoa, Speaker::Guest, "direct: Lives on Mars").await;

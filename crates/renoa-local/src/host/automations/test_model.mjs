@@ -13,8 +13,11 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   const prompt=request.messages[index].content[0].text;
   const results=request.messages.slice(index+1).filter(message=>message.role==="tool");
   const invoke=(id,name,args)=>complete([{type:"tool_call",id,name,arguments:args}],"tool_use");
-  for(const result of results) if(result.result.is_error && !prompt.startsWith("foreign automation ")) throw Error(JSON.stringify(result.result));
-  if(prompt.startsWith("create automation ") || prompt.startsWith("create once ")) {
+  for(const result of results) if(result.result.is_error && !prompt.startsWith("foreign automation ") && !prompt.startsWith("follow up ")) throw Error(JSON.stringify(result.result));
+  if(prompt.startsWith("follow up ")) {
+    if(results.length) complete(text(results[0].result.content[0].text));
+    else invoke("follow-up","follow_up",{note:"Ask whether the table was booked",after_minutes:Number(prompt.split(" ")[2])});
+  } else if(prompt.startsWith("create automation ") || prompt.startsWith("create once ")) {
     if(results.length) complete(text("Automation created"));
     else invoke("create-automation","automation_manage",{action:"create",spec:{agent_id:prompt.split(" ")[2],name:"Digest",prompt:"scheduled digest",schedule:prompt.startsWith("create once ")?{kind:"once",at:prompt.split(" ")[3]}:{kind:"cron",expression:"0 */12 * * *",timezone:"UTC"},enabled:true}});
   } else if(prompt.startsWith("reschedule ")) {

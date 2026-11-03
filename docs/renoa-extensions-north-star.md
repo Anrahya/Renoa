@@ -584,8 +584,9 @@ schema 43 adds `renoa.memory`, schema 44 adds plugin-owned triggers and
 `renoa.memory`'s job receipts and memory session generations, schema 45
 adds the conversations and passes of its note pass, schema 47 adds its
 reminders, schema 48 adds `renoa.owner`, schema 49 records each feed
-item's acknowledged wake, and schema 50 lets every compiled plugin keep
-settings and triggers, for `renoa.owner`'s heartbeat.
+item's acknowledged wake, schema 50 lets every compiled plugin keep
+settings and triggers, for `renoa.owner`'s heartbeat, and schema 51 marks
+`renoa.automations`' follow-ups.
 
 ## Contribution model
 
@@ -606,7 +607,7 @@ field on every plugin.
 | Point | State |
 |---|---|
 | `tools`, `skills`, `mcp_servers` | implemented |
-| `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory`, `renoa.documents` and `renoa.owner` |
+| `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory`, `renoa.documents`, `renoa.owner` and `renoa.automations` |
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` and `renoa.owner` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
 | `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
@@ -700,7 +701,9 @@ when a request plainly needs a tool, and noting what a person says in passing
 never does, so the Host binds each resident tool directly in the agent's tool
 list, beside `plugin_search`, `plugin_manage` and the executor.
 `renoa.memory` keeps `memory_note`, `memory_recall` and `memory_zoom`
-resident, and `renoa.documents` keeps `agent_documents`.
+resident, `renoa.documents` keeps `agent_documents`, `renoa.owner` keeps
+`ask_owner`, `notify_owner` and `set_today`, and `renoa.automations` keeps
+`follow_up`.
 
 1. The plugin's declaration is the one list, and each name is a tool that
    plugin owns, which a test checks. The direct binding wraps the tool the
