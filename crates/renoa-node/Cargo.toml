@@ -10,6 +10,7 @@ name = "renoa-node"
 path = "src/bin/renoa-node/main.rs"
 
 [dependencies]
+base64.workspace = true
 futures-util.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
 renoa-control = { path = "../renoa-control", version = "0.1.0" }
@@ -19,6 +20,7 @@ renoa-local = { path = "../renoa-local", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 renoa-rcp-client = { path = "../renoa-rcp-client", version = "0.1.0" }
 renoa-telemetry = { path = "../renoa-telemetry", version = "0.1.0" }
+ring.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -29,6 +31,8 @@ tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# Opens sealed notices with a stored key, which ring cannot hold.
+aws-lc-rs.workspace = true
 jiff.workspace = true
 mnem.workspace = true
 nix.workspace = true

@@ -1,0 +1,8 @@
+{
+  "device_id": "44c3e21e-cf6c-4dae-a990-6113b8180877",
+  "notice_id": "bfc47f99-6b06-4713-89b5-a59e4d6a563b",
+  "plaintext": "{\"kind\":\"authorization\",\"label\":\"Notion MCP\",\"url\":\"https://provider.example/authorize?state=one\",\"expires_at_ms\":1893456000000}",
+  "private_key": "8bXQpT6-201eEZCbfn5BjDruZPIcDp_AVS_0zu84TZs",
+  "public_key": "BF-DLVvm3C97gH6MzIEC7j1M0GDuNjRhHpAeTO0yeUTB9wUgMWG2wmkQOontZLJUCELALgwqPvlQuCRxhOTuqoM",
+  "sealed": "AQTRVEER5ndDKVvL0p_JtcpfY8_lR0Z6BC8C0Ms2bDH3dgoYFUxfxyV6OC6Wybn_omms0SiLfTVOoksPzpyR7Y0OGJzqAB8CLKUY-xrqp1JVJtni9B860ZiQLafo8k8PVKjMC5oBmT50zQOPA8UulKi8FEwMyNnlbudHDWMLbx78HLvFxswPbmlMFiDFBQ3aMFC8lZd00c6XyhWRLYn5AhMNevau7w7AmWlMJ7jLj08L5hJOUvsXAwGOikq6jAEylA8dU1zQEWm37p3ZA2BEU855WBrdPu0ojFmmIUL6"
+}

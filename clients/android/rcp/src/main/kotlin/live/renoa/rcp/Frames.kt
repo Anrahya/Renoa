@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
 /** The binding version this client speaks. The server rejects any other value. */
-const val RCP_BINDING_VERSION = 16
+const val RCP_BINDING_VERSION = 17
 
 /** The largest application message the coordinator accepts, in bytes. */
 const val MAX_FRAME_BYTES = 1 shl 20

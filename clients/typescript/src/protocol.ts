@@ -1,4 +1,4 @@
-export const RCP_VERSION = 16;
+export const RCP_VERSION = 17;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `16`.
+first implemented transport binding. The current binding version is `17`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -55,14 +55,21 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `16` with `version_mismatch` and ends the session.
+rejects any value other than `17` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `16` supersedes version `15` by adding a node's wake request
+Version `17` supersedes version `16` by adding sealed setup notices: a signed-in
+app's `set_notice_key`, `list_notices` and `acknowledge_notice` (answered by
+`notice_key_set`, `notice_list` and `notice_acknowledged`), and a node's
+`list_notice_keys`, `put_notice` and `withdraw_notices` (answered by
+`notice_keys`, `notice_put` and `notices_withdrawn`). A version `16` peer is
+rejected at authentication.
+
+Version `16` superseded version `15` by adding a node's wake request
 (`request_wake` answered by `wake_requested`) and text input's `quiet`. A version `15` peer is rejected
 at authentication.
 
@@ -123,7 +130,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 16,
+  "version": 17,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -133,7 +140,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 16,
+  "version": 17,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -146,7 +153,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 16,
+  "version": 17,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -159,7 +166,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 16,
+  "version": 17,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -175,7 +182,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 16
+  "version": 17
 }
 ```
 
@@ -488,6 +495,99 @@ sends the push service one of two constant messages, `changed` or `ring`, with
 no task, principal, agent or text in it, and the app learns what changed with
 `list_tasks`, `attach` and the Host's feed. A `ring` comes from a node's
 [`request_wake`](#wake-the-owner) with urgency `now`.
+
+### Setup notices
+
+A plugin setup link for the owner's app travels as a notice sealed to one
+device; the coordinator stores the ciphertext only and cannot read the link. A
+connection whose device proved its key registers the key its notices are sealed
+to: an uncompressed SEC1 P-256 public key (65 bytes starting `0x04`),
+base64url without padding.
+
+```json
+{
+  "type": "set_notice_key",
+  "request_id": 52,
+  "public_key": "BHq…"
+}
+```
+
+```json
+{
+  "type": "notice_key_set",
+  "request_id": 52
+}
+```
+
+A key that is not such a point receives `invalid_message`. A device holds one
+key, so a new one replaces the old. The app lists its device's unexpired
+notices, soonest to expire first and at most 23 of them, so the list fits one
+1 MiB message; it acknowledges each once shown, which deletes it and lets the
+next list carry the rest:
+
+```json
+{
+  "type": "list_notices",
+  "request_id": 53
+}
+```
+
+```json
+{
+  "type": "notice_list",
+  "request_id": 53,
+  "notices": [
+    {
+      "notice_id": "00000000-0000-0000-0000-000000000070",
+      "sealed": "AQS…",
+      "expires_at_ms": 1893456000000
+    }
+  ]
+}
+```
+
+```json
+{
+  "type": "acknowledge_notice",
+  "request_id": 54,
+  "notice_id": "00000000-0000-0000-0000-000000000070"
+}
+```
+
+```json
+{
+  "type": "notice_acknowledged",
+  "request_id": 54
+}
+```
+
+Acknowledging a notice the device does not hold succeeds and changes nothing.
+A browser ticket connection, or a device that presented only its bearer
+credential, receives `invalid_role` (`setup notices belong to an app that proved
+its device key; this connection did not`): whoever holds a notice key receives
+the owner's setup links. Revoking
+the device deletes its key and notices.
+
+`sealed` is the envelope `1 ‖ ephemeral public key (65) ‖ nonce (12) ‖
+AES-256-GCM ciphertext and tag`, base64url without padding. The AES key is
+HKDF-SHA256 over the P-256 ECDH secret of the ephemeral key and the device key,
+with salt `renoa.setup-notice.v1` and info `ephemeral public key ‖ device public
+key`. The associated data is `renoa.setup-notice.v1 ‖ notice_id (16 bytes) ‖
+device_id (16 bytes)`, so a notice opens only as itself on its device.
+`crates/renoa-node/tests/setup-notice-vector.json` is a fixed vector to check an
+implementation against. The plaintext is JSON:
+
+```json
+{
+  "kind": "authorization",
+  "label": "Notion MCP",
+  "url": "https://provider.example/authorize?state=one",
+  "expires_at_ms": 1893456000000
+}
+```
+
+`kind` is `authorization`, a provider sign-in, or `credentials`, Renoa's
+encrypted credential page; `label` names what is being connected.
 
 ### Attach
 
@@ -876,7 +976,8 @@ owns the task, and sends no response:
 
 Node frames about a command use `command_id` for correlation because it is
 already the durable operation identity. They do not carry `request_id`; only a
-node's requests, `send_agent_message` and `request_wake`, do.
+node's requests, `send_agent_message`, `request_wake` and the
+[setup notice](#put-setup-notices) requests, do.
 
 ### Wake the owner
 
@@ -907,6 +1008,88 @@ answers:
 
 A node with no recorded owner receives `invalid_role` with the `request_id`.
 A surface that sends it receives `invalid_role` with a `null` `request_id`.
+
+### Put setup notices
+
+A node delivers a plugin setup link for a command that did not come from
+Discord by sealing it to each of its owner's active devices with a notice key.
+It lists them:
+
+```json
+{
+  "type": "list_notice_keys",
+  "request_id": 9
+}
+```
+
+```json
+{
+  "type": "notice_keys",
+  "request_id": 9,
+  "keys": [
+    {
+      "device_id": "00000000-0000-0000-0000-000000000080",
+      "public_key": "BHq…"
+    }
+  ]
+}
+```
+
+and puts one notice per device:
+
+```json
+{
+  "type": "put_notice",
+  "request_id": 10,
+  "notice": {
+    "notice_id": "00000000-0000-0000-0000-000000000070",
+    "device_id": "00000000-0000-0000-0000-000000000080",
+    "sealed": "AQS…",
+    "expires_at_ms": 1893456000000
+  }
+}
+```
+
+```json
+{
+  "type": "notice_put",
+  "request_id": 10
+}
+```
+
+Once the notice is durably stored, with a `changed` wake for the owner, the
+coordinator answers `notice_put`. A notice id names one recipient: a retry for
+the same device from the same node answers `notice_put` again and stores
+nothing new; one for another device or node receives `conflict` (`this notice
+id names another recipient; derive a new id`). `sealed` must be 1 to 44,250
+bytes of base64url without padding and `expires_at_ms` in the future, or
+`invalid_message`; no error repeats the sealed text. A device that is not an
+active, keyed device of the node's owner receives `invalid_role` (`the device is
+not an active device of this node's owner with a notice key; list the notice
+keys again`). `list_notice_keys` and `put_notice` from a node with no recorded
+owner receive `invalid_role` too. When a turn stops, the node withdraws, once,
+the notices of each setup link that did not reach the person; one it could not
+withdraw expires with its link:
+
+```json
+{
+  "type": "withdraw_notices",
+  "request_id": 11,
+  "notice_ids": ["00000000-0000-0000-0000-000000000070"]
+}
+```
+
+```json
+{
+  "type": "notices_withdrawn",
+  "request_id": 11
+}
+```
+
+A node withdraws only notices it put; another id changes nothing. A surface
+that sends a node notice frame receives `invalid_role` with a `null`
+`request_id`; a node that sends a surface notice frame receives `invalid_role`
+with its `request_id`.
 
 ### Host control
 

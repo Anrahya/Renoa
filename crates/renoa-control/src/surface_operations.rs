@@ -17,6 +17,10 @@ use crate::{
     wire::{publish_task_event, send_control_error, send_error, send_reply, task_sender},
 };
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive dispatch table owns every surface operation"
+)]
 pub(crate) async fn handle_surface_operation(
     state: Arc<CoordinatorState>,
     outgoing: &mpsc::Sender<ServerMessage>,
@@ -46,6 +50,9 @@ pub(crate) async fn handle_surface_operation(
         }
         SurfaceOperation::Push(operation) => {
             crate::push_tokens::handle(&state, outgoing, request_id, &session, operation).await;
+        }
+        SurfaceOperation::Notice(operation) => {
+            crate::setup_notices::handle(&state, outgoing, request_id, &session, operation).await;
         }
         SurfaceOperation::ListTasks => {
             let result = list_tasks(&state, principal_id, request_id).await;

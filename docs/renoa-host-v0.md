@@ -589,9 +589,11 @@ operator, default agent and token come from the committed connection, which the
 surface database then pins.
 
 The executing node consumes structured `plugin_manage` progress. OAuth and
-credential setup links are delivered only to the operator's DM through the
-Host's Discord connection, with mentions and embeds disabled, and never enter
-the RCP task journal. SQLite stores a digest and delivery state, keyed by the
+credential setup links for a command from Discord are delivered only to the
+operator's DM through the Host's Discord connection, with mentions and embeds
+disabled, and never enter the RCP task journal; a command from any other
+surface gets them as notices sealed to the owner's signed-in apps (see
+`rcp-v0.md`, Setup notices). SQLite stores a digest and delivery state, keyed by the
 RCP command, never the link. Confirmed rate limits may retry; an unknown send
 outcome stops that command as failed and requires checking the DM before
 restarting. Recovery never blindly repeats an uncertain link.

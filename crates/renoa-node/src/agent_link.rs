@@ -1,6 +1,6 @@
 //! The node's requests over its own coordinator session: on behalf of its
 //! agents, who they can message and the message itself; on behalf of its
-//! Host, a wake for the owner's phone.
+//! Host, a wake for the owner's phone and the setup notices for their apps.
 //!
 //! A request travels over the node's own coordinator session, so the
 //! coordinator knows which node speaks. Nothing queues across a reconnect: a
@@ -16,7 +16,9 @@ use std::{
 };
 
 use renoa_agent::BoxFuture;
-use renoa_control::{ClientMessage, ErrorCode, NodeId, TargetSummary, WakeUrgency};
+use renoa_control::{
+    ClientMessage, DeviceNoticeKey, ErrorCode, NodeId, SealedNotice, TargetSummary, WakeUrgency,
+};
 use renoa_kernel::AgentId;
 use renoa_local::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 use renoa_protocol::{CommandId, TargetRef};
@@ -34,6 +36,7 @@ const QUEUE: usize = 16;
 /// What the coordinator answered a request.
 pub(crate) enum Answer {
     Targets(Vec<TargetSummary>),
+    NoticeKeys(Vec<DeviceNoticeKey>),
     Accepted,
     Refused { code: ErrorCode, message: String },
 }
@@ -51,6 +54,9 @@ enum Call {
         wake_id: Uuid,
         urgency: WakeUrgency,
     },
+    NoticeKeys,
+    PutNotice(SealedNotice),
+    WithdrawNotices(Vec<Uuid>),
 }
 
 /// Why a wake was not acknowledged.
@@ -138,13 +144,50 @@ impl AgentLink {
         match self.call(Call::Wake { wake_id, urgency }).await {
             Ok(Answer::Accepted) => Ok(()),
             Ok(Answer::Refused { code, message }) => Err(WakeFailure::Refused { code, message }),
-            Ok(Answer::Targets(_)) => Err(WakeFailure::Refused {
+            Ok(Answer::Targets(_) | Answer::NoticeKeys(_)) => Err(WakeFailure::Refused {
                 code: ErrorCode::InvalidMessage,
-                message: "the coordinator answered a wake with a list of agents".to_owned(),
+                message: "the coordinator answered a wake with a list".to_owned(),
             }),
             Err(_) => Err(WakeFailure::Unanswered),
         }
     }
+
+    /// The keys of the owner's signed-in devices a setup notice is sealed to.
+    pub(crate) async fn notice_keys(&self) -> Result<Vec<DeviceNoticeKey>, String> {
+        match self.call(Call::NoticeKeys).await.map_err(|_| unreached())? {
+            Answer::NoticeKeys(keys) => Ok(keys),
+            Answer::Refused { message, .. } => Err(message),
+            Answer::Targets(_) | Answer::Accepted => {
+                Err("the coordinator answered with something other than the notice keys".to_owned())
+            }
+        }
+    }
+
+    /// Puts one sealed notice, and returns once it is stored or was already.
+    pub(crate) async fn put_notice(&self, notice: SealedNotice) -> Result<(), String> {
+        self.accepted(Call::PutNotice(notice)).await
+    }
+
+    /// Withdraws the notices this node put.
+    pub(crate) async fn withdraw_notices(&self, notice_ids: Vec<Uuid>) -> Result<(), String> {
+        self.accepted(Call::WithdrawNotices(notice_ids)).await
+    }
+
+    async fn accepted(&self, call: Call) -> Result<(), String> {
+        match self.call(call).await.map_err(|_| unreached())? {
+            Answer::Accepted => Ok(()),
+            Answer::Refused { message, .. } => Err(message),
+            Answer::Targets(_) | Answer::NoticeKeys(_) => {
+                Err("the coordinator answered with a list instead of accepting".to_owned())
+            }
+        }
+    }
+}
+
+/// Why a notice request has no answer: every way [`AgentLink::call`] fails.
+fn unreached() -> String {
+    "this machine is not connected to the Renoa coordinator, or it did not answer in time"
+        .to_owned()
 }
 
 /// A request whose answer never came. A message may have been admitted, so
@@ -207,6 +250,12 @@ impl LinkSession {
                     wake_id,
                     urgency,
                 },
+                Call::NoticeKeys => ClientMessage::ListNoticeKeys { request_id },
+                Call::PutNotice(notice) => ClientMessage::PutNotice { request_id, notice },
+                Call::WithdrawNotices(notice_ids) => ClientMessage::WithdrawNotices {
+                    request_id,
+                    notice_ids,
+                },
             };
         }
     }
@@ -267,7 +316,7 @@ impl AgentPeers for Peers {
                     });
                     Ok(roster)
                 }
-                Answer::Accepted => Err(PeerError::Unavailable(
+                Answer::Accepted | Answer::NoticeKeys(_) => Err(PeerError::Unavailable(
                     "Renoa gave an answer that was not the list of agents.".to_owned(),
                 )),
                 Answer::Refused { message, .. } => Err(PeerError::Refused(message)),
@@ -306,7 +355,7 @@ impl AgentPeers for Peers {
                     ),
                     _ => PeerError::Refused(message),
                 }),
-                Answer::Targets(_) => Err(PeerError::Unavailable(
+                Answer::Targets(_) | Answer::NoticeKeys(_) => Err(PeerError::Unavailable(
                     "Renoa gave an answer that did not say whether the message was accepted."
                         .to_owned(),
                 )),

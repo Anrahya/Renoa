@@ -233,6 +233,16 @@ async fn permanent_actions_are_durable_idempotent_and_not_retried_after_ambiguit
         url::Url::parse("https://provider.example/authorize?state=one").expect("valid action URL"),
         Some(9_999_999_999_999),
     );
+    let mut fragment = action.clone();
+    fragment.id = format!("{}/call-0/authorization", work.request_id);
+    fragment.url = url::Url::parse("https://provider.example/authorize#key").expect("URL");
+    assert!(
+        store
+            .begin_action_delivery(work.update_id, work.topic, fragment)
+            .await
+            .is_err(),
+        "only a credential page link carries a fragment"
+    );
 
     assert!(
         store

@@ -235,10 +235,11 @@ credentials are stored outside the package. Existing direct test registrations
 are not adopted by this API.
 
 `PluginProgress` owns authorization and encrypted credential setup event shapes.
-Telegram and Slack consume those types; the existing relay still permits
-approval on another device. Discord currently discards progress events and has
-no account setup action delivery. That delivery path is tracked in
-[issue #47](https://github.com/Anrahya/Renoa/issues/47).
+Every surface reads a setup link through the one `SetupLink` check, then keeps
+only its own wording and rules; the existing relay still permits approval on
+another device. On the RCP path the executing node delivers each link: by
+Discord DM for a command from Discord, otherwise as a notice sealed to each of
+the owner's signed-in apps (see `rcp-v0.md`, Setup notices).
 
 ### Agent activation and replacement
 

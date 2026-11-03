@@ -6,7 +6,7 @@ stable public SDK and not an agent harness.
 
 It currently owns the surface-side continuity mechanics:
 
-- version 16 device or one-use browser-ticket authentication and task discovery,
+- version 17 device or one-use browser-ticket authentication and task discovery,
   with each task's status and last committed sequence;
 - replay followed by live task events;
 - a caller-owned durable cursor committed only after the surface callback succeeds;

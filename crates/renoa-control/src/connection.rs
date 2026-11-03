@@ -35,7 +35,8 @@ const OUTBOUND_CAPACITY: usize = 128;
 const CLOSE_FLUSH_DEADLINE: Duration = Duration::from_secs(2);
 const AUTHENTICATION_DEADLINE: Duration = Duration::from_secs(10);
 const TRANSPORT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
+/// The binding's largest reassembled application message.
+pub(crate) const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 
 struct AuthenticatedPeer {
     authority: Authority,
@@ -384,7 +385,13 @@ async fn read_peer(
         | ClientMessage::ServeHostControl
         | ClientMessage::CompleteHostCall { .. }
         | ClientMessage::SendAgentMessage { .. }
-        | ClientMessage::RequestWake { .. } => {
+        | ClientMessage::RequestWake { .. }
+        | ClientMessage::SetNoticeKey { .. }
+        | ClientMessage::ListNotices { .. }
+        | ClientMessage::AcknowledgeNotice { .. }
+        | ClientMessage::ListNoticeKeys { .. }
+        | ClientMessage::PutNotice { .. }
+        | ClientMessage::WithdrawNotices { .. } => {
             send_error(
                 outgoing,
                 None,

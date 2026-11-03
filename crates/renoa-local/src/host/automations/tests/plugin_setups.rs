@@ -110,6 +110,45 @@ async fn a_saved_setup_comes_back_to_its_conversation_once() {
     );
 }
 
+/// A call whose link never reached the person is forgotten by the identity
+/// its tool call saved it under, and only that call.
+#[tokio::test]
+async fn a_setup_whose_link_was_not_delivered_is_forgotten() {
+    let (_d, h, parent, _) = fixture().await;
+    let session = conversation(&h, parent).await;
+    let command = renoa_kernel::CommandId::new();
+    let undelivered = setup(
+        parent,
+        session,
+        &crate::mcp::oauth_operation_id(session, Some(command), "call-1"),
+        now_ms() + 600_000,
+    );
+    let kept = setup(
+        parent,
+        session,
+        &crate::mcp::oauth_operation_id(session, Some(command), "call-2"),
+        now_ms() + 600_000,
+    );
+    assert!(plugin_setups::record(&h.config.database, &undelivered).expect("saved"));
+    assert!(plugin_setups::record(&h.config.database, &kept).expect("saved"));
+
+    h.forget_plugin_setup(session, command, "call-1")
+        .await
+        .expect("forgotten");
+    h.forget_plugin_setup(session, command, "call-1")
+        .await
+        .expect("forgetting it again changes nothing");
+
+    assert_eq!(saved(&h.config.database), 1);
+    let left: String = rusqlite::Connection::open(&h.config.database)
+        .expect("catalog")
+        .query_row("SELECT operation_id FROM host_plugin_setups", [], |row| {
+            row.get(0)
+        })
+        .expect("the other setup");
+    assert_eq!(left, kept.operation_id);
+}
+
 /// A link that expired before the person answered comes back saying so.
 #[tokio::test]
 async fn an_expired_setup_comes_back_saying_so() {

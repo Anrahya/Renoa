@@ -17,8 +17,9 @@ use crate::{
     live::LiveEvents,
     node_log,
     node_store::ExecutionRecord,
-    operator, origin,
+    origin,
     projection::{closing_events, project_history},
+    setup::SetupLinks,
 };
 
 impl NodeRuntime {
@@ -80,16 +81,27 @@ impl NodeRuntime {
         };
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
-        let (setup_events, setup) =
-            operator::setup_sink(self.host.home(), command_id.as_uuid(), &cancellation);
+        let setup = Arc::new(SetupLinks::open(
+            self.host.home(),
+            &self.link,
+            record.command.surface.as_str(),
+            command_id.as_uuid(),
+            cancellation.clone(),
+        ));
         let events = Arc::new(
-            LiveEvents::start(Arc::clone(&self), record.task_id, command_id, setup_events).await?,
+            LiveEvents::start(Arc::clone(&self), record.task_id, command_id, setup.clone()).await?,
         );
         let result = run_request(request, &record, &session, events, cancellation).await?;
         // A setup link that could not be delivered stopped the turn; its
-        // reason is the command's outcome.
-        let setup_failure = match &setup {
-            Some(setup) => setup.take_error().await,
+        // reason is the command's outcome. The turn has settled (a tool runs
+        // to its end even when cancelled), so every setup its calls saved is
+        // saved by now.
+        let setup_failure = match setup.finish().await {
+            Some(stopped) => {
+                stopped
+                    .forget_setups(&self.host, record.binding.session_id, command_id.as_uuid())
+                    .await
+            }
             None => None,
         };
         let outcome = match result {

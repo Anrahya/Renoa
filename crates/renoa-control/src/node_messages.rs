@@ -46,6 +46,10 @@ pub(crate) async fn serve_host_control(
         .is_some()
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive dispatch table owns every node operation"
+)]
 pub(crate) async fn handle_node_operation(
     state: &CoordinatorState,
     outgoing: &mpsc::Sender<ServerMessage>,
@@ -57,7 +61,8 @@ pub(crate) async fn handle_node_operation(
         // A request names its own id so the sender's wait ends with the reason.
         let request_id = match &operation {
             NodeOperation::SendAgentMessage { request_id, .. }
-            | NodeOperation::RequestWake { request_id, .. } => Some(*request_id),
+            | NodeOperation::RequestWake { request_id, .. }
+            | NodeOperation::Notice { request_id, .. } => Some(*request_id),
             _ => None,
         };
         send_error(outgoing, request_id, ErrorCode::InvalidRole, REPLACED).await;
@@ -148,6 +153,13 @@ pub(crate) async fn handle_node_operation(
             urgency,
         } => {
             crate::push_wake::request(state, outgoing, node_id, request_id, wake_id, urgency).await;
+        }
+        NodeOperation::Notice {
+            request_id,
+            operation,
+        } => {
+            crate::setup_notices::handle_node(state, outgoing, node_id, request_id, operation)
+                .await;
         }
     }
 }

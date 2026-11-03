@@ -228,10 +228,7 @@ fn validate_action(action: &ActionLink) -> Result<(), StoreError> {
         || action.url.host_str().is_none()
         || !action.url.username().is_empty()
         || action.url.password().is_some()
-        || action
-            .url
-            .fragment()
-            .is_some_and(|fragment| !action.sensitive_fragment || !valid_setup_fragment(fragment))
+        || (action.url.fragment().is_some() && !action.sensitive_fragment)
         || action.expires_at_ms.is_some_and(|expiry| expiry <= 0)
     {
         return Err(StoreError::Invalid(
@@ -239,31 +236,4 @@ fn validate_action(action: &ActionLink) -> Result<(), StoreError> {
         ));
     }
     Ok(())
-}
-
-fn valid_setup_fragment(fragment: &str) -> bool {
-    let mut version = None;
-    let mut key = None;
-    let mut token = None;
-    for (name, value) in url::form_urlencoded::parse(fragment.as_bytes()) {
-        let slot = match name.as_ref() {
-            "v" => &mut version,
-            "key" => &mut key,
-            "token" => &mut token,
-            _ => return false,
-        };
-        if slot.replace(value.into_owned()).is_some() {
-            return false;
-        }
-    }
-    version.as_deref() == Some("1")
-        && key.as_deref().is_some_and(valid_secret_hex)
-        && token.as_deref().is_some_and(valid_secret_hex)
-}
-
-fn valid_secret_hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }

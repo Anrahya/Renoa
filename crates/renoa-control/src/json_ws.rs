@@ -10,11 +10,10 @@ use crate::{
     ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
     HostMethod, NodeId, PushToken, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary,
     WakeUrgency,
-    agent_messages::OutgoingMessage,
-    operations::{NodeOperation, PushOperation, SurfaceOperation},
+    setup_notices::{DeviceNoticeKey, HeldNotice, NoticeKey, SealedNotice},
 };
 
-pub const JSON_WS_VERSION: u32 = 16;
+pub const JSON_WS_VERSION: u32 = 17;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -93,6 +92,18 @@ pub enum ClientMessage {
     ClearPushToken {
         request_id: u64,
     },
+    /// The key a signed-in app opens its setup notices with.
+    SetNoticeKey {
+        request_id: u64,
+        public_key: NoticeKey,
+    },
+    ListNotices {
+        request_id: u64,
+    },
+    AcknowledgeNotice {
+        request_id: u64,
+        notice_id: Uuid,
+    },
     AdvertiseTargets {
         targets: Vec<TargetCard>,
     },
@@ -136,217 +147,17 @@ pub enum ClientMessage {
         wake_id: Uuid,
         urgency: WakeUrgency,
     },
-}
-
-impl ClientMessage {
-    pub(crate) fn into_operation(self) -> Option<JsonOperation> {
-        let operation = match self {
-            Self::AdvertiseTargets { targets } => NodeOperation::AdvertiseTargets { targets },
-            Self::AcknowledgeExecution {
-                task_id,
-                command_id,
-            } => NodeOperation::AcknowledgeExecution {
-                task_id,
-                command_id,
-            },
-            Self::PublishExecutionEvents {
-                task_id,
-                command_id,
-                events,
-            } => NodeOperation::PublishExecutionEvents {
-                task_id,
-                command_id,
-                events,
-            },
-            Self::AcknowledgeStop {
-                task_id,
-                command_id,
-            } => NodeOperation::AcknowledgeStop {
-                task_id,
-                command_id,
-            },
-            Self::PublishLiveActivity {
-                task_id,
-                command_id,
-                activity,
-            } => NodeOperation::PublishLiveActivity {
-                task_id,
-                command_id,
-                activity,
-            },
-            Self::SendAgentMessage {
-                request_id,
-                from_command,
-                message_id,
-                node_id,
-                target,
-                text,
-            } => NodeOperation::SendAgentMessage {
-                request_id,
-                message: OutgoingMessage {
-                    from_command,
-                    message_id,
-                    to_node: node_id,
-                    to_target: target,
-                    text,
-                },
-            },
-            Self::RequestWake {
-                request_id,
-                wake_id,
-                urgency,
-            } => NodeOperation::RequestWake {
-                request_id,
-                wake_id,
-                urgency,
-            },
-            Self::ServeHostControl => NodeOperation::ServeHostControl,
-            Self::CompleteHostCall {
-                call_id,
-                status,
-                body,
-            } => NodeOperation::CompleteHostCall {
-                call_id,
-                status,
-                body,
-            },
-            Self::Enroll { .. }
-            | Self::Authenticate { .. }
-            | Self::AuthenticateTicket { .. }
-            | Self::DeviceProof { .. } => return None,
-            Self::ListTargets { request_id } => {
-                return Some(JsonOperation::ListTargets { request_id });
-            }
-            Self::ListTasks { .. }
-            | Self::ListDevices { .. }
-            | Self::RevokeDevice { .. }
-            | Self::OpenTask { .. }
-            | Self::Attach { .. }
-            | Self::Submit { .. }
-            | Self::StopCommand { .. }
-            | Self::DeleteTask { .. }
-            | Self::CallHost { .. }
-            | Self::SetPushToken { .. }
-            | Self::ClearPushToken { .. } => return self.into_surface_operation(),
-        };
-        Some(JsonOperation::Node(operation))
-    }
-
-    fn into_surface_operation(self) -> Option<JsonOperation> {
-        let (request_id, operation) = match self {
-            Self::ListTasks { request_id } => (request_id, SurfaceOperation::ListTasks),
-            Self::OpenTask {
-                request_id,
-                task_id,
-                node_id,
-                target,
-            } => (
-                request_id,
-                SurfaceOperation::OpenTask {
-                    task_id,
-                    node_id,
-                    target,
-                },
-            ),
-            Self::Attach {
-                request_id,
-                task_id,
-                after_sequence,
-                live,
-            } => (
-                request_id,
-                SurfaceOperation::Attach {
-                    task_id,
-                    after_sequence,
-                    live,
-                },
-            ),
-            Self::Submit {
-                request_id,
-                task_id,
-                command_id,
-                input,
-            } => (
-                request_id,
-                SurfaceOperation::Submit {
-                    task_id,
-                    command_id,
-                    input,
-                },
-            ),
-            Self::StopCommand {
-                request_id,
-                task_id,
-                command_id,
-            } => (
-                request_id,
-                SurfaceOperation::StopCommand {
-                    task_id,
-                    command_id,
-                },
-            ),
-            Self::DeleteTask {
-                request_id,
-                task_id,
-            } => (request_id, SurfaceOperation::DeleteTask { task_id }),
-            Self::ListDevices { request_id } => (request_id, SurfaceOperation::ListDevices),
-            Self::RevokeDevice {
-                request_id,
-                device_id,
-            } => (request_id, SurfaceOperation::RevokeDevice { device_id }),
-            Self::CallHost {
-                request_id,
-                method,
-                path,
-                body,
-            } => (
-                request_id,
-                SurfaceOperation::CallHost { method, path, body },
-            ),
-            Self::SetPushToken {
-                request_id,
-                provider,
-                token,
-            } => (
-                request_id,
-                SurfaceOperation::Push(PushOperation::Set { provider, token }),
-            ),
-            Self::ClearPushToken { request_id } => {
-                (request_id, SurfaceOperation::Push(PushOperation::Clear))
-            }
-            Self::Enroll { .. }
-            | Self::ListTargets { .. }
-            | Self::Authenticate { .. }
-            | Self::AuthenticateTicket { .. }
-            | Self::DeviceProof { .. }
-            | Self::AdvertiseTargets { .. }
-            | Self::AcknowledgeExecution { .. }
-            | Self::PublishExecutionEvents { .. }
-            | Self::AcknowledgeStop { .. }
-            | Self::PublishLiveActivity { .. }
-            | Self::ServeHostControl
-            | Self::CompleteHostCall { .. }
-            | Self::SendAgentMessage { .. }
-            | Self::RequestWake { .. } => return None,
-        };
-        Some(JsonOperation::Surface {
-            request_id,
-            operation,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum JsonOperation {
-    Surface {
+    /// The node asks for its owner's devices it may seal a setup notice to.
+    ListNoticeKeys {
         request_id: u64,
-        operation: SurfaceOperation,
     },
-    Node(NodeOperation),
-    /// Open to both roles: a surface lists its principal's targets, a node
-    /// those of its owner.
-    ListTargets {
+    PutNotice {
         request_id: u64,
+        notice: SealedNotice,
+    },
+    WithdrawNotices {
+        request_id: u64,
+        notice_ids: Vec<Uuid>,
     },
 }
 
@@ -418,6 +229,29 @@ pub enum ServerMessage {
     WakeRequested {
         request_id: u64,
     },
+    NoticeKeySet {
+        request_id: u64,
+    },
+    /// The device's unexpired setup notices.
+    NoticeList {
+        request_id: u64,
+        notices: Vec<HeldNotice>,
+    },
+    NoticeAcknowledged {
+        request_id: u64,
+    },
+    /// The node owner's active devices with a notice key.
+    NoticeKeys {
+        request_id: u64,
+        keys: Vec<DeviceNoticeKey>,
+    },
+    /// The notice is stored, or its id was stored already.
+    NoticePut {
+        request_id: u64,
+    },
+    NoticesWithdrawn {
+        request_id: u64,
+    },
     ExecutionEventsAccepted {
         command_id: CommandId,
         through_execution_sequence: u64,
@@ -457,6 +291,9 @@ pub enum ServerMessage {
 }
 
 mod numbers;
+mod operations;
+
+pub(crate) use operations::JsonOperation;
 
 #[cfg(test)]
 mod tests;

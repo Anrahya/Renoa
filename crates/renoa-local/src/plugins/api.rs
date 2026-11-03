@@ -11,10 +11,12 @@ mod dispatch;
 pub(crate) mod inventory;
 mod progress;
 mod schema;
+mod setup_link;
 pub use inventory::{PluginInventoryItem, PluginInventoryPage};
 pub use progress::{
     PluginAuthorizationRequired, PluginCredentialKind, PluginCredentialRequired, PluginProgress,
 };
+pub use setup_link::{InvalidSetupLink, SetupLink, SetupLinkKind};
 
 pub use super::host::state::HostPluginActivation;
 pub use dispatch::{PluginInvocation, PluginOutcome};

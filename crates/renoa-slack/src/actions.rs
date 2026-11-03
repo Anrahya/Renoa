@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use renoa_agent::{ContentBlock, ToolOutput};
-use renoa_local::{PluginCredentialKind, PluginProgress};
+use renoa_local::{PluginCredentialKind, SetupLink, SetupLinkKind};
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
@@ -27,50 +26,31 @@ pub(crate) struct Action {
 }
 
 impl Action {
-    pub(crate) fn parse(update: &ToolOutput) -> Option<Self> {
-        if update.is_error {
-            return None;
-        }
-        let [ContentBlock::Text { text }] = update.content.as_slice() else {
-            return None;
+    /// The Slack message for a checked link. Slack shows only a link that
+    /// says when it expires.
+    pub(crate) fn new(link: &SetupLink) -> Result<Self, SlackError> {
+        let title = match link.kind {
+            SetupLinkKind::Credentials(PluginCredentialKind::OAuthClient) => {
+                "Action needed: configure this connection\nEnter the app credentials on Renoa's secure page. After saving them, return here for a separate authorization message."
+            }
+            SetupLinkKind::Credentials(PluginCredentialKind::ApiToken) => {
+                "Action needed: save the API credential\nEnter the API key on Renoa's secure page. Keep it out of chat. Connection setup will continue after it is saved."
+            }
+            SetupLinkKind::Authorization => {
+                "Action needed: authorize access\nThe connection is ready for sign-in. Open the provider page below and approve access. This is separate from saving app credentials."
+            }
         };
-        let input: PluginProgress = serde_json::from_str(text).ok()?;
-        let (stage, url, title, expires_at_ms) = match input {
-            PluginProgress::CredentialRequired(input) => (
-                "credentials",
-                input.setup_url,
-                match input.credential_kind {
-                    PluginCredentialKind::OAuthClient => {
-                        "Action needed: configure this connection\nEnter the app credentials on Renoa's secure page. After saving them, return here for a separate authorization message."
-                    }
-                    PluginCredentialKind::ApiToken => {
-                        "Action needed: save the API credential\nEnter the API key on Renoa's secure page. Keep it out of chat. Connection setup will continue after it is saved."
-                    }
-                },
-                input.expires_at_ms,
-            ),
-            PluginProgress::AuthorizationRequired(input) => (
-                "authorization",
-                input.authorization_url,
-                "Action needed: authorize access\nThe connection is ready for sign-in. Open the provider page below and approve access. This is separate from saving app credentials.",
-                input.expires_at_ms?,
-            ),
-        };
-        let parsed = url::Url::parse(&url).ok()?;
-        if parsed.scheme() != "https"
-            || parsed.host_str().is_none()
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || url.len() > 16 * 1024
-            || expires_at_ms <= 0
-            || (stage == "authorization" && parsed.fragment().is_some())
-        {
-            return None;
-        }
-        Some(Self {
-            stage,
+        let expires_at_ms = link.expires_at_ms.ok_or_else(|| {
+            SlackError::Invalid(
+                "This setup link has no expiry, so it was not sent. Ask Arcee to restart the connection setup."
+                    .to_owned(),
+            )
+        })?;
+        Ok(Self {
+            stage: link.kind.as_str(),
             text: format!(
-                "{title}\n\n{url}\n\nThis link expires. If it expires, ask me to restart this connection's setup; saved credentials are reused."
+                "{title}\n\n{}\n\nThis link expires. If it expires, ask me to restart this connection's setup; saved credentials are reused.",
+                link.url
             ),
             expires_at_ms,
         })

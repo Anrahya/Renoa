@@ -82,10 +82,11 @@ pub use mcp::{
 pub use model_bridge::{BridgeModel, ModelBridgeError};
 pub use model_catalog::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
 pub use plugins::api::{
-    HostPluginActivation, MAX_PLUGIN_PAGE, PLUGIN_API_REVISION, PluginAuthentication,
-    PluginAuthorizationRequired, PluginCredentialKind, PluginCredentialRequired, PluginHeader,
-    PluginInventoryItem, PluginInventoryPage, PluginInvocation, PluginOutcome, PluginProgress,
-    PluginRequest, PluginSource, plugin_api_schema,
+    HostPluginActivation, InvalidSetupLink, MAX_PLUGIN_PAGE, PLUGIN_API_REVISION,
+    PluginAuthentication, PluginAuthorizationRequired, PluginCredentialKind,
+    PluginCredentialRequired, PluginHeader, PluginInventoryItem, PluginInventoryPage,
+    PluginInvocation, PluginOutcome, PluginProgress, PluginRequest, PluginSource, SetupLink,
+    SetupLinkKind, plugin_api_schema,
 };
 pub use plugins::{
     InstalledPlugin, PluginActivation, PluginAddOutcome, PluginConnectionOutcome, PluginCredential,
