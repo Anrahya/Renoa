@@ -345,7 +345,12 @@ pub(crate) fn context_binding(
     automatic_compaction: Option<crate::AutomaticCompaction>,
     working_input_limit: Option<NonZeroU64>,
 ) -> Result<ContextBinding, LocalRuntimeError> {
-    let settings = compaction_settings(model.as_ref(), automatic_compaction, working_input_limit)?;
+    let settings = compaction_settings(
+        model.context_window_tokens(),
+        model.max_output_tokens(),
+        automatic_compaction,
+        working_input_limit,
+    )?;
     let limits = CompactionLimits::new(
         settings.context,
         settings.reserved,
@@ -389,13 +394,13 @@ struct CompactionSettings {
 }
 
 fn compaction_settings(
-    model: &BridgeModel,
+    provider_context: NonZeroU64,
+    max_output: NonZeroU32,
     automatic_compaction: Option<crate::AutomaticCompaction>,
     working_input_limit: Option<NonZeroU64>,
 ) -> Result<CompactionSettings, LocalRuntimeError> {
-    let provider_context = model.context_window_tokens();
     let safety = (provider_context.get() / 50).max(MIN_CONTEXT_SAFETY_TOKENS);
-    let reserved = u64::from(model.max_output_tokens().get())
+    let reserved = u64::from(max_output.get())
         .checked_add(safety)
         .ok_or(LocalRuntimeError::ContextReserveOverflow)?;
     let context = working_input_limit.map_or(provider_context, |limit| {
@@ -412,22 +417,24 @@ fn compaction_settings(
         .and_then(NonZeroU64::new)
         .ok_or(LocalRuntimeError::ContextWindowTooSmall)?;
     // An agent's policy is written without knowing its model, so a trigger past
-    // this model's dispatch limit compacts at the limit instead, and the target
-    // stays below the trigger.
-    let automatic_compaction = automatic_compaction
-        .map(|policy| {
+    // this model's dispatch limit, or a working limit's, compacts at the limit
+    // instead, with the target kept to three fifths of it. A policy that fits
+    // is used as stored.
+    let automatic_compaction = match automatic_compaction {
+        Some(policy) if policy.trigger_input_tokens > dispatch || working_input_limit.is_some() => {
             let trigger = policy.trigger_input_tokens.min(dispatch);
             let target = trigger
                 .get()
                 .checked_mul(3)
                 .and_then(|value| NonZeroU64::new(value / 5))
                 .ok_or(LocalRuntimeError::ZeroCompactionTarget)?;
-            Ok::<_, LocalRuntimeError>(AutomaticCompaction {
+            Some(AutomaticCompaction {
                 trigger_input_tokens: trigger,
                 target_input_tokens: policy.target_input_tokens.min(target),
             })
-        })
-        .transpose()?;
+        }
+        policy => policy,
+    };
     let automatic_compaction_input_tokens =
         automatic_compaction.map_or(dispatch, |policy| policy.trigger_input_tokens);
     let target = match automatic_compaction {
@@ -449,3 +456,7 @@ fn compaction_settings(
         max_summary,
     })
 }
+
+#[cfg(test)]
+#[path = "runtime_compaction_tests.rs"]
+mod compaction_settings_tests;

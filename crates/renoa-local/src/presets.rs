@@ -33,10 +33,10 @@ const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
 
-// An everyday helper's one long chat compacts at 450,000 tokens, down to its
+// An everyday helper's one long chat compacts at 457,000 tokens, down to its
 // summary and the newest messages within 40,000. A model whose dispatch limit
 // is lower compacts at that limit (see `runtime::compaction_settings`).
-const APP_COMPACTION_TRIGGER: u64 = 450_000;
+const APP_COMPACTION_TRIGGER: u64 = 457_000;
 const APP_COMPACTION_TARGET: u64 = 40_000;
 
 const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
@@ -201,7 +201,7 @@ fn seeds() -> [AgentPreset; 4] {
         },
         AgentPreset {
             id: preset_id(APP_PRESET_ID),
-            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, no native file or shell tools, and its chat compacted at 450,000 tokens.",
+            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, no native file or shell tools, and its chat compacted at 457,000 tokens.",
             instructions: APP_INSTRUCTIONS,
             behavior: AgentBehavior {
                 workspace_instructions: WorkspaceInstructions::Off,
@@ -267,7 +267,7 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "2332ab3bdf9c1e45ef0ac66e571d8bc9b82773859b3ef3b3f34335d95ce1f2c4",
+            "c6f3ad67ba1cecac6df3dece4567b41249818bd8972e29dd57f87b62e4e26256",
         ),
         (
             ARCEE_PRESET_ID,

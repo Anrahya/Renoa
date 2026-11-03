@@ -39,7 +39,7 @@ caller-defined agent uses the explicit creation schema; `renoa.general.v1` is an
 `renoa.app.v4` seeds the everyday helpers people make in the Android app: plain-spoken
 instructions, its own `SOUL.md` from a neutral default, the person's `USER.md`, no
 workspace instructions, no native file or shell tools, and automatic compaction of its
-one chat at 450,000 input tokens down to 40,000; Host plugins such as Git,
+one chat at 457,000 input tokens down to 40,000; Host plugins such as Git,
 skills and agent management stay available, as for every agent. Every agent is
 one durable, provider-neutral `AgentDefinition`: identity and creation provenance,
 an optional preset id (the creation preset, or the preset a later
@@ -118,7 +118,8 @@ target, the planner keeps the smallest safe tail and still respects the real
 provider limit. This stored policy follows the agent across surfaces and does
 not change Alpha's context policy. A stored trigger past the model's dispatch
 limit compacts at that limit instead, with the target kept to three fifths of
-it at most, so a policy never stops an agent from running on a smaller model.
+it at most, so a trigger written for a large model does not stop the agent on a
+smaller one; a policy that fits the model is used as stored.
 
 A conversation has no length limit. Every Host runtime installs the compacting
 strategy, so an agent with no stored policy compacts when its projected input
