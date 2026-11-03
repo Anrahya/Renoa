@@ -40,11 +40,63 @@ pub(crate) struct PluginManager {
     pub(super) skills: SkillStore,
     shared_registry: Option<SharedPluginRegistry>,
     pub(super) github_source: super::intake::GithubSourceClient,
+    /// The Host's runner for setups waiting on the person.
+    setups: std::sync::Arc<SetupRunner>,
+}
+
+/// Whether this process runs the Host's saved setups, and how a saved one
+/// wakes it. A `plugin_manage` call hands a setup to the runner only while one
+/// is attached; otherwise its turn waits for the person.
+#[derive(Debug, Default)]
+pub(crate) struct SetupRunner {
+    wake: tokio::sync::Notify,
+    attached: std::sync::atomic::AtomicBool,
+}
+
+impl SetupRunner {
+    pub(crate) fn attached(&self) -> bool {
+        self.attached.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Marks the runner attached until the returned guard drops.
+    pub(crate) fn attach(&self) -> AttachedRunner<'_> {
+        self.attached
+            .store(true, std::sync::atomic::Ordering::Release);
+        AttachedRunner(self)
+    }
+
+    pub(crate) fn wake(&self) {
+        self.wake.notify_one();
+    }
+
+    pub(crate) async fn woken(&self) {
+        self.wake.notified().await;
+    }
+}
+
+pub(crate) struct AttachedRunner<'a>(&'a SetupRunner);
+
+impl Drop for AttachedRunner<'_> {
+    fn drop(&mut self) {
+        self.0
+            .attached
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 impl PluginManager {
     pub(crate) fn mcp_catalog(&self) -> McpCatalogStore {
         self.mcp_catalog.clone()
+    }
+
+    /// The Host catalog this manager keeps its plugins in.
+    pub(crate) fn database(&self) -> &std::path::Path {
+        self.store.database()
+    }
+
+    /// The Host's runner for setups waiting on the person.
+    pub(crate) fn setups(&self) -> &SetupRunner {
+        &self.setups
     }
 
     #[cfg(test)]
@@ -88,6 +140,7 @@ impl PluginManager {
             skills,
             shared_registry: None,
             github_source: super::intake::GithubSourceClient::default(),
+            setups: std::sync::Arc::default(),
         })
     }
 

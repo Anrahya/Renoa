@@ -585,8 +585,9 @@ schema 43 adds `renoa.memory`, schema 44 adds plugin-owned triggers and
 adds the conversations and passes of its note pass, schema 47 adds its
 reminders, schema 48 adds `renoa.owner`, schema 49 records each feed
 item's acknowledged wake, schema 50 lets every compiled plugin keep
-settings and triggers, for `renoa.owner`'s heartbeat, and schema 51 marks
-`renoa.automations`' follow-ups.
+settings and triggers, for `renoa.owner`'s heartbeat, schema 51 marks
+`renoa.automations`' follow-ups, and schema 52 saves the `plugin_manage` calls
+waiting on the person.
 
 ## Contribution model
 

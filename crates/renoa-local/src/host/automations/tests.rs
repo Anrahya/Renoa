@@ -627,3 +627,4 @@ mod deletion;
 mod feed;
 mod follow_ups;
 mod outcomes;
+mod plugin_setups;

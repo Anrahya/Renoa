@@ -49,6 +49,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
 /// Turns a schema 51 catalog back into schema 50's tables.
 #[cfg(test)]
 pub(crate) fn restore_schema_50(connection: &rusqlite::Connection) {
+    crate::host::plugin_setups::restore_schema_51(connection);
     connection
         .execute_batch("DROP TABLE host_automation_follow_ups;")
         .expect("restore schema 50");
@@ -244,6 +245,45 @@ fn save(
     actor.save(&tx, operation, &receipt, &record)?;
     tx.commit()?;
     Ok(Saved::Set(record))
+}
+
+/// Sends `note` back into `session` as `agent`'s follow-up, due a second
+/// after `now_ms`: how the Host tells an agent, in the conversation it acted
+/// from, what came of work it handed off. [`WAITING_MAX`] bounds only the
+/// follow-ups agents set themselves, so it does not refuse this one. A second
+/// call with the same `operation` returns the first's record instead.
+pub(crate) fn note_now(
+    tx: &Transaction<'_>,
+    agent: AgentId,
+    session: SessionId,
+    operation: Uuid,
+    note: &str,
+    now_ms: i64,
+) -> Result<(), AutomationError> {
+    let actor = AutomationActor::Agent {
+        id: agent,
+        session: Some(session),
+    };
+    let receipt = serde_json::to_string(note)?;
+    if actor.replay(tx, operation, &receipt)?.is_some() {
+        return Ok(());
+    }
+    let at = jiff::Timestamp::from_millisecond(now_ms.saturating_add(1_000))
+        .map_err(|error| AutomationError::Invalid(error.to_string()))?;
+    let spec = AutomationSpec {
+        agent_id: agent,
+        name: name(note),
+        prompt: note.to_owned(),
+        schedule: AutomationSchedule::Once { at: at.to_string() },
+        enabled: true,
+    };
+    let record = store::create(tx, actor, operation, spec, now_ms)?;
+    tx.execute(
+        "INSERT INTO host_automation_follow_ups(automation_id) VALUES(?1)",
+        [record.id.to_string()],
+    )?;
+    actor.save(tx, operation, &receipt, &record)?;
+    Ok(())
 }
 
 /// Deletes follow-up `automation` once its run ended as `ended`, if that run

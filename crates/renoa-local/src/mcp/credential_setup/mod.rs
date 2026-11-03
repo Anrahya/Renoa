@@ -53,9 +53,11 @@ impl CredentialSetupCoordinator {
         if saved_state.is_none() && self.secret_exists(credential_id).await? {
             return Ok(());
         }
-        let Some(updates) = updates else {
+        // With no one to show a link to, only a setup this operation already
+        // showed is waited for.
+        if updates.is_none() && saved_state.is_none() {
             return Ok(());
-        };
+        }
         let mut state = if let Some(state) = saved_state {
             state
         } else {
@@ -74,15 +76,22 @@ impl CredentialSetupCoordinator {
             return self.finish_existing(&state_id, &state, cancellation).await;
         }
 
-        let setup_url = self.client.setup_url(&state)?;
-        support::emit_required(
-            updates,
-            credential_id,
-            kind,
-            setup_url.as_str(),
-            state.expires_at_ms,
-        )
-        .await;
+        if let Some(updates) = updates {
+            let setup_url = self.client.setup_url(&state)?;
+            support::emit_required(
+                updates,
+                credential_id,
+                kind,
+                setup_url.as_str(),
+                state.expires_at_ms,
+            )
+            .await;
+            // The turn that showed the link ends here; the saved state lets the
+            // Host's setup wait poll for the person's answer without it.
+            return Err(McpHostError::AwaitingPerson {
+                expires_at_ms: Some(state.expires_at_ms),
+            });
+        }
         loop {
             let wait = remaining(state.expires_at_ms)?;
             if cancellation.is_cancelled() {
@@ -90,6 +99,10 @@ impl CredentialSetupCoordinator {
             }
             match self.client.status(state.relay_id, &cancellation).await? {
                 CredentialRelayStatus::Pending { .. } => {
+                    // Another setup of the same credential may have finished.
+                    if self.secret_exists(credential_id).await? {
+                        return self.finish_existing(&state_id, &state, cancellation).await;
+                    }
                     tokio::select! {
                         biased;
                         () = cancellation.cancelled() => {

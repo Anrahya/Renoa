@@ -192,6 +192,21 @@ impl McpAuthorizationResolver {
             .map_err(McpHostError::from)
     }
 
+    /// Whether `operation_id` showed a sign-in link for `connection_id` that
+    /// is still saved, so its callback can be waited for without a turn.
+    pub(crate) async fn shown_by(
+        &self,
+        connection_id: &str,
+        operation_id: &str,
+    ) -> Result<bool, McpHostError> {
+        Ok(self
+            .oauth
+            .flows
+            .load(connection_id)
+            .await?
+            .is_some_and(|flow| flow.operation_id == operation_id))
+    }
+
     pub(crate) async fn authorize(
         &self,
         request: McpOAuthAuthorizationRequest<'_>,

@@ -6,8 +6,9 @@ use renoa_kernel::AgentId;
 
 use crate::{
     mcp::{
-        McpAdapterError, McpCatalogSnapshot, McpConnectionCandidate, McpHostError,
-        McpOAuthAuthorizationRequest, McpOAuthError, McpRequestHeaders, discover_cancellable,
+        McpAdapterError, McpCatalogSnapshot, McpConnectionCandidate, McpCredentialHeader,
+        McpHostError, McpOAuthAuthorizationRequest, McpOAuthError, McpRequestHeaders,
+        discover_cancellable,
     },
     plugins::{PluginCredential, PluginError},
 };
@@ -104,11 +105,7 @@ impl PluginManager {
             updates: request.updates,
         };
         let authorization = if request.restart || request.requested_scope.is_some() {
-            Some(
-                self.authorizations
-                    .authorize(oauth_request(), cancellation.clone())
-                    .await?,
-            )
+            Some(self.sign_in(oauth_request(), cancellation.clone()).await?)
         } else {
             match self
                 .authorizations
@@ -122,14 +119,8 @@ impl PluginManager {
                 .await
             {
                 Ok(authorization) => authorization,
-                Err(McpHostError::OAuth(McpOAuthError::AuthorizationRequired(_)))
-                    if request.updates.is_some() =>
-                {
-                    Some(
-                        self.authorizations
-                            .authorize(oauth_request(), cancellation.clone())
-                            .await?,
-                    )
+                Err(McpHostError::OAuth(McpOAuthError::AuthorizationRequired(_))) => {
+                    Some(self.sign_in(oauth_request(), cancellation.clone()).await?)
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -234,6 +225,27 @@ impl PluginManager {
         })
     }
 
+    /// Signs in when someone can be shown the link, or when this operation
+    /// already showed one the person may have answered. Any other sign-in
+    /// would wait on a link nobody sees, so it is refused as needing them.
+    async fn sign_in(
+        &self,
+        request: McpOAuthAuthorizationRequest<'_>,
+        cancellation: CancellationToken,
+    ) -> Result<McpCredentialHeader, McpHostError> {
+        if request.updates.is_none()
+            && !self
+                .authorizations
+                .shown_by(request.connection_id, request.operation_id)
+                .await?
+        {
+            return Err(
+                McpOAuthError::AuthorizationRequired(request.connection_id.to_owned()).into(),
+            );
+        }
+        self.authorizations.authorize(request, cancellation).await
+    }
+
     pub(crate) async fn authorize_profile(
         &self,
         request: ProfileAuthorizationRequest<'_>,
@@ -255,8 +267,7 @@ impl PluginManager {
             )
             .await?;
         let authorization = self
-            .authorizations
-            .authorize(
+            .sign_in(
                 McpOAuthAuthorizationRequest {
                     connection_id: request.connection_id,
                     display_name: None,

@@ -328,6 +328,7 @@ impl LocalHost {
 
 /// Schema 51: the mark that makes a one-time automation a follow-up.
 pub(super) use follow_up::initialize as add_follow_ups;
+pub(crate) use follow_up::note_now;
 pub(super) use retention::{
     CONVERSATION_DELETIONS, RUN_INDEXES, Removed, purge_all_deleted, report as report_removed,
 };

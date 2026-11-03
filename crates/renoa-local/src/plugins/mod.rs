@@ -36,7 +36,7 @@ pub use manager::{PluginAddOutcome, PluginConnectionOutcome, PluginSourceReceipt
 #[cfg(test)]
 pub(crate) use search::PluginSearchTool;
 pub(crate) use search::binding_with_host as search_binding_with_host;
-pub(crate) use tool::agent_plugin_binding;
+pub(crate) use tool::{agent_plugin_binding, replay_manage_call};
 
 pub(crate) const PLUGIN_STORE_DIRECTORY: &str = "plugins";
 
