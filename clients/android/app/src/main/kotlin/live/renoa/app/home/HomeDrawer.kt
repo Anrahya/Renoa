@@ -1,11 +1,15 @@
 package live.renoa.app.home
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,19 +35,30 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import live.renoa.app.agents.Routine
@@ -55,7 +70,11 @@ import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
 import java.time.ZonedDateTime
 
-/** The pages over Home: Chats, Routines and Upcoming, swiped through or picked from the tabs. */
+/**
+ * The pages over Home: Chats, Routines and Upcoming, swiped through or picked from the tabs. Pulled
+ * down by its top, or by a page already scrolled to its top, it follows the finger and closes once
+ * pulled far enough or flung; short of that it springs back.
+ */
 @Composable
 internal fun HomeDrawer(
     state: HomeUiState,
@@ -78,10 +97,32 @@ internal fun HomeDrawer(
     LaunchedEffect(state.page) { state.page?.let { if (pager.currentPage != it.ordinal) pager.scrollToPage(it.ordinal) } }
     // A page turned by swipe or tab is the page Home reopens on; once closed, a late turn reopens nothing.
     LaunchedEffect(pager) { snapshotFlow { pager.currentPage }.collect { if (open != null) turn(pages[it]) } }
+    val pull = rememberPullToClose(onClose)
 
     // A tap that lands on no control here stops here, not on Home underneath.
-    Column(Modifier.fillMaxSize().background(colors.background).pointerInput(Unit) { detectTapGestures { } }.safeDrawingPadding()) {
-        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer { translationY = pull.offset }
+            .background(colors.background)
+            .pointerInput(Unit) { detectTapGestures { } }
+            .nestedScroll(pull)
+            .safeDrawingPadding(),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .draggable(rememberDraggableState { pull.drag(it) }, Orientation.Vertical, onDragStopped = { pull.release(it) })
+                .padding(top = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) { Box(Modifier.size(width = 36.dp, height = 4.dp).background(colors.border, CircleShape)) }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .draggable(rememberDraggableState { pull.drag(it) }, Orientation.Vertical, onDragStopped = { pull.release(it) })
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             pages.forEachIndexed { i, page ->
                 val on = pager.currentPage == i
                 val ink by animateColorAsState(if (on) colors.foreground else colors.mutedForeground, label = "tab")
@@ -200,4 +241,47 @@ private fun RoutineSwitch(on: Boolean, label: String, enabled: Boolean, onChange
             Box(Modifier.offset { IntOffset(knob.roundToPx(), 2.dp.roundToPx()) }.size(20.dp).background(if (on) colors.primaryForeground else colors.mutedForeground, CircleShape))
         }
     }
+}
+
+/** How far the pages are pulled down, and whether letting go closes them. */
+@Stable
+private class PullToClose(private val close: () -> Unit, private val far: Float, private val fast: Float) : NestedScrollConnection {
+    var offset by mutableFloatStateOf(0f)
+        private set
+
+    fun drag(dy: Float) {
+        offset = (offset + dy).coerceAtLeast(0f)
+    }
+
+    suspend fun release(velocity: Float) {
+        if (offset > 0f && (offset > far || velocity > fast)) close() else animate(offset, 0f) { value, _ -> offset = value }
+    }
+
+    // While pulled, a drag up takes the pull back before the page scrolls.
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (offset <= 0f || available.y >= 0f || source != NestedScrollSource.UserInput) return Offset.Zero
+        val used = maxOf(available.y, -offset)
+        drag(used)
+        return Offset(0f, used)
+    }
+
+    // A drag down that the page, already at its top, leaves over pulls the pages.
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        if (available.y <= 0f || source != NestedScrollSource.UserInput) return Offset.Zero
+        drag(available.y)
+        return Offset(0f, available.y)
+    }
+
+    override suspend fun onPreFling(available: Velocity): Velocity {
+        if (offset <= 0f) return Velocity.Zero
+        release(available.y)
+        return available
+    }
+}
+
+@Composable
+private fun rememberPullToClose(onClose: () -> Unit): PullToClose {
+    val close by rememberUpdatedState(onClose)
+    val density = LocalDensity.current
+    return remember(density) { with(density) { PullToClose({ close() }, far = 120.dp.toPx(), fast = 1_200.dp.toPx()) } }
 }

@@ -97,6 +97,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.swipe
 import live.renoa.app.agents.StreamingReply
@@ -307,6 +308,21 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithText("Routines").performTouchInput { swipeUp(startY = centerY, endY = centerY - 300f) }
         compose.waitForIdle()
         compose.onNode(hasText("Chats") and isSelected()).assertIsDisplayed()
+    }
+
+    @Test
+    fun thePagesClosePulledDownFromTheTopAndSpringBackFromAShortPull() {
+        home()
+        openPages()
+        val page = compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM")
+        page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 40f, durationMillis = 600) }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Back to Home").assertIsDisplayed()
+
+        page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 900f, durationMillis = 600) }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
+        compose.onNodeWithText("Chats").assertIsDisplayed()
     }
 
     @Test
