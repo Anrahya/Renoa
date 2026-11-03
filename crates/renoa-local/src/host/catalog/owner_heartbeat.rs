@@ -38,6 +38,7 @@ pub(super) fn admit_every_plugin_trigger(
 /// keeps settings and only `renoa.memory` triggers.
 #[cfg(test)]
 pub(crate) fn restore_schema_49(connection: &rusqlite::Connection) {
+    crate::host::automations::follow_up::restore_schema_50(connection);
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;

@@ -105,18 +105,16 @@ impl HostPluginId {
             Self::Documents => &[crate::capabilities::AGENT_DOCUMENTS],
             Self::Memory if notebook => &[memory::NOTE, memory::RECALL, memory::ZOOM],
             Self::Owner => &[owner::ASK, owner::NOTIFY, owner::TODAY],
-            Self::Memory
-            | Self::Agents
-            | Self::Automations
-            | Self::Skills
-            | Self::Git
-            | Self::Time => &[],
+            Self::Automations => &[crate::capabilities::FOLLOW_UP],
+            Self::Memory | Self::Agents | Self::Skills | Self::Git | Self::Time => &[],
         }
     }
     pub(crate) fn owner(tool: &str) -> Option<Self> {
         match tool {
             "agent_manage" | "agent_roster" | "message_agent" => Some(Self::Agents),
-            "automation_manage" | "automation_results" => Some(Self::Automations),
+            "automation_manage" | "automation_results" | crate::capabilities::FOLLOW_UP => {
+                Some(Self::Automations)
+            }
             "agent_documents" => Some(Self::Documents),
             "skill_search" | "skill_load" => Some(Self::Skills),
             "git_changes" | "git_diff" | "git_show" => Some(Self::Git),

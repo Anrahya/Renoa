@@ -182,15 +182,8 @@ pub(crate) fn protocol_bindings(
         session_id,
         command_id,
     ));
-    controls.push(super::automations::result_tool::binding(
-        Arc::clone(host),
-        agent,
-    ));
-    controls.push(super::automations::tool::binding(
-        Arc::clone(host),
-        agent,
-        session_id,
-        command_id,
+    controls.extend(super::automations::bindings(
+        host, agent, session_id, command_id,
     ));
     controls.extend(peer_bindings(host, agent, command_id));
     controls.extend(crate::plugins::host::owner::bindings(
@@ -337,20 +330,27 @@ mod tests {
             )
             .expect("plugin runtime")
         };
+        let platform = ["plugin_manage", "plugin_search", "tool_execute"];
+        let resident = [
+            "follow_up",
+            "agent_documents",
+            "memory_note",
+            "memory_recall",
+            "memory_zoom",
+            "ask_owner",
+            "notify_owner",
+            "set_today",
+        ];
         assert_eq!(
             offer(&resolved)
                 .iter()
                 .map(AgentToolBinding::tool_name)
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from([
-                "agent_documents",
-                "ask_owner",
-                "notify_owner",
-                "set_today",
-                "plugin_manage",
-                "plugin_search",
-                "tool_execute"
-            ]),
+            platform
+                .into_iter()
+                .chain(resident)
+                .filter(|tool| !tool.starts_with("memory_"))
+                .collect(),
             "a turn with no person lists no notebook tool"
         );
         let offered = offer(&resolved.with_principal(Some(Uuid::new_v4())));
@@ -360,18 +360,7 @@ mod tests {
             offered.len(),
             "runtime tool names must be unique"
         );
-        let resident = [
-            "agent_documents",
-            "memory_note",
-            "memory_recall",
-            "memory_zoom",
-            "ask_owner",
-            "notify_owner",
-            "set_today",
-        ];
-        let mut expected = BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"]);
-        expected.extend(resident);
-        assert_eq!(actual, expected);
+        assert_eq!(actual, platform.into_iter().chain(resident).collect());
         // Code Mode hides only the executor: resident tools stay direct.
         let (visible, hidden) =
             partition_selected_tools(offered, true).expect("partition selected tools");

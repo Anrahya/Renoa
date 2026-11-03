@@ -46,6 +46,7 @@ pub(crate) const AGENT_ROSTER: &str = "agent_roster";
 pub(crate) const MESSAGE_AGENT: &str = "message_agent";
 pub(crate) const AUTOMATION_MANAGE: &str = "automation_manage";
 pub(crate) const AUTOMATION_RESULTS: &str = "automation_results";
+pub(crate) const FOLLOW_UP: &str = "follow_up";
 pub(crate) const PLUGIN_SEARCH: &str = "plugin_search";
 pub(crate) const TOOL_EXECUTE: &str = "tool_execute";
 pub(crate) const SKILL_SEARCH: &str = "skill_search";

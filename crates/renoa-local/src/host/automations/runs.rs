@@ -343,8 +343,8 @@ pub(super) fn end(
 }
 
 /// Ends an unfinished run with `status`, reports it in the feed as `ended`,
-/// then applies its automation's retention: the run limit, and the purge a
-/// deletion waited for.
+/// deletes a follow-up it fulfilled, then applies its automation's
+/// retention: the run limit, and the purge a deletion waited for.
 fn close(
     path: &Path,
     id: Uuid,
@@ -360,6 +360,7 @@ fn close(
     if let Some(ended) = ended {
         feed::run_ended(&tx, id, automation, ended, now_ms)?;
     }
+    super::follow_up::retire(&tx, automation, ended)?;
     let removed = [
         retention::keep_newest(&tx, automation)?,
         retention::purge_deleted(&tx, automation)?,

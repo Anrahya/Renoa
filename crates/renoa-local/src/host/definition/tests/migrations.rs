@@ -279,6 +279,7 @@ async fn migrated_selections_remain_usable_through_host_consumers_and_replays() 
             .unwrap();
             let mut expected = BTreeSet::from([
                 "ask_owner",
+                "follow_up",
                 "notify_owner",
                 "set_today",
                 "plugin_manage",
