@@ -23,9 +23,11 @@ pub(super) mod retention;
 mod tests;
 mod wakes;
 
-pub(crate) use item::{BODY_CHARS, CHOICE_CHARS, CHOICES};
+pub(crate) use item::{BODY_CHARS, CHOICE_CHARS, CHOICES, TODAY_CHARS};
 pub use item::{FeedAction, FeedKind, Urgency};
-pub(crate) use produce::{Ability, ForOwner, ability_turned_on, owner_asked, owner_told};
+pub(crate) use produce::{
+    Ability, ForOwner, ability_turned_on, owner_asked, owner_told, today_set,
+};
 pub(super) use produce::{RunEnded, run_ended};
 pub use read::{FeedAgent, FeedItem, FeedPage, FeedSeen};
 pub use wakes::FeedWake;

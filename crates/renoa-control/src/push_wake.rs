@@ -5,7 +5,9 @@
 //! app learns what changed by reading the journal from its own cursors. The
 //! marker is written by the transaction that appends the record, so it is
 //! durable before the node hears `execution_events_accepted`, it survives a
-//! restart, and a retried batch that appends nothing marks nothing.
+//! restart, and a retried batch that appends nothing marks nothing. The
+//! records of a command submitted quiet, such as a heartbeat's run, mark no
+//! wake: what it has for the owner it asks for with `request_wake`.
 //!
 //! A node also asks for a wake, with `request_wake`, for something it has for
 //! its owner that the journal does not hold. The request carries an id and an
@@ -16,8 +18,8 @@
 
 use std::{sync::Arc, time::SystemTime};
 
-use renoa_protocol::{ExecutionEventKind, ExecutionTerminal, PrincipalId};
-use rusqlite::{Transaction, TransactionBehavior, params};
+use renoa_protocol::{CommandEnvelope, ExecutionEventKind, ExecutionTerminal, PrincipalId};
+use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -28,7 +30,7 @@ use crate::{
     coordinator::CoordinatorState,
     identity_store::timestamp_millis,
     node_ownership::node_owner,
-    store::{ControlStore, blocking, id_error, sqlite_error},
+    store::{ControlStore, blocking, id_error, json_error, sqlite_error},
     wire::send_control_error,
 };
 
@@ -85,6 +87,31 @@ pub(crate) fn wake_reason(kind: &TaskEventKind) -> Option<&'static str> {
             } => None,
         },
     }
+}
+
+/// Whether `kind` is a record of a command submitted quiet, or of its
+/// execution.
+pub(crate) fn of_quiet_command(
+    transaction: &Transaction<'_>,
+    kind: &TaskEventKind,
+) -> Result<bool, ControlError> {
+    let command_id = match kind {
+        TaskEventKind::ExecutionEvent { command_id, .. } => command_id,
+        TaskEventKind::CommandSubmitted { command } => return Ok(command.input.quiet()),
+    };
+    let Some(command_json) = transaction
+        .query_row(
+            "SELECT command_json FROM commands WHERE command_id = ?1",
+            [command_id.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sqlite_error)?
+    else {
+        return Ok(false);
+    };
+    let command: CommandEnvelope = serde_json::from_str(&command_json).map_err(json_error)?;
+    Ok(command.input.quiet())
 }
 
 /// Marks a wake as owed to `principal_id` inside the caller's transaction:

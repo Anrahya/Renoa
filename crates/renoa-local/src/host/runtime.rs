@@ -346,6 +346,7 @@ mod tests {
                 "agent_documents",
                 "ask_owner",
                 "notify_owner",
+                "set_today",
                 "plugin_manage",
                 "plugin_search",
                 "tool_execute"
@@ -366,6 +367,7 @@ mod tests {
             "memory_zoom",
             "ask_owner",
             "notify_owner",
+            "set_today",
         ];
         let mut expected = BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"]);
         expected.extend(resident);

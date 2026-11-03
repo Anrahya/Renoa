@@ -107,7 +107,7 @@ fn assert_trace(path: &std::path::Path) {
         .expect("read model request shape");
     let started: serde_json::Value =
         serde_json::from_str(&request_shape.0).expect("decode request shape");
-    assert_eq!(started["tools"], 11, "{started}");
+    assert_eq!(started["tools"], 12, "{started}");
     assert!(
         started["messages"]
             .as_u64()

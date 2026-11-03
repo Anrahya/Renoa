@@ -244,6 +244,19 @@ pub(crate) fn owner_told(tx: &Connection, told: &ForOwner<'_>) -> rusqlite::Resu
     )
 }
 
+/// Replaces the Today line with `sentence`, which stands until an item that
+/// needs the owner is written after it.
+pub(crate) fn today_set(tx: &Connection, sentence: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO host_today(singleton, sentence, through_sequence)
+         VALUES (1, ?1, (SELECT coalesce(max(sequence), 0) FROM host_feed_items))
+         ON CONFLICT(singleton) DO UPDATE
+         SET sentence = excluded.sentence, through_sequence = excluded.through_sequence",
+        [sentence],
+    )?;
+    Ok(())
+}
+
 /// Marks done, at `said_at_ms`, the open asks made in `session` before it,
 /// when `command` is a message there that no automation sent: the owner's
 /// next message answers them, from whichever surface. Returns how many it

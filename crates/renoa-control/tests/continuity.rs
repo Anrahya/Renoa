@@ -636,6 +636,7 @@ mod delivery {
                     text: "Run whenever the node returns.".to_owned(),
                     context: None,
                     author: renoa_protocol::Author::Principal,
+                    quiet: false,
                 },
             },
         )
@@ -666,6 +667,7 @@ mod delivery {
             text: "Accept this command once.".to_owned(),
             context: None,
             author: renoa_protocol::Author::Principal,
+            quiet: false,
         };
 
         send(
@@ -858,6 +860,7 @@ mod delivery {
                     text: "Do not strand me between nodes.".to_owned(),
                     context: None,
                     author: renoa_protocol::Author::Principal,
+                    quiet: false,
                 },
             },
         )
@@ -905,6 +908,7 @@ mod delivery {
                     text: "Expose any stranded predecessor.".to_owned(),
                     context: None,
                     author: renoa_protocol::Author::Principal,
+                    quiet: false,
                 },
             },
         )
@@ -1048,6 +1052,7 @@ mod delivery {
                 text: "Post it here.".to_owned(),
                 context: context.map(str::to_owned),
                 author,
+                quiet: false,
             },
         };
         let desk = Some("channel #desk (202)");
@@ -2665,6 +2670,7 @@ async fn submit(socket: &mut Socket, task_id: TaskId, command_id: CommandId, tex
                 text: text.to_owned(),
                 context: None,
                 author: renoa_protocol::Author::Principal,
+                quiet: false,
             },
         },
     )

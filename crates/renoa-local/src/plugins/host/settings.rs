@@ -11,16 +11,23 @@ use rusqlite::{OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{HostPluginId, time::TimeSettings};
+use super::{HostPluginId, owner::heartbeat::OwnerSettings, time::TimeSettings};
 use crate::{host::catalog, plugins::PluginError};
 
-pub(crate) const SETTINGS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_agent_plugin_settings (
+/// The table, whose `CHECK` accepts every [`HostPluginId`]: [`validate`]
+/// decides which take settings.
+pub(crate) fn settings_table() -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS host_agent_plugin_settings (
         agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-        plugin_id TEXT NOT NULL CHECK(plugin_id IN ('renoa.time')),
+        plugin_id TEXT NOT NULL CHECK(plugin_id IN ({})),
         settings_json TEXT NOT NULL
             CHECK(json_valid(settings_json) AND json_type(settings_json) = 'object'),
         PRIMARY KEY(agent_id, plugin_id)
-    ) STRICT;";
+    ) STRICT;",
+        super::state::every_plugin()
+    )
+}
 
 /// One agent's stored settings for one compiled plugin; `{}` is the defaults.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,13 +40,13 @@ pub struct HostPluginSettings {
 fn validate(plugin: HostPluginId, settings: Value) -> Result<Value, PluginError> {
     match plugin {
         HostPluginId::Time => Ok(serde_json::to_value(TimeSettings::validate(settings)?)?),
+        HostPluginId::Owner => Ok(serde_json::to_value(OwnerSettings::validate(settings)?)?),
         HostPluginId::Agents
         | HostPluginId::Automations
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Memory
-        | HostPluginId::Owner => Err(PluginError::Invalid(format!(
+        | HostPluginId::Memory => Err(PluginError::Invalid(format!(
             "{} has no settings",
             plugin.id()
         ))),

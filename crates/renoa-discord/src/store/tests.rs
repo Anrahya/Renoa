@@ -53,6 +53,7 @@ fn command(command_id: Uuid, surface: &str, text: &str) -> CommandEnvelope {
             text: text.to_owned(),
             context: None,
             author: renoa_protocol::Author::Principal,
+            quiet: false,
         },
         origin: None,
     }

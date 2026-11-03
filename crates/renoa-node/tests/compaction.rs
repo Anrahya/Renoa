@@ -256,6 +256,7 @@ async fn a_guests_compact_is_a_message_for_the_agent_and_summarizes_nothing() {
                 text: "/compact".to_owned(),
                 context: None,
                 author: Author::Guest,
+                quiet: false,
             },
         )
         .await;

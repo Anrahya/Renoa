@@ -233,6 +233,119 @@ async fn a_run_that_asks_the_owner_records_the_question_and_wakes_the_owner() {
     .expect("asking automation test timed out");
 }
 
+/// A heartbeat's run is submitted quiet: one that only says "Nothing to
+/// report." leaves no item and wakes no one; one that calls `notify_owner`
+/// leaves one item, and the item's wake is the only wake it makes.
+#[tokio::test]
+async fn a_heartbeat_reaches_the_owner_only_through_its_tools() {
+    timeout(Duration::from_secs(30), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        host.set_heartbeat_hours(fixture.agent_id, 1, Uuid::new_v4())
+            .await
+            .expect("turn the heartbeat on");
+        let now = renoa_local::TurnObservation::now()
+            .expect("now")
+            .unix_milliseconds();
+        host.automation_scheduler()
+            .expect("scheduler")
+            .next_run(now, false)
+            .await
+            .expect("converge the heartbeat");
+        let catalog = rusqlite::Connection::open(host.home().host_database()).expect("catalog");
+        let heartbeat: String = catalog
+            .query_row(
+                "SELECT automation_id FROM host_plugin_triggers WHERE plugin_id = 'renoa.owner'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the heartbeat");
+        let coordinator = rusqlite::Connection::open(system.files.path().join("control.sqlite"))
+            .expect("coordinator database");
+        let wakes = || -> i64 {
+            coordinator
+                .query_row(
+                    "SELECT coalesce(sum(generation), 0) FROM push_wakes",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("wakes")
+        };
+        let owner_feed = HostFeed::open(host.home().path()).expect("feed");
+
+        beat(&catalog, &heartbeat);
+        let before = wakes();
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        finished(&catalog, &heartbeat, 1).await;
+        let quiet: bool = coordinator
+            .query_row(
+                "SELECT json_extract(command_json, '$.input.quiet') FROM commands
+                 WHERE task_id = ?1",
+                [&heartbeat],
+                |row| row.get(0),
+            )
+            .expect("the run's command, submitted quiet");
+        assert!(quiet);
+        assert!(feed(&host).await.is_empty(), "nothing to report is no item");
+        assert_eq!(wakes(), before, "and wakes no one");
+
+        beat(&catalog, &heartbeat);
+        finished(&catalog, &heartbeat, 2).await;
+        let told = owner_feed.list(None).await.expect("list").items;
+        assert_eq!(
+            told.iter()
+                .map(|item| (item.kind, item.body.as_str()))
+                .collect::<Vec<_>>(),
+            [(FeedKind::Update, "The digest failed twice.")]
+        );
+        while !owner_feed.owed_wakes().await.expect("owed").is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(wakes(), before + 1, "the item's wake and no other");
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("heartbeat test timed out");
+}
+
+/// Makes `heartbeat` due now rather than at the next hour.
+fn beat(catalog: &rusqlite::Connection, heartbeat: &str) {
+    let now = renoa_local::TurnObservation::now()
+        .expect("now")
+        .unix_milliseconds();
+    catalog
+        .execute(
+            "UPDATE host_automations SET next_due_ms = ?2 WHERE id = ?1",
+            rusqlite::params![heartbeat, now],
+        )
+        .expect("due now");
+}
+
+/// Waits until `count` runs of `heartbeat` have their results.
+async fn finished(catalog: &rusqlite::Connection, heartbeat: &str, count: i64) {
+    loop {
+        let done: i64 = catalog
+            .query_row(
+                "SELECT count(*) FROM host_automation_runs
+                 WHERE automation_id = ?1 AND output IS NOT NULL",
+                [heartbeat],
+                |row| row.get(0),
+            )
+            .expect("runs");
+        if done == count {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// The owner's feed, newest first: each item's kind and subject.
 async fn feed(host: &LocalHost) -> Vec<(FeedKind, String)> {
     HostFeed::open(host.home().path())

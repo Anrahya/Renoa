@@ -16,6 +16,7 @@ mod memory_note_pass;
 mod memory_plugin;
 mod memory_reminders;
 mod migrations;
+mod owner_heartbeat;
 mod owner_plugin;
 mod registry_sync;
 mod run_retention;
@@ -46,6 +47,8 @@ pub(crate) use memory_plugin::restore_schema_42;
 #[cfg(test)]
 pub(crate) use memory_reminders::restore_schema_46;
 #[cfg(test)]
+pub(crate) use owner_heartbeat::restore_schema_49;
+#[cfg(test)]
 pub(crate) use owner_plugin::{restore_schema_47, restore_schema_48};
 #[cfg(test)]
 pub(crate) use registry_sync::restore_schema_35;
@@ -54,7 +57,7 @@ pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 #[cfg(test)]
 pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 49;
+const SCHEMA_VERSION: u32 = 50;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -368,6 +371,9 @@ fn upgrade(
     if version < 49 {
         crate::host::feed::add_wakes(transaction)?;
     }
+    if version < 50 {
+        owner_heartbeat::admit_every_plugin_trigger(transaction)?;
+    }
     Ok(purged)
 }
 
@@ -388,7 +394,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=48 => {
+        28..=49 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],

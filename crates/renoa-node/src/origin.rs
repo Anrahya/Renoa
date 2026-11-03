@@ -138,6 +138,7 @@ mod tests {
             text: "Hello".to_owned(),
             context: None,
             author: Author::Guest,
+            quiet: false,
         };
         assert_eq!(speaker(&guest), Speaker::Guest);
 

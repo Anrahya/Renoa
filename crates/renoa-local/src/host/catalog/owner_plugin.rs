@@ -20,6 +20,7 @@ pub(super) fn admit_owner_plugin(transaction: &Transaction<'_>) -> Result<(), Ho
 /// record of a wake.
 #[cfg(test)]
 pub(crate) fn restore_schema_48(connection: &rusqlite::Connection) {
+    super::restore_schema_49(connection);
     connection
         .execute_batch("ALTER TABLE host_feed_items DROP COLUMN wake_sent_at_ms;")
         .expect("restore the schema 48 feed");

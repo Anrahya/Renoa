@@ -583,8 +583,9 @@ plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings, and
 schema 43 adds `renoa.memory`, schema 44 adds plugin-owned triggers and
 `renoa.memory`'s job receipts and memory session generations, schema 45
 adds the conversations and passes of its note pass, schema 47 adds its
-reminders, schema 48 adds `renoa.owner`, and schema 49 records each feed
-item's acknowledged wake.
+reminders, schema 48 adds `renoa.owner`, schema 49 records each feed
+item's acknowledged wake, and schema 50 lets every compiled plugin keep
+settings and triggers, for `renoa.owner`'s heartbeat.
 
 ## Contribution model
 
@@ -608,8 +609,8 @@ field on every plugin.
 | `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory`, `renoa.documents` and `renoa.owner` |
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
-| `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
-| `triggers`: an automation a compiled plugin owns and keeps converged | implemented, for `renoa.memory` |
+| `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` and `renoa.owner` |
+| `triggers`: an automation a compiled plugin owns and keeps converged | implemented, for `renoa.memory` and `renoa.owner` |
 | `delivery`: private owner channels offered by surfaces | planned, for #104 and #86 |
 
 Other points (views) are named only as direction.
@@ -775,10 +776,12 @@ its plugin set the time; it runs at once, however late. `host_plugin_triggers` r
 lists, reads, changes or runs a plugin-owned automation through
 `automation_manage` or `automation_results`, and its runs are not agent
 work: the node hands a due run to its plugin instead of submitting a turn.
-The exception is a `renoa.memory` reminder, whose run the node submits to
+The exceptions are a `renoa.memory` reminder, whose run the node submits to
 the agent in the person's conversation, and nowhere else, with the submission
-the plugin chose when the run was admitted; a plugin's run in flight holds up
-neither it nor an agent's run. What a plugin reads or writes outside the
+the plugin chose when the run was admitted, and a `renoa.owner` heartbeat,
+whose run the node submits quiet, with its standing task, on a task of the
+trigger's own; a plugin's run in flight holds up neither of them nor an
+agent's run. What a plugin reads or writes outside the
 catalog for its triggers it does before the scheduler's write transaction
 opens. One wanted trigger that cannot be stored or scheduled is logged and
 left as it is, and holds up no other.

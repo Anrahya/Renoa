@@ -1,6 +1,8 @@
 //! `renoa.owner`: an agent reaches the owner on their phone. `ask_owner` asks
 //! one question and ends the turn, and the owner's next message answers it;
-//! `notify_owner` tells them one thing and the turn goes on.
+//! `notify_owner` tells them one thing and the turn goes on. Its heartbeat
+//! (see `heartbeat`) checks in every few hours, and only there may the agent
+//! `set_today`, the line above the owner's feed.
 //!
 //! Each call writes one feed item and nothing else, so the item is the call's
 //! whole effect: it is durable before the call succeeds, and a replay of the
@@ -22,17 +24,19 @@ use crate::host::{
     feed::{self, BODY_CHARS, CHOICE_CHARS, CHOICES, ForOwner},
 };
 
+pub(crate) mod heartbeat;
 mod input;
 #[cfg(test)]
 mod tests;
+mod today;
 
 use input::{Input, Kind};
 
 pub(crate) const PLUGIN_ID: &str = "renoa.owner";
-pub(crate) const DESCRIPTION: &str =
-    "Ask the owner a question or tell them something on their phone.";
+pub(crate) const DESCRIPTION: &str = "Ask the owner a question or tell them something on their phone. When the owner asks you to check in on them, turn on your heartbeat, a check-in of your own every few hours, with configure_plugin settings {\"heartbeat_hours\": n}, 1 to 24 hours apart; 0 or settings {} turns it off.";
 pub(crate) const ASK: &str = "ask_owner";
 pub(crate) const NOTIFY: &str = "notify_owner";
+pub(crate) const TODAY: &str = "set_today";
 const BINDING_REVISION: &str = "renoa-owner-v1";
 const NOT_RUN: &str =
     "Not run: your turn ended when you asked the owner. Put everything you need into one question.";
@@ -55,11 +59,11 @@ pub(crate) fn turned_off(tool: &str) -> String {
     )
 }
 
-/// `ask_owner` and `notify_owner` for one turn. A replay rewrites the same
-/// item, so both are safe to replay.
-pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 2] {
+/// `ask_owner`, `notify_owner` and `set_today` for one turn. A replay
+/// rewrites the same item or line, so each is safe to replay.
+pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 3] {
     let turn = Arc::new(turn);
-    [Kind::Ask, Kind::Notify].map(|kind| {
+    let [ask, notify] = [Kind::Ask, Kind::Notify].map(|kind| {
         AgentToolBinding::new(
             BINDING_REVISION,
             Arc::new(OwnerTool {
@@ -69,7 +73,16 @@ pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 2] {
             }),
             EffectRecovery::SafeToReplay,
         )
-    })
+    });
+    let today = AgentToolBinding::new(
+        BINDING_REVISION,
+        Arc::new(today::TodayTool {
+            turn,
+            spec: today::spec(),
+        }),
+        EffectRecovery::SafeToReplay,
+    );
+    [ask, notify, today]
 }
 
 fn spec(kind: Kind) -> ToolSpec {

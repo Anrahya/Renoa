@@ -35,6 +35,10 @@ pub struct ScheduledRun {
     /// sent to the agent: [`AutomationScheduler::run_for_plugin`] runs it on
     /// the Host. `None` for a run sent to the agent, a reminder's included.
     pub plugin: Option<&'static str>,
+    /// Whether the run is submitted quiet: what its execution writes wakes no
+    /// one, and only what it asks for itself reaches the owner. A
+    /// heartbeat's run is.
+    pub quiet: bool,
 }
 
 /// How a run of a plugin's trigger ended, to be recorded with
@@ -113,11 +117,14 @@ impl AutomationScheduler {
             let plugin = triggers::runner(&db, run.automation_id)?.map(HostPluginId::id);
             let origin_required =
                 triggers::delivers(&db, run.automation_id).map_err(super::AutomationError::from)?;
+            let quiet =
+                triggers::quiet(&db, run.automation_id).map_err(super::AutomationError::from)?;
             Ok::<_, LocalHostError>(Some(ScheduledRun {
                 run,
                 origin_session_id,
                 origin_required,
                 plugin,
+                quiet,
             }))
         })
         .await?

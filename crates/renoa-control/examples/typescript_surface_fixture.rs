@@ -195,6 +195,7 @@ async fn seed_journal(
                 text: "seed the replay journal".to_owned(),
                 context: None,
                 author: renoa_protocol::Author::Principal,
+                quiet: false,
             },
         },
     )
