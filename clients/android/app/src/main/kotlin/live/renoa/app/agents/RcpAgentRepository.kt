@@ -395,13 +395,14 @@ class RcpAgentRepository(
         val room = room(agentId)
         val open = hostAgentId(agentId)?.let { heldFeed.asks()[it.toString()] }
         val elsewhere = open?.takeIf { it.taskId != room.taskId }
-        // Hidden at once, so a second tap finds no question; shown again if the answer is refused.
+        // Hidden at once; shown again if the answer is refused or never sent, as when the screen goes.
         open?.let { heldFeed.deal(it.itemId) }
+        var sent = false
         try {
             send(agentId, elsewhere?.let { answerFromElsewhere(it.ask.question, choice.trim()) } ?: choice)
-        } catch (refused: RepositoryException) {
-            open?.let { heldFeed.restore(it.itemId) }
-            throw refused
+            sent = true
+        } finally {
+            if (!sent) open?.let { heldFeed.restore(it.itemId) }
         }
         // Asked in this chat, the Host marks it answered when it takes the message; asked elsewhere, it is put away.
         elsewhere?.let { heldFeed.answeredElsewhere(it.itemId) }

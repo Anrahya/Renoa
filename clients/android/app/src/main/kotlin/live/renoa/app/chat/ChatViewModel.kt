@@ -105,13 +105,20 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         viewModelScope.launch { runCatching { repository.markSeen(agentId) } }
     }
 
+    /** An answer on its way, so a second tap while it goes sends nothing. */
+    private var answering = false
+
     fun answer(choice: String) {
+        if (answering) return
+        answering = true
         notice.value = null
         viewModelScope.launch {
             try {
                 repository.answer(agentId, choice)
             } catch (refused: RepositoryException) {
                 notice.value = refused.wordsOr("That answer did not go through. Try again.")
+            } finally {
+                answering = false
             }
         }
     }

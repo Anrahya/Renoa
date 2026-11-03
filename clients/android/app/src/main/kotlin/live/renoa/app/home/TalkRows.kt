@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import live.renoa.app.agents.AgentSummary
+import live.renoa.app.agents.Note
 import live.renoa.app.agents.clockTime
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.Renoa
@@ -62,7 +63,7 @@ internal fun MainCard(talk: Talk, roster: List<AgentSummary>, next: String, now:
         Text(talk.line ?: "Nothing needs you right now.", style = RenoaType.Body, color = colors.foreground, maxLines = 5, overflow = TextOverflow.Ellipsis)
         when {
             talk.ask != null -> AskChoices(talk.ask.choices, { act.answer(talk.agent.id, it) })
-            talk.problem != null && talk.line == talk.problem.title -> RunAgain(talk.problem.id, act)
+            talk.problem != null -> Failed(talk, talk.problem, act)
             else -> Text("$next.", style = RenoaType.Caption, color = colors.mutedForeground)
         }
     }
@@ -86,7 +87,8 @@ internal fun TalkRow(talk: Talk, roster: List<AgentSummary>, now: ZonedDateTime,
             Text(it, style = RenoaType.Body, color = if (talk.needsOwner || talk.agent.glance.unread) colors.foreground else colors.foregroundSoft, maxLines = 4, overflow = TextOverflow.Ellipsis)
         }
         talk.ask?.let { ask -> AskChoices(ask.choices, { act.answer(talk.agent.id, it) }) }
-        talk.problem?.takeIf { talk.line == it.title }?.let { RunAgain(it.id, act) }
+        // A question comes first; its failed routine shows once it is answered.
+        talk.problem?.takeIf { talk.ask == null }?.let { Failed(talk, it, act) }
     }
 }
 
@@ -126,6 +128,13 @@ private fun Header(talk: Talk, roster: List<AgentSummary>, aside: String?) {
         Text(talk.agent.name, Modifier.weight(1f), style = RenoaType.Label, color = colors.foreground)
         aside?.let { Text(it, style = RenoaType.Eyebrow, color = colors.mutedForeground) }
     }
+}
+
+/** A failed routine under the row's line, named unless the line already names it, with a way to run it again. */
+@Composable
+private fun Failed(talk: Talk, problem: Note, act: TalkActions) {
+    if (talk.line != problem.title) Text(problem.title, style = RenoaType.Caption, color = Renoa.colors.stateFailed)
+    RunAgain(problem.id, act)
 }
 
 @Composable

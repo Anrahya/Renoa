@@ -2,6 +2,7 @@ package live.renoa.app.agents
 
 import java.security.MessageDigest
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -128,6 +129,15 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     /** How many items a page of the feed holds. */
     var feedPage = 50
 
+    /** When set, every older page of the feed ends with it. */
+    var olderPageFailure: Exception? = null
+
+    /** When set, an older page names itself as the next, as a Host with a cursor that never moves back would. */
+    var stuckCursor = false
+
+    /** When set, the next submission waits for this before it is kept. */
+    var submitHeld: CompletableDeferred<Unit>? = null
+
     /** When set, the next read of the feed's first page takes the feed as it stands, then answers only once this completes. */
     var feedHeld: CompletableDeferred<Unit>? = null
 
@@ -252,6 +262,10 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     override suspend fun submitText(taskId: Uuid, text: String): CommandSubmission {
         check(online) { "RCP client is not connected" }
+        submitHeld?.let {
+            submitHeld = null
+            it.await()
+        }
         val command = PendingTextCommand(Uuid.random(), taskId, text)
         state.enqueueCommand(command)
         val accepted = CompletableDeferred<Unit>()
@@ -370,16 +384,19 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             throw it
         }
         if (method == HostMethod.Get) {
-            // A page starts at its position in the feed, which stands in for the Host's sequence.
-            val from = path.removePrefix("/v1/host/feed").removePrefix("/before/").toIntOrNull() ?: 0
+            // As the Host numbers them, the newest item has the highest sequence, and a page holds those before its cursor.
+            val before = path.removePrefix("/v1/host/feed").removePrefix("/before/").toIntOrNull()
+            if (before != null) olderPageFailure?.let { throw it }
+            val from = before?.let { feed.size - it + 1 } ?: 0
             val items = feed.drop(from).take(feedPage)
+            val last = feed.size - (from + items.size - 1)
             val answer =
                 buildJsonObject {
                     put("today", today)
                     put("items", JsonArray(items))
-                    if (from + feedPage < feed.size) put("next_before", from + feedPage)
+                    if (from + feedPage < feed.size) put("next_before", if (stuckCursor && before != null) before else last)
                 }.toString()
-            if (from == 0) {
+            if (before == null) {
                 feedHeld?.let {
                     feedHeld = null
                     it.await()
@@ -1620,7 +1637,7 @@ class RcpAgentRepositoryTest {
         val repo = started()
         assertEquals("Still there?", repo.agents.value.first { it.id == rosterId }.glance.ask?.question)
         assertEquals(listOf("n1", "n2", "n3", "n4"), repo.feed.value.notes.map { it.id })
-        assertEquals(listOf("/v1/host/feed", "/v1/host/feed/before/2", "/v1/host/feed/before/4"), surface.feedCalls.map { it.second })
+        assertEquals(listOf("/v1/host/feed", "/v1/host/feed/before/4", "/v1/host/feed/before/2"), surface.feedCalls.map { it.second })
     }
 
     @Test
@@ -1649,6 +1666,38 @@ class RcpAgentRepositoryTest {
         surface.answers += Answer.Refuse(RcpErrorCode.NotFound)
         assertFailsWith<RepositoryException> { repo.answer(rosterId, "Dal") }
         assertEquals("Dinner?", repo.agents.value.first { it.id == rosterId }.glance.ask?.question)
+    }
+
+    @Test
+    fun anOlderPageThatCannotBeReadOrACursorThatDoesNotMoveEndsTheRead() = runTest {
+        val (kcal, _) = hostAgent()
+        surface.feedPage = 2
+        surface.feed += (1..5).map { item("n$it", "update", kcal, "Note $it.", Uuid.random()) }
+        surface.olderPageFailure = IllegalStateException("dropped")
+        val repo = started()
+        assertEquals(listOf("n1", "n2"), repo.feed.value.notes.map { it.id }, "the newest page still shows")
+
+        surface.olderPageFailure = null
+        surface.stuckCursor = true
+        surface.feedCalls.clear()
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("n1", "n2", "n3", "n4"), repo.feed.value.notes.map { it.id })
+        assertEquals(listOf("/v1/host/feed", "/v1/host/feed/before/4"), surface.feedCalls.map { it.second }, "a page that names itself again is not read again")
+    }
+
+    @Test
+    fun anAnswerNeverSentShowsTheQuestionAgain() = runTest {
+        val (kcal, rosterId) = hostAgent()
+        surface.feed += item("ask", "ask", kcal, "Dinner?", chatTaskId(surface.node, "agent:$kcal"), choices = listOf("Dal"))
+        val repo = started()
+        surface.submitHeld = CompletableDeferred()
+        val answering = backgroundScope.launch { repo.answer(rosterId, "Dal") }
+        runCurrent()
+        assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask, "hidden while it goes")
+        answering.cancel()
+        runCurrent()
+        assertEquals("Dinner?", repo.agents.value.first { it.id == rosterId }.glance.ask?.question, "as when the screen went before it was sent")
     }
 }
 

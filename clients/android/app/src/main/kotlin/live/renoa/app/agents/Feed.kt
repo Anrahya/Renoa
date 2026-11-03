@@ -69,16 +69,23 @@ internal data class FeedPage(val today: String, val items: List<FeedItem>, @Seri
 internal class HostFeed(private val host: HostClient) {
     /**
      * Reads every page: the Host keeps a bounded feed, but an open question or problem it never
-     * prunes can sit past the first page.
+     * prunes can sit past the first page. An older page that cannot be read ends the read with the
+     * pages before it, and a cursor that does not move back ends it too.
      */
     suspend fun read(): FeedPage {
         val first = page(null)
         val items = first.items.toMutableList()
         var before = first.nextBefore
         while (before != null) {
-            val older = page(before)
+            val at: Long = before
+            val older =
+                try {
+                    page(at)
+                } catch (unread: RepositoryException) {
+                    break
+                }
             items += older.items
-            before = older.nextBefore
+            before = older.nextBefore?.takeIf { it < at }
         }
         return FeedPage(first.today, items)
     }

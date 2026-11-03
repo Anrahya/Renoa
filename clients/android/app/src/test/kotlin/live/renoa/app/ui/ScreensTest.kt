@@ -263,10 +263,12 @@ class ScreensTest : ScreenTest() {
     @Test
     fun theMainAgentsFailedRoutineRunsAgainFromItsCard() {
         val failed = Note("brief", "renoa", NoteKind.Problem, "\u201cMorning brief\u201d didn\u2019t finish", "Run it again.", EVENING.toInstant())
-        val repo = FakeAgentRepository(scope, now = { EVENING }, feed = Feed("1 thing needs you.", listOf(failed)))
+        val note = Note("gift", "renoa", NoteKind.Update, "Wants you to know", "The scarf is \u20b91,200 off tonight.", EVENING.toInstant())
+        val repo = FakeAgentRepository(scope, now = { EVENING }, feed = Feed("1 thing needs you.", listOf(note, failed)))
         val model = HomeViewModel(repo)
         show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
         compose.waitForIdle()
+        compose.onNodeWithText("The scarf is \u20b91,200 off tonight.").assertIsDisplayed()
         compose.onNodeWithText("\u201cMorning brief\u201d didn\u2019t finish").assertIsDisplayed()
         compose.onAllNodesWithText("Run again").onFirst().performClick()
         compose.waitForIdle()
