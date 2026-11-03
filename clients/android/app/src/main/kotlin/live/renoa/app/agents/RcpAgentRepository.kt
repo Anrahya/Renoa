@@ -41,10 +41,11 @@ import kotlin.uuid.Uuid
  * [ChatMessage.notSent] until [retry] or [discard]. A message the outbox held when the chat opened
  * shows until it arrives.
  *
- * Making an agent, reading its profile, the routines and which agent is main are Host control,
- * carried by the same connection ([HostAgents], [HostRoutines]). The routines and the main agent come
- * from one read of the Host's observation on every roster check and after a new agent is made, and
- * each Host agent's purpose is read until the Host has answered for it.
+ * Making an agent, reading its profile, the routines, the feed and which agent is main are Host
+ * control, carried by the same connection ([HostAgents], [HostRoutines], [HostFeed]). The routines
+ * and the main agent come from one read of the Host's observation, and the feed from its own read,
+ * on every roster check and when the owner comes back; each Host agent's purpose is read until the
+ * Host has answered for it. An open question in the feed is its agent's [Glance.ask].
  * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
  * follows its chat. Abilities and edits are not on the Host's agent API yet, so those calls are
  * refused as [Problem.NotYet] and nothing is sent.
@@ -101,6 +102,7 @@ class RcpAgentRepository(
     private val host = HostAgents(hostClient)
     private val owner = HostOwner(hostClient)
     private val heldRoutines = HeldRoutines(HostRoutines(hostClient), changed = ::publish)
+    private val heldFeed = HeldFeed(HostFeed(hostClient), changed = ::publish)
 
     /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
     private val following = Mutex()
@@ -116,7 +118,9 @@ class RcpAgentRepository(
 
     override val rosterKnown: StateFlow<Boolean> = shown.known
 
-    override val briefing: StateFlow<Briefing?> = MutableStateFlow<Briefing?>(null).asStateFlow()
+    private val shownFeed = MutableStateFlow(Feed())
+
+    override val feed: StateFlow<Feed> = shownFeed.asStateFlow()
 
     override val routines: StateFlow<List<Routine>> = shown.routines.asStateFlow()
 
@@ -144,6 +148,7 @@ class RcpAgentRepository(
                     }
                     refusals = 0
                     readObservation()
+                    heldFeed.read()
                     readPurposes()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
@@ -156,6 +161,7 @@ class RcpAgentRepository(
                                     unsent.send()
                                     follow(surface.listTargets())
                                     readObservation()
+                                    heldFeed.read()
                                     readPurposes()
                                 }
                             }
@@ -195,7 +201,9 @@ class RcpAgentRepository(
      */
     fun retryNow() {
         val connected = synchronized(lock) { (linkState.value == Link.Connected).also { if (!it) nudges.trySend(Unit) } }
-        if (connected) scope.launch { runCatching { surface.probe() } }
+        if (!connected) return
+        scope.launch { runCatching { surface.probe() } }
+        scope.launch { heldFeed.read() }
     }
 
     /**
@@ -239,16 +247,21 @@ class RcpAgentRepository(
      * from them. It writes under the lock, so an older roster never overwrites a newer one.
      */
     private fun publish() {
+        val asks = heldFeed.asks()
         synchronized(lock) {
             roster.value =
                 rooms.filterValues { it.attached }.map { (id, room) ->
-                    AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = room.journal.state, glance = room.journal.glance)
+                    // A question the agent asked, in its chat or elsewhere, is the owner's to answer first.
+                    val ask = hostAgentId(id)?.let { asks[it.toString()] }?.ask
+                    val state = if (ask != null && room.journal.state.homeRank > AgentState.Wants.homeRank) AgentState.Wants else room.journal.state
+                    AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = state, glance = room.journal.glance.copy(ask = ask))
                 }
             // A Host that names no agent, or one not on this roster, marks no one, so the first stands in.
             val named = main?.id
             shown.show(rooms.keys, roster.value, main?.let { { id: String -> named != null && hostAgentId(id) == named } })
             val rosterId = { agent: String -> rooms.entries.firstOrNull { (_, room) -> room.attached && room.target.target == "$AGENT_TARGET$agent" }?.key }
             heldRoutines.shown(rosterId, here())?.let { shown.routines.value = it }
+            heldFeed.shown(rosterId)?.let { shownFeed.value = it }
         }
     }
 
@@ -377,7 +390,22 @@ class RcpAgentRepository(
         }
     }
 
-    override suspend fun answer(agentId: String, choice: String) = send(agentId, choice)
+    override suspend fun answer(agentId: String, choice: String) {
+        val room = room(agentId)
+        val open = hostAgentId(agentId)?.let { heldFeed.asks()[it.toString()] }
+        if (open == null || open.taskId == room.taskId) {
+            // Asked in this chat: the Host marks it answered when it takes the message.
+            send(agentId, choice)
+            open?.let { heldFeed.deal(it.itemId) }
+            return
+        }
+        send(agentId, answerFromElsewhere(open.ask.question, choice.trim()))
+        heldFeed.answeredElsewhere(open.itemId)
+    }
+
+    override suspend fun dismiss(noteId: String) = heldFeed.dismiss(noteId)
+
+    override suspend fun runAgain(noteId: String) = heldFeed.runAgain(noteId, Uuid.random().toString())
 
     override suspend fun markSeen(agentId: String) {
         val room = room(agentId)
@@ -454,17 +482,8 @@ class RcpAgentRepository(
     private fun agentId(target: TargetSummary) = agentId(target.nodeId, target.target)
 
     private companion object {
-        /** How a node names the target of a Host agent. */
-        const val AGENT_TARGET = "agent:"
         val JOIN_WITHIN = 30.seconds
         val JOIN_EVERY = 1.seconds
-
-        /** The Host's id for the agent behind [agentId], or null when it names no Host agent. */
-        fun hostAgentId(agentId: String): Uuid? {
-            val target = agentAddress(agentId)?.second ?: return null
-            if (!target.startsWith(AGENT_TARGET)) return null
-            return Uuid.parseOrNull(target.removePrefix(AGENT_TARGET))
-        }
 
         fun AgentRecord.profile(agentId: String) = AgentProfile(agentId, name, operational.purpose.orEmpty(), abilities = emptyList())
     }

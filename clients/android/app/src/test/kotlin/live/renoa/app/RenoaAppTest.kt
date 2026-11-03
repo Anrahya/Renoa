@@ -24,7 +24,6 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import android.graphics.drawable.ColorDrawable
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowCompat
-import live.renoa.app.home.OPEN_PAGES
 import live.renoa.app.ui.hasClickLabel
 import live.renoa.app.theme.ThemeName
 import androidx.lifecycle.ViewModelProvider
@@ -146,10 +145,12 @@ class RenoaAppTest : ScreenTest() {
 
     private fun onHome(description: String): SemanticsNodeInteraction = compose.onNodeWithContentDescription(description)
 
-    /** Everyone is in Chats, behind the dock; [description] may need scrolling to. The page stays open after. */
+    /** Everyone is in Chats, a page over Home; [description] may need scrolling to. The page stays open after. */
     private fun inChats(description: String): SemanticsNodeInteraction {
         if (compose.onAllNodesWithContentDescription("Back to Home").fetchSemanticsNodes().isEmpty()) {
-            compose.onNode(hasClickLabel(OPEN_PAGES)).performClick()
+            compose.onNodeWithText("Routines").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Chats").performClick()
             compose.waitForIdle()
         }
         compose.onAllNodes(hasScrollToNodeAction()).filter(hasAnyAncestor(hasScrollToNodeAction())).onFirst().performScrollToNode(hasContentDescription(description))

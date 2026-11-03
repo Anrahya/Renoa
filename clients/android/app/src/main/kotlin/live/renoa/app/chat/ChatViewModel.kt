@@ -122,7 +122,10 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         notice.value = null
     }
 
-    /** Sends the draft. The words leave the composer at once; if they are not kept, they come back. */
+    /**
+     * Sends the draft. The words leave the composer at once; if they are not kept, they come back.
+     * While the agent waits on a question, they are the answer.
+     */
     fun send() {
         val text = draft.value.trim()
         if (text.isEmpty()) return
@@ -131,13 +134,23 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         inFlight.update { it + 1 }
         viewModelScope.launch {
             try {
-                repository.send(agentId, text)
+                if (state.value.ask == null) repository.send(agentId, text) else answerOrSend(text)
             } catch (refused: RepositoryException) {
                 draft.update { if (it.isEmpty()) text else it }
                 notice.value = refused.wordsOr("That did not go through. Try again.")
             } finally {
                 inFlight.update { it - 1 }
             }
+        }
+    }
+
+    /** Answers the open question with [text]; one answered meanwhile, from here or elsewhere, makes it a plain message. */
+    private suspend fun answerOrSend(text: String) {
+        try {
+            repository.answer(agentId, text)
+        } catch (gone: RepositoryException) {
+            if (gone.problem != Problem.Conflict) throw gone
+            repository.send(agentId, text)
         }
     }
 

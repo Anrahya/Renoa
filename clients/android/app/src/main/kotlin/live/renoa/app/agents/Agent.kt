@@ -1,6 +1,7 @@
 package live.renoa.app.agents
 
 import kotlinx.serialization.Serializable
+import java.time.Instant
 
 /**
  * What an agent is doing, as the owner sees it. This is the one place the five states live:
@@ -47,9 +48,9 @@ data class AgentSummary(
     val primary: Boolean = false,
 )
 
-/** A question only the owner can answer, with the answers the agent offers. */
+/** A question only the owner can answer, with the answers the agent offers, and when it was asked, where Renoa said. */
 @Serializable
-data class Ask(val question: String, val choices: List<String>)
+data class Ask(val question: String, val choices: List<String>, @Serializable(with = InstantMillis::class) val at: Instant? = null)
 
 /**
  * What Home shows about an agent at a glance. [line] is the last thing it said, or when it wakes
@@ -65,9 +66,6 @@ data class Glance(
     /** The agent it is working with right now, by id. */
     val with: String? = null,
 )
-
-/** The note at the top of Home, in the voice of the agent who keeps an eye on everything. */
-data class Briefing(val agentId: String, val text: String)
 
 enum class Speaker { Owner, Agent }
 

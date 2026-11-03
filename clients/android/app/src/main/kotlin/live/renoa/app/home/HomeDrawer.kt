@@ -28,7 +28,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,7 +42,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -52,49 +50,12 @@ import live.renoa.app.agents.Routine
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.Renoa
-import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
 import java.time.ZonedDateTime
 
-/** What tapping the dock does, as a screen reader says it. */
-internal const val OPEN_PAGES = "Open chats, routines and what's coming up"
-
-/** The bar at the bottom of Home: who wrote, and what runs next. It opens the pages. */
-@Composable
-internal fun Dock(state: HomeUiState, next: String, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = Renoa.colors
-    val fresh = freshFrom(state.roster)
-    val shape = RoundedCornerShape(RenoaShapes.Card)
-    Row(
-        modifier
-            .fillMaxWidth()
-            .background(colors.card, shape)
-            .border(1.dp, colors.border, shape)
-            // Its words are what a screen reader says; the tap says where it goes.
-            .clickable(role = Role.Button, onClickLabel = OPEN_PAGES, onClick = onOpen)
-            .heightIn(min = 60.dp)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (fresh.isNotEmpty()) {
-            Box(Modifier.width(24.dp + 14.dp * (fresh.size.coerceAtMost(3) - 1))) {
-                fresh.take(3).forEachIndexed { i, agent ->
-                    Badge(agent, state.roster, 24.dp, Modifier.offset(x = 14.dp * i), label = "")
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-        }
-        Column(Modifier.weight(1f)) {
-            Text(dockTitle(fresh), style = RenoaType.Label, color = colors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(next, style = RenoaType.Caption, color = colors.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        PathIcon(Glyphs.OPEN_UP, colors.foreground, size = 18.dp)
-    }
-}
-
-/** The pages the dock opens: Chats, Routines and Upcoming, swiped through or picked from the tabs. */
+/** The pages over Home: Chats, Routines and Upcoming, swiped through or picked from the tabs. */
 @Composable
 internal fun HomeDrawer(
     state: HomeUiState,

@@ -30,7 +30,8 @@ reaches Google. `PushMessages` takes `{"renoa": "changed"}` and `{"renoa": "ring
 anything else, and enqueues `WakeWork`, an expedited WorkManager job. A ring (#86, what an agent
 needs from the owner now) first posts "Renoa needs you" on the "Needs you" channel, which sounds the
 phone's ringtone and names no agent; a later ring replaces it, and opening the app takes it back.
-Reading the feed it rang for comes with Home (#146). Push registers while either channel may show
+Home lists the feed it rang for: the app reads it when it connects and on each roster check, not
+from the wake job. Push registers while either channel may show
 something. Jobs run one after another; one whose wake a later catch-up already covered ends without
 connecting.
 

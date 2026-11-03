@@ -235,11 +235,11 @@ class FakeAgentRepositoryTest {
     }
 
     @Test
-    fun anAnswerThatWasNotOfferedOrHasNoQuestionIsRefusedAndChangesNothing() = runTest {
+    fun aBlankAnswerOrOneWithNoQuestionIsRefusedAndChangesNothing() = runTest {
         val repo = repository()
         val glance = repo.glance("tifa")
         val chat = repo.chat("tifa").messages
-        assertEquals(Problem.Invalid, assertFailsWith<RepositoryException> { repo.answer("tifa", "Pizza") }.problem)
+        assertEquals(Problem.Invalid, assertFailsWith<RepositoryException> { repo.answer("tifa", "  ") }.problem)
         assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.answer("nagisa", "Yes") }.problem)
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.answer("nobody", "Yes") }.problem)
         assertEquals(glance, repo.glance("tifa"))
