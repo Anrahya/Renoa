@@ -373,7 +373,10 @@ async fn dispatch(
         | ServerMessage::StopAccepted { request_id, .. }
         | ServerMessage::HostAnswer { request_id, .. }
         | ServerMessage::PushTokenSet { request_id }
-        | ServerMessage::PushTokenCleared { request_id } => *request_id,
+        | ServerMessage::PushTokenCleared { request_id }
+        | ServerMessage::NoticeKeySet { request_id }
+        | ServerMessage::NoticeList { request_id, .. }
+        | ServerMessage::NoticeAcknowledged { request_id } => *request_id,
         ServerMessage::Enrolled { .. }
         | ServerMessage::DeviceChallenge { .. }
         | ServerMessage::Authenticated { .. }
@@ -383,7 +386,10 @@ async fn dispatch(
         | ServerMessage::HostCall { .. }
         | ServerMessage::Stop { .. }
         | ServerMessage::LiveActivity { .. }
-        | ServerMessage::WakeRequested { .. } => {
+        | ServerMessage::WakeRequested { .. }
+        | ServerMessage::NoticeKeys { .. }
+        | ServerMessage::NoticePut { .. }
+        | ServerMessage::NoticesWithdrawn { .. } => {
             return Err(ClientError::Protocol(
                 "coordinator sent a node-only, session or unrequested message to a surface"
                     .to_owned(),

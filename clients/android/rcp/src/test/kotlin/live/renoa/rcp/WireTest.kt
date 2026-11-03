@@ -34,11 +34,19 @@ class WireTest {
             "enroll", "enrolled", "advertise_targets", "send_agent_message", "execute", "acknowledge_execution",
             "execution_acknowledged", "publish_execution_events", "execution_events_accepted", "stop", "acknowledge_stop",
             "publish_live_activity", "serve_host_control", "host_call", "complete_host_call", "request_wake",
-            "wake_requested",
+            "wake_requested", "list_notice_keys", "notice_keys", "put_notice", "notice_put", "withdraw_notices",
+            "notices_withdrawn",
         )
 
-    /** Surface frames this client does not offer yet: the app has no page that lists or revokes signed-in devices. */
-    private val surfaceFramesNotOffered = setOf("list_devices", "device_list", "revoke_device", "device_revoked")
+    /**
+     * Surface frames this client does not offer yet: the app has no page that lists or revokes signed-in devices, and
+     * it does not hold a setup notice key yet.
+     */
+    private val surfaceFramesNotOffered =
+        setOf(
+            "list_devices", "device_list", "revoke_device", "device_revoked", "set_notice_key", "notice_key_set",
+            "list_notices", "notice_list", "acknowledge_notice", "notice_acknowledged",
+        )
 
     private fun documentFrames(): List<JsonObject> =
         Regex("```json\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL)

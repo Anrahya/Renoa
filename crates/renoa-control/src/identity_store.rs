@@ -187,6 +187,7 @@ pub(crate) fn mark_revoked(
         )
         .map_err(sqlite_error)?;
     crate::push_tokens::forget_device_token(connection, device_id)?;
+    crate::setup_notices::forget_device(connection, device_id)?;
     Ok(changed > 0)
 }
 

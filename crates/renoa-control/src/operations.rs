@@ -150,6 +150,7 @@ pub(crate) enum SurfaceOperation {
         body: Option<String>,
     },
     Push(PushOperation),
+    Notice(crate::setup_notices::NoticeOperation),
 }
 
 /// A device's push-token registration: device state, not a task operation.
@@ -208,5 +209,9 @@ pub(crate) enum NodeOperation {
         request_id: u64,
         wake_id: Uuid,
         urgency: WakeUrgency,
+    },
+    Notice {
+        request_id: u64,
+        operation: crate::setup_notices::NodeNoticeOperation,
     },
 }

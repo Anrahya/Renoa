@@ -115,6 +115,36 @@ pub(crate) fn record(database: &Path, setup: &Setup) -> Result<bool, catalog::Ho
     Ok(same)
 }
 
+/// Removes the setup saved under `operation_id`, if one is.
+fn forget(database: &Path, operation_id: &str) -> Result<(), catalog::HostCatalogError> {
+    let db = catalog::open_verified(database)?;
+    db.execute(
+        "DELETE FROM host_plugin_setups WHERE operation_id=?1",
+        [operation_id],
+    )?;
+    Ok(())
+}
+
+impl super::LocalHost {
+    /// Forgets the setup that tool call `call` of `command` saved in
+    /// `session`, for a link that never reached the person: no one will
+    /// answer it, so nothing waits on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a catalog failure.
+    pub async fn forget_plugin_setup(
+        &self,
+        session: SessionId,
+        command: renoa_kernel::CommandId,
+        call: &str,
+    ) -> Result<(), super::LocalHostError> {
+        let database = self.config.database.clone();
+        let operation_id = crate::mcp::oauth_operation_id(session, Some(command), call);
+        Ok(tokio::task::spawn_blocking(move || forget(&database, &operation_id)).await??)
+    }
+}
+
 fn pending(database: &Path) -> Result<Vec<Setup>, catalog::HostCatalogError> {
     let db = catalog::open_verified(database)?;
     let mut statement = db.prepare(

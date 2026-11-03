@@ -1,6 +1,7 @@
 use renoa_control::{
-    ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, HostMethod,
-    JSON_WS_VERSION, NodeId, PushToken, ServerMessage, StopOutcome, TargetSummary, TaskEvent,
+    ClientMessage, ConnectionTicket, DeviceId, DeviceNoticeKey, DeviceSummary, ErrorCode,
+    HeldNotice, HostMethod, JSON_WS_VERSION, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, NodeId,
+    NoticeKey, PushToken, SealedNotice, ServerMessage, StopOutcome, TargetSummary, TaskEvent,
     TaskEventId, TaskEventKind, TaskId, TaskStatus, TaskSummary, WakeUrgency,
 };
 use renoa_protocol::{
@@ -12,8 +13,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v16_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 16);
+fn json_websocket_v17_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 17);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -26,7 +27,7 @@ fn json_websocket_v16_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 16,
+            "version": 17,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -922,4 +923,128 @@ fn every_documented_version_is_the_current_binding_version() {
     assert!(document.contains(&format!(
         "The current binding version is `{JSON_WS_VERSION}`."
     )));
+}
+
+/// The setup notice frames as `rcp-json-ws-v0.md` documents them.
+#[test]
+fn setup_notice_frames_have_the_documented_shapes() {
+    let notice_id = Uuid::from_u128(0x70);
+    let device_id = DeviceId::from_uuid(Uuid::from_u128(0x80));
+    let frames = [
+        (
+            serde_json::to_value(ClientMessage::SetNoticeKey {
+                request_id: 52,
+                public_key: NoticeKey::new("BHq"),
+            }),
+            json!({"type": "set_notice_key", "request_id": 52, "public_key": "BHq"}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::NoticeList {
+                request_id: 53,
+                notices: vec![HeldNotice {
+                    notice_id,
+                    sealed: "AQS".to_owned(),
+                    expires_at_ms: 1_893_456_000_000,
+                }],
+            }),
+            json!({"type": "notice_list", "request_id": 53, "notices": [{
+                "notice_id": "00000000-0000-0000-0000-000000000070",
+                "sealed": "AQS",
+                "expires_at_ms": 1_893_456_000_000_i64
+            }]}),
+        ),
+        (
+            serde_json::to_value(ClientMessage::AcknowledgeNotice {
+                request_id: 54,
+                notice_id,
+            }),
+            json!({"type": "acknowledge_notice", "request_id": 54,
+                   "notice_id": "00000000-0000-0000-0000-000000000070"}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::NoticeKeys {
+                request_id: 9,
+                keys: vec![DeviceNoticeKey {
+                    device_id,
+                    public_key: NoticeKey::new("BHq"),
+                }],
+            }),
+            json!({"type": "notice_keys", "request_id": 9, "keys": [{
+                "device_id": "00000000-0000-0000-0000-000000000080",
+                "public_key": "BHq"
+            }]}),
+        ),
+        (
+            serde_json::to_value(ClientMessage::PutNotice {
+                request_id: 10,
+                notice: SealedNotice {
+                    notice_id,
+                    device_id,
+                    sealed: "AQS".to_owned(),
+                    expires_at_ms: 1_893_456_000_000,
+                },
+            }),
+            json!({"type": "put_notice", "request_id": 10, "notice": {
+                "notice_id": "00000000-0000-0000-0000-000000000070",
+                "device_id": "00000000-0000-0000-0000-000000000080",
+                "sealed": "AQS",
+                "expires_at_ms": 1_893_456_000_000_i64
+            }}),
+        ),
+        (
+            serde_json::to_value(ClientMessage::WithdrawNotices {
+                request_id: 11,
+                notice_ids: vec![notice_id],
+            }),
+            json!({"type": "withdraw_notices", "request_id": 11,
+                   "notice_ids": ["00000000-0000-0000-0000-000000000070"]}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::NoticePut { request_id: 10 }),
+            json!({"type": "notice_put", "request_id": 10}),
+        ),
+    ];
+    for (frame, documented) in frames {
+        assert_eq!(frame.expect("serialize notice frame"), documented);
+    }
+}
+
+/// The fullest notice list stays within the binding's 1 MiB message, and one
+/// more of the largest notices would not.
+#[test]
+fn the_fullest_notice_list_fits_one_message() {
+    const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+    const MAX_INTEGER: u64 = 9_007_199_254_740_991;
+    let held = HeldNotice {
+        notice_id: Uuid::from_u128(u128::MAX),
+        sealed: "A".repeat(MAX_SEALED_NOTICE_BYTES),
+        expires_at_ms: i64::try_from(MAX_INTEGER).expect("interoperable integer"),
+    };
+    let frame = |count: usize| {
+        serde_json::to_vec(&ServerMessage::NoticeList {
+            request_id: MAX_INTEGER,
+            notices: vec![held.clone(); count],
+        })
+        .expect("serialize notice list")
+        .len()
+    };
+    assert!(frame(MAX_LISTED_NOTICES) <= MAX_MESSAGE_BYTES);
+    assert!(frame(MAX_LISTED_NOTICES + 1) > MAX_MESSAGE_BYTES);
+}
+
+/// The binding document states the notice bounds the code enforces.
+#[test]
+fn the_binding_document_states_the_notice_bounds() {
+    let document = include_str!("../../../docs/rcp-json-ws-v0.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let sealed = format!(
+        "`sealed` must be 1 to {},{:03} bytes",
+        MAX_SEALED_NOTICE_BYTES / 1000,
+        MAX_SEALED_NOTICE_BYTES % 1000
+    );
+    let listed = format!("at most {MAX_LISTED_NOTICES} of them");
+    assert!(document.contains(&sealed), "missing: {sealed}");
+    assert!(document.contains(&listed), "missing: {listed}");
 }

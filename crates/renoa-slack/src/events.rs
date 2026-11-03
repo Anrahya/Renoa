@@ -1,10 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 use renoa_agent::{AgentEvent, AgentEventSink, AssistantDelta, BoxFuture};
+use renoa_local::SetupLink;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    SlackError,
     actions::{Action, Actions},
     api::SlackApi,
     ingress::Topic,
@@ -122,13 +124,23 @@ impl AgentEventSink for Progress {
                 self.status(format!("Using {}…", call.name));
             }
             AgentEvent::ToolExecutionUpdate { call, update } => {
-                if call.name == "plugin_manage"
-                    && let Some(action) = Action::parse(&update)
-                    && let Some(actions) = &self.actions
+                if let Some(actions) = &self.actions
+                    && let Some(link) = SetupLink::from_update(&call.name, &update)
                 {
                     self.status("Account setup needs your action. Check the separate setup message in this conversation.".to_owned());
+                    let action = link
+                        .map_err(|error| {
+                            SlackError::Invalid(format!(
+                                "{error}, so no link was sent. Ask Arcee to restart the connection setup."
+                            ))
+                        })
+                        .and_then(|link| Action::new(&link));
                     return Box::pin(async move {
-                        if let Err(error) = actions.deliver(&call.id, action).await {
+                        let delivered = match action {
+                            Ok(action) => actions.deliver(&call.id, action).await,
+                            Err(error) => Err(error),
+                        };
+                        if let Err(error) = delivered {
                             let message = format!("{error}");
                             self.status(message.clone());
                             *self.action_error.lock().await = Some(message);

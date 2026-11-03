@@ -33,7 +33,15 @@ impl ClientMessage {
             | Self::SetPushToken { request_id, .. }
             | Self::ClearPushToken { request_id }
             | Self::SendAgentMessage { request_id, .. }
-            | Self::RequestWake { request_id, .. } => interoperable(*request_id),
+            | Self::RequestWake { request_id, .. }
+            | Self::SetNoticeKey { request_id, .. }
+            | Self::ListNotices { request_id }
+            | Self::AcknowledgeNotice { request_id, .. }
+            | Self::ListNoticeKeys { request_id }
+            | Self::WithdrawNotices { request_id, .. } => interoperable(*request_id),
+            Self::PutNotice { request_id, notice } => {
+                interoperable(*request_id) && timestamp(notice.expires_at_ms)
+            }
             Self::Attach {
                 request_id,
                 after_sequence,
@@ -74,7 +82,19 @@ impl ServerMessage {
             | Self::HostAnswer { request_id, .. }
             | Self::PushTokenSet { request_id }
             | Self::PushTokenCleared { request_id }
-            | Self::WakeRequested { request_id } => interoperable(*request_id),
+            | Self::WakeRequested { request_id }
+            | Self::NoticeKeySet { request_id }
+            | Self::NoticeAcknowledged { request_id }
+            | Self::NoticeKeys { request_id, .. }
+            | Self::NoticePut { request_id }
+            | Self::NoticesWithdrawn { request_id } => interoperable(*request_id),
+            Self::NoticeList {
+                request_id,
+                notices,
+            } => {
+                interoperable(*request_id)
+                    && notices.iter().all(|notice| timestamp(notice.expires_at_ms))
+            }
             Self::DeviceList {
                 request_id,
                 devices,
@@ -122,7 +142,9 @@ const fn interoperable(value: u64) -> bool {
 }
 
 fn execution_event_has_interoperable_numbers(event: &ExecutionEvent) -> bool {
-    interoperable(event.sequence)
-        && (-MAX_INTEROPERABLE_SIGNED_INTEGER..=MAX_INTEROPERABLE_SIGNED_INTEGER)
-            .contains(&event.recorded_at_ms)
+    interoperable(event.sequence) && timestamp(event.recorded_at_ms)
+}
+
+fn timestamp(value: i64) -> bool {
+    (-MAX_INTEROPERABLE_SIGNED_INTEGER..=MAX_INTEROPERABLE_SIGNED_INTEGER).contains(&value)
 }

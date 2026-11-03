@@ -3,12 +3,17 @@ use renoa_agent::{AgentEvent, AgentEventSink as _, ContentBlock, ToolCall, ToolO
 use super::*;
 use crate::{actions::Actions, events::Progress};
 
+/// The credential page's key, which no store may hold.
+const SECRET_KEY: &str = "5ec4e7b05ec4e7b05ec4e7b05ec4e7b05ec4e7b05ec4e7b05ec4e7b05ec4e7b0";
+
 fn setup_event(stage: &str) -> AgentEvent {
     let progress = if stage == "credentials" {
         renoa_local::PluginProgress::CredentialRequired(renoa_local::PluginCredentialRequired {
             credential: "fixture".to_owned(),
             credential_kind: renoa_local::PluginCredentialKind::OAuthClient,
-            setup_url: "https://renoa.example/setup#secret-browser-key".to_owned(),
+            setup_url: format!(
+                "https://renoa.example/setup#v=1&key={SECRET_KEY}&token={SECRET_KEY}&issuer=https%3A%2F%2Fprovider.example"
+            ),
             expires_at_ms: i64::MAX,
             message: "Open secure setup".to_owned(),
         })
@@ -133,7 +138,7 @@ async fn setup_steps_are_separate_posts_deduplicated_and_survive_final_delivery(
     let surface = fixture.directory.path().join("state/surfaces/slack");
     for file in ["slack.sqlite3", "slack.sqlite3-wal"] {
         let bytes = std::fs::read(surface.join(file)).expect("database file");
-        for secret in ["secret-browser-key", "private-oauth-state"] {
+        for secret in [SECRET_KEY, "private-oauth-state"] {
             assert!(
                 !bytes
                     .windows(secret.len())
@@ -193,4 +198,24 @@ async fn setup_actions_in_channels_cancel_with_a_private_setup_instruction() {
     stop.cancel();
     task.await.expect("progress joined");
     fixture.stop().await;
+}
+
+#[test]
+fn a_link_that_does_not_say_when_it_expires_is_not_sent() {
+    let progress = json!({
+        "status": "authorization_required",
+        "connection": "fixture",
+        "authorization_url": "https://provider.example/authorize?state=one",
+        "message": "Open sign-in"
+    });
+    let update = ToolOutput {
+        content: vec![ContentBlock::text(progress.to_string())],
+        details: None,
+        is_error: false,
+        closing: None,
+    };
+    let link = renoa_local::SetupLink::from_update("plugin_manage", &update)
+        .expect("setup progress")
+        .expect("a valid link");
+    assert!(crate::actions::Action::new(&link).is_err());
 }

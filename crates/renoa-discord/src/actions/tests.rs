@@ -2,7 +2,7 @@ use super::*;
 use axum::{
     Json, Router, extract::State, http::StatusCode, response::IntoResponse as _, routing::post,
 };
-use renoa_agent::ToolCall;
+use renoa_agent::{ContentBlock, ToolOutput};
 use serde_json::{Value, json};
 use std::sync::{
     Mutex,
@@ -86,7 +86,6 @@ impl Fixture {
             operator: Snowflake::parse("20").unwrap(),
             command: COMMAND.into(),
             cancellation: CancellationToken::new(),
-            error: tokio::sync::Mutex::new(None),
         };
         Self {
             files,
@@ -96,29 +95,26 @@ impl Fixture {
             task,
         }
     }
-    async fn emit(&self, tool: &str, call: &str, event: Value) {
-        self.progress
-            .emit(AgentEvent::ToolExecutionUpdate {
-                call: ToolCall {
-                    id: call.into(),
-                    name: tool.into(),
-                    arguments: json!({}),
-                    thought_signature: None,
-                    namespace: None,
-                },
-                update: ToolOutput {
-                    content: vec![ContentBlock::text(event.to_string())],
-                    details: None,
-                    is_error: false,
-                    closing: None,
-                },
-            })
-            .await;
+    async fn deliver(&self, call: &str, event: Value) -> Result<(), DiscordError> {
+        self.progress.deliver(call, &link(&event)).await
     }
     async fn close(self) {
         self.stop.cancel();
         self.task.await.unwrap();
     }
+}
+
+/// The link as the node passes it on, after the shared check.
+fn link(event: &Value) -> SetupLink {
+    let update = ToolOutput {
+        content: vec![ContentBlock::text(event.to_string())],
+        details: None,
+        is_error: false,
+        closing: None,
+    };
+    SetupLink::from_update("plugin_manage", &update)
+        .expect("setup progress")
+        .expect("a valid link")
 }
 
 fn authorization(expiry: i64) -> Value {
@@ -137,8 +133,8 @@ async fn private_actions_are_deduplicated_and_sensitive_urls_are_not_stored() {
         ("token", credential("api_token")),
         ("client", credential("oauth_client")),
     ] {
-        f.emit("plugin_manage", call, event.clone()).await;
-        f.emit("plugin_manage", call, event).await;
+        f.deliver(call, event.clone()).await.unwrap();
+        f.deliver(call, event).await.unwrap();
     }
     let bodies = f.bodies.lock().unwrap().clone();
     assert_eq!(bodies.len(), 3);
@@ -149,8 +145,7 @@ async fn private_actions_are_deduplicated_and_sensitive_urls_are_not_stored() {
     }
     assert!(bodies[2]["content"].as_str().unwrap().contains("issuer="));
     f.progress.store.recover().unwrap();
-    f.emit("plugin_manage", "token", credential("api_token"))
-        .await;
+    f.deliver("token", credential("api_token")).await.unwrap();
     assert_eq!(f.bodies.lock().unwrap().len(), 3);
     let database = f
         .files
@@ -178,12 +173,9 @@ async fn private_actions_are_deduplicated_and_sensitive_urls_are_not_stored() {
 }
 
 #[tokio::test]
-async fn unknown_delivery_cancels_setup_and_is_not_repeated_after_recovery() {
+async fn an_unknown_delivery_fails_and_is_not_repeated_after_recovery() {
     let f = Fixture::new(vec![500]).await;
-    f.emit("plugin_manage", "oauth", authorization(i64::MAX))
-        .await;
-    assert!(f.progress.cancellation.is_cancelled());
-    assert!(f.progress.error.lock().await.is_some());
+    assert!(f.deliver("oauth", authorization(i64::MAX)).await.is_err());
     f.progress.store.recover().unwrap();
     let fresh = SetupDelivery {
         api: f.progress.api.clone(),
@@ -191,23 +183,10 @@ async fn unknown_delivery_cancels_setup_and_is_not_repeated_after_recovery() {
         operator: f.progress.operator.clone(),
         command: COMMAND.into(),
         cancellation: CancellationToken::new(),
-        error: tokio::sync::Mutex::new(None),
     };
     assert!(
         fresh
-            .deliver(
-                "oauth",
-                Action::parse(
-                    "plugin_manage",
-                    &ToolOutput {
-                        content: vec![ContentBlock::text(authorization(i64::MAX).to_string())],
-                        details: None,
-                        is_error: false,
-                        closing: None
-                    }
-                )
-                .unwrap()
-            )
+            .deliver("oauth", &link(&authorization(i64::MAX)))
             .await
             .is_err()
     );
@@ -216,23 +195,15 @@ async fn unknown_delivery_cancels_setup_and_is_not_repeated_after_recovery() {
 }
 
 #[tokio::test]
-async fn expiry_cancellation_and_untrusted_producers_do_not_send() {
+async fn an_expired_link_fails_and_a_cancelled_command_sends_nothing() {
     let f = Fixture::new(vec![]).await;
-    f.emit("read_file", "fake", credential("api_token")).await;
+    let expired = f.deliver("expired", authorization(1)).await;
+    assert!(expired.unwrap_err().to_string().contains("expired"));
     assert!(f.bodies.lock().unwrap().is_empty());
-    f.emit("plugin_manage", "expired", authorization(1)).await;
-    assert!(
-        f.progress
-            .error
-            .lock()
-            .await
-            .as_ref()
-            .unwrap()
-            .contains("expired")
-    );
-    assert!(f.bodies.lock().unwrap().is_empty());
-    f.emit("plugin_manage", "cancelled", credential("api_token"))
-        .await;
+    f.progress.cancellation.cancel();
+    f.deliver("cancelled", credential("api_token"))
+        .await
+        .unwrap();
     assert!(f.bodies.lock().unwrap().is_empty());
     f.close().await;
 }
@@ -240,64 +211,9 @@ async fn expiry_cancellation_and_untrusted_producers_do_not_send() {
 #[tokio::test]
 async fn definite_rate_limit_retries_the_same_action_once() {
     let f = Fixture::new(vec![429, 200]).await;
-    f.emit("plugin_manage", "oauth", authorization(i64::MAX))
-        .await;
+    f.deliver("oauth", authorization(i64::MAX)).await.unwrap();
     assert_eq!(f.bodies.lock().unwrap().len(), 2);
-    assert!(f.progress.error.lock().await.is_none());
-    f.emit("plugin_manage", "oauth", authorization(i64::MAX))
-        .await;
+    f.deliver("oauth", authorization(i64::MAX)).await.unwrap();
     assert_eq!(f.bodies.lock().unwrap().len(), 2);
-    f.close().await;
-}
-
-#[test]
-fn invalid_links_are_rejected_before_delivery() {
-    for url in [
-        "http://provider.example/authorize",
-        "https://user:pass@provider.example/authorize",
-        "https://provider.example/authorize#secret",
-        "https://provider.example/authorize\n",
-    ] {
-        let mut event = authorization(i64::MAX);
-        event["authorization_url"] = url.into();
-        assert!(
-            Action::parse(
-                "plugin_manage",
-                &ToolOutput {
-                    content: vec![ContentBlock::text(event.to_string())],
-                    details: None,
-                    is_error: false,
-                    closing: None
-                }
-            )
-            .is_none()
-        );
-    }
-    for fragment in [
-        "v=1&key=bad&token=bad",
-        "v=1&key=bad&token=bad&v=1",
-        "v=1&unexpected=value",
-    ] {
-        assert!(!valid_fragment(fragment, PluginCredentialKind::ApiToken));
-    }
-}
-
-#[tokio::test]
-async fn a_malformed_host_setup_link_stops_the_wait_with_an_actionable_error() {
-    let f = Fixture::new(vec![200]).await;
-    let mut event = authorization(i64::MAX);
-    event["authorization_url"] = "http://provider.example/authorize".into();
-    f.emit("plugin_manage", "bad-link", event).await;
-    assert!(f.bodies.lock().unwrap().is_empty());
-    assert!(f.progress.cancellation.is_cancelled());
-    assert!(
-        f.progress
-            .error
-            .lock()
-            .await
-            .as_ref()
-            .unwrap()
-            .contains("invalid setup link")
-    );
     f.close().await;
 }

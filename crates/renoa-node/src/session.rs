@@ -280,29 +280,13 @@ async fn handle_server_message(
             command_id,
             through_execution_sequence,
         } => {
-            let publication = publications.get_mut(&command_id).ok_or_else(|| {
-                NodeError::Protocol(format!(
-                    "received event acknowledgement for unknown command {command_id}"
-                ))
-            })?;
-            let expected = publication.event_in_flight.ok_or_else(|| {
-                NodeError::Protocol(format!(
-                    "received unsolicited event acknowledgement for command {command_id}"
-                ))
-            })?;
-            if through_execution_sequence != expected {
-                return Err(NodeError::Protocol(format!(
-                    "event acknowledgement for command {command_id} ended at sequence \
-                     {through_execution_sequence}, expected {expected}"
-                )));
-            }
-            runtime
-                .state
-                .advance_publication(command_id, through_execution_sequence)
-                .await?;
-            publication.record.published_through = Some(through_execution_sequence);
-            publication.event_in_flight = None;
-            refresh_publications(runtime, publications).await?;
+            events_accepted(
+                runtime,
+                publications,
+                command_id,
+                through_execution_sequence,
+            )
+            .await?;
             send_pending(socket, &runtime.state, live, publications).await?;
         }
         ServerMessage::Stop {
@@ -329,8 +313,13 @@ async fn handle_server_message(
             request_id,
             targets,
         } => link.answer(request_id, Answer::Targets(targets))?,
+        ServerMessage::NoticeKeys { request_id, keys } => {
+            link.answer(request_id, Answer::NoticeKeys(keys))?;
+        }
         ServerMessage::CommandAccepted { request_id, .. }
-        | ServerMessage::WakeRequested { request_id } => {
+        | ServerMessage::WakeRequested { request_id }
+        | ServerMessage::NoticePut { request_id }
+        | ServerMessage::NoticesWithdrawn { request_id } => {
             link.answer(request_id, Answer::Accepted)?;
         }
         // An error that names a request is that request's refusal; any other
@@ -356,6 +345,9 @@ async fn handle_server_message(
         | ServerMessage::HostAnswer { .. }
         | ServerMessage::PushTokenSet { .. }
         | ServerMessage::PushTokenCleared { .. }
+        | ServerMessage::NoticeKeySet { .. }
+        | ServerMessage::NoticeList { .. }
+        | ServerMessage::NoticeAcknowledged { .. }
         | ServerMessage::LiveActivity { .. }
         | ServerMessage::TaskEvent { .. } => {
             return Err(NodeError::Protocol(
@@ -363,6 +355,40 @@ async fn handle_server_message(
             ));
         }
     }
+    Ok(())
+}
+
+/// Advances `command_id`'s publication through the events the coordinator
+/// accepted, which must be exactly the batch in flight.
+async fn events_accepted(
+    runtime: &Arc<NodeRuntime>,
+    publications: &mut HashMap<CommandId, Publication>,
+    command_id: CommandId,
+    through_execution_sequence: u64,
+) -> Result<(), NodeError> {
+    let publication = publications.get_mut(&command_id).ok_or_else(|| {
+        NodeError::Protocol(format!(
+            "received event acknowledgement for unknown command {command_id}"
+        ))
+    })?;
+    let expected = publication.event_in_flight.ok_or_else(|| {
+        NodeError::Protocol(format!(
+            "received unsolicited event acknowledgement for command {command_id}"
+        ))
+    })?;
+    if through_execution_sequence != expected {
+        return Err(NodeError::Protocol(format!(
+            "event acknowledgement for command {command_id} ended at sequence \
+             {through_execution_sequence}, expected {expected}"
+        )));
+    }
+    runtime
+        .state
+        .advance_publication(command_id, through_execution_sequence)
+        .await?;
+    publication.record.published_through = Some(through_execution_sequence);
+    publication.event_in_flight = None;
+    refresh_publications(runtime, publications).await?;
     Ok(())
 }
 

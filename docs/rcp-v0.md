@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 16 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 17 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -497,6 +497,31 @@ generation on, counted per token as every send is, and the ring stays owed
 until every device had one, so a wake that follows never replaces it. `ring` and `changed` have their own collapse
 keys, so an offline phone holds one of each.
 
+### Setup notices
+
+A plugin setup link must reach the person privately and never enter the task
+journal: a credential-setup link carries the key that keeps the relayed
+credential unreadable to the coordinator. The executing node checks each link
+once, with the shared `SetupLink` check in `renoa-local`, and routes it by the
+command's surface. A command from Discord gets it by Discord DM through the
+Host's Discord connection. A command from any other surface gets it as a notice
+for each of the owner's signed-in apps: the node lists the owner's devices
+that proved their key and registered a notice key, seals the link to each device's P-256 key (ECDH with a fresh key,
+HKDF-SHA256, AES-256-GCM, with the notice and device IDs bound as associated
+data) and puts the ciphertext. The coordinator stores ciphertext only, keyed by
+device, and wakes the owner with the constant `changed`. It deletes a notice
+when its device acknowledges it, when the device is revoked, and, once it has
+expired, at the device's next list. A device the coordinator refuses or that
+cannot be sealed to is skipped; the link fails only when no device holds it.
+There is no fallback from one route to the other: a link with no route, or one
+that fails the check, stops the turn with the reason. When a turn stops, for
+each `plugin_manage` call whose link did not reach the person the node
+withdraws its notices, once, and the Host forgets the setup the call saved; a
+notice it could not withdraw expires with its link, and a replay already
+waiting on a forgotten setup ends at its deadline. A notice ID is derived from
+the command, the tool call, the setup stage, the link and the device, so a
+retried put converges on the stored notice.
+
 ## Executor link
 
 ### Availability and dispatch
@@ -894,7 +919,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 16 JSON/WebSocket shape with binding-level conformance
+- a documented version 17 JSON/WebSocket shape with binding-level conformance
   assertions;
 - a command-scoped stop that is durable before it is answered, delivered to the
   node until acknowledged across reconnects and coordinator restart, accepted

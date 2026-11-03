@@ -28,7 +28,12 @@ authority. From a device that proved its key an owner may call their Host with
 `CallHost`, which the coordinator relays to the node that serves it; a Host
 call is not a task and enters no journal. A device may register its push token
 with `SetPushToken` and remove it with `ClearPushToken`; registration is
-device state, not a task operation, and grants no task authority. An operator may also create a task directly. The node's owner can
+device state, not a task operation, and grants no task authority. A device
+registers the key its setup notices are sealed to with `SetNoticeKey`, lists
+them with `ListNotices` and removes one with `AcknowledgeNotice`; a node lists
+its owner's keyed devices with `ListNoticeKeys`, stores a sealed notice with
+`PutNotice` and removes its own with `WithdrawNotices`. Notices are device
+state outside the journal. An operator may also create a task directly. The node's owner can
 open a task remotely with `OpenTask`, but only against a target its online node
 currently advertises, and delete one of its tasks with `DeleteTask`.
 
@@ -37,10 +42,12 @@ After authentication, the session identity fixes the peer's role:
 - a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`,
   `StopCommand`, and `DeleteTask`; a surface connected by a browser ticket or a
   proven device key may also `ListDevices` and `RevokeDevice`, one connected
-  by a proven device key may `CallHost`, and one connected by any device
-  credential may `SetPushToken` and `ClearPushToken`;
+  by a proven device key may `CallHost`, `SetNoticeKey`, `ListNotices`, and
+  `AcknowledgeNotice`, and one connected by any device credential may
+  `SetPushToken` and `ClearPushToken`;
 - a node may `AdvertiseTargets`, `ListTargets`, `SendAgentMessage`,
-  `RequestWake`, `AcknowledgeExecution`, `PublishExecutionEvents`,
+  `RequestWake`, `ListNoticeKeys`, `PutNotice`, `WithdrawNotices`,
+  `AcknowledgeExecution`, `PublishExecutionEvents`,
   `AcknowledgeStop`, `PublishLiveActivity`, `ServeHostControl`, and
   `CompleteHostCall`;
 - the coordinator may deliver `Execute`, `Stop`, and `HostCall` to a node, and
@@ -362,6 +369,21 @@ record of what happened.
 token, if it holds one, and returns `PushTokenCleared`. The same connections as
 for `SetPushToken` may clear.
 
+### `SetNoticeKey`, `ListNotices`, `AcknowledgeNotice`
+
+A plugin setup link for the owner's app is delivered as a notice sealed to one
+device, so the coordinator never holds a readable link: a credential-setup link
+carries the key that keeps a relayed credential unreadable to it.
+`SetNoticeKey` takes an uncompressed SEC1 P-256 public key and stores it as the
+device's notice key, replacing any it held; a key that is not such a point is
+`InvalidMessage`. `ListNotices` deletes the expired notices and returns the
+device's others, soonest to expire first and at most as many as one binding
+message holds. `AcknowledgeNotice` deletes one of the
+device's notices, and succeeds whether or not the device held it. Only a
+connection whose device proved its key may use them; a browser ticket or a
+bearer-only device connection is refused with `InvalidRole`. Revoking a device
+deletes its key and notices in the same transaction.
+
 ## Executor delivery and node operations
 
 ### `Execute`
@@ -476,6 +498,21 @@ owes the owner a wake, as a journal record that wakes does. `now` makes that
 wake ring: the ring stays owed through any wake that follows until every device
 of the owner was sent one. It returns `WakeRequested` once the transaction
 commits.
+
+### `ListNoticeKeys`, `PutNotice`, `WithdrawNotices`
+
+`ListNoticeKeys` returns the node owner's active devices that hold a notice
+key. `PutNotice` takes a notice ID, a device ID, the sealed notice and its
+expiry. The coordinator refuses an empty or oversized notice, one that is not
+base64url, or an expired one with `InvalidMessage`, before any write. In one
+transaction it then checks the notice ID: held for the same device and node, it
+returns `NoticePut` and stores nothing; held for another, it is a `Conflict`.
+Otherwise the device must be an active device of the node's owner with a notice
+key, or the put is refused with `InvalidRole`; the coordinator stores the
+notice and owes the owner a `changed` wake, and returns `NoticePut` once the
+transaction commits. `WithdrawNotices` deletes the listed notices this node put
+and ignores any other. `ListNoticeKeys` and `PutNotice` refuse a node without
+an owner with `InvalidRole`.
 
 ### `AcknowledgeExecution`
 
@@ -601,6 +638,12 @@ task sequence. A timestamp never determines order.
 | `PushTokenSet` | The device's token, and its removal from another device of the principal that held it |
 | `PushTokenCleared` | Removal of the device's token |
 | `WakeRequested` | The wake identity and the wake it owes the node's owner, or the same identity received within the last day |
+| `NoticeKeySet` | The device's notice key |
+| `NoticeList` | Removal of the device's expired notices; the returned notices are the device's own |
+| `NoticeAcknowledged` | Removal of the device's notice, if it held it |
+| `NoticeKeys` | No mutation; the returned keys belong to the node owner's active devices |
+| `NoticePut` | The notice and the wake it owes the owner, or the same notice put before |
+| `NoticesWithdrawn` | Removal of the listed notices this node put |
 
 None of these outcomes means that an external side effect happened exactly
 once.
@@ -641,6 +684,10 @@ correlation value is a binding concern.
 | `RevokeDevice` | device ID | Returns `DeviceRevoked` whether or not this call revoked it |
 | `SetPushToken` | device plus token | Returns `PushTokenSet` without another row |
 | `ClearPushToken` | device | Returns `PushTokenCleared` whether or not a token was held |
+| `SetNoticeKey` | device plus key | Returns `NoticeKeySet` without another row |
+| `AcknowledgeNotice` | device plus notice ID | Returns `NoticeAcknowledged` whether or not the notice was held |
+| `PutNotice` | notice ID plus device and node | Returns `NoticePut` without another notice or wake |
+| `WithdrawNotices` | node plus notice IDs | Returns `NoticesWithdrawn` whether or not the notices were held |
 | `CallHost` | The Host operation's own `operation_id`, for a change | The Host answers a repeated change from its receipt; the coordinator never retries |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |

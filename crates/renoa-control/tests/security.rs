@@ -134,7 +134,7 @@ mod security_behaviors {
                 |row| row.get::<_, i64>(0),
             )
             .expect("inspect stop request table and command state view");
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         assert_eq!(stop_objects, 2);
         assert!(pending_table_exists);
         assert!(stream_table_exists);

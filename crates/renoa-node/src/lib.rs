@@ -13,11 +13,11 @@ mod live;
 mod live_text;
 mod node_log;
 mod node_store;
-mod operator;
 mod origin;
 mod owner_wakes;
 mod projection;
 mod session;
+mod setup;
 mod stop;
 
 pub use bridge::{NodeError, RenoaNode};

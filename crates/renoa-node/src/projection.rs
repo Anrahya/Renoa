@@ -1,6 +1,4 @@
-use renoa_agent::{
-    AgentEvent, AgentEventSink, AssistantContent, BoxFuture, ContentBlock, Message, ToolResult,
-};
+use renoa_agent::{AssistantContent, ContentBlock, Message, ToolResult};
 use renoa_local::LocalTurnOutcome;
 use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
 
@@ -89,12 +87,4 @@ fn terminal_event(outcome: LocalTurnOutcome) -> ExecutionEventKind {
         },
     };
     ExecutionEventKind::ExecutionTerminated { terminal }
-}
-
-pub(crate) struct NoopEvents;
-
-impl AgentEventSink for NoopEvents {
-    fn emit(&self, _event: AgentEvent) -> BoxFuture<'_, ()> {
-        Box::pin(std::future::ready(()))
-    }
 }

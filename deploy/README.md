@@ -221,10 +221,12 @@ message's identity is stored, a command that calls no tool only shows typing,
 and after a restart progress resumes from the next task record in the same
 message, or the message is deleted if its command finished meanwhile.
 
-OAuth and credential links go to the application owner's DM. The executing node
-sends them directly with the Host's Discord connection, never through the RCP
-task journal, because a credential-setup link carries the key that keeps the
-relayed credential unreadable to the coordinator. Enable DMs before requesting
+OAuth and credential links for a command from Discord go to the application
+owner's DM. The executing node sends them directly with the Host's Discord
+connection, never through the RCP task journal, because a credential-setup link
+carries the key that keeps the relayed credential unreadable to the
+coordinator. A command from the app gets its links sealed to the owner's
+signed-in apps instead; Discord is not a fallback. Enable DMs before requesting
 plugin authorization. Unknown delivery is not automatically repeated; check the
 DM before restarting setup.
 
@@ -860,6 +862,15 @@ node's `request_wake`, so the coordinator, node, Pi node, Android app and every
 surface must again be upgraded together; a peer still on version 15 is refused
 at authentication.
 
+Coordinator schema 16 adds `notice_keys` and `setup_notices`, which hold only
+device keys and sealed ciphertext; opening a schema 15 database creates them,
+and a pre-upgrade binary cannot open schema 16. RCP binding version 17 adds the
+setup notice frames, so the coordinator, node, Pi node, Android app and every
+surface must again be upgraded together; a peer still on version 16 is refused
+at authentication. A setup link for a command from any surface but Discord
+reaches only an app that registered a notice key, so until the Android app does,
+such a link stops its turn: release the app with this version.
+
 Without a service account push is off: apps still register tokens, owed wakes
 are dropped, and the coordinator logs `push_disabled` once. Turning it on later
 needs no app change. Provisioning is manual and outside the repository:
@@ -1003,7 +1014,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 16; the recorded version-8 proof establishes only the deployment
+binding version 17; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

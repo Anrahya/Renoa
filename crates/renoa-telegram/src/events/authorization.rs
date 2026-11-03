@@ -1,23 +1,26 @@
-use renoa_agent::{ContentBlock, ToolOutput};
-use renoa_local::{PluginCredentialKind, PluginProgress};
-use url::Url;
+use renoa_agent::ToolOutput;
+use renoa_local::{SetupLink, SetupLinkKind};
 
 use crate::actions::ActionLink;
 
-const MAX_AUTHORIZATION_URL_BYTES: usize = 16 * 1024;
+/// A `plugin_manage` update's setup link, once it passed the shared check.
+/// An unsafe link is never shown.
+fn setup_link(tool: &str, update: &ToolOutput) -> Option<SetupLink> {
+    SetupLink::from_update(tool, update)?.ok()
+}
 
 pub(super) fn extension_progress(tool: &str, update: &ToolOutput) -> Option<String> {
-    if let Some(parsed) = parse_authorization(tool, update) {
-        return Some(format!(
+    let link = setup_link(tool, update)?;
+    Some(match link.kind {
+        SetupLinkKind::Authorization => format!(
             "Authorization needed for {}. Open the message I sent.",
-            parsed.label
-        ));
-    }
-    let parsed = parse_credential(tool, update)?;
-    Some(format!(
-        "A credential is needed for {}. Open the secure message I sent.",
-        parsed.credential
-    ))
+            link.label
+        ),
+        SetupLinkKind::Credentials(_) => format!(
+            "A credential is needed for {}. Open the secure message I sent.",
+            link.label
+        ),
+    })
 }
 
 pub(super) fn extension_action(
@@ -25,190 +28,26 @@ pub(super) fn extension_action(
     tool: &str,
     update: &ToolOutput,
 ) -> Option<ActionLink> {
-    if let Some(parsed) = parse_authorization(tool, update) {
-        return Some(ActionLink::new(
+    let link = setup_link(tool, update)?;
+    Some(match link.kind {
+        SetupLinkKind::Authorization => ActionLink::new(
             format!("{action_prefix}/authorization"),
-            format!("Authorize {}", parsed.label),
+            format!("Authorize {}", link.label),
             "Open the provider page to finish connecting this MCP.".to_owned(),
             "Authorize".to_owned(),
-            parsed.authorization_url,
-            parsed.expires_at_ms,
-        ));
-    }
-    let parsed = parse_credential(tool, update)?;
-    Some(ActionLink::sensitive(
-        format!("{action_prefix}/credential"),
-        format!("Connect {}", parsed.credential),
-        "Enter it on Renoa's encrypted setup page. Do not paste the secret into chat.".to_owned(),
-        "Open secure setup".to_owned(),
-        parsed.setup_url,
-        Some(parsed.expires_at_ms),
-    ))
-}
-
-struct ParsedAuthorization {
-    label: String,
-    authorization_url: Url,
-    expires_at_ms: Option<i64>,
-}
-
-struct ParsedCredential {
-    credential: String,
-    setup_url: Url,
-    expires_at_ms: i64,
-}
-
-fn parse_authorization(tool: &str, update: &ToolOutput) -> Option<ParsedAuthorization> {
-    let text = extension_text(tool, update)?;
-    let PluginProgress::AuthorizationRequired(parsed) = serde_json::from_str(text).ok()? else {
-        return None;
-    };
-    if parsed.connection.is_empty()
-        || parsed.connection.len() > 128
-        || parsed
-            .connection
-            .bytes()
-            .any(|byte| byte.is_ascii_control())
-        || parsed.message.is_empty()
-        || parsed.expires_at_ms.is_some_and(|expiry| expiry <= 0)
-    {
-        return None;
-    }
-    let url = Url::parse(&parsed.authorization_url).ok()?;
-    if parsed.authorization_url.len() > MAX_AUTHORIZATION_URL_BYTES
-        || url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-    {
-        return None;
-    }
-    let label = parsed
-        .display_name
-        .as_deref()
-        .filter(|name| valid_display_name(name))
-        .map(humanize_name)
-        .unwrap_or(parsed.connection);
-    Some(ParsedAuthorization {
-        label,
-        authorization_url: url,
-        expires_at_ms: parsed.expires_at_ms,
+            link.url,
+            link.expires_at_ms,
+        ),
+        SetupLinkKind::Credentials(_) => ActionLink::sensitive(
+            format!("{action_prefix}/credential"),
+            format!("Connect {}", link.label),
+            "Enter it on Renoa's encrypted setup page. Do not paste the secret into chat."
+                .to_owned(),
+            "Open secure setup".to_owned(),
+            link.url,
+            link.expires_at_ms,
+        ),
     })
-}
-
-fn valid_display_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
-        })
-}
-
-fn humanize_name(name: &str) -> String {
-    name.split(['.', '-'])
-        .filter(|part| !part.is_empty())
-        .map(|part| match part {
-            "api" => "API".to_owned(),
-            "mcp" => "MCP".to_owned(),
-            "oauth" => "OAuth".to_owned(),
-            _ => {
-                let mut characters = part.chars();
-                characters.next().map_or_else(String::new, |first| {
-                    first.to_uppercase().chain(characters).collect()
-                })
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn parse_credential(tool: &str, update: &ToolOutput) -> Option<ParsedCredential> {
-    let text = extension_text(tool, update)?;
-    let PluginProgress::CredentialRequired(parsed) = serde_json::from_str(text).ok()? else {
-        return None;
-    };
-    if parsed.credential.is_empty()
-        || parsed.credential.len() > 128
-        || parsed
-            .credential
-            .bytes()
-            .any(|byte| byte.is_ascii_control())
-        || parsed.message.is_empty()
-        || parsed.expires_at_ms <= 0
-    {
-        return None;
-    }
-    let url = Url::parse(&parsed.setup_url).ok()?;
-    if parsed.setup_url.len() > MAX_AUTHORIZATION_URL_BYTES
-        || url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || !url
-            .fragment()
-            .is_some_and(|fragment| valid_setup_fragment(fragment, parsed.credential_kind))
-    {
-        return None;
-    }
-    Some(ParsedCredential {
-        credential: parsed.credential,
-        setup_url: url,
-        expires_at_ms: parsed.expires_at_ms,
-    })
-}
-
-fn extension_text<'a>(tool: &str, update: &'a ToolOutput) -> Option<&'a str> {
-    if tool != "plugin_manage" || update.is_error || update.content.len() != 1 {
-        return None;
-    }
-    let ContentBlock::Text { text } = &update.content[0] else {
-        return None;
-    };
-    Some(text)
-}
-
-fn valid_setup_fragment(fragment: &str, kind: PluginCredentialKind) -> bool {
-    let mut version = None;
-    let mut key = None;
-    let mut token = None;
-    let mut issuer = None;
-    for (name, value) in url::form_urlencoded::parse(fragment.as_bytes()) {
-        let slot = match name.as_ref() {
-            "v" => &mut version,
-            "key" => &mut key,
-            "token" => &mut token,
-            "issuer" => &mut issuer,
-            _ => return false,
-        };
-        if slot.replace(value.into_owned()).is_some() {
-            return false;
-        }
-    }
-    version.as_deref() == Some("1")
-        && key.as_deref().is_some_and(valid_secret_hex)
-        && token.as_deref().is_some_and(valid_secret_hex)
-        && match kind {
-            PluginCredentialKind::ApiToken => issuer.is_none(),
-            PluginCredentialKind::OAuthClient => issuer.as_deref().is_some_and(|issuer| {
-                Url::parse(issuer).is_ok_and(|issuer| {
-                    issuer.scheme() == "https"
-                        && issuer.host_str().is_some()
-                        && issuer.username().is_empty()
-                        && issuer.password().is_none()
-                        && issuer.query().is_none()
-                        && issuer.fragment().is_none()
-                })
-            }),
-        }
-}
-
-fn valid_secret_hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 #[cfg(test)]

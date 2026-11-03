@@ -47,6 +47,7 @@ mod push_supervisor;
 mod push_tokens;
 mod push_wake;
 mod session_registry;
+mod setup_notices;
 mod store;
 mod surface_operations;
 mod task_deletion;
@@ -70,3 +71,7 @@ pub use operations::{
 };
 pub use push_tokens::PushToken;
 pub use push_wake::WakeUrgency;
+pub use setup_notices::{
+    DeviceNoticeKey, HeldNotice, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, NoticeKey,
+    SealedNotice,
+};
