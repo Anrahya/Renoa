@@ -22,7 +22,7 @@ pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v5";
 /// The seed general purpose agents can use.
 pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 /// The seed for the everyday helpers people make in the app.
-pub(crate) const APP_PRESET_ID: &str = "renoa.app.v3";
+pub(crate) const APP_PRESET_ID: &str = "renoa.app.v4";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
@@ -32,6 +32,12 @@ const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
 
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
+
+// An everyday helper's one long chat compacts at 450,000 tokens, down to its
+// summary and the newest messages within 40,000. A model whose dispatch limit
+// is lower compacts at that limit (see `runtime::compaction_settings`).
+const APP_COMPACTION_TRIGGER: u64 = 450_000;
+const APP_COMPACTION_TARGET: u64 = 40_000;
 
 const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::ReadFile,
@@ -195,11 +201,14 @@ fn seeds() -> [AgentPreset; 4] {
         },
         AgentPreset {
             id: preset_id(APP_PRESET_ID),
-            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, and no native file or shell tools.",
+            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, no native file or shell tools, and its chat compacted at 450,000 tokens.",
             instructions: APP_INSTRUCTIONS,
             behavior: AgentBehavior {
                 workspace_instructions: WorkspaceInstructions::Off,
-                automatic_compaction: None,
+                automatic_compaction: Some(AutomaticCompaction {
+                    trigger_input_tokens: non_zero(APP_COMPACTION_TRIGGER),
+                    target_input_tokens: non_zero(APP_COMPACTION_TARGET),
+                }),
             },
             documents: PresetDocuments {
                 user: true,
@@ -258,7 +267,7 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "c4a4c66b6ab84ac904e6ba8cc9eed1fc481fc96beb2105f1dbc47f7698c17b41",
+            "2332ab3bdf9c1e45ef0ac66e571d8bc9b82773859b3ef3b3f34335d95ce1f2c4",
         ),
         (
             ARCEE_PRESET_ID,

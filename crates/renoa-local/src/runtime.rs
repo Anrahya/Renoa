@@ -125,13 +125,6 @@ pub enum LocalRuntimeError {
     ContextReserveOverflow,
     #[error("model context is smaller than its output reserve")]
     ContextWindowTooSmall,
-    #[error(
-        "automatic compaction trigger ({automatic_compaction_input_tokens}) exceeds the model dispatch limit ({dispatch_limit_tokens})"
-    )]
-    AutomaticCompactionAboveDispatchLimit {
-        automatic_compaction_input_tokens: u64,
-        dispatch_limit_tokens: u64,
-    },
     #[error("post-compaction target is zero")]
     ZeroCompactionTarget,
     #[error("checkpoint budget is zero")]
@@ -418,29 +411,25 @@ fn compaction_settings(
         .checked_sub(reserved)
         .and_then(NonZeroU64::new)
         .ok_or(LocalRuntimeError::ContextWindowTooSmall)?;
-    let automatic_compaction = match (automatic_compaction, working_input_limit) {
-        (Some(policy), Some(_)) => {
+    // An agent's policy is written without knowing its model, so a trigger past
+    // this model's dispatch limit compacts at the limit instead, and the target
+    // stays below the trigger.
+    let automatic_compaction = automatic_compaction
+        .map(|policy| {
             let trigger = policy.trigger_input_tokens.min(dispatch);
             let target = trigger
                 .get()
                 .checked_mul(3)
                 .and_then(|value| NonZeroU64::new(value / 5))
                 .ok_or(LocalRuntimeError::ZeroCompactionTarget)?;
-            Some(AutomaticCompaction {
+            Ok::<_, LocalRuntimeError>(AutomaticCompaction {
                 trigger_input_tokens: trigger,
                 target_input_tokens: policy.target_input_tokens.min(target),
             })
-        }
-        (policy, None) | (policy @ None, Some(_)) => policy,
-    };
+        })
+        .transpose()?;
     let automatic_compaction_input_tokens =
         automatic_compaction.map_or(dispatch, |policy| policy.trigger_input_tokens);
-    if automatic_compaction_input_tokens > dispatch {
-        return Err(LocalRuntimeError::AutomaticCompactionAboveDispatchLimit {
-            automatic_compaction_input_tokens: automatic_compaction_input_tokens.get(),
-            dispatch_limit_tokens: dispatch.get(),
-        });
-    }
     let target = match automatic_compaction {
         Some(policy) => policy.target_input_tokens,
         None => dispatch
