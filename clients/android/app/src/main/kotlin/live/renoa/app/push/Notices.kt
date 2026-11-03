@@ -108,10 +108,15 @@ internal object Notices {
         return manager.getNotificationChannelCompat(channel)?.importance != NotificationManagerCompat.IMPORTANCE_NONE
     }
 
-    /** Whether the app may post at all: Android 13 and later need the owner's permission. */
-    private fun permitted(context: Context): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    /** Posts [notification] under [tag], if the app may post at all: Android 13 and later need the owner's permission. */
+    private fun show(context: Context, tag: String, notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        NotificationManagerCompat.from(context).notify(tag, NOTICE, notification)
+    }
 
     /**
      * Rings for what needs the owner now, with [RING_TITLE] and nothing from the agent; a later ring
@@ -120,7 +125,7 @@ internal object Notices {
      */
     fun ring(context: Context) {
         createChannels(context)
-        if (!allowed(context, NEEDS_YOU) || !permitted(context)) return
+        if (!allowed(context, NEEDS_YOU)) return
         val tap = Intent(context, NoticeTap::class.java).setData(Uri.fromParts("renoa", RING, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val open = PendingIntent.getActivity(context, 0, tap, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification =
@@ -133,14 +138,14 @@ internal object Notices {
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build()
-        NotificationManagerCompat.from(context).notify(RING, NOTICE, notification)
+        show(context, RING, notification)
     }
 
     /** Takes back the ring, as when the owner opens the app. */
     fun cancelRing(context: Context) = NotificationManagerCompat.from(context).cancel(RING, NOTICE)
 
     fun post(context: Context, notice: Notice) {
-        if (!allowed(context) || !permitted(context)) return
+        if (!allowed(context)) return
         val text =
             when (val news = notice.news) {
                 is News.Replied -> plainText(news.text)
@@ -165,7 +170,7 @@ internal object Notices {
                 .setOnlyAlertOnce(shownAlready)
                 .addExtras(Bundle().apply { putLong(SEQUENCE, notice.news.sequence) })
                 .build()
-        NotificationManagerCompat.from(context).notify(tag, NOTICE, notification)
+        show(context, tag, notification)
     }
 
     /** Takes back the notice from [taskId], as when its chat comes on screen. */
