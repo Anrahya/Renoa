@@ -315,7 +315,7 @@ class ScreensTest : ScreenTest() {
         home()
         openPages()
         val page = compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM")
-        page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 40f, durationMillis = 600) }
+        page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 200f, durationMillis = 800) }
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Back to Home").assertIsDisplayed()
 
