@@ -283,6 +283,7 @@ fn error_result(call: &ToolCall, message: &str) -> Message {
             content: vec![ContentBlock::text(message)],
             details: None,
             is_error: true,
+            closing: None,
         },
     }
 }

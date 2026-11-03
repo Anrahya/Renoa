@@ -84,6 +84,7 @@ async fn invoke(
         content: result.content,
         details: result.details,
         is_error: false,
+        closing: None,
     })
 }
 fn value(output: &ToolOutput) -> Value {
@@ -123,7 +124,13 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             .iter()
             .map(AgentToolBinding::tool_name)
             .collect::<Vec<_>>(),
-        ["plugin_search", "plugin_manage", "tool_execute"]
+        [
+            "plugin_search",
+            "plugin_manage",
+            "tool_execute",
+            "ask_owner",
+            "notify_owner"
+        ]
     );
     let browse = value(
         &invoke(&bindings, "plugin_search", "browse", json!({"query":"*"}))
@@ -220,7 +227,8 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         )
         .unwrap()
         .len(),
-        3
+        5,
+        "the three plugin tools and the two resident owner tools"
     );
     assert!(
         invoke(

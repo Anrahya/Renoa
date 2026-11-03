@@ -163,6 +163,7 @@ impl Tool for Bash {
                     "stderr_truncated": stderr.truncated()
                 })),
                 is_error: false,
+                closing: None,
             })
         })
     }

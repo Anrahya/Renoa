@@ -171,6 +171,7 @@ impl Tool for GitTool {
                 content: vec![ContentBlock::text(output.to_string())],
                 details: None,
                 is_error: false,
+                closing: None,
             })
         })
     }

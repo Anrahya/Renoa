@@ -319,6 +319,7 @@ impl Tool for RecordingTool {
             content: vec![ContentBlock::text("done")],
             details: None,
             is_error: false,
+            closing: None,
         })))
     }
 }

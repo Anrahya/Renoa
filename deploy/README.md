@@ -350,7 +350,7 @@ The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and
 `POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
-This release requires Host schema 45. A schema 28–44 catalog upgrades in place
+This release requires Host schema 48. A schema 28–47 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
@@ -360,8 +360,10 @@ moves automations to cron schedules, bounds automation run history, and moves
 each agent's turn timing onto the `renoa.time` plugin, marks the Host's main
 agent, admits the `renoa.memory` plugin, on by default for every agent, and
 adds the tables for plugin-owned triggers, `renoa.memory`'s job receipts and
-memory session generations, and its note pass's conversations and passes; it
-refuses to upgrade while a daily or interval automation remains. The first
+memory session generations, and its note pass's conversations and passes,
+adds the owner's feed and `renoa.memory`'s reminders, admits the
+`renoa.owner` plugin and gives feed items an urgency; it refuses to upgrade
+while a daily or interval automation remains. The first
 scheduler pass then creates `renoa.memory`'s nightly run: 11:00 (Mnem's pass day start) in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
 notebook and writing their `MIND.md`. It runs in the main agent's memory

@@ -70,7 +70,7 @@ pub(super) fn answer(
         LocalTurnOutcome::Cancelled => {
             Err((Receipt::Unanswered, "the job was cancelled".to_owned()))
         }
-        LocalTurnOutcome::WaitingForInput => {
+        LocalTurnOutcome::WaitingForInput { .. } => {
             Err((Receipt::Unanswered, "the job waited for input".to_owned()))
         }
         LocalTurnOutcome::Compacted { .. } => {

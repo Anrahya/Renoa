@@ -6,10 +6,11 @@
 //! agents and plugin authors and hold whatever a name may. The agent's name
 //! is not stored: it is read when listing, so a rename shows.
 
+use renoa_kernel::{AgentId, CommandId, SessionId};
 use rusqlite::{Connection, OptionalExtension as _, params};
 use uuid::Uuid;
 
-use super::item::{BODY_CHARS, FeedAction, FeedKind, TITLE_CHARS, fit};
+use super::item::{BODY_CHARS, FeedAction, FeedKind, TITLE_CHARS, Urgency, fit};
 use crate::{
     host::automations::RunLanding,
     plugins::host::{HostPluginId, triggers::PLUGIN_OWNED},
@@ -92,6 +93,12 @@ pub(in crate::host) fn run_ended(
             "It started too late to be worth running. You can run it now.",
         ),
     };
+    let urgency = match kind {
+        FeedKind::Problem => Urgency::Soon,
+        FeedKind::Result | FeedKind::Ask | FeedKind::Update | FeedKind::Ability => {
+            Urgency::Whenever
+        }
+    };
     insert(
         tx,
         &NewItem {
@@ -102,6 +109,8 @@ pub(in crate::host) fn run_ended(
             body,
             action,
             subject,
+            urgency,
+            choices: None,
         },
         Some(now_ms),
     )
@@ -159,8 +168,102 @@ pub(crate) fn ability_turned_on(
             body: "It added this to its own abilities. You can turn it off.",
             action: FeedAction::TurnOff,
             subject,
+            urgency: Urgency::Whenever,
+            choices: None,
         },
         None,
+    )
+}
+
+/// What an agent's `ask_owner` or `notify_owner` call writes, by the call
+/// that made it.
+pub(crate) struct ForOwner<'a> {
+    pub(crate) agent: AgentId,
+    /// The Host session the call was made in, which the item's action works on.
+    pub(crate) session: SessionId,
+    pub(crate) command: Option<CommandId>,
+    pub(crate) call: &'a str,
+    pub(crate) text: &'a str,
+    pub(crate) urgency: Urgency,
+}
+
+impl ForOwner<'_> {
+    fn source(&self) -> String {
+        let command = self
+            .command
+            .map_or_else(|| "-".to_owned(), |command| command.to_string());
+        format!("{}:{command}:{}", self.session, self.call)
+    }
+}
+
+/// Reports that an agent asks the owner `asked.text`, offering `choices`.
+/// A replay of the same call writes nothing more.
+pub(crate) fn owner_asked(
+    tx: &Connection,
+    asked: &ForOwner<'_>,
+    choices: Option<&[String]>,
+) -> rusqlite::Result<()> {
+    let choices = choices
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    insert(
+        tx,
+        &NewItem {
+            source: &asked.source(),
+            kind: FeedKind::Ask,
+            agent: &asked.agent.to_string(),
+            title: "Needs your answer",
+            body: asked.text,
+            action: FeedAction::Reply,
+            subject: &asked.session.to_string(),
+            urgency: asked.urgency,
+            choices: choices.as_deref(),
+        },
+        None,
+    )
+}
+
+/// Reports that an agent tells the owner `told.text`. A replay of the same
+/// call writes nothing more.
+pub(crate) fn owner_told(tx: &Connection, told: &ForOwner<'_>) -> rusqlite::Result<()> {
+    insert(
+        tx,
+        &NewItem {
+            source: &told.source(),
+            kind: FeedKind::Update,
+            agent: &told.agent.to_string(),
+            title: "Wants you to know",
+            body: told.text,
+            action: FeedAction::Open,
+            subject: &told.session.to_string(),
+            urgency: told.urgency,
+            choices: None,
+        },
+        None,
+    )
+}
+
+/// Marks done, at `said_at_ms`, the open asks made in `session` before it,
+/// when `command` is a message there that no automation sent: the owner's
+/// next message answers them, from whichever surface. Returns how many it
+/// marked.
+pub(crate) fn asks_answered(
+    tx: &Connection,
+    session: SessionId,
+    command: CommandId,
+    said_at_ms: i64,
+) -> rusqlite::Result<usize> {
+    tx.execute(
+        "UPDATE host_feed_items SET done_at_ms = ?4
+         WHERE kind = ?1 AND subject_id = ?2 AND done_at_ms IS NULL AND created_at_ms < ?4
+           AND NOT EXISTS(SELECT 1 FROM host_automation_runs WHERE id = ?3)",
+        params![
+            FeedKind::Ask.as_str(),
+            session.to_string(),
+            command.to_string(),
+            said_at_ms
+        ],
     )
 }
 
@@ -191,6 +294,9 @@ struct NewItem<'a> {
     body: &'a str,
     action: FeedAction,
     subject: &'a str,
+    urgency: Urgency,
+    /// An ask's choices, as a JSON list.
+    choices: Option<&'a str>,
 }
 
 /// Inserts `item` once under the identity its kind and source derive. A
@@ -203,8 +309,9 @@ fn insert(tx: &Connection, item: &NewItem<'_>, at_ms: Option<i64>) -> rusqlite::
         item.source
     ));
     tx.execute(
-        "INSERT INTO host_feed_items(id, kind, agent_id, title, body, action, subject_id, created_at_ms)
-         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+        "INSERT INTO host_feed_items(id, kind, agent_id, title, body, action, subject_id,
+                                     urgency, choices, created_at_ms)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?10,
                 coalesce(?8, CAST((julianday('now') - 2440587.5) * 86400000.0 AS INTEGER))
          WHERE NOT EXISTS (SELECT 1 FROM host_feed_items WHERE id = ?1)",
         params![
@@ -216,6 +323,8 @@ fn insert(tx: &Connection, item: &NewItem<'_>, at_ms: Option<i64>) -> rusqlite::
             item.action.as_str(),
             item.subject,
             at_ms,
+            item.urgency.as_str(),
+            item.choices,
         ],
     )?;
     Ok(())

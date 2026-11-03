@@ -66,6 +66,7 @@ async fn an_authorization_update_crosses_the_durable_store_and_permanent_message
         )],
         details: None,
         is_error: false,
+        closing: None,
     };
 
     events

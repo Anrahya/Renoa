@@ -216,7 +216,8 @@ fn contribution(
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Time => Ok(None),
+        | HostPluginId::Time
+        | HostPluginId::Owner => Ok(None),
     }
 }
 
@@ -232,7 +233,8 @@ const fn budget(plugin: HostPluginId) -> usize {
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Time => 0,
+        | HostPluginId::Time
+        | HostPluginId::Owner => 0,
     }
 }
 

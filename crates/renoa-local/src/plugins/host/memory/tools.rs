@@ -177,6 +177,7 @@ impl Tool for MemoryTool {
                 content: vec![ContentBlock::text(text)],
                 details: noted.map(|id| json!({"kind": NOTE_DETAIL_KIND, "id": id})),
                 is_error: false,
+                closing: None,
             })
         })
     }

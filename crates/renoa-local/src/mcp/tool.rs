@@ -160,6 +160,7 @@ impl Tool for ExecuteTool {
                         result.details.as_ref(),
                     )),
                     is_error: result.is_error,
+                    closing: None,
                 }),
                 Err(error) => map_failure(&reference, &selected, error),
             }

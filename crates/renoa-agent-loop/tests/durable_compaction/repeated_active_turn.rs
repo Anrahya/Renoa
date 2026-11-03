@@ -114,6 +114,7 @@ impl Tool for CountingTool {
             content: vec![ContentBlock::text(format!("tool result {ordinal}"))],
             details: None,
             is_error: false,
+            closing: None,
         })))
     }
 }

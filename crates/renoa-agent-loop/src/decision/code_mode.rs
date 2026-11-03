@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use renoa_agent::{Message, ToolCall, ToolResult};
 use renoa_kernel::{
     CancellationInput, CancellationTransition, EffectBatchFacts, EffectFact, EffectOutcome,
-    EffectRecovery, EffectRequest, LoopDecision, LoopError, OperationId, SettledEffect,
+    EffectRecovery, EffectRequest, LoopDecision, LoopError, LoopInput, OperationId, SettledEffect,
     SettledEffectBatch, UnknownEffectAbandonment, UnknownEffectInput,
 };
 
@@ -203,13 +203,15 @@ impl AgentLoop {
         run: CodeRun,
         snapshot: String,
         calls: &CodeCallBatch,
-        effect_batch: Option<SettledEffectBatch>,
+        input: LoopInput,
     ) -> Result<LoopDecision, LoopError> {
-        let batch = effect_batch
+        let batch = input
+            .effect_batch
             .ok_or_else(|| LoopError::new("Code Mode MCP checkpoint has no settled batch"))?;
         let effects = self.validate_settled_code_batch(&run, calls, &batch)?;
         let mut results = BTreeMap::new();
         let mut result_bytes = 0_usize;
+        let (mut closings, mut seen) = (Vec::new(), BTreeMap::new());
         for call in calls.ordered() {
             let identity = run.call_id(call.call_id);
             let effect = effects
@@ -233,6 +235,11 @@ impl AgentLoop {
                     "Code Mode MCP result identity differs from its request",
                 ));
             }
+            closings.extend(result.closing.clone());
+            seen.insert(
+                call.call_id.to_string(),
+                (result.content.clone(), result.is_error),
+            );
             let python_value = python_result(&result);
             let encoded_bytes = serde_json::to_vec(&python_value)
                 .map_err(|error| {
@@ -248,6 +255,9 @@ impl AgentLoop {
                 return Self::append_tool_result(model_turns, pending, result);
             }
             results.insert(call.call_id.to_string(), python_value);
+        }
+        if !closings.is_empty() {
+            return super::closing::stop_code_run(&pending, &seen, closings, &input.events);
         }
         let request = CodeStepRequest {
             run_id: run.run_id.clone(),

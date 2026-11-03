@@ -1,17 +1,14 @@
 use std::time::Duration;
 
-use renoa_agent::{AssistantContent, ContentBlock, Message, TokenUsage};
-use renoa_agent_loop::{
-    AgentCommand, COMPACTION_RESULT_EVENT_KIND, CONTEXT_CHECKPOINT_EVENT_KIND, CompactionResult,
-    MESSAGE_EVENT_KIND,
-};
+use renoa_agent::{ContentBlock, Message, TokenUsage};
+use renoa_agent_loop::{AgentCommand, COMPACTION_RESULT_EVENT_KIND, MESSAGE_EVENT_KIND};
 use renoa_kernel::{
     CancellationId, Command, CommandId, DriveResult, EventCursor, KernelError, OperationId,
     OperationOutcome, OperationSnapshot, Runtime,
 };
 use tokio_util::sync::CancellationToken;
 
-use super::{LocalSession, LocalSessionError, LocalTurnOutcome};
+use super::{LocalSession, LocalSessionError, LocalTurnOutcome, outcome::decode_compaction_result};
 
 impl LocalSession {
     /// Returns a settled durable prompt result without resolving a runtime.
@@ -353,87 +350,6 @@ impl LocalSession {
         }
         Ok(admitted.outcome.clone())
     }
-
-    fn project_outcome(
-        &self,
-        operation_id: OperationId,
-        outcome: OperationOutcome,
-    ) -> Result<LocalTurnOutcome, LocalSessionError> {
-        match outcome {
-            OperationOutcome::Completed => self.completed_outcome(operation_id),
-            OperationOutcome::Cancelled => Ok(LocalTurnOutcome::Cancelled),
-            OperationOutcome::Failed { reason } => Ok(LocalTurnOutcome::Failed { reason }),
-            OperationOutcome::WaitingForInput => Ok(LocalTurnOutcome::WaitingForInput),
-            _ => Err(LocalSessionError::UnsupportedOperationOutcome),
-        }
-    }
-
-    fn completed_outcome(
-        &self,
-        operation_id: OperationId,
-    ) -> Result<LocalTurnOutcome, LocalSessionError> {
-        let page = self
-            .kernel
-            .events_after(self.session_id, EventCursor::START)?;
-        let operation_events = page
-            .events
-            .iter()
-            .filter(|event| event.operation_id == operation_id)
-            .collect::<Vec<_>>();
-        let compaction_results = operation_events
-            .iter()
-            .filter(|event| event.kind == COMPACTION_RESULT_EVENT_KIND)
-            .collect::<Vec<_>>();
-        if compaction_results.len() > 1 {
-            return Err(LocalSessionError::DuplicateCompactionResult(operation_id));
-        }
-        if let Some(event) = compaction_results.first() {
-            if operation_events
-                .iter()
-                .any(|event| event.kind == MESSAGE_EVENT_KIND)
-            {
-                return Err(LocalSessionError::MixedCompletedResult(operation_id));
-            }
-            let result = decode_compaction_result(operation_id, event.payload.clone())?;
-            return Ok(LocalTurnOutcome::Compacted {
-                estimated_input_tokens: result.estimated_input_tokens(),
-                summarized: operation_events
-                    .iter()
-                    .any(|event| event.kind == CONTEXT_CHECKPOINT_EVENT_KIND),
-            });
-        }
-        let event = operation_events
-            .iter()
-            .rev()
-            .find(|event| event.kind == MESSAGE_EVENT_KIND)
-            .ok_or(LocalSessionError::MessageMissing(operation_id))?;
-        let message =
-            serde_json::from_value::<Message>(event.payload.clone()).map_err(|source| {
-                LocalSessionError::MessageInvalid {
-                    operation_id,
-                    source,
-                }
-            })?;
-        let Message::Assistant {
-            content,
-            stop_reason,
-            ..
-        } = message
-        else {
-            return Err(LocalSessionError::NonAssistantMessage(operation_id));
-        };
-        let output = content
-            .into_iter()
-            .filter_map(|block| match block {
-                AssistantContent::Text { text, .. } => Some(text),
-                AssistantContent::Reasoning { .. } | AssistantContent::ToolCall { .. } => None,
-            })
-            .collect();
-        Ok(LocalTurnOutcome::Completed {
-            output,
-            stop_reason,
-        })
-    }
 }
 
 fn encode_command(command: AgentCommand) -> Result<serde_json::Value, LocalSessionError> {
@@ -454,16 +370,6 @@ fn command_conflict(operation: &OperationSnapshot) -> LocalSessionError {
         command_id: operation.command_id,
         operation_id: operation.operation_id,
     }
-}
-
-fn decode_compaction_result(
-    operation_id: OperationId,
-    payload: serde_json::Value,
-) -> Result<CompactionResult, LocalSessionError> {
-    serde_json::from_value(payload).map_err(|source| LocalSessionError::CompactionResultInvalid {
-        operation_id,
-        source,
-    })
 }
 
 fn context_tokens(usage: TokenUsage) -> Option<u64> {

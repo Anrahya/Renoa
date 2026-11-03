@@ -24,6 +24,7 @@ async fn emit_content(trace: &super::TraceRun, secret: &str) {
         content: vec![ContentBlock::text(secret)],
         details: Some(json!({ "details": secret })),
         is_error: false,
+        closing: None,
     };
     for event in [
         AgentEvent::ModelRequestStart {
@@ -73,6 +74,7 @@ async fn emit_content(trace: &super::TraceRun, secret: &str) {
                 content: vec![ContentBlock::text(secret)],
                 details: Some(json!({ "details": secret })),
                 is_error: false,
+                closing: None,
             },
         },
     ] {
@@ -157,6 +159,7 @@ async fn a_failed_tool_call_keeps_the_start_of_its_error() {
                 content: vec![ContentBlock::text(error.clone())],
                 details: None,
                 is_error: true,
+                closing: None,
             },
         })
         .await;

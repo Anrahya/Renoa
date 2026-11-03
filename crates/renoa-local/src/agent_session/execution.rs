@@ -409,6 +409,10 @@ impl AgentSession {
             observation,
             speaker,
         } = prompt;
+        // A new message from a person the Host knows answers the open asks
+        // before it once its turn settles. A guest, another agent or an
+        // unidentified sender answers nothing.
+        let mut answers = None;
         let (prompt, skipped) = match self.kernel.prompt_admission(command_id, &content)? {
             PromptAdmission::Admitted(command) => (command, Vec::new()),
             PromptAdmission::New {
@@ -417,6 +421,9 @@ impl AgentSession {
                 let database = self.host.database.clone();
                 let agent = self.agent;
                 let observed_at = observation.unix_milliseconds();
+                if speaker.principal().is_some() {
+                    answers = Some(observed_at);
+                }
                 // Reading plugin state is blocking catalog I/O.
                 let (entries, skipped) = tokio::task::spawn_blocking(move || {
                     message_context::admit(
@@ -440,6 +447,31 @@ impl AgentSession {
             .await?;
         // Recorded once the message is admitted.
         record_skipped(trace, MESSAGE_CONTEXT_TRACE, command_id, &skipped).await;
+        if let Some(said_at) = answers {
+            self.answer_asks(command_id, said_at).await;
+        }
         Ok(outcome)
+    }
+
+    /// Marks done the open asks made in this session before `said_at`. A
+    /// failure is reported and left: the next message closes them.
+    async fn answer_asks(&self, command_id: CommandId, said_at: i64) {
+        let database = self.host.database.clone();
+        let session = renoa_kernel::SessionId::from_uuid(self.id);
+        let answered = tokio::task::spawn_blocking(move || {
+            crate::host::feed::answer_asks(&database, session, command_id, said_at)
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|answered| answered);
+        if let Err(error) = answered {
+            renoa_telemetry::event(
+                "renoa.host",
+                "warn",
+                "owner_asks_unanswered",
+                &serde_json::json!({ "command_id": command_id, "error": error }),
+            );
+        }
     }
 }

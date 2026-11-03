@@ -167,6 +167,41 @@ async fn a_run_whose_conversation_has_no_task_lands_in_its_own_task_and_the_feed
     .expect("fallback automation test timed out");
 }
 
+/// A run that asks the owner ends on the question, which is its output, and
+/// the ask waits in the feed beside the run's result.
+#[tokio::test]
+async fn a_run_that_asks_the_owner_records_the_question_as_its_output() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let automation = create(&host, fixture.agent_id, "Ask about the digest.").await;
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        assert_eq!(
+            result_of(&host, fixture.agent_id, run).await,
+            "Send the digest now?\n- Yes\n- No"
+        );
+        let session = fixture.session_for(TaskId::from_uuid(automation.id));
+        assert_eq!(
+            feed(&host).await,
+            [
+                (FeedKind::Result, run.to_string()),
+                (FeedKind::Ask, session.to_string())
+            ]
+        );
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("asking automation test timed out");
+}
+
 /// The owner's feed, newest first: each item's kind and subject.
 async fn feed(host: &LocalHost) -> Vec<(FeedKind, String)> {
     HostFeed::open(host.home().path())

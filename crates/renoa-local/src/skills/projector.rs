@@ -155,6 +155,7 @@ mod tests {
                     content: vec![ContentBlock::text(output.to_string())],
                     details: None,
                     is_error: false,
+                    closing: None,
                 },
             }])
             .unwrap();
@@ -187,6 +188,7 @@ mod tests {
                     "reference": reference,
                 })),
                 is_error: false,
+                closing: None,
             },
         }
     }

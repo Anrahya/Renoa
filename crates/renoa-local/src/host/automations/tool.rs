@@ -198,6 +198,7 @@ impl Tool for Manage {
                 content: vec![renoa_agent::ContentBlock::text(result.to_string())],
                 details: None,
                 is_error: false,
+                closing: None,
             })
         })
     }

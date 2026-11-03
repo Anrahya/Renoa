@@ -92,6 +92,7 @@ fn summary_input_does_not_expose_host_only_tool_details() {
                         content: vec![ContentBlock::text("model-visible output")],
                         details: Some(json!({"host_only_marker": "must-not-leak"})),
                         is_error: false,
+                        closing: None,
                     },
                 },
             ),
@@ -410,6 +411,7 @@ fn tool_result(call_id: &str, name: &str, text: impl Into<String>) -> Message {
             content: vec![ContentBlock::text(text)],
             details: None,
             is_error: false,
+            closing: None,
         },
     }
 }

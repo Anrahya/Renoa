@@ -184,7 +184,7 @@ impl Server {
                 }
                 LocalTurnOutcome::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),
                 LocalTurnOutcome::Failed { reason } => Err(ServerError::Operation(reason)),
-                LocalTurnOutcome::WaitingForInput => Err(ServerError::Operation(
+                LocalTurnOutcome::WaitingForInput { .. } => Err(ServerError::Operation(
                     "explicit compaction is waiting for unsupported external input".to_owned(),
                 )),
                 LocalTurnOutcome::Completed { .. } => Err(ServerError::Operation(
@@ -204,6 +204,17 @@ impl Server {
         let outcome = prompt::execute(&session, action, request_id, events).await?;
         sink.ensure_delivery()?;
         match outcome {
+            LocalTurnOutcome::WaitingForInput { output } => {
+                if let Some(output) = sink.closing_chunk(&output)? {
+                    connection
+                        .send_notification(SessionNotification::new(
+                            session.id().to_string(),
+                            SessionUpdate::AgentMessageChunk(output),
+                        ))
+                        .map_err(ServerError::Transport)?;
+                }
+                Ok(PromptResponse::new(StopReason::EndTurn))
+            }
             LocalTurnOutcome::Completed {
                 output,
                 stop_reason,
@@ -231,9 +242,6 @@ impl Server {
                 Some(failure) => Err(ServerError::Operation(failure.message)),
                 None => Err(ServerError::Operation(reason)),
             },
-            LocalTurnOutcome::WaitingForInput => Err(ServerError::Operation(
-                "the agent turn is waiting for unsupported external input".to_owned(),
-            )),
             LocalTurnOutcome::Compacted { .. } => Err(ServerError::Operation(
                 "a normal prompt returned a compaction result".to_owned(),
             )),

@@ -9,6 +9,7 @@ use renoa_kernel::{
     SettledEffectBatch,
 };
 
+mod closing;
 mod code_mode;
 mod compaction;
 mod effect_input;
@@ -390,6 +391,7 @@ impl AgentLoop {
         &self,
         model_turns: u32,
         pending: PendingToolCalls,
+        events: &[renoa_kernel::SemanticEvent],
         effect_batch: Option<SettledEffectBatch>,
     ) -> Result<LoopDecision, LoopError> {
         let call = pending.current();
@@ -404,7 +406,7 @@ impl AgentLoop {
             &tool.effect_binding,
             &encode("tool request", call)?,
         )?;
-        let result = match effect.outcome {
+        let mut result = match effect.outcome {
             EffectOutcome::Success(result) => decode::<ToolResult>("tool result", result)?,
             EffectOutcome::Failure { message } => {
                 return Self::fail_tool(&pending, message);
@@ -415,6 +417,9 @@ impl AgentLoop {
             return Err(LoopError::new(
                 "tool result identity differs from its persisted request",
             ));
+        }
+        if let Some(closing) = result.closing.take() {
+            return closing::close_turn(&pending, result, closing, events);
         }
         Self::append_tool_result(model_turns, pending, result)
     }
@@ -483,5 +488,6 @@ fn unavailable_result(call: &ToolCall, message: &str) -> ToolResult {
         content: vec![ContentBlock::text(message)],
         details: None,
         is_error: true,
+        closing: None,
     }
 }

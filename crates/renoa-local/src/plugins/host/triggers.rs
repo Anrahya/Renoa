@@ -147,7 +147,8 @@ pub(crate) fn wanted(
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Time => Ok(Vec::new()),
+        | HostPluginId::Time
+        | HostPluginId::Owner => Ok(Vec::new()),
     }
 }
 
@@ -269,7 +270,8 @@ pub(crate) async fn run(
         | HostPluginId::Documents
         | HostPluginId::Skills
         | HostPluginId::Git
-        | HostPluginId::Time => Ok(Ended {
+        | HostPluginId::Time
+        | HostPluginId::Owner => Ok(Ended {
             status: RunStatus::Failed,
             output: format!("{} owns no trigger", plugin.id()),
             failed_tool_calls: None,

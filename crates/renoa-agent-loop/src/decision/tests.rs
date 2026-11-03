@@ -104,6 +104,7 @@ fn definite_tool_adapter_failure_balances_the_assistant_calls() {
                     content: vec![ContentBlock::text(message)],
                     details: None,
                     is_error: true,
+                    closing: None,
                 },
             })
             .expect("message"),

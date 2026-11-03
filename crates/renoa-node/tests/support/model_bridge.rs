@@ -46,8 +46,8 @@ const STREAMED_TURN: &str = r#" else if (prompt === "Stream an answer.") {
 
 /// Creates a paused automation through the Host plugin, discovering its
 /// schema first as a model must, and answers the automation's standing
-/// prompts: one that succeeds, one whose model fails, and one whose tool call
-/// fails before it answers.
+/// prompts: one that succeeds, one whose model fails, one whose tool call
+/// fails before it answers, and one that asks the owner.
 /// "Schedule for <agent>: <standing prompt>" names the automation's agent.
 const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for ")) {
   const [, agent, standing] = prompt.match(/^Schedule for ([^:]+): (.*)$/);
@@ -76,6 +76,11 @@ const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for "))
   }
 } else if (prompt === "Write the digest.") {
   content = [{ type: "text", text: "Digest written." }];
+} else if (prompt === "Ask about the digest.") {
+  content = [{ type: "tool_call", id: "ask", name: "ask_owner", arguments: {
+    question: "Send the digest now?", choices: ["Yes", "No"], urgency: "soon"
+  } }];
+  stopReason = "tool_use";
 } else if (prompt === "Fail the digest.") {
   process.stderr.write("the model is unavailable");
   process.exit(4);

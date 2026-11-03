@@ -110,6 +110,7 @@ impl Fixture {
                     content: vec![ContentBlock::text(event.to_string())],
                     details: None,
                     is_error: false,
+                    closing: None,
                 },
             })
             .await;
@@ -201,7 +202,8 @@ async fn unknown_delivery_cancels_setup_and_is_not_repeated_after_recovery() {
                     &ToolOutput {
                         content: vec![ContentBlock::text(authorization(i64::MAX).to_string())],
                         details: None,
-                        is_error: false
+                        is_error: false,
+                        closing: None
                     }
                 )
                 .unwrap()
@@ -264,7 +266,8 @@ fn invalid_links_are_rejected_before_delivery() {
                 &ToolOutput {
                     content: vec![ContentBlock::text(event.to_string())],
                     details: None,
-                    is_error: false
+                    is_error: false,
+                    closing: None
                 }
             )
             .is_none()

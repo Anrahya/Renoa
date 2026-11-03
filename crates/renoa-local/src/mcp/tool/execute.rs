@@ -65,6 +65,7 @@ fn remote_authorization_failure(
         content: vec![ContentBlock::text(message)],
         details: Some(authorization_details(reference, selected, &failure)),
         is_error: true,
+        closing: None,
     }
 }
 
@@ -95,6 +96,7 @@ fn unknown_authorization_failure(
             }),
         )),
         is_error: true,
+        closing: None,
     }
 }
 
@@ -159,6 +161,7 @@ pub(super) fn map_failure(
                 partial_changes_possible,
             )),
             is_error: true,
+            closing: None,
         });
     }
     if let McpAdapterError::Remote(remote) = &source {
@@ -176,6 +179,7 @@ pub(super) fn map_failure(
                 partial_changes_possible,
             )),
             is_error: true,
+            closing: None,
         });
     }
     Err(definite_boundary_error(&source, partial_changes_possible))

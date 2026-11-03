@@ -333,7 +333,8 @@ impl Worker {
 
 fn format_outcome(outcome: LocalTurnOutcome) -> String {
     match outcome {
-        LocalTurnOutcome::Completed { output, .. } => output,
+        LocalTurnOutcome::Completed { output, .. }
+        | LocalTurnOutcome::WaitingForInput { output } => output,
         LocalTurnOutcome::Cancelled => "Stopped.".to_owned(),
         LocalTurnOutcome::Compacted {
             estimated_input_tokens,
@@ -342,7 +343,6 @@ fn format_outcome(outcome: LocalTurnOutcome) -> String {
         LocalTurnOutcome::Failed { reason } => {
             format!("Arcee could not complete this turn: {reason}")
         }
-        LocalTurnOutcome::WaitingForInput => "Arcee is waiting for more input.".to_owned(),
         _ => "Arcee returned an unsupported outcome; inspect the durable session.".to_owned(),
     }
 }

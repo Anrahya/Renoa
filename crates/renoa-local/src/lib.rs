@@ -112,6 +112,7 @@ pub use host::automations::{
 };
 pub use host::feed::{
     FEED_PAGE, FeedAction, FeedAgent, FeedError, FeedItem, FeedKind, FeedPage, FeedSeen, HostFeed,
+    Urgency,
 };
 
 pub use renoa_home::RenoaHome;

@@ -569,8 +569,8 @@ of the same skill name.
 ## Compiled Host plugins
 
 The same protocol also discovers compiled `renoa.agents`, `renoa.automations`,
-`renoa.documents`, `renoa.skills`, `renoa.git`, `renoa.time`, and `renoa.memory`
-plugins. Their
+`renoa.documents`, `renoa.skills`, `renoa.git`, `renoa.time`, `renoa.memory`
+and `renoa.owner` plugins. Their
 implementations are registered by the Host and cannot be loaded from an
 imported package. `plugin_manage` enables or deactivates them for its caller
 using durable receipts, and `configure_plugin` replaces the caller's settings
@@ -582,8 +582,8 @@ machine selection. Schema 32 owns these activation records alongside external
 plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings, and
 schema 43 adds `renoa.memory`, schema 44 adds plugin-owned triggers and
 `renoa.memory`'s job receipts and memory session generations, schema 45
-adds the conversations and passes of its note pass, and schema 47 adds its
-reminders.
+adds the conversations and passes of its note pass, schema 47 adds its
+reminders, and schema 48 adds `renoa.owner`.
 
 ## Contribution model
 
@@ -604,7 +604,7 @@ field on every plugin.
 | Point | State |
 |---|---|
 | `tools`, `skills`, `mcp_servers` | implemented |
-| `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory` and `renoa.documents` |
+| `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory`, `renoa.documents` and `renoa.owner` |
 | `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
 | `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |

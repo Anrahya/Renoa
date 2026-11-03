@@ -111,7 +111,7 @@ impl Ran<'_> {
                 LocalTurnOutcome::Cancelled => Outcome::Cancelled,
                 LocalTurnOutcome::Completed { .. }
                 | LocalTurnOutcome::Failed { .. }
-                | LocalTurnOutcome::WaitingForInput
+                | LocalTurnOutcome::WaitingForInput { .. }
                 | LocalTurnOutcome::Compacted { .. } => Outcome::Failed,
             },
             noted: receipt::noted(&messages).len(),

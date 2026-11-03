@@ -201,6 +201,7 @@ impl Tool for LoadTool {
                     "reference": reference,
                 })),
                 is_error: false,
+                closing: None,
             })
         })
     }
@@ -243,6 +244,7 @@ fn json_output(value: &impl Serialize) -> Result<ToolOutput, ToolError> {
         content: vec![ContentBlock::text(content)],
         details: None,
         is_error: false,
+        closing: None,
     })
 }
 

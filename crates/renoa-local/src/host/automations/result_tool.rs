@@ -96,6 +96,7 @@ impl Tool for Results {
                 content: vec![renoa_agent::ContentBlock::text(result.to_string())],
                 details: None,
                 is_error: false,
+                closing: None,
             })
         })
     }

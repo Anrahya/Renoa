@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::{FEED_PAGE, FeedAction, FeedError, FeedKind, item, newest, produce};
+use super::{FEED_PAGE, FeedAction, FeedError, FeedKind, Urgency, item, newest, produce};
 use crate::host::catalog;
 
 /// One item as an app shows it.
@@ -24,8 +24,13 @@ pub struct FeedItem {
     pub done: bool,
     pub action: FeedAction,
     /// What the action works on: the automation to retry, the run to open,
-    /// or the plugin to turn off for `agent`.
+    /// the plugin to turn off for `agent`, or, for an ask or an update, the
+    /// Host session it was made in.
     pub subject_id: String,
+    pub urgency: Urgency,
+    /// The answers an ask offers; `None` when the owner answers in their own
+    /// words, and for every other kind.
+    pub choices: Option<Vec<String>>,
 }
 
 /// The agent an item is about, with its name as of this read.
@@ -55,7 +60,7 @@ pub struct FeedSeen {
 }
 
 const ITEM_COLUMNS: &str = "i.id, i.sequence, i.kind, i.agent_id, a.name, i.title, i.body,
-    i.created_at_ms, i.done_at_ms IS NOT NULL, i.action, i.subject_id
+    i.created_at_ms, i.done_at_ms IS NOT NULL, i.action, i.subject_id, i.urgency, i.choices
     FROM host_feed_items i JOIN host_agents a ON a.agent_id = i.agent_id";
 
 fn item(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedItem> {
@@ -83,6 +88,19 @@ fn item(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedItem> {
         done: row.get(8)?,
         action: row.get(9)?,
         subject_id: row.get(10)?,
+        urgency: row.get(11)?,
+        choices: row
+            .get::<_, Option<String>>(12)?
+            .map(|choices| {
+                serde_json::from_str(&choices).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        12,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
     })
 }
 

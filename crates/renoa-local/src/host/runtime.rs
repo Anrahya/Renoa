@@ -193,6 +193,14 @@ pub(crate) fn protocol_bindings(
         command_id,
     ));
     controls.extend(peer_bindings(host, agent, command_id));
+    controls.extend(crate::plugins::host::owner::bindings(
+        crate::plugins::host::owner::OwnerTurn {
+            database: host.database.clone(),
+            agent,
+            session: session_id,
+            command: command_id,
+        },
+    ));
     controls.extend(crate::plugins::host::memory::bindings(
         crate::plugins::host::memory::MemoryTurn {
             database: host.database.clone(),
@@ -254,6 +262,8 @@ mod memory_pass_tests;
 mod memory_plugin_tests;
 #[cfg(test)]
 mod memory_reminder_tests;
+#[cfg(test)]
+mod owner_plugin_tests;
 #[cfg(test)]
 mod time_plugin_tests;
 
@@ -334,6 +344,8 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from([
                 "agent_documents",
+                "ask_owner",
+                "notify_owner",
                 "plugin_manage",
                 "plugin_search",
                 "tool_execute"
@@ -352,6 +364,8 @@ mod tests {
             "memory_note",
             "memory_recall",
             "memory_zoom",
+            "ask_owner",
+            "notify_owner",
         ];
         let mut expected = BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"]);
         expected.extend(resident);

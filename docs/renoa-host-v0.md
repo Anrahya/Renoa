@@ -343,7 +343,10 @@ it in one call: `host_feed_items`, newest first by an `AUTOINCREMENT` sequence
 that is never reused. An item has a `kind` (`ask`, `update`, `result`,
 `problem` or `ability`), the agent it is about, a `title` of at most 120
 characters and a `body` of at most 240, an `action` (`reply`, `open`, `retry`
-or `turn_off`) on a `subject_id`, its creation time, and the time it was done.
+or `turn_off`) on a `subject_id`, an `urgency` (`whenever`, `soon` or `now`),
+an ask's `choices`, its creation time, and the time it was done. A `problem`
+is `soon`; an `ask` or an `update` has the urgency its agent chose; every
+other item is `whenever`.
 Every item commits in the transaction that records the fact it reports, so a
 crash leaves both or neither and a rejected change leaves no item. Its identity
 derives from its kind and source, and producers insert once, so a replay
@@ -372,15 +375,19 @@ one only when the plugin it replaces was turned off. A selection the owner or
 the agent's creator made, at creation or later, writes none, and neither do a
 replacement of a plugin that was on, deactivation and disconnection. Every write of an agent's package
 activations goes through one function, and a test fails on a write anywhere
-else. Nothing writes `ask` or `update` items yet; their tools will, and a
-producer marks its own item done by id as a dismissal does. Nothing is backfilled: runs and activations recorded
-before schema 46 make no items.
+else. `ask_owner` and `notify_owner` write `ask` (`reply`) and `update`
+(`open`) items on the Host session they were called in; see "Reaching the
+owner". Nothing is backfilled: runs and activations recorded before schema 46
+make no items, and items stored before schema 48 are `whenever`.
 
 Three relayed owner operations read it. `GET /v1/host/feed`, and
 `GET /v1/host/feed/before/{sequence}` for older pages, return
 `{today, unread, seen_through, items, next_before}`: at most 50 items, each
 `{id, sequence, kind, agent {id, name}, title, body, at_ms, done, action,
-subject_id}`, and `next_before` null on the oldest page. The page size is fixed
+subject_id, urgency, choices}`, and `next_before` null on the oldest page. The
+node names the RCP task of an `ask` or `update` in its `subject_id`, so a
+client answers an ask by submitting to that task; a session no task of the
+node runs keeps its Host session id. The page size is fixed
 because the relay carries no query. `POST /v1/host/feed/seen` with `{through}`
 raises the owner's one `seen_through` to the larger of the two and returns
 `{seen_through, unread}`; a value above the newest sequence the feed has handed
@@ -407,6 +414,34 @@ with a count and a reason, and a failure removes nothing, logs
 `retention_failed` and leaves the beat recorded. A run's
 removal removes the result about it, and purging a deleted automation removes
 its items, counted in `automation_runs_pruned` and `automation_purged`.
+
+### Reaching the owner
+
+The compiled plugin `renoa.owner` ("Reach you") keeps `ask_owner` and
+`notify_owner` resident in every agent's tool list, also while the owner has
+turned it off for the agent, when each call is refused with "nothing was
+sent". A guest's turn refuses them as it refuses every tool. Both take a flat
+object and a required `urgency`: `ask_owner` a `question` of at most 240
+characters and 2 to 6 optional `choices` of at most 40, `notify_owner` a
+`message` of at most 240. A refused call names the field, what was sent and
+what is expected, and shows a correct call.
+
+A call writes its one feed item in one transaction, under an identity derived
+from its session, command and call, so a replay rewrites nothing and both
+tools are safe to replay; an item that cannot be saved is an error the model
+reads, and the turn goes on. `ask_owner` also ends the turn: its result
+carries the question, with its choices as a `- ` list, as the turn's closing
+message (see the agent loop's closing results), so every surface shows the
+question as the reply and an automation's run records it as its output. A
+later call in the same response is not run. The next new message on that
+session from a person the Host knows, through any surface that identifies
+them, marks the asks made there before it done once the turn it starts
+settles; a guest's message, another agent's, an unidentified sender's and an
+automation run answer nothing. A mark that fails is logged as
+`owner_asks_unanswered`, and the person's next message closes it. Deleting a
+conversation removes the asks and updates made in it.
+`notify_owner` does not end the turn. Pushing these items to the owner's phone
+by urgency is not built yet.
 
 ### The main agent
 
@@ -678,8 +713,9 @@ Every agent receives `plugin_search`, `plugin_manage`, and one invocation tool:
 `tool_execute`. These are platform capabilities and cannot be removed through
 machine-tool selections. Beside them, each compiled plugin binds its resident
 tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
-`renoa.memory` for a turn that talks to a person or comes from a guest, and
-`agent_documents` from `renoa.documents` for an agent that keeps documents.
+`renoa.memory` for a turn that talks to a person or comes from a guest,
+`agent_documents` from `renoa.documents` for an agent that keeps documents,
+and `ask_owner` and `notify_owner` from `renoa.owner` for every agent.
 The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
@@ -707,8 +743,8 @@ machine tools for a child; it exposes no operation to grant tools to its caller.
 owner operations. Their revision-checked receipts remain independent of the
 original creation receipt. Active operations retain their frozen grants.
 
-Seven compiled Host plugins use the same discovery and management boundary as
-external plugins. Six contribute tools, invoked through the same exact-schema
+Eight compiled Host plugins use the same discovery and management boundary as
+external plugins. Seven contribute tools, invoked through the same exact-schema
 lookup as external MCP tools; `renoa.time` contributes context to each message,
 and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 
@@ -721,6 +757,7 @@ and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 | `renoa.git` | Inspect local changes, diffs, and commits |
 | `renoa.time` | Show the current time and the time since the previous message |
 | `renoa.memory` | Note, recall and zoom into the speaking person's shared notebook; show their `MIND.md` |
+| `renoa.owner` | Ask the owner a question that ends the turn, or tell them something, through the feed |
 
 These plugins start enabled, except that an agent created from the Alpha preset
 starts with `renoa.time` off; document tools exist only for definitions that enable
@@ -1344,7 +1381,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 47
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 48
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1367,7 +1404,9 @@ below schema 46 gains the feed's items, the owner's `seen_through` and the
 Today sentence, all empty, before its other steps, since the schema 40 purge
 removes a deleted automation's items. Every catalog below schema 47 gains
 `renoa.memory`'s reminders, empty: the scheduler creates them when it next
-converges the triggers. Live selections
+converges the triggers. Every catalog below schema 48 admits `renoa.owner` in
+its compiled-plugin table, keeping every stored activation, and gives every
+feed item an urgency, `whenever` for those it holds, and an ask its choices. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.

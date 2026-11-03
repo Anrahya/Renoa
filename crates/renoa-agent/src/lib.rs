@@ -14,8 +14,8 @@ pub use model::{
 };
 pub use sampling::{SamplingError, SamplingResult, sample_model};
 pub use tool::{
-    Tool, ToolCall, ToolCallBatchError, ToolError, ToolErrorCode, ToolOutcomeUnknown, ToolOutput,
-    ToolResult, ToolSpec, ToolUpdates, invoke_tool, validate_tool_call_ids,
+    Closing, Tool, ToolCall, ToolCallBatchError, ToolError, ToolErrorCode, ToolOutcomeUnknown,
+    ToolOutput, ToolResult, ToolSpec, ToolUpdates, invoke_tool, validate_tool_call_ids,
 };
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

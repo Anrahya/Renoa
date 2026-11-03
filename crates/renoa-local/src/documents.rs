@@ -343,6 +343,7 @@ impl Tool for AgentDocumentsTool {
                 content: vec![ContentBlock::text(content)],
                 details: None,
                 is_error: false,
+                closing: None,
             })
         })
     }
