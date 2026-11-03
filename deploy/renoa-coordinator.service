@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=renoa-arcee
-Group=renoa-arcee
+User=renoa
+Group=renoa
 Environment=HOME=/home/renoa
 UMask=0077
 ExecStart=/usr/local/bin/renoa-coordinator serve /home/renoa/.renoa 7818 renoa.live https://renoa.live /opt/renoa/control-room

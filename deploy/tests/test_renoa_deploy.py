@@ -194,7 +194,7 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.releases(), {"v1", "legacy"})
         self.assertEqual(json.loads(self.layout.manifest.read_text())["health"], "ok")
         self.assertTrue(self.layout.tool.is_file())
-        self.assertIn(("runuser", "-u", "renoa-arcee", "--", "/usr/local/bin/renoa-host", "inspect", deploy.HOME), self.host.commands)
+        self.assertIn(("runuser", "-u", "renoa", "--", "/usr/local/bin/renoa-host", "inspect", deploy.HOME), self.host.commands)
 
     def test_reinstalling_the_running_release_changes_nothing(self):
         archive = release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"})
