@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use renoa_agent::{Message, ToolCall, ToolResult};
 use renoa_kernel::{
     CancellationInput, CancellationTransition, EffectBatchFacts, EffectFact, EffectOutcome,
-    EffectRecovery, EffectRequest, LoopDecision, LoopError, LoopInput, OperationId, SemanticEvent,
-    SettledEffect, SettledEffectBatch, UnknownEffectAbandonment, UnknownEffectInput,
+    EffectRecovery, EffectRequest, LoopDecision, LoopError, LoopInput, OperationId, SettledEffect,
+    SettledEffectBatch, UnknownEffectAbandonment, UnknownEffectInput,
 };
 
 use super::{
