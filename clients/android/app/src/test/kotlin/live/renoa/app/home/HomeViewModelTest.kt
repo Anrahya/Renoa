@@ -16,6 +16,7 @@ import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -132,17 +133,65 @@ class HomeViewModelTest {
     }
 
     @Test
-    fun whenTheShownCardGoesTheOneInItsPlaceShows() = runTest {
+    fun openingARowPutsItsNotesAwayAndAFailedRoutineRunsAgainFromHome() = runTest {
         val (vm, _) = model()
         runCurrent()
-        val list = vm.state.value.handovers
-        vm.show(list[2].key)
-        assertEquals(2, vm.state.value.shown)
+        val optimus = vm.state.value.talks.talking.first { it.agent.id == "optimus" }
+        vm.seen(assertNotNull(optimus.note).id)
+        runCurrent()
+        assertTrue(vm.state.value.feed.notes.none { it.id == "projects" })
 
-        val gone = vm.state.value.copy(roster = vm.state.value.roster.filter { it.id != list[2].agent.id })
-        assertEquals(list[3].key, gone.handovers[gone.shown].key, "the next card takes its place, not the first")
-        val shorter = vm.state.value.copy(roster = vm.state.value.roster.filter { it.id == "tifa" || it.id == "ledger" })
-        assertEquals(listOf("tifa/needs", "ledger/needs"), shorter.handovers.map { it.key })
-        assertEquals(1, shorter.shown, "past the end, the last")
+        val nagisa = vm.state.value.talks.quiet.first { it.agent.id == "nagisa" }
+        vm.runAgain(assertNotNull(nagisa.problem).id)
+        runCurrent()
+        assertEquals(emptyList(), vm.state.value.feed.notes)
+        assertNull(vm.state.value.notice)
+
+        // Already gone, as when it ran again elsewhere: nothing to tell the owner.
+        vm.runAgain("prices")
+        runCurrent()
+        assertNull(vm.state.value.notice)
+    }
+
+    @Test
+    fun aSecondTapWhileTheAnswerGoesSendsNothing() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val release = CompletableDeferred<Unit>()
+        val answers = mutableListOf<String>()
+        val vm =
+            HomeViewModel(
+                object : AgentRepository by inner {
+                    override suspend fun answer(agentId: String, choice: String) {
+                        answers += choice
+                        release.await()
+                        inner.answer(agentId, choice)
+                    }
+                },
+            )
+        backgroundScope.launch { vm.state.collect {} }
+        vm.answer("tifa", "Dal and a salad")
+        vm.answer("tifa", "Dal and a salad")
+        runCurrent()
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("Dal and a salad"), answers)
+        vm.answer("tifa", "Not sure yet")
+        runCurrent()
+        assertEquals(2, answers.size, "once it went, the next answer goes")
+    }
+
+    @Test
+    fun aRunAgainTheHostRefusesSaysSo() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val vm =
+            HomeViewModel(
+                object : AgentRepository by inner {
+                    override suspend fun runAgain(noteId: String) = throw RepositoryException(Problem.Invalid, "refused")
+                },
+            )
+        backgroundScope.launch { vm.state.collect {} }
+        vm.runAgain("prices")
+        runCurrent()
+        assertEquals("That routine could not run again. Try again.", vm.state.value.notice)
     }
 }

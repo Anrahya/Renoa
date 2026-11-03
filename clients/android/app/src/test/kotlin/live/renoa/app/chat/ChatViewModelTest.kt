@@ -104,6 +104,61 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun aSecondTapOnAnAnswerWhileTheFirstGoesSendsNothing() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val release = CompletableDeferred<Unit>()
+        val answers = mutableListOf<String>()
+        val repo =
+            object : AgentRepository by inner {
+                override suspend fun answer(agentId: String, choice: String) {
+                    answers += choice
+                    release.await()
+                    inner.answer(agentId, choice)
+                }
+            }
+        val vm = ChatViewModel(repo, "tifa").also { vm -> backgroundScope.launch { vm.state.collect {} } }
+        runCurrent()
+        vm.answer("Dal and a salad")
+        vm.answer("Not sure yet")
+        runCurrent()
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("Dal and a salad"), answers)
+        vm.answer("Not sure yet")
+        runCurrent()
+        assertEquals(2, answers.size, "once it went, the next answer goes")
+    }
+
+    @Test
+    fun whatTheOwnerTypesWhileAQuestionWaitsIsTheAnswer() = runTest {
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val calls = mutableListOf<String>()
+        val repo =
+            object : AgentRepository by inner {
+                override suspend fun answer(agentId: String, choice: String) {
+                    calls += "answer $choice"
+                    inner.answer(agentId, choice)
+                }
+
+                override suspend fun send(agentId: String, text: String) {
+                    calls += "send $text"
+                    inner.send(agentId, text)
+                }
+            }
+        val vm = ChatViewModel(repo, "tifa").also { vm -> backgroundScope.launch { vm.state.collect {} } }
+        runCurrent()
+        vm.onDraft("Dal, and some fruit")
+        vm.send()
+        runCurrent()
+        assertNull(vm.state.value.ask)
+
+        vm.onDraft("Thanks")
+        vm.send()
+        runCurrent()
+        assertEquals(listOf("answer Dal, and some fruit", "send Thanks"), calls, "with no question waiting, a message is a message")
+    }
+
+    @Test
     fun aChatWhoseAgentIsGoneIsEmptyRatherThanStuck() = runTest {
         val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
         val gone =

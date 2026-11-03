@@ -25,6 +25,16 @@ internal fun agentAddress(agentId: String): Pair<Uuid, String>? {
     return agentId.substringAfter('/', "").takeIf { it.isNotEmpty() }?.let { node to it }
 }
 
+/** How a node names the target of a Host agent. */
+internal const val AGENT_TARGET = "agent:"
+
+/** The Host's id for the agent behind [agentId], or null when it names no Host agent. */
+internal fun hostAgentId(agentId: String): Uuid? {
+    val target = agentAddress(agentId)?.second ?: return null
+    if (!target.startsWith(AGENT_TARGET)) return null
+    return Uuid.parseOrNull(target.removePrefix(AGENT_TARGET))
+}
+
 /**
  * One agent's chat, rebuilt from its task's journal and the live text of the turn that is running.
  * Not thread-safe: the caller serializes [apply], [live] and [markSeen].

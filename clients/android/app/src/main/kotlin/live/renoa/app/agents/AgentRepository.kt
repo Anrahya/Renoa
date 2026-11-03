@@ -88,8 +88,14 @@ interface AgentRepository {
      */
     val rosterKnown: StateFlow<Boolean>
 
-    /** The note at the top of Home, or null when there is nothing to say. */
-    val briefing: StateFlow<Briefing?>
+    /** Home's line about the day and the notes the agents left the owner, as Renoa last said. */
+    val feed: StateFlow<Feed>
+
+    /** Puts a note away for good, on every device. */
+    suspend fun dismiss(noteId: String)
+
+    /** Runs the routine a [NoteKind.Problem] note is about again; the note goes until it fails again. */
+    suspend fun runAgain(noteId: String)
 
     fun conversation(agentId: String): Flow<Conversation>
 
@@ -102,7 +108,12 @@ interface AgentRepository {
     /** Deletes a message the app stopped sending; it is never sent. */
     suspend fun discard(agentId: String, messageId: String)
 
-    /** Answers the agent's question with one of its choices. The answer is kept as the owner's message. */
+    /**
+     * Answers the agent's question ([Glance.ask]) with one of its choices or the owner's own words,
+     * as the owner's message in the agent's chat. A question asked outside that chat is named in the
+     * message, and put away. With no question waiting, as when it was answered elsewhere meanwhile,
+     * the words go as a plain message.
+     */
     suspend fun answer(agentId: String, choice: String)
 
     /** The owner has read what the agent said. */

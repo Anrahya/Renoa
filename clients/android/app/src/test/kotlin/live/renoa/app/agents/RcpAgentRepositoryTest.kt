@@ -2,6 +2,7 @@ package live.renoa.app.agents
 
 import java.security.MessageDigest
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -113,6 +114,32 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     /** When set, the next observation reads the automations, then answers only once this completes. */
     var observationHeld: CompletableDeferred<Unit>? = null
+
+    /** The owner's feed on the Host, newest first, and its line about the day. Its calls are kept apart from [hostCalls] in [feedCalls]. */
+    val feed = mutableListOf<JsonObject>()
+    var today = "All quiet."
+    val feedCalls = mutableListOf<Pair<HostMethod, String>>()
+
+    /** When set, the next feed call ends with it instead of reaching the Host. */
+    var feedFailure: Exception? = null
+
+    /** When set, a run asked for now is refused as already running. */
+    var running = false
+
+    /** How many items a page of the feed holds. */
+    var feedPage = 50
+
+    /** When set, every older page of the feed ends with it. */
+    var olderPageFailure: Exception? = null
+
+    /** When set, an older page names itself as the next, as a Host with a cursor that never moves back would. */
+    var stuckCursor = false
+
+    /** When set, the next submission waits for this before it is kept. */
+    var submitHeld: CompletableDeferred<Unit>? = null
+
+    /** When set, the next read of the feed's first page takes the feed as it stands, then answers only once this completes. */
+    var feedHeld: CompletableDeferred<Unit>? = null
 
     /** When set, the next switch is applied at once, but its receipt arrives only once this completes. */
     var switchHeld: CompletableDeferred<Unit>? = null
@@ -235,6 +262,10 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     override suspend fun submitText(taskId: Uuid, text: String): CommandSubmission {
         check(online) { "RCP client is not connected" }
+        submitHeld?.let {
+            submitHeld = null
+            it.await()
+        }
         val command = PendingTextCommand(Uuid.random(), taskId, text)
         state.enqueueCommand(command)
         val accepted = CompletableDeferred<Unit>()
@@ -296,6 +327,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             )
         }
         if (path == "/v1/host/profile") return profileCall(method, body)
+        if (path == "/v1/host/feed" || path.startsWith("/v1/host/feed/") || path.endsWith("/run")) return feedCall(method, path)
         hostCalls += Triple(method, path, body)
         hostFailure?.let {
             hostFailure = null
@@ -342,6 +374,42 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         }
         val record = hostAgents[path.removePrefix("/v1/host/agents/")]
         return if (method == HostMethod.Get && record != null) HostAnswer(200, record.toString()) else HostAnswer(404, "{\"error\":\"not found\"}")
+    }
+
+    /** Lists the feed, dismisses an item, or runs a routine now, as the Host does. */
+    private suspend fun feedCall(method: HostMethod, path: String): HostAnswer {
+        feedCalls += method to path
+        feedFailure?.let {
+            feedFailure = null
+            throw it
+        }
+        if (method == HostMethod.Get) {
+            // As the Host numbers them, the newest item has the highest sequence, and a page holds those before its cursor.
+            val before = path.removePrefix("/v1/host/feed").removePrefix("/before/").toIntOrNull()
+            if (before != null) olderPageFailure?.let { throw it }
+            val from = before?.let { feed.size - it + 1 } ?: 0
+            val items = feed.drop(from).take(feedPage)
+            val last = feed.size - (from + items.size - 1)
+            val answer =
+                buildJsonObject {
+                    put("today", today)
+                    put("items", JsonArray(items))
+                    if (from + feedPage < feed.size) put("next_before", if (stuckCursor && before != null) before else last)
+                }.toString()
+            if (before == null) {
+                feedHeld?.let {
+                    feedHeld = null
+                    it.await()
+                }
+            }
+            return HostAnswer(200, answer)
+        }
+        if (path.endsWith("/run")) return if (running) HostAnswer(409, "{\"error\":\"run_in_progress\"}") else HostAnswer(200, "{}")
+        val id = path.removePrefix("/v1/host/feed/items/").removeSuffix("/dismissal")
+        val at = feed.indexOfFirst { it.getValue("id").jsonPrimitive.content == id }
+        if (at < 0) return HostAnswer(404, "{\"error\":\"not_found\"}")
+        feed[at] = JsonObject(feed[at] + ("done" to JsonPrimitive(true)))
+        return HostAnswer(200, feed[at].toString())
     }
 
     /** Pauses or resumes an automation from the revision the request expects, as the Host does. */
@@ -1423,6 +1491,221 @@ class RcpAgentRepositoryTest {
         val sent = Json.parseToJsonElement(checkNotNull(surface.hostCalls.last().third)).jsonObject
         assertEquals("5", sent.getValue("expected_revision").jsonPrimitive.content, "the next change starts from the newer revision")
         assertTrue(repo.routines.value.single().on)
+    }
+
+    /** An item of the Host's feed from the Host agent [agent], made in [subject]. */
+    private fun item(id: String, kind: String, agent: Uuid, body: String, subject: Uuid, atMs: Long = 1_000, done: Boolean = false, choices: List<String>? = null) =
+        buildJsonObject {
+            put("id", id)
+            put("kind", kind)
+            put("agent", buildJsonObject { put("id", agent.toString()); put("name", "Kcal") })
+            put("title", if (kind == "problem") "\u201cPrices\u201d didn\u2019t finish" else "Wants you to know")
+            put("body", body)
+            put("at_ms", atMs)
+            put("done", done)
+            put("subject_id", subject.toString())
+            put("urgency", "soon")
+            choices?.let { put("choices", JsonArray(it.map(::JsonPrimitive))) }
+        }
+
+    /** A Host agent on the roster, and its roster id. */
+    private fun hostAgent(): Pair<Uuid, String> {
+        val id = Uuid.random()
+        surface.targets += TargetSummary(surface.node, "agent:$id", "Kcal")
+        return id to "${surface.node}/agent:$id"
+    }
+
+    @Test
+    fun theFeedsNotesReachHomeAndAnOpenQuestionIsItsAgentsAsk() = runTest {
+        val (kcal, rosterId) = hostAgent()
+        val stranger = Uuid.random()
+        val routine = Uuid.random()
+        surface.today = "Kcal has a question."
+        surface.feed +=
+            listOf(
+                item("ask", "ask", kcal, "Dinner?", chatTaskId(surface.node, "agent:$kcal"), atMs = 5_000, choices = listOf("Dal")),
+                item("older-ask", "ask", kcal, "Lunch?", Uuid.random(), atMs = 4_000),
+                item("note", "update", kcal, "Prices fell.", Uuid.random()),
+                item("problem", "problem", kcal, "Run it again.", routine),
+                item("answered", "ask", kcal, "Breakfast?", Uuid.random(), atMs = 9_000, done = true),
+                item("read", "update", kcal, "Already put away.", Uuid.random(), done = true),
+                item("stray", "update", stranger, "From no one here.", Uuid.random()),
+            )
+        val repo = started()
+        val feed = repo.feed.value
+        assertEquals("Kcal has a question.", feed.today)
+        assertEquals(listOf("note" to rosterId, "problem" to rosterId, "stray" to null), feed.notes.map { it.id to it.agentId }, "asks are no notes, and an agent not here is named by none")
+        assertEquals(NoteKind.Problem, feed.notes[1].kind)
+        val kcalHere = repo.agents.value.first { it.id == rosterId }
+        assertEquals(AgentState.Wants, kcalHere.state)
+        assertEquals(Ask("Dinner?", listOf("Dal"), Instant.ofEpochMilli(5_000)), kcalHere.glance.ask, "the newest open question; one answered is no question")
+        assertNull(repo.agents.value.first { it.id == nagisa }.glance.ask)
+
+        surface.feed.clear()
+        surface.today = "All quiet."
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(Feed("All quiet.", emptyList()), repo.feed.value, "each roster check reads it again")
+        assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask)
+    }
+
+    @Test
+    fun whileTheFeedCannotBeReadTheLastOneStays() = runTest {
+        val (kcal, _) = hostAgent()
+        surface.feed += item("note", "update", kcal, "Prices fell.", Uuid.random())
+        val repo = started()
+        surface.feed.clear()
+        surface.feedFailure = IllegalStateException("dropped")
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("note"), repo.feed.value.notes.map { it.id })
+    }
+
+    @Test
+    fun anAnswerToAQuestionAskedInItsChatIsSentAsIsAndOneAskedElsewhereNamesTheQuestionAndIsPutAway() = runTest {
+        val (kcal, rosterId) = hostAgent()
+        val chatTask = chatTaskId(surface.node, "agent:$kcal")
+        surface.feed += item("here", "ask", kcal, "Dinner?", chatTask, choices = listOf("Dal"))
+        val repo = started()
+        repo.answer(rosterId, "Dal")
+        runCurrent()
+        assertEquals(chatTask to "Dal", surface.admitted.last().let { it.taskId to it.text })
+        assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask, "answered here, it goes at once")
+        assertTrue(surface.feedCalls.none { it.first == HostMethod.Post }, "the Host marks it answered when it takes the message")
+
+        val elsewhere = Uuid.random()
+        surface.feed.clear()
+        surface.feed += item("there", "ask", kcal, "Gift?", elsewhere)
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        repo.answer(rosterId, "  The scarf ")
+        runCurrent()
+        assertEquals(chatTask to "About your question \u201cGift?\u201d: The scarf", surface.admitted.last().let { it.taskId to it.text }, "its chat never saw the question")
+        assertEquals(HostMethod.Post to "/v1/host/feed/items/there/dismissal", surface.feedCalls.last())
+        assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask)
+    }
+
+    @Test
+    fun aDismissedNoteGoesAndOneTheHostCouldNotTakeShowsAgain() = runTest {
+        val (kcal, _) = hostAgent()
+        surface.feed += listOf(item("one", "update", kcal, "One.", Uuid.random()), item("two", "update", kcal, "Two.", Uuid.random()))
+        val repo = started()
+        repo.dismiss("one")
+        assertEquals(listOf("two"), repo.feed.value.notes.map { it.id })
+        assertEquals(HostMethod.Post to "/v1/host/feed/items/one/dismissal", surface.feedCalls.last())
+
+        surface.feedFailure = IllegalStateException("dropped")
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.dismiss("two") }.problem)
+        assertEquals(listOf("two"), repo.feed.value.notes.map { it.id }, "shown again")
+
+        surface.feed.removeAt(1)
+        repo.dismiss("two")
+        assertEquals(emptyList(), repo.feed.value.notes, "one the Host no longer has is gone all the same")
+    }
+
+    @Test
+    fun aProblemsRoutineRunsAgainAndARunAlreadyWaitingCountsAsRun() = runTest {
+        val (kcal, _) = hostAgent()
+        val routine = Uuid.random()
+        val other = Uuid.random()
+        surface.feed += listOf(item("p1", "problem", kcal, "Again.", routine), item("p2", "problem", kcal, "Again.", other), item("note", "update", kcal, "Hi.", Uuid.random()))
+        val repo = started()
+        repo.runAgain("p1")
+        assertEquals(HostMethod.Post to "/v1/host/automations/$routine/run", surface.feedCalls.last())
+        assertEquals(listOf("p2", "note"), repo.feed.value.notes.map { it.id })
+
+        surface.running = true
+        repo.runAgain("p2")
+        assertEquals(listOf("note"), repo.feed.value.notes.map { it.id })
+
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.runAgain("note") }.problem, "only a problem runs again")
+        surface.running = false
+        surface.feedFailure = IllegalStateException("dropped")
+        surface.feed += item("p3", "problem", kcal, "Again.", Uuid.random())
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        surface.feedFailure = IllegalStateException("dropped")
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.runAgain("p3") }.problem, "not yet read, so not here")
+    }
+
+    @Test
+    fun aQuestionPastTheFirstPageOfTheFeedStillShows() = runTest {
+        val (kcal, rosterId) = hostAgent()
+        surface.feedPage = 2
+        surface.feed += (1..4).map { item("n$it", "update", kcal, "Note $it.", Uuid.random()) }
+        surface.feed += item("old-ask", "ask", kcal, "Still there?", Uuid.random())
+        val repo = started()
+        assertEquals("Still there?", repo.agents.value.first { it.id == rosterId }.glance.ask?.question)
+        assertEquals(listOf("n1", "n2", "n3", "n4"), repo.feed.value.notes.map { it.id })
+        assertEquals(listOf("/v1/host/feed", "/v1/host/feed/before/4", "/v1/host/feed/before/2"), surface.feedCalls.map { it.second })
+    }
+
+    @Test
+    fun aReadThatAnswersAfterANewerOneIsDropped() = runTest {
+        val (kcal, _) = hostAgent()
+        surface.feed += item("x", "update", kcal, "X.", Uuid.random())
+        val repo = started()
+        surface.feedHeld = CompletableDeferred()
+        val held = surface.feedHeld!!
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        repo.dismiss("x")
+        repo.retryNow()
+        runCurrent()
+        assertEquals(emptyList(), repo.feed.value.notes)
+        held.complete(Unit)
+        runCurrent()
+        assertEquals(emptyList(), repo.feed.value.notes, "the older read, which still had it open, does not bring it back")
+    }
+
+    @Test
+    fun anAnswerTheCoordinatorRefusesShowsTheQuestionAgain() = runTest {
+        val (kcal, rosterId) = hostAgent()
+        surface.feed += item("ask", "ask", kcal, "Dinner?", chatTaskId(surface.node, "agent:$kcal"), choices = listOf("Dal"))
+        val repo = started()
+        surface.answers += Answer.Refuse(RcpErrorCode.NotFound)
+        assertFailsWith<RepositoryException> { repo.answer(rosterId, "Dal") }
+        assertEquals("Dinner?", repo.agents.value.first { it.id == rosterId }.glance.ask?.question)
+    }
+
+    @Test
+    fun anOlderPageThatCannotBeReadKeepsTheLastFeedAndACursorThatDoesNotMoveEndsTheRead() = runTest {
+        val (kcal, _) = hostAgent()
+        surface.feedPage = 2
+        surface.feed += (1..5).map { item("n$it", "update", kcal, "Note $it.", Uuid.random()) }
+        val repo = started()
+        surface.feed.add(0, item("new", "update", kcal, "New.", Uuid.random()))
+        surface.olderPageFailure = IllegalStateException("dropped")
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("n1", "n2", "n3", "n4", "n5"), repo.feed.value.notes.map { it.id }, "half a feed would hide what sits further back")
+        surface.feed.removeAt(0)
+
+        surface.olderPageFailure = null
+        surface.stuckCursor = true
+        surface.feedCalls.clear()
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("n1", "n2", "n3", "n4"), repo.feed.value.notes.map { it.id })
+        assertEquals(listOf("/v1/host/feed", "/v1/host/feed/before/4"), surface.feedCalls.map { it.second }, "a page that names itself again is not read again")
+    }
+
+    @Test
+    fun anAnswerGoesEvenIfTheScreenThatTookItGoesFirst() = runTest {
+        val (kcal, rosterId) = hostAgent()
+        surface.feed += item("ask", "ask", kcal, "Dinner?", Uuid.random(), choices = listOf("Dal"))
+        val repo = started()
+        val held = CompletableDeferred<Unit>()
+        surface.submitHeld = held
+        val answering = backgroundScope.launch { repo.answer(rosterId, "Dal") }
+        runCurrent()
+        assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask, "hidden while it goes")
+        answering.cancel()
+        held.complete(Unit)
+        runCurrent()
+        assertEquals("About your question \u201cDinner?\u201d: Dal", surface.admitted.last().text)
+        assertEquals(HostMethod.Post to "/v1/host/feed/items/ask/dismissal", surface.feedCalls.last(), "and the question is put away")
+        assertNull(repo.agents.value.first { it.id == rosterId }.glance.ask)
     }
 }
 

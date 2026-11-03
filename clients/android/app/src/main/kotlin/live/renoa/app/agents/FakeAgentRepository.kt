@@ -61,9 +61,9 @@ class FakeAgentRepository(
     private val wordDelayMs: Long = 60,
     private val script: ReplyScript = ReplyScript.Demo,
     private val newId: () -> String = { UUID.randomUUID().toString() },
-    briefing: Briefing? = FakeWorld.briefing(),
     routineSeeds: List<RoutineSeed> = FakeWorld.routines(),
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
+    feed: Feed = FakeWorld.feed(now().toInstant()),
 ) : AgentRepository {
     private class Room(val conversation: MutableStateFlow<Conversation>, val doing: String) {
         val queue = ArrayDeque<String>()
@@ -74,7 +74,14 @@ class FakeAgentRepository(
     }
 
     private val lock = Any()
-    private val roster = MutableStateFlow(seeds.map { it.summary })
+    // A seeded question with no time of its own was asked a few minutes ago, so it shows on the day strip.
+    private val roster =
+        MutableStateFlow(
+            seeds.map { seed ->
+                val ask = seed.summary.glance.ask
+                if (ask == null || ask.at != null) seed.summary else seed.summary.copy(glance = seed.summary.glance.copy(ask = ask.copy(at = now().toInstant().minusSeconds(300))))
+            },
+        )
     private val abilities = seeds.associate { it.summary.id to it.abilities }.toMutableMap()
     private val rooms =
         seeds.associate { it.summary.id to Room(MutableStateFlow(Conversation(it.messages)), it.doing) }.toMutableMap()
@@ -136,12 +143,27 @@ class FakeAgentRepository(
             Routine(
                 seed.id, FakeWorld.idFor(seed.agentName), seed.name, scheduleWords(daily, at.zone), on,
                 next = if (on) ran.plusDays(1).toInstant() else null,
-                lastRun = if (on) LastRun(ran.toInstant(), RunOutcome.Done) else null,
+                lastRun = if (on) LastRun(ran.toInstant(), if (seed.fails) RunOutcome.Failed else RunOutcome.Done) else null,
             )
         }
     }
 
-    override val briefing: StateFlow<Briefing?> = MutableStateFlow(briefing).asStateFlow()
+    private val feedState = MutableStateFlow(feed)
+
+    override val feed: StateFlow<Feed> = feedState.asStateFlow()
+
+    /** As the Host does: a note it no longer has is [Problem.NotFound]. */
+    override suspend fun dismiss(noteId: String) = takeNote(noteId) { true }
+
+    /** Runs it again at once, and it goes; one that is no problem is [Problem.NotFound]. */
+    override suspend fun runAgain(noteId: String) = takeNote(noteId) { it.kind == NoteKind.Problem }
+
+    private fun takeNote(noteId: String, fits: (Note) -> Boolean) {
+        synchronized(lock) {
+            val note = feedState.value.notes.firstOrNull { it.id == noteId && fits(it) } ?: throw RepositoryException(Problem.NotFound, "There is no such note.")
+            feedState.update { it.copy(notes = it.notes - note) }
+        }
+    }
 
     override fun conversation(agentId: String): Flow<Conversation> = room(agentId).conversation
 
@@ -160,10 +182,10 @@ class FakeAgentRepository(
     override suspend fun answer(agentId: String, choice: String) {
         val room = room(agentId)
         synchronized(lock) {
-            val ask = summaryLocked(agentId).glance.ask ?: throw RepositoryException(Problem.Conflict, "There is no question waiting.")
-            if (choice !in ask.choices) throw RepositoryException(Problem.Invalid, "\"$choice\" is not one of the answers offered.")
+            summaryLocked(agentId)
+            if (choice.isBlank()) throw RepositoryException(Problem.Invalid, "An answer needs some words in it.")
             glance(agentId) { it.copy(ask = null, unread = false) }
-            keepLocked(agentId, room, choice)
+            keepLocked(agentId, room, choice.trim())
         }
     }
 

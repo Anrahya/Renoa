@@ -105,14 +105,20 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         viewModelScope.launch { runCatching { repository.markSeen(agentId) } }
     }
 
+    /** An answer on its way, so a second tap while it goes sends nothing. */
+    private var answering = false
+
     fun answer(choice: String) {
+        if (answering) return
+        answering = true
         notice.value = null
         viewModelScope.launch {
             try {
                 repository.answer(agentId, choice)
             } catch (refused: RepositoryException) {
-                // A conflict means the question was already answered, from here or elsewhere: nothing to retry.
-                if (refused.problem != Problem.Conflict) notice.value = refused.wordsOr("That answer did not go through. Try again.")
+                notice.value = refused.wordsOr("That answer did not go through. Try again.")
+            } finally {
+                answering = false
             }
         }
     }
@@ -122,7 +128,10 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         notice.value = null
     }
 
-    /** Sends the draft. The words leave the composer at once; if they are not kept, they come back. */
+    /**
+     * Sends the draft. The words leave the composer at once; if they are not kept, they come back.
+     * While the agent waits on a question, they are the answer.
+     */
     fun send() {
         val text = draft.value.trim()
         if (text.isEmpty()) return
@@ -131,7 +140,7 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         inFlight.update { it + 1 }
         viewModelScope.launch {
             try {
-                repository.send(agentId, text)
+                if (state.value.ask == null) repository.send(agentId, text) else repository.answer(agentId, text)
             } catch (refused: RepositoryException) {
                 draft.update { if (it.isEmpty()) text else it }
                 notice.value = refused.wordsOr("That did not go through. Try again.")

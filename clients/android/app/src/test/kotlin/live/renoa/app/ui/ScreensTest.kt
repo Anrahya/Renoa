@@ -9,7 +9,6 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -65,7 +64,6 @@ import live.renoa.app.editor.AgentEditorScreen
 import live.renoa.app.editor.AgentEditorViewModel
 import live.renoa.app.editor.EditorMode
 import live.renoa.app.home.HomeScreen
-import live.renoa.app.home.OPEN_PAGES
 import live.renoa.app.home.HomeViewModel
 import live.renoa.app.signin.SignInScreen
 import live.renoa.app.signup.SignUpMemory
@@ -109,6 +107,10 @@ import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import live.renoa.app.agents.Feed
+import live.renoa.app.agents.Note
+import live.renoa.app.agents.NoteKind
 
 class ScreensTest : ScreenTest() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
@@ -195,81 +197,89 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
     }
 
+    /** Opens the pages over Home, on Routines. */
     private fun openPages() {
-        compose.onNode(hasClickLabel(OPEN_PAGES)).performClick()
+        compose.onNodeWithText("Routines").performClick()
         compose.waitForIdle()
     }
 
+    /** Scrolls Home's list to [matcher]. */
+    private fun onList(matcher: SemanticsMatcher): SemanticsNodeInteraction {
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(matcher)
+        return compose.onNode(matcher)
+    }
+
     @Test
-    fun homeShowsTheDayRenoaWithEveryoneAndTheOneThingThatNeedsTheOwner() {
+    fun homeShowsTheDayRenoaOnTopAndWhoeverHasSomethingToSay() {
         home(seconds = 3.97f)
         compose.onNodeWithText("Good evening.").assertIsDisplayed()
         compose.onNodeWithText("THU 7:40 PM").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Today. Morning brief ran at 7:30 AM. GitHub check ran at 6:30 PM. Prices and groceries ran at 7:15 PM. Posts worth a reply at 8 PM. Evening check-in at 9 PM").assertIsDisplayed()
+        compose.onNode(hasContentDescription("Today. Morning brief ran at 7:30 AM. GitHub check ran at 6:30 PM. Optimus: Three projects", substring = true)).assertIsDisplayed()
+        compose.onNode(hasContentDescription("Prices and groceries failed at 7:15 PM. Tifa asks: What's the plan for dinner? You were light on fibre at lunch. Posts worth a reply at 8 PM. Evening check-in at 9 PM.", substring = true)).assertExists()
+        compose.onNodeWithText("Next: Posts worth a reply at 8 PM \u00b7 2 ran \u00b7 1 didn\u2019t finish").assertIsDisplayed()
         compose.onNodeWithContentDescription("Renoa, working, your main agent").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Tifa, wants you").assertIsDisplayed()
-        compose.onNodeWithContentDescription("3 more, in Chats").assertIsDisplayed()
-        compose.onNodeWithText("Renoa and Kai'Sa · Picking three posts worth your reply…").assertIsDisplayed()
+        compose.onNodeWithText("Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").assertIsDisplayed()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
-        compose.onNodeWithText("1 of 6").assertIsDisplayed()
-        compose
-            .onNode(hasClickLabel(OPEN_PAGES))
-            .assert(hasText("New from Tifa and Optimus"))
-            .assert(hasText("Next: Posts worth a reply at 8 PM"))
-            .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.ContentDescription))
-        compose.onNodeWithText("Next: Posts worth a reply at 8 PM").assertIsDisplayed()
+        onList(hasText("Three projects are trending on GitHub that fit what you build. I can walk you through them tonight.")).assertIsDisplayed()
+        onList(hasText("QUIET")).assertIsDisplayed()
+        onList(hasText("\u201cPrices and groceries\u201d didn\u2019t finish")).assertIsDisplayed()
+        compose.onNodeWithText("New helper").assertIsDisplayed()
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToIndex(0)
         snapshot("home")
     }
 
     @Test
-    fun theOneThingStepsThroughTheRestAndAQuestionIsAnsweredInPlace() {
+    fun aQuestionIsAnsweredInPlaceAndAFailedRoutineRunsAgain() {
         home()
-        compose.onNodeWithContentDescription("Previous").assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Next").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithText("I couldn't open last month's statement. Can you send it again?").assertIsDisplayed()
-        compose.onNodeWithText("2 of 6").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Previous").performClick()
-        compose.waitForIdle()
-
         compose.onNodeWithText("Dal and a salad").performClick()
         compose.waitForIdle()
         compose.onNodeWithText("Dal and a salad").assertDoesNotExist()
-        compose.onNodeWithText("I couldn't open last month's statement. Can you send it again?").assertIsDisplayed()
+        assertNull(repository.agents.value.first { it.id == "tifa" }.glance.ask)
+
+        onList(hasText("Run again")).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("\u201cPrices and groceries\u201d didn\u2019t finish").assertDoesNotExist()
+        assertTrue(repository.feed.value.notes.none { it.kind == NoteKind.Problem })
     }
 
     @Test
-    fun tappingSomeoneOpensTheirChatAndTheRestAreInChats() {
+    fun tappingSomeoneOpensTheirChatAndPutsTheirNotesAway() {
         val opened = mutableListOf<String>()
         var made = 0
         home(onOpenChat = { opened += it }, onNewAgent = { made++ })
-        compose.onNodeWithContentDescription("Optimus, resting").performClick()
-        compose.onNodeWithContentDescription("Renoa, working, your main agent").performClick()
+        compose.onNodeWithText("Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").performClick()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").performClick()
-        assertEquals(listOf("optimus", "renoa", "tifa"), opened)
-
-        compose.onNodeWithContentDescription("3 more, in Chats").performClick()
+        onList(hasText("Three projects are trending on GitHub that fit what you build. I can walk you through them tonight.")).performClick()
         compose.waitForIdle()
-        val chats = compose.onAllNodes(hasScrollToNodeAction()).filter(hasAnyAncestor(hasScrollToNodeAction())).onFirst()
-        chats.performScrollToNode(hasContentDescription("Echo, asleep"))
-        compose.onNodeWithContentDescription("Echo, asleep").performClick()
-        chats.performScrollToNode(hasContentDescription("Meet someone new"))
-        compose.onNodeWithContentDescription("Meet someone new").performClick()
+        assertEquals(listOf("renoa", "tifa", "optimus"), opened)
+        assertTrue(repository.feed.value.notes.none { it.id == "projects" }, "the note the owner opened is put away")
+        onList(hasContentDescription("Echo, asleep")).performClick()
         assertEquals("echo", opened.last())
-        assertEquals(1, made)
 
-        compose.onNodeWithContentDescription("Back to Home").performClick()
+        compose.onNodeWithText("New helper").performClick()
+        assertEquals(1, made)
+    }
+
+    @Test
+    fun theMainAgentsFailedRoutineRunsAgainFromItsCard() {
+        val failed = Note("brief", "renoa", NoteKind.Problem, "\u201cMorning brief\u201d didn\u2019t finish", "Run it again.", EVENING.toInstant())
+        val note = Note("gift", "renoa", NoteKind.Update, "Wants you to know", "The scarf is \u20b91,200 off tonight.", EVENING.toInstant())
+        val repo = FakeAgentRepository(scope, now = { EVENING }, feed = Feed("1 thing needs you.", listOf(note, failed)))
+        val model = HomeViewModel(repo)
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Optimus, resting").assertIsDisplayed()
+        compose.onNodeWithText("The scarf is \u20b91,200 off tonight.").assertIsDisplayed()
+        compose.onNodeWithText("\u201cMorning brief\u201d didn\u2019t finish").assertIsDisplayed()
+        compose.onAllNodesWithText("Run again").onFirst().performClick()
+        compose.waitForIdle()
+        assertTrue(repo.feed.value.notes.none { it.id == "brief" })
     }
 
     @Test
     fun aRoutineIsTurnedOnFromItsPageAndWhatIsComingUpIsListed() {
         home()
         openPages()
-        compose.onNodeWithText("Routines").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithText("Tifa · Every day at 1 PM").assertIsDisplayed()
+        compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
         compose.onNodeWithText("Paused").assertIsDisplayed()
         compose.onNodeWithContentDescription("Lunch photo").performClick()
         compose.waitForIdle()
@@ -285,7 +295,7 @@ class ScreensTest : ScreenTest() {
 
         compose.activity.onBackPressedDispatcher.onBackPressed()
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Tifa, wants you").assertIsDisplayed()
+        compose.onNodeWithText("New helper").assertIsDisplayed()
         compose.onNodeWithText("Upcoming").assertDoesNotExist()
     }
 
@@ -295,7 +305,7 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
         snapshot("home-paper")
         openPages()
-        snapshot("home-chats-paper")
+        snapshot("home-routines-paper")
     }
 
     @Test
@@ -313,16 +323,16 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
         compose.onNodeWithText(CHECKING_IN).assertIsDisplayed()
         compose.onNodeWithContentDescription("Today.").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Make your first agent").assertDoesNotExist()
+        compose.onNodeWithText("Make your first agent").assertDoesNotExist()
         compose.onNodeWithText("Nobody is here yet.").assertDoesNotExist()
-        compose.onNode(hasClickLabel(OPEN_PAGES)).assertDoesNotExist()
+        compose.onNodeWithText("New helper").assertDoesNotExist()
         snapshot("home-connecting")
 
         // Once Renoa says no one is here, Home says so and offers to make someone.
         known.value = true
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Today. Nothing runs today.").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Make your first agent").assertIsDisplayed()
+        compose.onNodeWithText("Make your first agent").assertIsDisplayed()
         compose.onNodeWithText(CHECKING_IN).assertDoesNotExist()
     }
 

@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.AgentSummary
-import live.renoa.app.agents.Briefing
+import live.renoa.app.agents.Feed
 import live.renoa.app.agents.Link
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
@@ -31,7 +31,7 @@ fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
 
 private const val MAX_GREETED_NAME = 40
 
-/** The pages the dock opens, in the order they are swiped through. */
+/** The pages over Home, in the order they are swiped through. */
 enum class HomePage(val title: String) { Chats("Chats"), Routines("Routines"), Upcoming("Upcoming") }
 
 /** What Home keeps of its own while the owner is in a chat and back. */
@@ -40,8 +40,6 @@ private data class Local(
     /** Routines being switched, with the state asked for, shown until Renoa answers. */
     val switching: Map<String, Boolean> = emptyMap(),
     val page: HomePage? = null,
-    val shown: String? = null,
-    val shownAt: Int = 0,
     val ownerName: String? = null,
     val signUp: Boolean = false,
 )
@@ -49,15 +47,13 @@ private data class Local(
 data class HomeUiState(
     /** Every agent, as the roster has them; [people] is Home's order. */
     val roster: List<AgentSummary> = emptyList(),
-    val briefing: Briefing? = null,
+    /** The day's line and the notes agents left the owner. */
+    val feed: Feed = Feed(),
     val routines: List<Routine> = emptyList(),
     val notice: String? = null,
     val switching: Map<String, Boolean> = emptyMap(),
     /** The page open over Home, or null while Home itself shows. */
     val page: HomePage? = null,
-    /** The handover the owner stepped to, and where it stood, so the card next to it shows once it is gone. */
-    val shownKey: String? = null,
-    val shownAt: Int = 0,
     /** The owner's name from their profile, once read. */
     val ownerName: String? = null,
     /** Renoa has made no agent for the owner yet, so sign-up comes first. */
@@ -70,15 +66,7 @@ data class HomeUiState(
 
     val main: AgentSummary? get() = mainAgent(roster)
 
-    val handovers: List<Handover> get() = handovers(roster, briefing)
-
-    /** Where the relay stands in [handovers]: the one stepped to, else whatever now stands in its place. */
-    val shown: Int
-        get() {
-            val list = handovers
-            val at = list.indexOfFirst { it.key == shownKey }
-            return if (at >= 0) at else shownAt.coerceAtMost(list.lastIndex).coerceAtLeast(0)
-        }
+    val talks: TalkList get() = talks(roster, feed)
 
     fun agent(id: String?): AgentSummary? = roster.firstOrNull { it.id == id }
 
@@ -101,12 +89,12 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     }
 
     val state: StateFlow<HomeUiState> =
-        combine(repository.agents, repository.briefing, repository.routines, local, repository.link.combine(repository.rosterKnown, ::Pair)) { agents, briefing, routines, mine, (link, known) ->
-            HomeUiState(agents, briefing, routines, mine.notice, mine.switching, mine.page, mine.shown, mine.shownAt, mine.ownerName, mine.signUp, link, known)
+        combine(repository.agents, repository.feed, repository.routines, local, repository.link.combine(repository.rosterKnown, ::Pair)) { agents, feed, routines, mine, (link, known) ->
+            HomeUiState(agents, feed, routines, mine.notice, mine.switching, mine.page, mine.ownerName, mine.signUp, link, known)
         }.stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
-            HomeUiState(repository.agents.value, repository.briefing.value, repository.routines.value, link = repository.link.value, known = repository.rosterKnown.value),
+            HomeUiState(repository.agents.value, repository.feed.value, repository.routines.value, link = repository.link.value, known = repository.rosterKnown.value),
         )
 
     init {
@@ -144,18 +132,47 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     /** Closes the page. A notice shown on it goes with it. */
     fun close() = local.update { it.copy(page = null, notice = null) }
 
-    /** Steps the relay to the handover [key]. */
-    fun show(key: String) = local.update { it.copy(shown = key, shownAt = state.value.handovers.indexOfFirst { h -> h.key == key }.coerceAtLeast(0)) }
+    /**
+     * Puts away the note the owner opened, as the row it sat on opens its chat. One that cannot be
+     * put away shows again, which says so.
+     */
+    fun seen(note: String) {
+        viewModelScope.launch {
+            try {
+                repository.dismiss(note)
+            } catch (unconfirmed: RepositoryException) {
+                // The note is back on Home; the owner can open it again.
+            }
+        }
+    }
+
+    /** Runs the routine that failed in [note] again; the note goes once it is asked for. */
+    fun runAgain(note: String) {
+        local.update { it.copy(notice = null) }
+        viewModelScope.launch {
+            try {
+                repository.runAgain(note)
+            } catch (refused: RepositoryException) {
+                // Gone means it already ran again or was put away elsewhere: nothing to retry.
+                if (refused.problem != Problem.NotFound) local.update { it.copy(notice = refused.wordsOr("That routine could not run again. Try again.")) }
+            }
+        }
+    }
+
+    /** Agents whose answer is on its way, so a second tap while it goes sends nothing. */
+    private val answering = HashSet<String>()
 
     /** Answers an agent's question right from Home; the agent picks it up from there. */
     fun answer(agentId: String, choice: String) {
+        if (!answering.add(agentId)) return
         local.update { it.copy(notice = null) }
         viewModelScope.launch {
             try {
                 repository.answer(agentId, choice)
             } catch (refused: RepositoryException) {
-                // A conflict means the question was already answered, from here or elsewhere: nothing to retry.
-                if (refused.problem != Problem.Conflict) local.update { it.copy(notice = refused.wordsOr("That answer did not go through. Try again.")) }
+                local.update { it.copy(notice = refused.wordsOr("That answer did not go through. Try again.")) }
+            } finally {
+                answering.remove(agentId)
             }
         }
     }

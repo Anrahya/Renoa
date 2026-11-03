@@ -7,57 +7,51 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
-import live.renoa.app.agents.RunOutcome
-import live.renoa.app.agents.clockTime
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaType
+import live.renoa.app.ui.ButtonKind
+import live.renoa.app.ui.ButtonSize
 import live.renoa.app.ui.LinkLine
+import live.renoa.app.ui.RenoaButton
 import live.renoa.app.ui.RenoaMark
 import java.time.ZonedDateTime
 
 /**
- * Home is the owner's day with their agents: the day so far and what runs in it, the main agent
- * with everyone round her, one thing at a time handed over, and a bar that opens the chats,
- * routines and what's coming up. Until it is [HomeUiState.known] who is here, the seats stand
- * empty and nothing is handed over.
+ * Home is the owner's day with their agents: the day strip on top, then the main agent with what
+ * needs the owner, then every agent with something to say, and the quiet ones in a line each.
+ * Until it is [HomeUiState.known] who is here, Home says it is checking in.
  */
 @Composable
 fun HomeScreen(
@@ -70,46 +64,49 @@ fun HomeScreen(
 ) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.signUp) { if (state.signUp) onSignUp() }
-    // Read once per visit: the first visit assembles, later ones show the tiles in place.
-    val assemble = remember { !viewModel.assembled }
-    LaunchedEffect(Unit) { viewModel.markAssembled() }
     val time by produceState(now()) {
         while (true) {
             delay(60_000L - value.second * 1_000L)
             value = now()
         }
     }
-    val next = nextWords(state.routines, time)
     val colors = Renoa.colors
+    var lit by remember { mutableStateOf<String?>(null) }
+    val act =
+        TalkActions(
+            open = { talk ->
+                talk.note?.let { viewModel.seen(it.id) }
+                onOpenChat(talk.agent.id)
+            },
+            answer = viewModel::answer,
+            runAgain = viewModel::runAgain,
+        )
     BackHandler(enabled = state.page != null) { viewModel.close() }
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
         // Under an open page, Home is hidden from accessibility, so only the page is read.
-        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().then(if (state.page != null) Modifier.clearAndSetSemantics { } else Modifier)) {
-            // The constellation takes what the rest leaves, within reason; a short screen scrolls instead of squeezing it.
-            val stage = (maxHeight - 500.dp).coerceIn(240.dp, 380.dp)
-            Column(Modifier.fillMaxSize()) {
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(48.dp)
-                                .clickable(role = Role.Button, onClick = onChangeColours)
-                                .semantics { contentDescription = "Renoa, change colours" },
-                            contentAlignment = Alignment.CenterStart,
-                        ) { RenoaMark(colors.foreground, 26.dp) }
-                        Spacer(Modifier.weight(1f))
-                        Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = colors.mutedForeground)
-                    }
-                    Text(greeting(time.hour, state.ownerName), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
-                    LinkLine(state.link, Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp))
-                    DayStrip(state, time, { viewModel.open(HomePage.Routines) }, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp))
-                    Constellation(state, assemble, onOpenChat, onNewAgent, { viewModel.open(HomePage.Chats) }, Modifier.height(stage))
-                    TalkLine(state, onOpenChat)
-                    if (state.known) Relay(state, next, viewModel::show, onOpenChat, viewModel::answer, Modifier.padding(horizontal = 16.dp))
-                    state.notice?.takeIf { state.page == null }?.let { Text(it, Modifier.padding(start = 24.dp, top = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
+        Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (state.page != null) Modifier.clearAndSetSemantics { } else Modifier)) {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .clickable(role = Role.Button, onClick = onChangeColours)
+                        .semantics { contentDescription = "Renoa, change colours" },
+                    contentAlignment = Alignment.CenterStart,
+                ) { RenoaMark(colors.foreground, 26.dp) }
+                Spacer(Modifier.weight(1f))
+                Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = colors.mutedForeground)
+            }
+            Text(greeting(time.hour, state.ownerName), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
+            LinkLine(state.link, Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp))
+            DayStrip(state, time, { lit = it }, Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp))
+            TalkList(state, time, lit, act, onNewAgent, Modifier.weight(1f))
+            state.notice?.takeIf { state.page == null }?.let { Text(it, Modifier.padding(start = 24.dp, top = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
+            if (state.known) {
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RenoaButton(HomePage.Routines.title, { viewModel.open(HomePage.Routines) }, Modifier.weight(1f), kind = ButtonKind.Secondary)
+                    RenoaButton("New helper", onNewAgent, Modifier.weight(1f), kind = ButtonKind.Secondary)
                 }
-                if (state.known) Dock(state, next, { viewModel.open(HomePage.Chats) }, Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp))
             }
         }
         AnimatedVisibility(
@@ -122,63 +119,31 @@ fun HomeScreen(
     }
 }
 
-/**
- * The day from 6 am to midnight: the part gone by is filled, a line marks now, and each routine
- * that ran today or still runs today is a dot in its agent's colour, hollow while it is to come.
- * Tapping it opens the routines.
- */
+/** The main agent pinned on top, everyone with something to say, then the quiet ones. */
 @Composable
-private fun DayStrip(state: HomeUiState, now: ZonedDateTime, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+private fun TalkList(state: HomeUiState, now: ZonedDateTime, lit: String?, act: TalkActions, onNewAgent: () -> Unit, modifier: Modifier = Modifier) {
     val colors = Renoa.colors
-    val marks = dayMarks(state.routines, now)
-    val words =
+    val talks = state.talks
+    LazyColumn(modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp)) {
         when {
-            marks.isNotEmpty() ->
-                marks.joinToString(prefix = "Today. ", separator = ". ") { mark ->
-                    val at = clockTime(mark.at.toLocalTime())
-                    when (mark.ran) {
-                        null -> "${mark.routine.name} at $at"
-                        RunOutcome.Failed -> "${mark.routine.name} failed at $at"
-                        RunOutcome.Skipped -> "${mark.routine.name} was skipped at $at"
-                        RunOutcome.Done -> "${mark.routine.name} ran at $at"
+            !state.known -> item(key = "checking") { Text(CHECKING_IN, Modifier.padding(4.dp), style = RenoaType.Body, color = colors.mutedForeground) }
+            talks.main == null ->
+                item(key = "first") {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Nobody is here yet.", style = RenoaType.Heading, color = colors.foreground)
+                        Text("Make your first agent, and they will start helping.", style = RenoaType.Body, color = colors.foregroundSoft)
+                        RenoaButton("Make your first agent", onNewAgent, size = ButtonSize.Sm)
                     }
                 }
-            // Nothing can be said of the day before Renoa has said what runs in it.
-            state.known -> "Today. Nothing runs today."
-            else -> "Today."
-        }
-    Column(
-        modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "Open routines", onClick = onOpen).semantics { contentDescription = words },
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Canvas(Modifier.fillMaxWidth().height(22.dp)) {
-            val y = size.height / 2
-            val bar = 4.dp.toPx()
-            val corner = CornerRadius(bar / 2)
-            drawRoundRect(colors.secondary, Offset(0f, y - bar / 2), Size(size.width, bar), corner)
-            val nowX = size.width * stripAt(now.toLocalTime())
-            drawRoundRect(colors.input, Offset(0f, y - bar / 2), Size(nowX, bar), corner)
-            for (mark in marks) {
-                val x = size.width * stripAt(mark.at.toLocalTime())
-                val at = Offset(x, y)
-                val ink = state.agent(mark.routine.agentId)?.let { AgentHue.of(it.id, state.roster).face(colors) } ?: colors.foreground
-                drawCircle(colors.background, 6.dp.toPx(), at)
-                when (mark.ran) {
-                    null -> drawCircle(ink, 4.dp.toPx(), at, style = Stroke(1.6.dp.toPx()))
-                    RunOutcome.Done -> drawCircle(ink, 4.5.dp.toPx(), at)
-                    // It never ran: a small mark in the strip's own grey.
-                    RunOutcome.Skipped -> drawCircle(colors.mutedForeground, 2.5.dp.toPx(), at)
-                    // The agent's dot inside a ring in the failure colour, so it shows on any agent's colour.
-                    RunOutcome.Failed -> {
-                        drawCircle(colors.stateFailed, 7.dp.toPx(), at, style = Stroke(1.6.dp.toPx()))
-                        drawCircle(ink, 3.5.dp.toPx(), at)
-                    }
+            else -> {
+                val main = talks.main
+                item(key = main.agent.id) { MainCard(main, state.roster, nextWords(state.routines, now), now, lit == main.agent.id, act, Modifier.padding(bottom = 6.dp)) }
+                items(talks.talking, key = { it.agent.id }) { TalkRow(it, state.roster, now, lit == it.agent.id, act) }
+                if (talks.quiet.isNotEmpty()) {
+                    item(key = "quiet") { Text("QUIET", Modifier.padding(start = 4.dp, top = 16.dp, bottom = 4.dp), style = RenoaType.Eyebrow, color = colors.mutedForeground) }
+                    items(talks.quiet, key = { it.agent.id }) { QuietRow(it, state.roster, lit == it.agent.id, act) }
                 }
             }
-            drawLine(colors.foreground, Offset(nowX, 1.dp.toPx()), Offset(nowX, size.height - 1.dp.toPx()), 1.5.dp.toPx())
-        }
-        Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            listOf("6 am", "Noon", "6 pm", "12 am").forEach { Text(it, style = RenoaType.Eyebrow, color = colors.mutedForeground) }
         }
     }
 }

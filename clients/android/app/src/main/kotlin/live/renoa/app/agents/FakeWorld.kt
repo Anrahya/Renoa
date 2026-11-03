@@ -3,6 +3,7 @@ package live.renoa.app.agents
 import live.renoa.app.agents.AbilityKind.Everyday
 import live.renoa.app.agents.AbilityKind.Machine
 import live.renoa.app.agents.AbilityKind.Soon
+import java.time.Instant
 import java.time.LocalTime
 
 /** What a fake agent starts with. [doing] is what it says it is doing while it works on a reply. */
@@ -13,8 +14,8 @@ class AgentSeed(
     val doing: String = "Thinking about what you said",
 )
 
-/** A scripted routine that runs every day at [at], from which the fake works out its words and runs. */
-class RoutineSeed(val id: String, val agentName: String, val name: String, val at: LocalTime, val on: Boolean = true)
+/** A scripted routine that runs every day at [at], from which the fake works out its words and runs; one that [fails] fails every run. */
+class RoutineSeed(val id: String, val agentName: String, val name: String, val at: LocalTime, val on: Boolean = true, val fails: Boolean = false)
 
 /** The scripted roster the app shows until the real repository exists. */
 object FakeWorld {
@@ -59,11 +60,26 @@ object FakeWorld {
 
     fun idFor(name: String): String = name.lowercase().filter { it.isLetterOrDigit() }
 
-    /** The agent whose note opens Home. */
+    /** The main agent, who keeps the day's line. */
     const val LEAD = "renoa"
 
-    fun briefing(): Briefing =
-        Briefing(LEAD, "Evening, Yash. Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.")
+    /** The day's line and what the demo agents left the owner, as of [now]. */
+    fun feed(now: Instant): Feed =
+        Feed(
+            "Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.",
+            listOf(
+                Note(
+                    "projects", idFor("Optimus"), NoteKind.Update, "Wants you to know",
+                    "Three projects are trending on GitHub that fit what you build. I can walk you through them tonight.",
+                    now.minusSeconds(1_800),
+                ),
+                Note(
+                    "prices", idFor("Nagisa"), NoteKind.Problem, "\u201cPrices and groceries\u201d didn\u2019t finish",
+                    "Something went wrong on this run. You can run it again now.",
+                    now.minusSeconds(1_500),
+                ),
+            ),
+        )
 
     /** What the demo agents do every day. */
     fun routines(): List<RoutineSeed> =
@@ -71,7 +87,7 @@ object FakeWorld {
             RoutineSeed("brief", "Renoa", "Morning brief", LocalTime.of(7, 30)),
             RoutineSeed("lunch", "Tifa", "Lunch photo", LocalTime.of(13, 0), on = false),
             RoutineSeed("github", "Optimus", "GitHub check", LocalTime.of(18, 30)),
-            RoutineSeed("prices", "Nagisa", "Prices and groceries", LocalTime.of(19, 15)),
+            RoutineSeed("prices", "Nagisa", "Prices and groceries", LocalTime.of(19, 15), fails = true),
             RoutineSeed("posts", "Kai'Sa", "Posts worth a reply", LocalTime.of(20, 0)),
             RoutineSeed("checkin", "Renoa", "Evening check-in", LocalTime.of(21, 0)),
         )

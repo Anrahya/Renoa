@@ -471,8 +471,9 @@ phone; `whenever` never wakes it, and an item answered or dismissed first is
 owed nothing. The node that serves the Host reads the owed items every second,
 oldest first, and asks the coordinator for each with `request_wake` under the
 item's id, `now` as a ring and `soon` as the wake a reply sends. The Android
-app shows a ring at once; it does not yet read the feed after a wake, so a
-`soon` item shows on the phone only once Home lists the feed (#146). Once the
+app shows a ring at once; Home lists the feed, read when the app connects and
+on each roster check, so a `soon` item shows once the owner opens the app; the
+wake itself does not read the feed. Once the
 coordinator acknowledges the wake as recorded, the node stores the time on the
 item (`wake_sent_at_ms`), so the item is owed no more; a lost acknowledgement
 leaves it owed, and the coordinator records the repeated id once. A refused
