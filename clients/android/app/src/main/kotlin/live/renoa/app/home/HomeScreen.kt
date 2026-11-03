@@ -45,7 +45,7 @@ import live.renoa.app.ui.ButtonKind
 import live.renoa.app.ui.ButtonSize
 import live.renoa.app.ui.LinkLine
 import live.renoa.app.ui.RenoaButton
-import live.renoa.app.ui.RenoaMark
+import live.renoa.app.ui.RenoaIcon
 import java.time.ZonedDateTime
 
 /**
@@ -93,7 +93,7 @@ fun HomeScreen(
                         .clickable(role = Role.Button, onClick = onChangeColours)
                         .semantics { contentDescription = "Renoa, change colours" },
                     contentAlignment = Alignment.CenterStart,
-                ) { RenoaMark(colors.foreground, 26.dp) }
+                ) { RenoaIcon(30.dp) }
                 Spacer(Modifier.weight(1f))
                 Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = colors.mutedForeground)
             }

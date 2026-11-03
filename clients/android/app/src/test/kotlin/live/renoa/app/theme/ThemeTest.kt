@@ -124,6 +124,6 @@ class ThemeTest {
     fun theWindowAndTheIconStandOnATokenToo() {
         assertEquals(ThemeName.Paper.colors.background, resourceColour("values", "window_background"))
         assertEquals(ThemeName.Graphite.colors.background, resourceColour("values-night", "window_background"))
-        assertEquals(ThemeName.Graphite.colors.background, resourceColour("values", "ic_launcher_background"))
+        assertEquals(ThemeName.Paper.colors.partModel, resourceColour("values", "ic_launcher_background"))
     }
 }

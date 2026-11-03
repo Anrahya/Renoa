@@ -1,14 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The waving face in one ink, for themed icons: the face is an outline so the eyes and smile read. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#FFFFFF" android:pathData="M62.60,34.50L58.30,41.95L49.70,41.95L45.40,34.50L49.70,27.05L58.30,27.05Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M79.49,44.25L75.19,51.70L66.59,51.70L62.29,44.25L66.59,36.80L75.19,36.80Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M79.49,63.75L75.19,71.20L66.59,71.20L62.29,63.75L66.59,56.30L75.19,56.30Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M62.60,73.50L58.30,80.95L49.70,80.95L45.40,73.50L49.70,66.05L58.30,66.05Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M45.71,63.75L41.41,71.20L32.81,71.20L28.51,63.75L32.81,56.30L41.41,56.30Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M45.71,44.25L41.41,51.70L32.81,51.70L28.51,44.25L32.81,36.80L41.41,36.80Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M64.50,54.00L59.25,63.09L48.75,63.09L43.50,54.00L48.75,44.91L59.25,44.91Z" />
+    <!-- Scaled in so the hand and its wave stay inside the 66-unit safe circle on any mask. -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.8" android:scaleY="0.8">
+        <path
+            android:pathData="M73,58L62,38.95L40,38.95L29,58L40,77.05L62,77.05Z"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineJoin="round"
+            android:strokeWidth="4" />
+        <path android:fillColor="#FFFFFF" android:pathData="M41.8,56a2.7,3.5 0,1 0,5.4 0a2.7,3.5 0,1 0,-5.4 0Z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M54.8,56a2.7,3.5 0,1 0,5.4 0a2.7,3.5 0,1 0,-5.4 0Z" />
+        <path
+            android:pathData="M46,65Q51,70 56,65"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="2.6" />
+        <group
+            android:pivotX="75"
+            android:pivotY="35"
+            android:rotation="18">
+            <path
+                android:pathData="M83.5,35L79.25,27.64L70.75,27.64L66.5,35L70.75,42.36L79.25,42.36Z"
+                android:strokeColor="#FFFFFF"
+                android:strokeLineJoin="round"
+                android:strokeWidth="3.4" />
+        </group>
+        <path
+            android:pathData="M81,23.5q3.2,3 2.6,7.2M85.5,27.5q2.2,2.6 1.6,6"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="2.2" />
+    </group>
 </vector>
