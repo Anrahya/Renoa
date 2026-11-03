@@ -44,6 +44,8 @@ impl LocalHost {
                 .transaction()
                 .map_err(catalog::HostCatalogError::from)?;
             note_pass::store::forget(&transaction, session_uuid, now_ms)?;
+            crate::host::feed::retention::forget_session(&transaction, session_uuid)
+                .map_err(catalog::HostCatalogError::from)?;
             transaction
                 .commit()
                 .map_err(catalog::HostCatalogError::from)?;

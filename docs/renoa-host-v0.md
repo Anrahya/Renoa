@@ -433,10 +433,13 @@ reads, and the turn goes on. `ask_owner` also ends the turn: its result
 carries the question, with its choices as a `- ` list, as the turn's closing
 message (see the agent loop's closing results), so every surface shows the
 question as the reply and an automation's run records it as its output. A
-later call in the same response is not run. The owner's next message on that
-session, from any surface and not a guest's or an automation run's, marks the
-asks made there before it done once the turn it starts settles; a mark that
-fails is logged as `owner_asks_unanswered`, and the next message closes it.
+later call in the same response is not run. The next new message on that
+session from a person the Host knows, through any surface that identifies
+them, marks the asks made there before it done once the turn it starts
+settles; a guest's message, another agent's, an unidentified sender's and an
+automation run answer nothing. A mark that fails is logged as
+`owner_asks_unanswered`, and the person's next message closes it. Deleting a
+conversation removes the asks and updates made in it.
 `notify_owner` does not end the turn. Pushing these items to the owner's phone
 by urgency is not built yet.
 
@@ -710,8 +713,9 @@ Every agent receives `plugin_search`, `plugin_manage`, and one invocation tool:
 `tool_execute`. These are platform capabilities and cannot be removed through
 machine-tool selections. Beside them, each compiled plugin binds its resident
 tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
-`renoa.memory` for a turn that talks to a person or comes from a guest, and
-`agent_documents` from `renoa.documents` for an agent that keeps documents.
+`renoa.memory` for a turn that talks to a person or comes from a guest,
+`agent_documents` from `renoa.documents` for an agent that keeps documents,
+and `ask_owner` and `notify_owner` from `renoa.owner` for every agent.
 The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
@@ -739,8 +743,8 @@ machine tools for a child; it exposes no operation to grant tools to its caller.
 owner operations. Their revision-checked receipts remain independent of the
 original creation receipt. Active operations retain their frozen grants.
 
-Seven compiled Host plugins use the same discovery and management boundary as
-external plugins. Six contribute tools, invoked through the same exact-schema
+Eight compiled Host plugins use the same discovery and management boundary as
+external plugins. Seven contribute tools, invoked through the same exact-schema
 lookup as external MCP tools; `renoa.time` contributes context to each message,
 and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 
@@ -753,6 +757,7 @@ and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 | `renoa.git` | Inspect local changes, diffs, and commits |
 | `renoa.time` | Show the current time and the time since the previous message |
 | `renoa.memory` | Note, recall and zoom into the speaking person's shared notebook; show their `MIND.md` |
+| `renoa.owner` | Ask the owner a question that ends the turn, or tell them something, through the feed |
 
 These plugins start enabled, except that an agent created from the Alpha preset
 starts with `renoa.time` off; document tools exist only for definitions that enable

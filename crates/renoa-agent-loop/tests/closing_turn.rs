@@ -47,7 +47,7 @@ async fn a_closing_result_ends_the_turn_and_the_next_command_answers_it() {
                 ],
                 stop_reason: StopReason::ToolUse,
                 usage: None,
-                metadata: AssistantMetadata::default(),
+                metadata: caller(),
             },
             ModelResponse {
                 content: vec![AssistantContent::text("Booked for six.")],
@@ -88,7 +88,9 @@ async fn a_closing_result_ends_the_turn_and_the_next_command_answers_it() {
         Message::Assistant { .. },
         Message::Tool { result: asked },
         Message::Tool { result: skipped },
-        Message::Assistant { content, .. },
+        Message::Assistant {
+            content, metadata, ..
+        },
     ] = history.as_slice()
     else {
         panic!("user, calls, result, not-run, closing: {history:?}");
@@ -108,6 +110,14 @@ async fn a_closing_result_ends_the_turn_and_the_next_command_answers_it() {
     );
     assert_eq!(skipped.content, vec![ContentBlock::text(NOT_RUN)]);
     assert_eq!(content, &vec![AssistantContent::text(QUESTION)]);
+    assert_eq!(
+        metadata,
+        &AssistantMetadata {
+            response_id: None,
+            ..caller()
+        },
+        "a provider replays the closing message as the caller's own"
+    );
 
     let answered = submit(&kernel, session_id, "Yes");
     assert_eq!(
@@ -144,6 +154,17 @@ fn messages(kernel: &Kernel, session_id: SessionId) -> Vec<Message> {
         .into_iter()
         .filter_map(|event| serde_json::from_value(event.payload).ok())
         .collect()
+}
+
+/// The provider an assistant message names, which every one in history must.
+fn caller() -> AssistantMetadata {
+    AssistantMetadata {
+        api: Some("anthropic-messages".to_owned()),
+        provider: Some("anthropic".to_owned()),
+        model: Some("claude-fixture".to_owned()),
+        response_id: Some("response-1".to_owned()),
+        ..AssistantMetadata::default()
+    }
 }
 
 fn call(id: &str) -> ToolCall {

@@ -265,3 +265,52 @@ fn a_tool_turn_streams_execution_before_the_final_answer() {
     assert_eq!(response["result"]["stopReason"], "end_turn");
     process.finish();
 }
+
+/// A turn that ends on `ask_owner` shows the question as a new assistant
+/// message after the text the model streamed, and ends the prompt normally.
+#[test]
+fn an_ask_ends_the_prompt_with_the_question_as_a_new_message() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(&bridge, BRIDGE).expect("write model bridge");
+    let mut process = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    process.initialize();
+    let created = process.create_session(&workspace);
+    let session_id = created["result"]["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+
+    process.send_prompt(&session_id, "Ask", "5b0f3c1e-8d2a-4f6b-9c7d-1e2f3a4b5c6d");
+    let messages = process.read_until_response(3);
+    let chunks: Vec<(&str, &str)> = messages
+        .iter()
+        .filter(|message| message["params"]["update"]["sessionUpdate"] == "agent_message_chunk")
+        .map(|message| {
+            (
+                message["params"]["update"]["content"]["text"]
+                    .as_str()
+                    .expect("chunk text"),
+                message["params"]["update"]["messageId"]
+                    .as_str()
+                    .expect("message id"),
+            )
+        })
+        .collect();
+    let [(streamed, first), (question, second)] = chunks.as_slice() else {
+        panic!("the streamed text, then the question: {messages:?}");
+    };
+    assert_eq!(
+        (*streamed, *question),
+        ("Checking. ", "Book the 6pm table?\n- Yes\n- No")
+    );
+    assert_ne!(first, second, "the question is a message of its own");
+    let response = messages.last().expect("prompt response");
+    assert_eq!(response["result"]["stopReason"], "end_turn");
+    process.finish();
+}

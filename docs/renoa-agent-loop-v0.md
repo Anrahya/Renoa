@@ -341,10 +341,15 @@ results. An unknown MCP child is never replayed by the loop.
 A tool result may carry a closing message and a `not_run` text, as
 `ask_owner` does. The loop records the result without them, gives every later
 call of the same response the `not_run` text as an error result, appends the
-closing message as the turn's last assistant message, and ends the operation
-waiting for input; the next command is a new operation that answers it. A
-Code Mode child that carries one stops the run: Python is not resumed, and the
-outer `code_mode` result holds every result of that wave.
+closing message as the turn's last assistant message, with the provider, API
+and model of the assistant message that made the call, and ends the operation
+waiting for input; the next command is a new operation that answers it. An
+empty closing message fails the operation, and a cancellation that settles
+such a result records it without the closing message. A Code Mode child that
+carries one stops the run: Python is not resumed, the outer `code_mode` result
+holds the content and error flag of every result of that wave, or only that
+the run stopped when that passes the 1 MiB final-result limit, and the reply
+is every closing message of the wave in call order.
 
 Code Mode accepts at most 64 KiB of source, 32 MCP calls in one wave, 128
 calls and 32 waves in one run, a 2 MiB encoded snapshot, 2 MiB of MCP results

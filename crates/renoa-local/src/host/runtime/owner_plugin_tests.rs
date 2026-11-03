@@ -18,8 +18,9 @@ use crate::{
 
 /// `ask` calls `ask_owner` twice in one response; `tell` calls
 /// `notify_owner` and answers with its result, prefixed `error: ` when it
-/// failed. Any other prompt answers with the conversation the model received,
-/// one `role: text` per message, each after a line holding `§`.
+/// failed. `Yes` answers with the conversation the model received, one
+/// `role: text` per message, each after a line holding `§`; any other prompt
+/// answers `Noted.`.
 const MODEL: &str = r#"
 import { createHash } from "node:crypto";
 const spec = JSON.stringify({id:"fixture"});
@@ -44,7 +45,8 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
     const last=results.at(-1);
     if (!last) complete([{type:"tool_call",id:"tell",name:"notify_owner",arguments:{message:"The build failed twice.",urgency:"soon"}}],"tool_use");
     else say((last.is_error?"error: ":"")+last.content[0].text);
-  } else say(request.messages.map(message=>message.role+": "+(
+  } else if (prompt!=="Yes") say("Noted.");
+  else say(request.messages.map(message=>message.role+": "+(
     message.role==="tool" ? message.result.content[0].text
     : message.role==="user" ? message.content[0].text
     : message.content.map(part=>part.type==="text"?part.text:part.type==="tool_call"?part.name:"").join("|")
@@ -165,22 +167,29 @@ async fn an_ask_ends_the_turn_and_the_owners_next_message_answers_it() {
     assert_eq!(asked.subject_id, session.id().to_string());
 
     say(&session, Speaker::Guest, "Maybe later").await;
-    assert!(!items(root).await[0].done, "a guest's message is no answer");
+    say(&session, Speaker::Unidentified, "From another agent").await;
+    assert!(
+        !items(root).await[0].done,
+        "a guest's or another agent's message is no answer"
+    );
 
     let seen = say(&session, owner, "Yes").await;
-    let tail: Vec<&str> = seen.rsplit("\n§\n").take(6).collect();
+    let messages: Vec<&str> = seen.split("\n§\n").collect();
+    let call = messages
+        .iter()
+        .position(|message| *message == "assistant: ask_owner|ask_owner")
+        .unwrap_or_else(|| panic!("the call is in history: {seen}"));
     assert_eq!(
-        tail,
+        messages[call..call + 4],
         [
-            "user: Yes",
-            "user: Maybe later",
-            &format!("assistant: {QUESTION}"),
-            &format!("tool: {NOT_RUN}"),
-            "tool: The owner has your question. Their answer comes as a new message.",
             "assistant: ask_owner|ask_owner",
+            "tool: The owner has your question. Their answer comes as a new message.",
+            &format!("tool: {NOT_RUN}"),
+            &format!("assistant: {QUESTION}"),
         ],
         "{seen}"
     );
+    assert_eq!(messages.last(), Some(&"user: Yes"));
     assert!(items(root).await[0].done, "the owner's message answers it");
 }
 
@@ -330,4 +339,23 @@ async fn schema_48_admits_the_owner_plugin_into_a_schema_47_catalog() {
         (Urgency::Soon, Urgency::Whenever, None),
         "an upgrade leaves a stored item quiet"
     );
+}
+
+/// Deleting a conversation removes the asks and updates made in it: nothing
+/// can answer them, and an open ask would wait forever.
+#[tokio::test]
+async fn deleting_a_conversation_removes_its_asks() {
+    let directory = tempfile::tempdir().expect("directory");
+    let root = directory.path();
+    let host = host(root);
+    let (agent, session) = renoa(&host, root).await;
+    let owner = Speaker::Principal(Uuid::new_v4());
+    turn(&session, owner, "ask").await;
+    say(&session, owner, "tell").await;
+    assert_eq!(items(root).await.len(), 2);
+
+    let id = session.id();
+    drop(session);
+    host.delete_session(agent, id).await.expect("deleted");
+    assert!(items(root).await.is_empty(), "{:?}", items(root).await);
 }

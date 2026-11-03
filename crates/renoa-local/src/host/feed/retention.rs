@@ -61,6 +61,20 @@ pub(in crate::host) fn forget_automation(
     )
 }
 
+/// Removes the asks and updates made in `session`, which is being deleted:
+/// nothing can answer or open them any more, and an open ask would otherwise
+/// wait forever.
+pub(in crate::host) fn forget_session(db: &Connection, session: Uuid) -> rusqlite::Result<usize> {
+    db.execute(
+        "DELETE FROM host_feed_items WHERE kind IN (?1, ?2) AND subject_id = ?3",
+        params![
+            FeedKind::Ask.as_str(),
+            FeedKind::Update.as_str(),
+            session.to_string()
+        ],
+    )
+}
+
 /// Removes the results of `runs`, which are being removed: a result that
 /// cannot be opened is not kept.
 pub(in crate::host) fn forget_results(db: &Connection, runs: &[String]) -> rusqlite::Result<usize> {

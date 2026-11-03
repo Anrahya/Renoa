@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use renoa_agent::{Message, ToolCall, ToolResult};
 use renoa_kernel::{
     CancellationInput, CancellationTransition, EffectBatchFacts, EffectFact, EffectOutcome,
-    EffectRecovery, EffectRequest, LoopDecision, LoopError, OperationId, SettledEffect,
-    SettledEffectBatch, UnknownEffectAbandonment, UnknownEffectInput,
+    EffectRecovery, EffectRequest, LoopDecision, LoopError, OperationId, SemanticEvent,
+    SettledEffect, SettledEffectBatch, UnknownEffectAbandonment, UnknownEffectInput,
 };
 
 use super::{
@@ -203,6 +203,7 @@ impl AgentLoop {
         run: CodeRun,
         snapshot: String,
         calls: &CodeCallBatch,
+        events: &[SemanticEvent],
         effect_batch: Option<SettledEffectBatch>,
     ) -> Result<LoopDecision, LoopError> {
         let batch = effect_batch
@@ -210,7 +211,7 @@ impl AgentLoop {
         let effects = self.validate_settled_code_batch(&run, calls, &batch)?;
         let mut results = BTreeMap::new();
         let mut result_bytes = 0_usize;
-        let mut closing = None;
+        let (mut closings, mut seen) = (Vec::new(), BTreeMap::new());
         for call in calls.ordered() {
             let identity = run.call_id(call.call_id);
             let effect = effects
@@ -234,7 +235,11 @@ impl AgentLoop {
                     "Code Mode MCP result identity differs from its request",
                 ));
             }
-            closing = closing.or(result.closing.clone());
+            closings.extend(result.closing.clone());
+            seen.insert(
+                call.call_id.to_string(),
+                (result.content.clone(), result.is_error),
+            );
             let python_value = python_result(&result);
             let encoded_bytes = serde_json::to_vec(&python_value)
                 .map_err(|error| {
@@ -251,13 +256,8 @@ impl AgentLoop {
             }
             results.insert(call.call_id.to_string(), python_value);
         }
-        // A call that ends the turn stops the run: Python never resumes, and
-        // the model sees every result of the wave before the closing message.
-        if let Some(closing) = closing {
-            let stopped =
-                serde_json::json!({ "stopped": "a call ended the turn", "results": results });
-            let result = model_result(pending.current(), &stopped, false)?;
-            return super::closing::close_turn(&pending, result, closing);
+        if !closings.is_empty() {
+            return super::closing::stop_code_run(&pending, &seen, closings, events);
         }
         let request = CodeStepRequest {
             run_id: run.run_id.clone(),

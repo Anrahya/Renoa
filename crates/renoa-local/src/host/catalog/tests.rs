@@ -876,3 +876,46 @@ fn only_a_busy_or_locked_catalog_is_busy() {
         .expect_err("no such table");
     assert!(!LocalHostError::HostCatalog(HostCatalogError::Database(missing)).catalog_busy());
 }
+
+/// A reset from schema 47 reaches schema 48's feed: an item takes an urgency
+/// and an ask's choices, and every compiled plugin can be stored.
+#[test]
+fn a_reset_from_schema_47_gives_the_feed_its_urgency_and_admits_every_plugin() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    initialize(&database).expect("initialize current catalog");
+    let connection = open_verified(&database).expect("open current catalog");
+    super::restore_schema_47(&connection);
+    connection
+        .execute_batch(
+            "UPDATE host_metadata SET schema_version = 47 WHERE singleton = 1;
+             PRAGMA user_version = 47;",
+        )
+        .expect("store schema 47");
+    drop(connection);
+
+    cutover(&database).expect("reset schema 47");
+    let connection = open_verified(&database).expect("open reset catalog");
+    connection
+        .execute_batch(
+            "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000002', 'Fresh', 1,
+                'provisioning', NULL, '{}', 'system', 'migration-test');
+             INSERT INTO host_feed_items(id, kind, agent_id, title, body, action, subject_id,
+                urgency, choices, created_at_ms)
+             VALUES ('00000000-0000-0000-0000-0000000000f1', 'ask',
+                '00000000-0000-0000-0000-000000000002', 'Needs your answer', 'Book it?',
+                'reply', 'session', 'now', '[\"Yes\",\"No\"]', 1);",
+        )
+        .expect("a reset feed takes an urgency and choices");
+    for plugin in crate::plugins::host::HostPluginId::ALL {
+        connection
+            .execute(
+                "INSERT INTO host_agent_builtin_plugins
+                 VALUES ('00000000-0000-0000-0000-000000000002', ?1, 0)",
+                [plugin.id()],
+            )
+            .unwrap_or_else(|error| panic!("{} is stored: {error}", plugin.id()));
+    }
+}

@@ -189,7 +189,7 @@ if (prompt === "Hello") {
   request.system_prompt.startsWith("You are Alpha, Renoa's local coding agent.") &&
   request.system_prompt.includes("Keep the ACP kernel path exact.") &&
   request.tools.map(tool => tool.name).join(",") ===
-    "read_file,edit_file,write_file,bash,grep,find,plugin_search,plugin_manage,tool_execute"
+    "read_file,edit_file,write_file,bash,grep,find,plugin_search,plugin_manage,tool_execute,ask_owner,notify_owner"
 ) {
   content = [{ type: "text", text: "Alpha is kernel-backed." }];
 } else if (
@@ -281,6 +281,22 @@ if (prompt === "Hello") {
       id: "read-1",
       name: "read_file",
       arguments: { path: "value.txt" }
+    }
+  ];
+  stop_reason = "tool_use";
+} else if (prompt === "Ask") {
+  process.stdout.write(JSON.stringify({
+    event: "content_delta",
+    content_index: 0,
+    delta: { type: "text", text: "Checking. " }
+  }) + "\n");
+  content = [
+    { type: "text", text: "Checking. " },
+    {
+      type: "tool_call",
+      id: "ask-1",
+      name: "ask_owner",
+      arguments: { question: "Book the 6pm table?", choices: ["Yes", "No"], urgency: "soon" }
     }
   ];
   stop_reason = "tool_use";

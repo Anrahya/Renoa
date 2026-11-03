@@ -409,8 +409,9 @@ impl AgentSession {
             observation,
             speaker,
         } = prompt;
-        // A new message from anyone but a guest answers the open asks before
-        // it, once admitted.
+        // A new message from a person the Host knows answers the open asks
+        // before it once its turn settles. A guest, another agent or an
+        // unidentified sender answers nothing.
         let mut answers = None;
         let (prompt, skipped) = match self.kernel.prompt_admission(command_id, &content)? {
             PromptAdmission::Admitted(command) => (command, Vec::new()),
@@ -420,7 +421,7 @@ impl AgentSession {
                 let database = self.host.database.clone();
                 let agent = self.agent;
                 let observed_at = observation.unix_milliseconds();
-                if !matches!(speaker, Speaker::Guest) {
+                if speaker.principal().is_some() {
                     answers = Some(observed_at);
                 }
                 // Reading plugin state is blocking catalog I/O.

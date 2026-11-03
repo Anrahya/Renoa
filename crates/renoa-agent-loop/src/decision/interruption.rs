@@ -40,7 +40,7 @@ impl LoopPlugin for AgentLoop {
             LoopPhase::AwaitingTool {
                 model_turns,
                 pending,
-            } => self.settle_tool(model_turns, pending, input.effect_batch),
+            } => self.settle_tool(model_turns, pending, &input.events, input.effect_batch),
             LoopPhase::AwaitingCodeStep {
                 model_turns,
                 pending,
@@ -59,6 +59,7 @@ impl LoopPlugin for AgentLoop {
                 run,
                 snapshot,
                 &calls,
+                &input.events,
                 input.effect_batch,
             ),
             LoopPhase::Terminal => Err(LoopError::new(
@@ -284,12 +285,14 @@ impl AgentLoop {
 fn settled_tool_result(call: &ToolCall, outcome: &EffectOutcome) -> Result<ToolResult, LoopError> {
     match outcome {
         EffectOutcome::Success(value) => {
-            let result = decode::<ToolResult>("tool result", value.clone())?;
+            let mut result = decode::<ToolResult>("tool result", value.clone())?;
             if result.call_id != call.id || result.name != call.name {
                 return Err(LoopError::new(
                     "tool result identity differs from its persisted request",
                 ));
             }
+            // Cancelled, the turn ends without the closing message it asked for.
+            result.closing = None;
             Ok(result)
         }
         EffectOutcome::Failure { .. } => Ok(unavailable_result(

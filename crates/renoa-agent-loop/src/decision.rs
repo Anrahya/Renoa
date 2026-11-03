@@ -391,6 +391,7 @@ impl AgentLoop {
         &self,
         model_turns: u32,
         pending: PendingToolCalls,
+        events: &[renoa_kernel::SemanticEvent],
         effect_batch: Option<SettledEffectBatch>,
     ) -> Result<LoopDecision, LoopError> {
         let call = pending.current();
@@ -405,7 +406,7 @@ impl AgentLoop {
             &tool.effect_binding,
             &encode("tool request", call)?,
         )?;
-        let result = match effect.outcome {
+        let mut result = match effect.outcome {
             EffectOutcome::Success(result) => decode::<ToolResult>("tool result", result)?,
             EffectOutcome::Failure { message } => {
                 return Self::fail_tool(&pending, message);
@@ -417,17 +418,17 @@ impl AgentLoop {
                 "tool result identity differs from its persisted request",
             ));
         }
+        if let Some(closing) = result.closing.take() {
+            return closing::close_turn(&pending, result, closing, events);
+        }
         Self::append_tool_result(model_turns, pending, result)
     }
 
     fn append_tool_result(
         model_turns: u32,
         pending: PendingToolCalls,
-        mut result: ToolResult,
+        result: ToolResult,
     ) -> Result<LoopDecision, LoopError> {
-        if let Some(closing) = result.closing.take() {
-            return closing::close_turn(&pending, result, closing);
-        }
         let phase = pending
             .advance()
             .map_or(LoopPhase::NeedModel { model_turns }, |pending| {

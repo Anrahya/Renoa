@@ -71,8 +71,18 @@ pub(super) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
 }
 
 /// Gives every item an urgency and an ask its choices: schema 48. Existing
-/// items keep `whenever`, so an upgrade wakes no phone for them.
+/// items keep `whenever`, so an upgrade wakes no phone for them. A table that
+/// has them already is left alone, so the reset's cutover can run it on any
+/// catalog.
 pub(super) fn add_urgency(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
+    let present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('host_feed_items') WHERE name = 'urgency')",
+        [],
+        |row| row.get(0),
+    )?;
+    if present {
+        return Ok(());
+    }
     tx.execute_batch(&format!(
         "ALTER TABLE host_feed_items ADD COLUMN urgency TEXT NOT NULL DEFAULT 'whenever'
             CHECK (urgency IN ({urgencies}));
