@@ -245,14 +245,16 @@ pub(crate) fn owner_told(tx: &Connection, told: &ForOwner<'_>) -> rusqlite::Resu
 }
 
 /// Replaces the Today line with `sentence`, which stands until an item that
-/// needs the owner is written after it.
+/// needs the owner is written after it. The same sentence again changes
+/// nothing, so a replay never hides an item written since.
 pub(crate) fn today_set(tx: &Connection, sentence: &str) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO host_today(singleton, sentence, through_sequence)
-         VALUES (1, ?1, (SELECT coalesce(max(sequence), 0) FROM host_feed_items))
+        "INSERT INTO host_today(singleton, sentence, through_sequence) VALUES (1, ?1, ?2)
          ON CONFLICT(singleton) DO UPDATE
-         SET sentence = excluded.sentence, through_sequence = excluded.through_sequence",
-        [sentence],
+         SET through_sequence = CASE WHEN sentence = excluded.sentence
+                                     THEN through_sequence ELSE excluded.through_sequence END,
+             sentence = excluded.sentence",
+        params![sentence, super::newest(tx)?],
     )?;
     Ok(())
 }

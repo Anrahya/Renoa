@@ -118,6 +118,70 @@ async fn renoa(host: &LocalHost, root: &Path) -> (renoa_kernel::AgentId, Arc<Age
     (agent, session)
 }
 
+/// Admits a run now of an ordinary automation of `agent`, as of `at_ms`.
+async fn ordinary_run(host: &LocalHost, agent: renoa_kernel::AgentId, at_ms: i64) -> Uuid {
+    let digest = host
+        .manage_automation(
+            agent,
+            Uuid::new_v4(),
+            crate::AutomationMutation::Create {
+                spec: crate::AutomationSpec {
+                    agent_id: agent,
+                    name: "Digest".to_owned(),
+                    prompt: "Write the digest.".to_owned(),
+                    schedule: crate::AutomationSchedule::Cron {
+                        expression: "0 0 * * *".to_owned(),
+                        timezone: "UTC".to_owned(),
+                    },
+                    enabled: false,
+                },
+            },
+            at_ms,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("an ordinary automation");
+    let run = Uuid::new_v4();
+    host.manage_automation(
+        agent,
+        run,
+        crate::AutomationMutation::RunNow { id: digest.id },
+        at_ms,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("its run");
+    run
+}
+
+/// A second agent of the Host, Scout, and a session of its own.
+async fn scout(host: &LocalHost, root: &Path) -> (Arc<AgentSession>, renoa_kernel::AgentId) {
+    let agent = host
+        .create_agent(
+            AgentCreator::System {
+                component: "owner-fixture".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::APP_PRESET_ID).expect("preset"),
+                "Scout",
+            )
+            .with_instructions("Answer."),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("agent")
+        .id;
+    let workspace = root.join("scout-workspace");
+    fs::create_dir_all(&workspace).expect("workspace");
+    let session = host
+        .ensure_agent_session(agent, &workspace, Uuid::new_v4())
+        .await
+        .expect("session");
+    (session, agent)
+}
+
 async fn turn(session: &AgentSession, speaker: Speaker, prompt: &str) -> LocalTurnOutcome {
     turn_as(session, Uuid::new_v4(), speaker, prompt).await
 }
@@ -418,22 +482,7 @@ async fn a_heartbeat_follows_its_agents_setting_and_switch() {
     let root = directory.path();
     let host = host(root);
     let (main, _) = renoa(&host, root).await;
-    let other = host
-        .create_agent(
-            AgentCreator::System {
-                component: "owner-fixture".to_owned(),
-            },
-            AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::from_preset(
-                Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::APP_PRESET_ID).expect("preset"),
-                "Scout",
-            ),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("agent")
-        .id;
+    let (_, other) = scout(&host, root).await;
     let scheduler = host.automation_scheduler().expect("scheduler");
     let converge = || async { scheduler.next_run(now_ms(), false).await.expect("tick") };
 
@@ -486,8 +535,10 @@ async fn a_heartbeat_follows_its_agents_setting_and_switch() {
 }
 
 /// A heartbeat's run goes to its agent, quiet, on a task of its own, with
-/// the standing task; `set_today` refuses in any other turn and sets the
-/// Today line in that one.
+/// the standing task; `set_today` refuses in any other turn, a run of the
+/// agent's other automations and another agent's turn under the run's id
+/// included, and sets the Today line in that one. `renoa.memory` is off, so
+/// no nightly run is due before the heartbeat.
 #[tokio::test]
 async fn set_today_works_only_in_a_run_of_the_agents_heartbeat() {
     let directory = tempfile::tempdir().expect("directory");
@@ -513,6 +564,14 @@ async fn set_today_works_only_in_a_run_of_the_agents_heartbeat() {
     host.set_heartbeat_hours(agent, 1, Uuid::new_v4())
         .await
         .expect("turn the heartbeat on");
+    state::change(
+        &host.config.database,
+        agent,
+        HostPluginId::Memory,
+        false,
+        "memory-off",
+    )
+    .expect("no nightly run");
     let scheduler = host.automation_scheduler().expect("scheduler");
     let now = now_ms();
     scheduler.next_run(now, false).await.expect("converge");
@@ -547,6 +606,25 @@ async fn set_today_works_only_in_a_run_of_the_agents_heartbeat() {
         "{}",
         due.run.submission
     );
+
+    let digest_run = ordinary_run(&host, agent, due_ms).await;
+    let refused = format!("error: {NOT_A_HEARTBEAT}");
+    for (session, command, what) in [
+        (&session, digest_run, "another automation's run"),
+        (
+            &scout(&host, root).await.0,
+            due.run.id,
+            "another agent under the run's id",
+        ),
+    ] {
+        let LocalTurnOutcome::Completed { output, .. } =
+            turn_as(session, command, owner, "today").await
+        else {
+            panic!("{what}: the turn completes");
+        };
+        assert_eq!(output, refused, "{what}");
+    }
+    assert_eq!(today().await, "All quiet.");
 
     let LocalTurnOutcome::Completed { output, .. } =
         turn_as(&session, due.run.id, owner, "today").await

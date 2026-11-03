@@ -636,7 +636,8 @@ message (see `rcp-v0.md`). The Pi node treats all of it as ordinary text.
 Text input may also carry `"quiet": true`: nothing the command's execution
 appends wakes its principal's devices, so what it has for them it asks for
 itself with `request_wake`. The Renoa node submits an agent's heartbeat runs
-quiet. It is omitted when false.
+quiet, and the coordinator makes an agent's message sent from a quiet command,
+and the answer to it, quiet too. It is omitted when false.
 
 `request_id` correlates one connection attempt. `command_id` is the durable
 idempotency identity and must be reused with identical content, `context`,

@@ -49,8 +49,9 @@ pub(super) fn converge(
 /// wants is created, or updated to its wanted spec, and every other one it
 /// owns is disabled. A schedule or switch that changes is due again from
 /// `now_ms`, as an edit by its agent would be; a one-time schedule at or
-/// before `now_ms` is due at once. A trigger whose runs go to its agent is
-/// retired once it is not wanted (see [`retention::retire_trigger`]). One
+/// before `now_ms` is due at once. A reminder is retired once it is not
+/// wanted (see [`retention::retire_trigger`]); every other trigger is kept,
+/// disabled, so its runs and its task stay. One
 /// wanted trigger whose spec cannot be stored or scheduled is left as it is
 /// and logged as `automation_unschedulable`, as a due row that cannot be
 /// admitted is, so it holds up no other.

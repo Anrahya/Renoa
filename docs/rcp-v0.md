@@ -453,10 +453,11 @@ sent loses nothing a reconnection does not recover.
 
 A device registers its push token with `SetPushToken`, device state that is not
 a task operation. The token is opaque to RCP and its provider is a closed set,
-today only `fcm`. The coordinator decides from the record kind alone whether a
-record wakes: an assistant message with text other than whitespace and a failed
-execution do, every other record does not, and no record of a command whose
-text input is `quiet` does. It marks the wake owed to the
+today only `fcm`. The coordinator decides from the record kind and its
+command whether a record wakes: an assistant message with text other than
+whitespace and a failed execution do, every other record does not, and no
+record of a command whose text input is `quiet` does. A message an agent sends
+while executing a quiet command is quiet, and so is the answer to it. It marks the wake owed to the
 record's principal in the transaction that appends the record, so the mark is
 durable before the node's events are acknowledged and a retried batch that
 appends nothing marks nothing. A dispatcher started only while serving drains

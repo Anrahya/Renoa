@@ -81,7 +81,9 @@ pub(crate) fn hours(db: &Connection, agent: AgentId) -> Result<u8, PluginError> 
 /// The heartbeats wanted: one for each agent with `renoa.owner` on and a
 /// heartbeat set, at minute 0 every [`hours`] from [`FIRST_HOUR`] to
 /// [`LAST_HOUR`] in the agent's zone. A zone without an IANA name keeps the
-/// hours in UTC.
+/// hours in UTC. An agent whose settings cannot be read, such as a zone this
+/// Host no longer knows, is left out and logged as `heartbeat_unschedulable`,
+/// so it holds up no other trigger.
 pub(crate) fn wanted(db: &Connection) -> Result<Vec<(Uuid, AutomationSpec)>, PluginError> {
     let agents = db
         .prepare("SELECT agent_id FROM host_agents ORDER BY agent_id")?
@@ -92,26 +94,43 @@ pub(crate) fn wanted(db: &Connection) -> Result<Vec<(Uuid, AutomationSpec)>, Plu
         let agent = AgentId::from_uuid(Uuid::parse_str(&agent).map_err(|error| {
             PluginError::Invalid(format!("stored agent id `{agent}`: {error}"))
         })?);
-        let hours = hours(db, agent)?;
-        if hours == 0 || !state::enabled_in(db, agent, HostPluginId::Owner)? {
+        if !state::enabled_in(db, agent, HostPluginId::Owner)? {
             continue;
         }
-        let zone = TimeSettings::zone_of(db, Some(agent))?;
-        wanted.push((
-            triggers::automation_id(HostPluginId::Owner, agent),
-            AutomationSpec {
-                agent_id: agent,
-                name: NAME.to_owned(),
-                prompt: task(),
-                schedule: AutomationSchedule::Cron {
-                    expression: format!("0 {FIRST_HOUR}-{LAST_HOUR}/{hours} * * *"),
-                    timezone: zone.iana_name().unwrap_or("UTC").to_owned(),
-                },
-                enabled: true,
-            },
-        ));
+        match spec(db, agent) {
+            Ok(Some(spec)) => {
+                wanted.push((triggers::automation_id(HostPluginId::Owner, agent), spec));
+            }
+            Ok(None) => {}
+            Err(PluginError::Invalid(error)) => renoa_telemetry::event(
+                "renoa.host",
+                "warn",
+                "heartbeat_unschedulable",
+                &serde_json::json!({ "agent_id": agent, "error": error }),
+            ),
+            Err(error) => return Err(error),
+        }
     }
     Ok(wanted)
+}
+
+/// `agent`'s heartbeat, or `None` while it is off.
+fn spec(db: &Connection, agent: AgentId) -> Result<Option<AutomationSpec>, PluginError> {
+    let hours = hours(db, agent)?;
+    if hours == 0 {
+        return Ok(None);
+    }
+    let zone = TimeSettings::zone_of(db, Some(agent))?;
+    Ok(Some(AutomationSpec {
+        agent_id: agent,
+        name: NAME.to_owned(),
+        prompt: task(),
+        schedule: AutomationSchedule::Cron {
+            expression: format!("0 {FIRST_HOUR}-{LAST_HOUR}/{hours} * * *"),
+            timezone: zone.iana_name().unwrap_or("UTC").to_owned(),
+        },
+        enabled: true,
+    }))
 }
 
 /// The heartbeat's standing task.
@@ -122,7 +141,7 @@ fn task() -> String {
 }
 
 /// Whether `command` is a run of `agent`'s heartbeat: a run's command has
-/// the run's id.
+/// the run's id, and the trigger's id is derived from the agent's.
 pub(crate) fn is_run(
     db: &Connection,
     agent: AgentId,
@@ -130,10 +149,9 @@ pub(crate) fn is_run(
 ) -> rusqlite::Result<bool> {
     Ok(db
         .query_row(
-            "SELECT 1 FROM host_automation_runs WHERE id = ?1 AND agent_id = ?2 AND automation_id = ?3",
+            "SELECT 1 FROM host_automation_runs WHERE id = ?1 AND automation_id = ?2",
             [
                 command.to_string(),
-                agent.to_string(),
                 triggers::automation_id(HostPluginId::Owner, agent).to_string(),
             ],
             |_| Ok(()),

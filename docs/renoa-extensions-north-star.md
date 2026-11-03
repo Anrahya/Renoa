@@ -607,9 +607,9 @@ field on every plugin.
 |---|---|
 | `tools`, `skills`, `mcp_servers` | implemented |
 | `resident tools`: a compiled plugin's tools kept in the agent's own tool list | implemented, for `renoa.memory`, `renoa.documents` and `renoa.owner` |
-| `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
+| `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` and `renoa.owner` |
 | `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` and `renoa.memory` |
-| `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` and `renoa.owner` |
+| `session_context`: attributed blocks in the system prompt of a turn that talks to a person | implemented, for `renoa.memory` |
 | `triggers`: an automation a compiled plugin owns and keeps converged | implemented, for `renoa.memory` and `renoa.owner` |
 | `delivery`: private owner channels offered by surfaces | planned, for #104 and #86 |
 

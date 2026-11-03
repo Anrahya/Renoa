@@ -32,7 +32,7 @@ use std::{
 
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_local::{AutomationScheduler, RunOutcome, RunStatus, ScheduledRun, TurnObservation};
-use renoa_protocol::{Author, CommandId, CommandInput};
+use renoa_protocol::{CommandId, CommandInput};
 use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
 
@@ -358,12 +358,7 @@ async fn deliver(
 
 /// The run's command input: its submission, quiet for a heartbeat's run.
 fn submission(due: &ScheduledRun) -> CommandInput {
-    CommandInput::Text {
-        text: due.run.submission.clone(),
-        context: None,
-        author: Author::Principal,
-        quiet: due.quiet,
-    }
+    CommandInput::from_text(due.run.submission.clone()).quiet_if(due.quiet)
 }
 
 enum Resolution {

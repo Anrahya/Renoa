@@ -118,7 +118,7 @@ pub(crate) fn answer_asks(
 
 /// The newest sequence the feed has handed out, pruned or not; 0 before the
 /// first item.
-fn newest(db: &rusqlite::Connection) -> rusqlite::Result<i64> {
+pub(super) fn newest(db: &rusqlite::Connection) -> rusqlite::Result<i64> {
     db.query_row(
         "SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name = 'host_feed_items'), 0)",
         [],

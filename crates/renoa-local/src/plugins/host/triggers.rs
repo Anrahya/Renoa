@@ -199,8 +199,9 @@ pub(crate) fn own(
     })
 }
 
-/// Whether the runs of `automation`, a plugin's trigger, are delivered to its
-/// agent rather than run by its plugin.
+/// Whether the runs of `automation`, a plugin's trigger, go only to their
+/// conversation with a person: a reminder's. A heartbeat's run goes to its
+/// agent too, but on a task of its own, and is never retired.
 pub(crate) fn delivers(db: &Connection, automation: Uuid) -> rusqlite::Result<bool> {
     db.query_row(
         "SELECT EXISTS(SELECT 1 FROM host_memory_reminders WHERE automation_id = ?1)",
@@ -315,4 +316,16 @@ fn parse_automation(value: &str) -> Result<Uuid, PluginError> {
 fn parse_plugin(value: &str) -> Result<HostPluginId, PluginError> {
     HostPluginId::parse(value)
         .ok_or_else(|| PluginError::Invalid(format!("stored trigger owner `{value}`")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HOST_RUN, HostPluginId};
+
+    /// `HOST_RUN` names the heartbeat's plugin in SQL; a rename of its id
+    /// must move the query with it.
+    #[test]
+    fn the_host_runs_no_heartbeat() {
+        assert!(HOST_RUN.contains(&format!("plugin_id != '{}'", HostPluginId::Owner.id())));
+    }
 }

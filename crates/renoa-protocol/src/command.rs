@@ -170,6 +170,15 @@ impl CommandInput {
             Self::Text { quiet, .. } => *quiet,
         }
     }
+
+    /// This input, submitted quiet when `quiet` is.
+    #[must_use]
+    pub fn quiet_if(mut self, quiet: bool) -> Self {
+        match &mut self {
+            Self::Text { quiet: input, .. } => *input = quiet,
+        }
+        self
+    }
 }
 
 /// Why a command exists when another agent caused it. Only the coordinator

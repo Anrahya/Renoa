@@ -456,8 +456,10 @@ the plugin is off for the agent; the scheduler converges a change before it
 next admits a run, and keeps a heartbeat it no longer wants disabled. Unlike
 `renoa.memory`'s triggers, a heartbeat's run is sent to its agent: its standing
 task, owned by `renoa.owner`, on a task of the trigger's own, submitted
-quiet, so nothing its execution writes wakes the owner (see `rcp-v0.md`, "Push
-wakes"). It makes no feed item of its own, as no plugin's run does: only what
+quiet, so nothing its execution writes wakes the owner, nor what another agent
+it asks writes, nor that agent's answer (see `rcp-v0.md`, "Push wakes"). An
+agent whose settings cannot be read, such as a zone the Host no longer knows,
+has no heartbeat and is logged as `heartbeat_unschedulable`. It makes no feed item of its own, as no plugin's run does: only what
 its `notify_owner` and `ask_owner` calls write reaches the owner. `set_today`
 takes one `sentence`, one line of at most 140 characters, and refuses any turn
 that is not a run of the calling agent's heartbeat, which it knows by the
@@ -1825,7 +1827,9 @@ plugin run is unfinished. A `renoa.memory` reminder, though its plugin owns
 it, runs as an agent's run: its submission is Mnem's message for the item,
 chosen when the run is admitted, and it goes to the conversation the plugin
 chose then; a node with no task for that conversation fails the run instead
-of opening the automation's own task. A draining node stops the Host's memory runs and
+of opening the automation's own task. A `renoa.owner` heartbeat runs as an
+agent's run too, with its standing task on the automation's own task, and is
+submitted quiet. A draining node stops the Host's memory runs and
 waits for the plugin run in flight, leaving one stopped part way unrecorded;
 shutdown drops it. Either way the next scheduler resumes it. A run the coordinator refuses, for
 example because its agent no longer exists, failed with the refusal as its

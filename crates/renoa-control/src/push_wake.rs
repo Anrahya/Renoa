@@ -89,15 +89,15 @@ pub(crate) fn wake_reason(kind: &TaskEventKind) -> Option<&'static str> {
     }
 }
 
-/// Whether `kind` is a record of a command submitted quiet, or of its
-/// execution.
+/// Whether `kind` is a record of the execution of a command submitted quiet.
 pub(crate) fn of_quiet_command(
     transaction: &Transaction<'_>,
     kind: &TaskEventKind,
 ) -> Result<bool, ControlError> {
     let command_id = match kind {
         TaskEventKind::ExecutionEvent { command_id, .. } => command_id,
-        TaskEventKind::CommandSubmitted { command } => return Ok(command.input.quiet()),
+        // A submission wakes no one whatever it says.
+        TaskEventKind::CommandSubmitted { .. } => return Ok(false),
     };
     let Some(command_json) = transaction
         .query_row(
