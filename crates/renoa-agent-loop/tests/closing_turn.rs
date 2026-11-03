@@ -39,23 +39,7 @@ async fn a_closing_result_ends_the_turn_and_the_next_command_answers_it() {
         .expect("create session");
     let requests = Arc::new(Mutex::new(Vec::new()));
     let model = Arc::new(ScriptedModel {
-        responses: Mutex::new(VecDeque::from([
-            ModelResponse {
-                content: vec![
-                    AssistantContent::tool_call(call("ask-1")),
-                    AssistantContent::tool_call(call("ask-2")),
-                ],
-                stop_reason: StopReason::ToolUse,
-                usage: None,
-                metadata: caller(),
-            },
-            ModelResponse {
-                content: vec![AssistantContent::text("Booked for six.")],
-                stop_reason: StopReason::Stop,
-                usage: None,
-                metadata: AssistantMetadata::default(),
-            },
-        ])),
+        responses: Mutex::new(responses()),
         requests: Arc::clone(&requests),
     });
     let runtime = build_runtime(
@@ -136,6 +120,27 @@ async fn a_closing_result_ends_the_turn_and_the_next_command_answers_it() {
         Message::Assistant { content, .. } if content == &vec![AssistantContent::text(QUESTION)]
     ));
     assert_eq!(answer_request[5], Message::user_text("Yes"));
+}
+
+/// The asking response, then the answer to the owner's reply.
+fn responses() -> VecDeque<ModelResponse> {
+    VecDeque::from([
+        ModelResponse {
+            content: vec![
+                AssistantContent::tool_call(call("ask-1")),
+                AssistantContent::tool_call(call("ask-2")),
+            ],
+            stop_reason: StopReason::ToolUse,
+            usage: None,
+            metadata: caller(),
+        },
+        ModelResponse {
+            content: vec![AssistantContent::text("Booked for six.")],
+            stop_reason: StopReason::Stop,
+            usage: None,
+            metadata: AssistantMetadata::default(),
+        },
+    ])
 }
 
 fn submit(kernel: &Kernel, session_id: SessionId, text: &str) -> renoa_kernel::OperationId {
