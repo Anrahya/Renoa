@@ -383,7 +383,8 @@ async fn read_peer(
         | ClientMessage::PublishExecutionEvents { .. }
         | ClientMessage::ServeHostControl
         | ClientMessage::CompleteHostCall { .. }
-        | ClientMessage::SendAgentMessage { .. } => {
+        | ClientMessage::SendAgentMessage { .. }
+        | ClientMessage::RequestWake { .. } => {
             send_error(
                 outgoing,
                 None,

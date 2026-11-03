@@ -450,7 +450,7 @@ pub(crate) fn append_event(
         u64::try_from(sequence).map_err(|_| ControlError::store("negative task sequence"))?;
     if crate::push_wake::wake_reason(kind).is_some() {
         let principal_id = PrincipalId::from_uuid(principal_id.parse().map_err(id_error)?);
-        crate::push_wake::record(transaction, principal_id)?;
+        crate::push_wake::record(transaction, principal_id, false)?;
     }
     let event = TaskEvent {
         event_id: TaskEventId::new(),

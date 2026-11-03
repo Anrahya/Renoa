@@ -170,7 +170,7 @@ async fn a_run_whose_conversation_has_no_task_lands_in_its_own_task_and_the_feed
 /// A run that asks the owner ends on the question, which is its output, and
 /// the ask waits in the feed beside the run's result.
 #[tokio::test]
-async fn a_run_that_asks_the_owner_records_the_question_as_its_output() {
+async fn a_run_that_asks_the_owner_records_the_question_and_wakes_the_owner() {
     timeout(Duration::from_secs(20), async {
         let mut system = TestSystem::start().await;
         let fixture = HostFixture::install(&mut system).await;
@@ -190,6 +190,37 @@ async fn a_run_that_asks_the_owner_records_the_question_as_its_output() {
                 (FeedKind::Ask, session.to_string())
             ]
         );
+        // The ask is `soon`, so the node asks the coordinator to wake the
+        // owner under the item's id and records the acknowledgement.
+        let owner_feed = HostFeed::open(host.home().path()).expect("feed");
+        let ask = owner_feed
+            .list(None)
+            .await
+            .expect("list")
+            .items
+            .into_iter()
+            .find(|item| item.kind == FeedKind::Ask)
+            .expect("the ask")
+            .id;
+        while !owner_feed.owed_wakes().await.expect("owed").is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let coordinator = rusqlite::Connection::open(system.files.path().join("control.sqlite"))
+            .expect("coordinator database");
+        let requested: Vec<String> = coordinator
+            .prepare("SELECT wake_id FROM push_wake_requests")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("requested wakes");
+        assert_eq!(requested, [ask.to_string()]);
+        let rings: i64 = coordinator
+            .query_row("SELECT ring_generation FROM push_wakes", [], |row| {
+                row.get(0)
+            })
+            .expect("the owner's wake row");
+        assert_eq!(rings, 0, "a `soon` ask does not ring");
 
         shutdown.cancel();
         node_task

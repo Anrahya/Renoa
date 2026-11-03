@@ -14,6 +14,13 @@
 //! send started for an older wake cannot cover a newer one. No SQLite lock is
 //! held across a network call.
 //!
+//! While a ring is owed, a device's send rings unless the device already had
+//! a send that counts started at or after the ring's generation; the first
+//! such send to each device's current token is the ring, so a device rings
+//! once and a wake that follows does not ring it again. A token registered
+//! while the ring is owed rings too, and a restart forgets which devices
+//! rang, so a ring still owed rings each device again.
+//!
 //! Wakes coalesce three ways: one marker per principal, a least gap between
 //! two sends to one device (the marker stays until the trailing wake goes
 //! out), and FCM's collapse key, so an offline phone holds one pending wake.
@@ -37,7 +44,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ControlError, DeviceId, PushToken, control_log,
     coordinator::CoordinatorState,
-    fcm::{FcmSender, WakeOutcome},
+    fcm::{FcmSender, WakeKind, WakeOutcome},
     push_pacing::{Pacing, Ready},
     push_tokens::PushTarget,
     push_wake::OwedWake,
@@ -64,6 +71,7 @@ struct Sending {
     /// The marker's generation when the send started.
     generation: i64,
     target: PushTarget,
+    kind: WakeKind,
 }
 
 /// The latest send to one device that delivered, or that FCM refused or
@@ -183,7 +191,7 @@ impl Dispatcher {
                 }
                 Delivery::Disabled => {
                     self.report_disabled(wake.principal_id);
-                    self.settle(wake).await
+                    self.settle(wake.principal_id, wake.generation).await
                 }
             };
             if let Err(error) = result {
@@ -230,20 +238,24 @@ impl Dispatcher {
         let mut waiting = false;
         let mut ready = Vec::new();
         for target in targets {
-            if covered
-                .get(&target.device_id)
-                .is_some_and(|covered| covered.covers(&target, wake.generation))
-            {
+            let had = covered.get(&target.device_id);
+            if had.is_some_and(|covered| covered.covers(&target, wake.generation)) {
                 continue;
             }
             waiting = true;
-            ready.push(target);
+            let kind = match wake.ring {
+                Some(ring) if !had.is_some_and(|covered| covered.covers(&target, ring)) => {
+                    WakeKind::Ring
+                }
+                Some(_) | None => WakeKind::Changed,
+            };
+            ready.push((target, kind));
         }
-        for target in ready {
+        for (target, kind) in ready {
             match self.pacing.ready(&target, gap, Instant::now()) {
                 Ready::At(at) => earliest(due, at),
                 Ready::Now if self.in_flight.len() < MAX_IN_FLIGHT => {
-                    self.start(sender, shutdown, wake, target);
+                    self.start(sender, shutdown, wake, target, kind);
                 }
                 // At the bound, the send that ends next starts another pass;
                 // a send in flight starts one when it ends.
@@ -253,7 +265,7 @@ impl Dispatcher {
         if waiting {
             return Ok(());
         }
-        self.settle(wake).await
+        self.settle(wake.principal_id, wake.generation).await
     }
 
     fn start(
@@ -262,6 +274,7 @@ impl Dispatcher {
         shutdown: &CancellationToken,
         wake: OwedWake,
         target: PushTarget,
+        kind: WakeKind,
     ) {
         self.pacing.started(target.device_id);
         let sender = Arc::clone(sender);
@@ -269,13 +282,14 @@ impl Dispatcher {
         let token = target.token.clone();
         let handle = self
             .in_flight
-            .spawn(async move { sender.wake(&token, &stop).await });
+            .spawn(async move { sender.wake(&token, kind, &stop).await });
         self.sending.insert(
             handle.id(),
             Sending {
                 principal_id: wake.principal_id,
                 generation: wake.generation,
                 target,
+                kind,
             },
         );
     }
@@ -297,6 +311,7 @@ impl Dispatcher {
             principal_id,
             generation,
             target,
+            kind,
         }) = self.sending.remove(&id)
         else {
             return Ok(());
@@ -309,7 +324,15 @@ impl Dispatcher {
             WakeOutcome::Cancelled => return Ok(()),
             // The device stays owed, and a pass sends again after its backoff.
             WakeOutcome::GaveUp(_) => {
-                return report(&self.state, principal_id, target, outcome, retry_after).await;
+                return report(
+                    &self.state,
+                    principal_id,
+                    target,
+                    kind,
+                    outcome,
+                    retry_after,
+                )
+                .await;
             }
             WakeOutcome::Delivered | WakeOutcome::DeadToken(_) | WakeOutcome::Refused(_) => {}
         }
@@ -325,7 +348,7 @@ impl Dispatcher {
                 token: target.token.clone(),
             },
         );
-        report(&self.state, principal_id, target, outcome, None).await?;
+        report(&self.state, principal_id, target, kind, outcome, None).await?;
         self.settle_if_covered(principal_id, generation).await
     }
 
@@ -356,16 +379,21 @@ impl Dispatcher {
                 _ => return Ok(()),
             }
         }
-        self.settle(OwedWake {
-            principal_id,
-            generation,
-        })
-        .await
+        self.settle(principal_id, generation).await
     }
 
-    async fn settle(&mut self, wake: OwedWake) -> Result<(), ControlError> {
-        if self.state.store.settle_wake(wake).await? {
-            self.covered.remove(&wake.principal_id);
+    async fn settle(
+        &mut self,
+        principal_id: PrincipalId,
+        generation: i64,
+    ) -> Result<(), ControlError> {
+        if self
+            .state
+            .store
+            .settle_wake(principal_id, generation)
+            .await?
+        {
+            self.covered.remove(&principal_id);
         }
         Ok(())
     }
@@ -395,6 +423,7 @@ async fn report(
     state: &CoordinatorState,
     principal_id: PrincipalId,
     target: PushTarget,
+    kind: WakeKind,
     outcome: WakeOutcome,
     retry_after: Option<Duration>,
 ) -> Result<(), ControlError> {
@@ -403,6 +432,7 @@ async fn report(
         serde_json::json!({
             "device_id": device_id,
             "principal_id": principal_id,
+            "kind": kind.as_str(),
             "reason": reason,
             "retry_after_ms": retry_after.map(|delay| delay.as_millis()),
         })

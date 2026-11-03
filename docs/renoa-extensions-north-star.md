@@ -583,7 +583,8 @@ plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings, and
 schema 43 adds `renoa.memory`, schema 44 adds plugin-owned triggers and
 `renoa.memory`'s job receipts and memory session generations, schema 45
 adds the conversations and passes of its note pass, schema 47 adds its
-reminders, and schema 48 adds `renoa.owner`.
+reminders, schema 48 adds `renoa.owner`, and schema 49 records each feed
+item's acknowledged wake.
 
 ## Contribution model
 

@@ -1,7 +1,7 @@
 use renoa_control::{
     ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, HostMethod,
     JSON_WS_VERSION, NodeId, PushToken, ServerMessage, StopOutcome, TargetSummary, TaskEvent,
-    TaskEventId, TaskEventKind, TaskId, TaskStatus, TaskSummary,
+    TaskEventId, TaskEventKind, TaskId, TaskStatus, TaskSummary, WakeUrgency,
 };
 use renoa_protocol::{
     AgentMessageKind, AgentOrigin, CommandEnvelope, CommandId, CommandInput, LiveActivity,
@@ -12,8 +12,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v15_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 15);
+fn json_websocket_v16_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 16);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -26,7 +26,7 @@ fn json_websocket_v15_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 15,
+            "version": 16,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -93,7 +93,7 @@ fn json_websocket_v15_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v15_text_input_carries_context_and_a_guest_author_only_when_present() {
+fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_present() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let submit = ClientMessage::Submit {
@@ -194,7 +194,7 @@ fn json_websocket_v15_text_input_carries_context_and_a_guest_author_only_when_pr
 }
 
 #[test]
-fn json_websocket_v15_encodes_task_discovery() {
+fn json_websocket_v16_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -243,7 +243,7 @@ fn json_websocket_v15_encodes_task_discovery() {
 /// directions, so a client written from the document sends and reads these
 /// bytes.
 #[test]
-fn json_websocket_v15_encodes_the_device_key_handshake_and_device_administration() {
+fn json_websocket_v16_encodes_the_device_key_handshake_and_device_administration() {
     let device_id = DeviceId::from_uuid(Uuid::from_u128(0x40));
     let nonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let client_frames = [
@@ -335,7 +335,7 @@ fn json_websocket_v15_encodes_the_device_key_handshake_and_device_administration
 }
 
 #[test]
-fn json_websocket_v15_encodes_target_discovery_and_task_opening() {
+fn json_websocket_v16_encodes_target_discovery_and_task_opening() {
     let node_id = NodeId::from_uuid(Uuid::from_u128(3));
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let cases = [
@@ -407,7 +407,7 @@ fn json_websocket_v15_encodes_target_discovery_and_task_opening() {
 }
 
 #[test]
-fn json_websocket_v15_encodes_harness_neutral_execution_events() {
+fn json_websocket_v16_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {
@@ -526,7 +526,7 @@ fn execute_delivery_contains_only_continuity_data() {
 }
 
 #[test]
-fn json_websocket_v15_attach_says_whether_it_wants_live_activity() {
+fn json_websocket_v16_attach_says_whether_it_wants_live_activity() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let attach = ClientMessage::Attach {
         request_id: 3,
@@ -562,7 +562,7 @@ fn json_websocket_v15_attach_says_whether_it_wants_live_activity() {
 }
 
 #[test]
-fn json_websocket_v15_encodes_stopping_a_command() {
+fn json_websocket_v16_encodes_stopping_a_command() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let ids = json!({
@@ -619,7 +619,7 @@ fn json_websocket_v15_encodes_stopping_a_command() {
 }
 
 #[test]
-fn json_websocket_v15_encodes_live_activity() {
+fn json_websocket_v16_encodes_live_activity() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let published = ClientMessage::PublishLiveActivity {
@@ -668,7 +668,7 @@ fn json_websocket_v15_encodes_live_activity() {
 }
 
 #[test]
-fn json_websocket_v15_encodes_host_control_calls() {
+fn json_websocket_v16_encodes_host_control_calls() {
     let call_id = Uuid::from_u128(9);
     let call = ServerMessage::HostCall {
         call_id,
@@ -737,7 +737,7 @@ fn json_websocket_v15_encodes_host_control_calls() {
 }
 
 #[test]
-fn json_websocket_v15_encodes_an_agent_message_and_its_origin() {
+fn json_websocket_v16_encodes_an_agent_message_and_its_origin() {
     let message = ClientMessage::SendAgentMessage {
         request_id: 21,
         from_command: CommandId::from_uuid(Uuid::from_u128(2)),
@@ -799,7 +799,7 @@ fn json_websocket_v15_encodes_an_agent_message_and_its_origin() {
 
 /// The push-token frames exactly as `docs/rcp-json-ws-v0.md` shows them.
 #[test]
-fn json_websocket_v15_encodes_push_token_registration() {
+fn json_websocket_v16_encodes_push_token_registration() {
     let set = ClientMessage::SetPushToken {
         request_id: 50,
         provider: "fcm".to_owned(),
@@ -846,4 +846,76 @@ fn json_websocket_v15_encodes_push_token_registration() {
             message
         );
     }
+}
+
+/// A node's wake request and its answer exactly as `docs/rcp-json-ws-v0.md`
+/// shows them.
+#[test]
+fn json_websocket_v16_encodes_a_wake_request() {
+    for (urgency, name) in [(WakeUrgency::Soon, "soon"), (WakeUrgency::Now, "now")] {
+        let request = ClientMessage::RequestWake {
+            request_id: 7,
+            wake_id: Uuid::from_u128(9),
+            urgency,
+        };
+        let request_json = json!({
+            "type": "request_wake",
+            "request_id": 7,
+            "wake_id": "00000000-0000-0000-0000-000000000009",
+            "urgency": name
+        });
+        assert_eq!(
+            serde_json::to_value(&request).expect("serialize the request"),
+            request_json
+        );
+        assert_eq!(
+            serde_json::from_value::<ClientMessage>(request_json).expect("deserialize the request"),
+            request
+        );
+    }
+    assert!(
+        serde_json::from_value::<ClientMessage>(json!({
+            "type": "request_wake",
+            "request_id": 7,
+            "wake_id": "00000000-0000-0000-0000-000000000009",
+            "urgency": "whenever"
+        }))
+        .is_err(),
+        "a wake that can wait is not a request"
+    );
+    let answer = ServerMessage::WakeRequested { request_id: 7 };
+    let answer_json = json!({ "type": "wake_requested", "request_id": 7 });
+    assert_eq!(
+        serde_json::to_value(&answer).expect("serialize the answer"),
+        answer_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(answer_json).expect("deserialize the answer"),
+        answer
+    );
+}
+
+/// Every worked example that names a binding version names the one the
+/// coordinator speaks, so a client written from the document is not refused.
+#[test]
+fn every_documented_version_is_the_current_binding_version() {
+    let document = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/rcp-json-ws-v0.md"),
+    )
+    .expect("read the binding document");
+    let mut examples = 0;
+    for block in document.split("```json\n").skip(1) {
+        let block = block.split("\n```").next().expect("a closed block");
+        let Ok(frame) = serde_json::from_str::<serde_json::Value>(block) else {
+            continue;
+        };
+        if let Some(version) = frame.get("version") {
+            examples += 1;
+            assert_eq!(version, &json!(JSON_WS_VERSION), "{block}");
+        }
+    }
+    assert!(examples >= 5, "found {examples} versioned examples");
+    assert!(document.contains(&format!(
+        "The current binding version is `{JSON_WS_VERSION}`."
+    )));
 }

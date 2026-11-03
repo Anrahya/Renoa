@@ -12,26 +12,41 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.time.Duration.Companion.seconds
 
-/**
- * Whether a push is one of Renoa's wake-ups: `changed`, or `ring`, which #86 adds for what needs the
- * owner now and which runs the same catch-up for now. It carries nothing else: what changed is read
- * over RCP. Anything else is ignored.
- */
-internal fun isWake(data: Map<String, String>): Boolean = data["renoa"] in WAKES
+/** One of Renoa's wake-ups. It carries nothing else: what changed is read over RCP. */
+internal enum class Wake {
+    /** Something changed: read it, and tell the owner of any reply. */
+    Changed,
 
-private val WAKES = setOf("changed", "ring")
+    /** Something needs the owner within minutes: ring, then read as for [Changed]. */
+    Ring,
+}
+
+/** Which of Renoa's wake-ups a push is, or null for anything else, which is ignored. */
+internal fun wakeOf(data: Map<String, String>): Wake? =
+    when (data["renoa"]) {
+        "changed" -> Wake.Changed
+        "ring" -> Wake.Ring
+        else -> null
+    }
 
 /** How long the app waits for Firebase to issue a token before it gives up until the next try. */
 private val TOKEN_WAIT = 30.seconds
 
 /**
- * Where Firebase delivers Renoa's wake-ups and this install's new tokens. Both only start a
- * [WakeWork]: Firebase allows the callback a few seconds and no network, and a new token reaches
- * Renoa on the job's connection.
+ * Where Firebase delivers Renoa's wake-ups and this install's new tokens. Both start a [WakeWork]:
+ * Firebase allows the callback a few seconds and no network, and a new token reaches Renoa on the
+ * job's connection. A ring also rings at once, since it needs no network to say Renoa needs the owner.
  */
 class PushMessages : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
-        if (isWake(message.data)) WakeWork.enqueue(this)
+        when (wakeOf(message.data)) {
+            Wake.Changed -> WakeWork.enqueue(this)
+            Wake.Ring -> {
+                Notices.ring(this)
+                WakeWork.enqueue(this)
+            }
+            null -> {}
+        }
     }
 
     // Registration tokens, which firebase-messaging 26 deprecates for installation IDs, are what

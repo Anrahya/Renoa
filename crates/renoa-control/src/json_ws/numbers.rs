@@ -32,7 +32,8 @@ impl ClientMessage {
             | Self::CallHost { request_id, .. }
             | Self::SetPushToken { request_id, .. }
             | Self::ClearPushToken { request_id }
-            | Self::SendAgentMessage { request_id, .. } => interoperable(*request_id),
+            | Self::SendAgentMessage { request_id, .. }
+            | Self::RequestWake { request_id, .. } => interoperable(*request_id),
             Self::Attach {
                 request_id,
                 after_sequence,
@@ -72,7 +73,8 @@ impl ServerMessage {
             | Self::TaskDeleted { request_id, .. }
             | Self::HostAnswer { request_id, .. }
             | Self::PushTokenSet { request_id }
-            | Self::PushTokenCleared { request_id } => interoperable(*request_id),
+            | Self::PushTokenCleared { request_id }
+            | Self::WakeRequested { request_id } => interoperable(*request_id),
             Self::DeviceList {
                 request_id,
                 devices,

@@ -382,7 +382,8 @@ async fn dispatch(
         | ServerMessage::Execute { .. }
         | ServerMessage::HostCall { .. }
         | ServerMessage::Stop { .. }
-        | ServerMessage::LiveActivity { .. } => {
+        | ServerMessage::LiveActivity { .. }
+        | ServerMessage::WakeRequested { .. } => {
             return Err(ClientError::Protocol(
                 "coordinator sent a node-only, session or unrequested message to a surface"
                     .to_owned(),

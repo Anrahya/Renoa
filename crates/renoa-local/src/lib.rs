@@ -111,8 +111,8 @@ pub use host::automations::{
     RunResult, RunStatus, ScheduledRun,
 };
 pub use host::feed::{
-    FEED_PAGE, FeedAction, FeedAgent, FeedError, FeedItem, FeedKind, FeedPage, FeedSeen, HostFeed,
-    Urgency,
+    FEED_PAGE, FeedAction, FeedAgent, FeedError, FeedItem, FeedKind, FeedPage, FeedSeen, FeedWake,
+    HostFeed, Urgency,
 };
 
 pub use renoa_home::RenoaHome;

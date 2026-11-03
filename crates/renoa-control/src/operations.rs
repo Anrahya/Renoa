@@ -5,7 +5,7 @@ use renoa_protocol::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{DeviceId, NodeId, TaskEventId, TaskId, agent_messages::OutgoingMessage};
+use crate::{DeviceId, NodeId, TaskEventId, TaskId, WakeUrgency, agent_messages::OutgoingMessage};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
@@ -203,5 +203,10 @@ pub(crate) enum NodeOperation {
     SendAgentMessage {
         request_id: u64,
         message: OutgoingMessage,
+    },
+    RequestWake {
+        request_id: u64,
+        wake_id: Uuid,
+        urgency: WakeUrgency,
     },
 }

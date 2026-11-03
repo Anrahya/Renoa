@@ -359,10 +359,11 @@ class WakeUpTest {
     }
 
     @Test
-    fun onlyRenoasWakesStartACatchUp() {
-        assertTrue(isWake(mapOf("renoa" to "changed")))
-        assertTrue(isWake(mapOf("renoa" to "ring")), "what needs the owner now reads the same way")
-        assertTrue(!isWake(mapOf("renoa" to "something else")) && !isWake(emptyMap()))
+    fun onlyRenoasTwoWakesAreWakes() {
+        assertEquals(Wake.Changed, wakeOf(mapOf("renoa" to "changed")))
+        assertEquals(Wake.Ring, wakeOf(mapOf("renoa" to "ring")))
+        assertNull(wakeOf(mapOf("renoa" to "something else")))
+        assertNull(wakeOf(emptyMap()))
     }
 
     @Test

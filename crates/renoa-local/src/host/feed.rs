@@ -21,12 +21,15 @@ mod read;
 pub(super) mod retention;
 #[cfg(test)]
 mod tests;
+mod wakes;
 
 pub(crate) use item::{BODY_CHARS, CHOICE_CHARS, CHOICES};
 pub use item::{FeedAction, FeedKind, Urgency};
 pub(crate) use produce::{Ability, ForOwner, ability_turned_on, owner_asked, owner_told};
 pub(super) use produce::{RunEnded, run_ended};
 pub use read::{FeedAgent, FeedItem, FeedPage, FeedSeen};
+pub use wakes::FeedWake;
+pub(super) use wakes::add_wakes;
 
 /// Items one page of [`HostFeed::list`] holds.
 pub const FEED_PAGE: u8 = 50;
@@ -185,5 +188,25 @@ impl HostFeed {
     pub async fn dismiss(&self, id: Uuid, now_ms: i64) -> Result<FeedItem, FeedError> {
         let database = self.database.clone();
         tokio::task::spawn_blocking(move || read::dismiss(&database, id, now_ms)).await?
+    }
+
+    /// The open items whose urgency wakes the owner's phone and whose wake
+    /// was not yet acknowledged, oldest first, a page at a time.
+    ///
+    /// # Errors
+    /// Returns catalog and stored-data failures.
+    pub async fn owed_wakes(&self) -> Result<Vec<FeedWake>, FeedError> {
+        let database = self.database.clone();
+        tokio::task::spawn_blocking(move || wakes::owed(&database)).await?
+    }
+
+    /// Records that the coordinator acknowledged item `id`'s wake at
+    /// `now_ms`; repeating it changes nothing.
+    ///
+    /// # Errors
+    /// Returns catalog and stored-data failures.
+    pub async fn wake_sent(&self, id: Uuid, now_ms: i64) -> Result<(), FeedError> {
+        let database = self.database.clone();
+        tokio::task::spawn_blocking(move || wakes::sent(&database, id, now_ms)).await?
     }
 }

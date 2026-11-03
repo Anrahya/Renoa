@@ -19,7 +19,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
     BrowserSessions, ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION,
-    NodeId, PeerIdentity, PushSettings, PushToken, ServerMessage, TaskId, TaskSpec,
+    NodeId, PeerIdentity, PushSettings, PushToken, ServerMessage, TaskId, TaskSpec, WakeUrgency,
 };
 use renoa_protocol::{
     CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
@@ -37,6 +37,7 @@ use tokio::{
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 use url::Url;
+use uuid::Uuid;
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -592,6 +593,10 @@ impl Fixture {
             .create_enrollment(peer, SystemTime::now() + Duration::from_mins(1))
             .await
             .expect("create an enrollment");
+        self.claim(token).await
+    }
+
+    async fn claim(&self, token: renoa_control::EnrollmentToken) -> DeviceCredentials {
         let (mut socket, _) = connect_async(&self.ws).await.expect("connect to enroll");
         send(
             &mut socket,
@@ -914,6 +919,26 @@ fn wake_body(token: &str) -> Value {
             "android": { "priority": "high", "collapse_key": "changed" }
         }
     })
+}
+
+/// The exact body every ring carries, apart from the device's token.
+fn ring_body(token: &str) -> Value {
+    json!({
+        "message": {
+            "token": token,
+            "data": { "renoa": "ring" },
+            "android": { "priority": "high", "collapse_key": "ring" }
+        }
+    })
+}
+
+/// The bodies of the wakes sent so far, in order.
+fn bodies(requests: &[Recorded]) -> Vec<Value> {
+    requests
+        .iter()
+        .filter(|request| request.is_fcm())
+        .map(|request| serde_json::from_str(&request.body).expect("wake JSON"))
+        .collect()
 }
 
 // --- Registration ---
@@ -2204,13 +2229,284 @@ async fn a_schema_13_database_gains_the_push_tables_and_keeps_its_devices() {
         .database()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     let mut socket = f.connect(&phone).await;
     assert!(matches!(
         set_token(&mut socket, 1, "fcm:phone-token").await,
         ServerMessage::PushTokenSet { .. }
     ));
     assert_eq!(f.tokens().len(), 1);
+    f.stop().await;
+    google.stop();
+}
+
+// --- Wakes a node asks for ---
+
+impl Fixture {
+    /// The fixture's node, enrolled with the owner recorded as its owner.
+    async fn owned_node(&self) -> Node {
+        let token = self
+            .coordinator
+            .create_node_enrollment(
+                self.node_id,
+                self.owner,
+                SystemTime::now() + Duration::from_mins(1),
+            )
+            .await
+            .expect("create the node's enrollment");
+        let credentials = self.claim(token).await;
+        Node {
+            socket: self.connect(&credentials).await,
+            task_id: self.task_id,
+        }
+    }
+
+    fn requested_ids(&self) -> i64 {
+        self.database()
+            .query_row("SELECT count(*) FROM push_wake_requests", [], |row| {
+                row.get(0)
+            })
+            .expect("count requested wakes")
+    }
+}
+
+async fn request_wake(
+    node: &mut Socket,
+    request_id: u64,
+    wake_id: Uuid,
+    urgency: WakeUrgency,
+) -> ServerMessage {
+    send(
+        node,
+        &ClientMessage::RequestWake {
+            request_id,
+            wake_id,
+            urgency,
+        },
+    )
+    .await;
+    receive(node).await
+}
+
+#[tokio::test]
+async fn a_requested_wake_buzzes_or_rings_and_a_repeated_id_adds_nothing() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.owned_node().await;
+    let update = Uuid::new_v4();
+    let ask = Uuid::new_v4();
+
+    assert_eq!(
+        request_wake(&mut node.socket, 1, update, WakeUrgency::Soon).await,
+        ServerMessage::WakeRequested { request_id: 1 }
+    );
+    google.wait_for_fcm(1).await;
+    f.drained().await;
+    // The same id again, even louder, is acknowledged and records nothing.
+    assert_eq!(
+        request_wake(&mut node.socket, 2, update, WakeUrgency::Now).await,
+        ServerMessage::WakeRequested { request_id: 2 }
+    );
+    assert_eq!(f.owed_wakes(), 0, "a repeated id owes no wake");
+    assert_eq!(
+        request_wake(&mut node.socket, 3, ask, WakeUrgency::Now).await,
+        ServerMessage::WakeRequested { request_id: 3 }
+    );
+    google.wait_for_fcm(2).await;
+    f.drained().await;
+
+    let sent = google.settled().await;
+    assert_eq!(
+        bodies(&sent),
+        [wake_body("fcm:phone-token"), ring_body("fcm:phone-token")],
+        "`soon` sends the constant wake, `now` the constant ring, and the repeat nothing"
+    );
+    for request in &sent {
+        let everything = request.everything();
+        for absent in [update.to_string(), ask.to_string(), f.owner.to_string()] {
+            assert!(!everything.contains(&absent), "{absent} in {everything}");
+        }
+    }
+    assert_eq!(f.requested_ids(), 2);
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_wake_id_is_remembered_for_a_day_and_wakes_again_after_it() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Disabled).await;
+    let mut node = f.owned_node().await;
+    let wake = Uuid::new_v4();
+    request_wake(&mut node.socket, 1, wake, WakeUrgency::Soon).await;
+    let generation = || -> i64 {
+        f.database()
+            .query_row(
+                "SELECT coalesce(max(generation), 0) FROM push_wakes",
+                [],
+                |row| row.get(0),
+            )
+            .expect("generation")
+    };
+    assert_eq!(generation(), 1);
+    request_wake(&mut node.socket, 2, wake, WakeUrgency::Soon).await;
+    assert_eq!(generation(), 1, "a repeat within the day records nothing");
+    f.database()
+        .execute(
+            "UPDATE push_wake_requests SET received_at_ms = received_at_ms - 86400001",
+            [],
+        )
+        .expect("age the request past a day");
+    assert_eq!(
+        request_wake(&mut node.socket, 3, wake, WakeUrgency::Soon).await,
+        ServerMessage::WakeRequested { request_id: 3 }
+    );
+    assert_eq!(generation(), 2, "a repeat after a day is one more wake");
+    assert_eq!(
+        f.requested_ids(),
+        1,
+        "the forgotten id was pruned and recorded anew"
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_node_without_an_owner_is_refused_and_records_no_wake() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.node().await;
+    let answer = request_wake(&mut node.socket, 7, Uuid::new_v4(), WakeUrgency::Now).await;
+    assert_eq!(
+        refused(answer, 7, ErrorCode::InvalidRole),
+        format!("node {} has no owner, so it has no one to wake", f.node_id)
+    );
+    assert_eq!(f.owed_wakes(), 0);
+    assert_eq!(f.requested_ids(), 0);
+    assert!(google.settled().await.is_empty(), "nothing is sent");
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_ring_stays_owed_through_the_wakes_around_it_and_rings_once() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.owned_node().await;
+    let held = google.hold("fcm:phone-token").await;
+    node.reply(&mut phone, 2, "first").await;
+    google.wait_for_fcm(1).await;
+    // A ring and then a reply arrive while the first wake is in flight; the
+    // reply's wake must not replace the ring.
+    request_wake(&mut node.socket, 3, Uuid::new_v4(), WakeUrgency::Now).await;
+    node.reply(&mut phone, 4, "second").await;
+    drop(held);
+    google.wait_for_fcm(2).await;
+    f.drained().await;
+    // Once the phone rang, a later wake only buzzes it.
+    node.reply(&mut phone, 5, "third").await;
+    google.wait_for_fcm(3).await;
+    f.drained().await;
+    assert_eq!(
+        bodies(&google.settled().await),
+        [
+            wake_body("fcm:phone-token"),
+            ring_body("fcm:phone-token"),
+            wake_body("fcm:phone-token"),
+        ]
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_wake_recorded_while_a_ring_is_in_flight_only_buzzes_the_phone_it_rang() {
+    let google = Google::start().await;
+    let f = Fixture::start(&google, Push::Fcm(Duration::ZERO)).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.owned_node().await;
+    let held = google.hold("fcm:phone-token").await;
+    request_wake(&mut node.socket, 2, Uuid::new_v4(), WakeUrgency::Now).await;
+    google.wait_for_fcm(1).await;
+    // Recorded during the ring's send, so the phone is owed one more wake,
+    // and the ring it is getting already counts.
+    node.reply(&mut phone, 3, "news").await;
+    drop(held);
+    google.wait_for_fcm(2).await;
+    f.drained().await;
+    assert_eq!(
+        bodies(&google.settled().await),
+        [ring_body("fcm:phone-token"), wake_body("fcm:phone-token")]
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_ring_owed_at_a_restart_rings_once_after_it() {
+    let push = Push::Fcm(Duration::from_mins(1));
+    let google = Google::start().await;
+    let mut f = Fixture::start(&google, push).await;
+    let (_, mut phone) = f.phone().await;
+    set_token(&mut phone, 1, "fcm:phone-token").await;
+    let mut node = f.owned_node().await;
+    node.reply(&mut phone, 2, "first").await;
+    google.wait_for_fcm(1).await;
+    // Inside the gap, so the ring is owed and not sent before the restart.
+    request_wake(&mut node.socket, 3, Uuid::new_v4(), WakeUrgency::Now).await;
+    assert_eq!(f.owed_wakes(), 1);
+    drop((phone, node));
+
+    f.restart(&google, push).await;
+    google.wait_for_fcm(2).await;
+    f.drained().await;
+    assert_eq!(
+        bodies(&google.settled().await),
+        [wake_body("fcm:phone-token"), ring_body("fcm:phone-token")],
+        "exactly one ring after the restart"
+    );
+    f.stop().await;
+    google.stop();
+}
+
+#[tokio::test]
+async fn a_schema_14_database_learns_rings_and_rings_none_of_its_wakes() {
+    let google = Google::start().await;
+    let mut f = Fixture::start(&google, Push::Disabled).await;
+    let stored = PrincipalId::new();
+    f.restart_after(&google, Push::Disabled, |database| {
+        database
+            .execute_batch(&format!(
+                "ALTER TABLE push_wakes DROP COLUMN ring_generation;
+                 DROP TABLE push_wake_requests;
+                 INSERT INTO push_wakes (principal_id, generation, settled) VALUES ('{stored}', 3, 3);
+                 PRAGMA user_version = 14;"
+            ))
+            .expect("return the database to schema 14");
+    })
+    .await;
+    let database = f.database();
+    let version: i64 = database
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("version");
+    assert_eq!(version, 15);
+    let ring: i64 = database
+        .query_row(
+            "SELECT ring_generation FROM push_wakes WHERE principal_id = ?1",
+            [stored.to_string()],
+            |row| row.get(0),
+        )
+        .expect("the stored wake row");
+    assert_eq!(ring, 0, "a stored wake rings at no generation");
+    assert_eq!(f.requested_ids(), 0);
+    drop(database);
     f.stop().await;
     google.stop();
 }

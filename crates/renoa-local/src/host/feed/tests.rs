@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
-use super::{FEED_PAGE, FeedError, FeedKind, HostFeed, produce, retention};
+use super::{FEED_PAGE, FeedError, FeedKind, FeedWake, HostFeed, produce, retention};
 use crate::{host::catalog, plugins::host::HostPluginId};
 
 const DAY: i64 = 24 * 3_600_000;
@@ -493,4 +493,93 @@ fn a_message_answers_the_asks_before_it_in_its_own_session() {
         0,
         "answering again changes nothing"
     );
+}
+
+/// An open item that wakes is owed one wake, oldest first, until the node
+/// records its acknowledgement; one that can wait, or that the owner already
+/// answered, is owed none.
+#[tokio::test]
+async fn an_open_item_that_wakes_is_owed_until_its_wake_is_sent() {
+    let store = Store::new();
+    let item = |urgency: &str| {
+        let (sequence, id) = store.item(FeedKind::Update, 1);
+        store
+            .db()
+            .execute(
+                "UPDATE host_feed_items SET urgency = ?1 WHERE sequence = ?2",
+                params![urgency, sequence],
+            )
+            .expect("urgency");
+        id
+    };
+    item("whenever");
+    let soon = item("soon");
+    let now = item("now");
+    let answered = item("now");
+    store
+        .db()
+        .execute(
+            "UPDATE host_feed_items SET done_at_ms = 5 WHERE id = ?1",
+            [answered.to_string()],
+        )
+        .expect("answer it");
+    let feed = store.feed();
+    assert_eq!(
+        feed.owed_wakes().await.expect("owed"),
+        [
+            FeedWake {
+                id: soon,
+                rings: false
+            },
+            FeedWake {
+                id: now,
+                rings: true
+            },
+        ]
+    );
+    feed.wake_sent(soon, 10).await.expect("sent");
+    feed.wake_sent(soon, 20).await.expect("sent again");
+    feed.wake_sent(Uuid::new_v4(), 30)
+        .await
+        .expect("a removed item is nothing to record");
+    assert_eq!(
+        feed.owed_wakes().await.expect("owed"),
+        [FeedWake {
+            id: now,
+            rings: true
+        }]
+    );
+    let sent: i64 = store
+        .db()
+        .query_row(
+            "SELECT wake_sent_at_ms FROM host_feed_items WHERE id = ?1",
+            [soon.to_string()],
+            |row| row.get(0),
+        )
+        .expect("sent at");
+    assert_eq!(sent, 10, "the first acknowledgement is kept");
+}
+
+#[test]
+fn schema_49_gives_a_schema_48_catalog_its_wake_record_and_owes_its_waking_items() {
+    let store = Store::new();
+    let database = store.database();
+    let db = store.db();
+    catalog::restore_schema_48(&db);
+    db.execute_batch(
+        "UPDATE host_metadata SET schema_version = 48 WHERE singleton = 1;
+         PRAGMA user_version = 48;",
+    )
+    .expect("a schema 48 catalog");
+    let (sequence, id) = store.item(FeedKind::Update, 1);
+    db.execute(
+        "UPDATE host_feed_items SET urgency = 'soon' WHERE sequence = ?1",
+        [sequence],
+    )
+    .expect("urgency");
+    drop(db);
+    catalog::initialize(&database).expect("upgrade schema 48");
+    catalog::initialize(&database).expect("reopen the upgraded catalog");
+    let owed = super::wakes::owed(&database).expect("owed");
+    assert_eq!(owed, [FeedWake { id, rings: false }]);
 }

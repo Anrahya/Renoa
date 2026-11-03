@@ -2,7 +2,7 @@
 
 The Kotlin app shell. Two modules:
 
-- `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 15)
+- `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 16)
   behind the `RcpSurface` interface: discovery with task status, each task's last sequence and
   agent names, a task's journal with optional live text, submitting and stopping a command, and
   the device-key proof, and registering or clearing the device's push token; `PasskeySignIn`
@@ -26,10 +26,13 @@ The Kotlin app shell. Two modules:
 
 Renoa wakes a closed app with a content-free Firebase Cloud Messaging message (issue #116,
 `crates/renoa-control/src/fcm.rs`); what changed is read over RCP, so nothing an agent wrote
-reaches Google. `PushMessages` takes `{"renoa": "changed"}` and `{"renoa": "ring"}` (#86; the
-same catch-up for now), ignores anything else, and only enqueues `WakeWork`, an expedited
-WorkManager job. Jobs run one after another; one whose wake a later catch-up already covered ends
-without connecting.
+reaches Google. `PushMessages` takes `{"renoa": "changed"}` and `{"renoa": "ring"}`, ignores
+anything else, and enqueues `WakeWork`, an expedited WorkManager job. A ring (#86, what an agent
+needs from the owner now) first posts "Renoa needs you" on the "Needs you" channel, which sounds the
+phone's ringtone and names no agent; a later ring replaces it, and opening the app takes it back.
+Reading the feed it rang for comes with Home (#146). Push registers while either channel may show
+something. Jobs run one after another; one whose wake a later catch-up already covered ends without
+connecting.
 
 The job (`WakeUp`) connects with the device credential and key, registers the push token, lists the
 tasks, attaches from its own cursor (`WakeCursors`, kept per sign-in in the app's storage) to each

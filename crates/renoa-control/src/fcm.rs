@@ -1,9 +1,9 @@
 //! Sending one content-free wake through FCM HTTP v1, and the settings that
 //! turn push on.
 //!
-//! Every request carries the same body apart from the device's token: no task,
-//! principal, agent or text. The app reads what changed over RCP, so nothing
-//! an agent wrote reaches Google.
+//! Every request carries one of two constant bodies apart from the device's
+//! token, `changed` or `ring`: no task, principal, agent or text. The app reads
+//! what changed over RCP, so nothing an agent wrote reaches Google.
 
 use std::{path::Path, time::Duration};
 
@@ -30,6 +30,25 @@ const MAX_ATTEMPTS: u32 = 3;
 pub(crate) const BACKOFF_BASE: Duration = Duration::from_secs(1);
 const MAX_RETRY_DELAY: Duration = Duration::from_mins(1);
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+
+/// Which constant a wake carries. Each has its own collapse key, so a pending
+/// ring on an offline phone is not replaced by a later `changed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WakeKind {
+    /// Something changed; the app reads it quietly or with a buzz.
+    Changed,
+    /// Something needs the owner within minutes; the app rings.
+    Ring,
+}
+
+impl WakeKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Changed => "changed",
+            Self::Ring => "ring",
+        }
+    }
+}
 
 /// What the coordinator needs to send wakes: a Firebase project and the
 /// credentials that may send to it. Without settings push is off: tokens are
@@ -152,12 +171,13 @@ impl FcmSender {
         })
     }
 
-    /// Sends one wake to `token`, retrying a transient failure a bounded
+    /// Sends one `kind` of wake to `token`, retrying a transient failure a bounded
     /// number of times with exponential backoff or the server's
     /// `Retry-After`, and a refused access token once with a fresh one.
     pub(crate) async fn wake(
         &self,
         token: &PushToken,
+        kind: WakeKind,
         cancelled: &CancellationToken,
     ) -> WakeOutcome {
         let mut attempt = 1;
@@ -165,7 +185,7 @@ impl FcmSender {
         loop {
             let result = tokio::select! {
                 () = cancelled.cancelled() => return WakeOutcome::Cancelled,
-                result = self.attempt(token) => result,
+                result = self.attempt(token, kind) => result,
             };
             let (reason, after) = match result {
                 Attempt::Done(outcome) => return outcome,
@@ -192,7 +212,7 @@ impl FcmSender {
         }
     }
 
-    async fn attempt(&self, token: &PushToken) -> Attempt {
+    async fn attempt(&self, token: &PushToken, kind: WakeKind) -> Attempt {
         let bearer = match self.tokens.bearer().await {
             Ok(bearer) => bearer,
             Err(AccessError::Unavailable) => {
@@ -214,7 +234,7 @@ impl FcmSender {
             .post(self.send_url.clone())
             .header(header::AUTHORIZATION, bearer.authorization())
             .header(header::CONTENT_TYPE, "application/json")
-            .body(wake_body(token))
+            .body(wake_body(token, kind))
             .send()
             .await
         else {
@@ -238,15 +258,15 @@ impl FcmSender {
     }
 }
 
-/// The request body: a data-only, high-priority message under one collapse
-/// key, so an offline phone holds one pending wake. No `ttl`, so FCM's
-/// four-week default applies.
-fn wake_body(token: &PushToken) -> String {
+/// The request body: a data-only, high-priority message under its kind's
+/// collapse key, so an offline phone holds one pending wake of each kind. No
+/// `ttl`, so FCM's four-week default applies.
+fn wake_body(token: &PushToken, kind: WakeKind) -> String {
     serde_json::json!({
         "message": {
             "token": token.expose(),
-            "data": { "renoa": "changed" },
-            "android": { "priority": "high", "collapse_key": "changed" },
+            "data": { "renoa": kind.as_str() },
+            "android": { "priority": "high", "collapse_key": kind.as_str() },
         }
     })
     .to_string()

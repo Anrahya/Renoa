@@ -1,7 +1,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
-use renoa_local::LocalHost;
+use renoa_local::{HostFeed, LocalHost};
 use renoa_protocol::{TargetCard, TargetRef};
 use thiserror::Error;
 use tokio::{
@@ -22,6 +22,7 @@ use crate::{
     live::LiveFrame,
     node_log,
     node_store::{NodeStore, NodeStoreError, TargetBinding},
+    owner_wakes,
     session::{SessionEnd, serve_session},
     stop::RunningTurns,
 };
@@ -66,6 +67,8 @@ pub struct RenoaNode {
     credentials: DeviceCredentials,
     runtime: Arc<NodeRuntime>,
     automations: Option<AutomationLink>,
+    /// The feed whose items wake the owner's phone.
+    feed: HostFeed,
     drain: CancellationToken,
 }
 
@@ -93,6 +96,8 @@ impl RenoaNode {
         let link = Arc::new(AgentLink::default());
         host.attach_agent_peers(Arc::new(Peers(Arc::clone(&link))));
         let host_control = HostControl::open(Arc::clone(&host), state.clone())?;
+        let feed = HostFeed::open(host.home().path())
+            .map_err(|error| NodeError::Configuration(error.to_string()))?;
         let (live, _) = broadcast::channel(LIVE_FRAME_CAPACITY);
         Ok(Self {
             endpoint,
@@ -107,6 +112,7 @@ impl RenoaNode {
                 turns: RunningTurns::default(),
             }),
             automations: None,
+            feed,
             drain: CancellationToken::new(),
         })
     }
@@ -144,8 +150,9 @@ impl RenoaNode {
         self
     }
 
-    /// Runs durable Host work and, when configured, the Host's automation
-    /// schedule, reconnecting both outbound coordinator links.
+    /// Runs durable Host work, the owner's wakes and, when configured, the
+    /// Host's automation schedule, reconnecting both outbound coordinator
+    /// links.
     ///
     /// # Errors
     ///
@@ -157,6 +164,11 @@ impl RenoaNode {
         let mut running_tasks = HashSet::new();
         schedule_pending(Arc::clone(&self.runtime), &mut tasks, &mut running_tasks).await?;
         let mut commits = self.runtime.commits.subscribe();
+        let wakes = tokio::spawn(owner_wakes::run(
+            self.feed.clone(),
+            Arc::clone(&self.runtime.link),
+            shutdown.clone(),
+        ));
         // Boxed: the schedule's future is large and lives as long as the node.
         let schedule = self.automations.take().map(|link| {
             Box::pin(automations::run(
@@ -191,6 +203,7 @@ impl RenoaNode {
             }
         };
 
+        wakes.abort();
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         result

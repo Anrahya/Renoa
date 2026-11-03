@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 15 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 16 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -483,6 +483,18 @@ text, so RCP semantics stay independent of the cloud vendor (locked decision
 12), and another platform adds a provider rather than changing the operations.
 Revoking a device deletes its token in the same transaction.
 
+A node asks for a wake with `RequestWake` for something its Host holds for the
+owner that no task record carries, such as an agent's question. The request
+carries a stable wake identity and an urgency, `soon` or `now`, and nothing
+else: the wake is the node owner's, and a node without one is refused. The
+coordinator records the identity and the wake in one transaction and
+acknowledges after the commit; the same identity within a day records nothing.
+`now` rings: the marker keeps the generation the ring was asked at, a device's
+send is the constant `ring` until that device had a send that counts from that
+generation on, counted per token as every send is, and the ring stays owed
+until every device had one, so a wake that follows never replaces it. `ring` and `changed` have their own collapse
+keys, so an offline phone holds one of each.
+
 ## Executor link
 
 ### Availability and dispatch
@@ -880,7 +892,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 15 JSON/WebSocket shape with binding-level conformance
+- a documented version 16 JSON/WebSocket shape with binding-level conformance
   assertions;
 - a command-scoped stop that is durable before it is answered, delivered to the
   node until acknowledged across reconnects and coordinator restart, accepted
@@ -1057,7 +1069,8 @@ Work proceeds in this order unless evidence changes the dependency:
 
 Workspace replication, executor migration, mobile UI, and additional surface
 adapters follow only after the continuity path is reliable. Content-free push
-wakes are implemented on the coordinator (see Push wakes); the app side is not.
+wakes, `changed` and `ring`, are implemented on the coordinator and in the
+Android app (see Push wakes).
 
 ## Required conformance scenarios
 

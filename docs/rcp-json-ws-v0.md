@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `15`.
+first implemented transport binding. The current binding version is `16`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -55,14 +55,18 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `15` with `version_mismatch` and ends the session.
+rejects any value other than `16` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `15` supersedes version `14` by adding push-token registration
+Version `16` supersedes version `15` by adding a node's wake request
+(`request_wake` answered by `wake_requested`). A version `15` peer is rejected
+at authentication.
+
+Version `15` superseded version `14` by adding push-token registration
 (`set_push_token` answered by `push_token_set`, `clear_push_token` answered by
 `push_token_cleared`) and a `throughSequence` in every `task_list` summary. A
 version `14` peer is rejected at authentication.
@@ -119,7 +123,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 15,
+  "version": 16,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -129,7 +133,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 15,
+  "version": 16,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -142,7 +146,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 15,
+  "version": 16,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -155,7 +159,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 15,
+  "version": 16,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -171,7 +175,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 15
+  "version": 16
 }
 ```
 
@@ -480,8 +484,10 @@ browser ticket`), and so does a node.
 
 Clearing succeeds whether or not the device held a token. Revoking the device
 deletes its token too. The wake itself is not an RCP frame: the coordinator
-sends the push service a constant message with no task, principal, agent or
-text in it, and the app learns what changed with `list_tasks` and `attach`.
+sends the push service one of two constant messages, `changed` or `ring`, with
+no task, principal, agent or text in it, and the app learns what changed with
+`list_tasks`, `attach` and the Host's feed. A `ring` comes from a node's
+[`request_wake`](#wake-the-owner) with urgency `now`.
 
 ### Attach
 
@@ -862,8 +868,39 @@ owns the task, and sends no response:
 }
 ```
 
-Node frames use `command_id` for correlation because it is already the durable
-operation identity. They do not carry `request_id`.
+Node frames about a command use `command_id` for correlation because it is
+already the durable operation identity. They do not carry `request_id`; only a
+node's requests, `send_agent_message` and `request_wake`, do.
+
+### Wake the owner
+
+A node asks the coordinator to wake its owner's phone for something its Host
+has for them that no journal record carries, such as an agent's question:
+
+```json
+{
+  "type": "request_wake",
+  "request_id": 8,
+  "wake_id": "00000000-0000-0000-0000-000000000060",
+  "urgency": "now"
+}
+```
+
+`urgency` is `soon`, the same constant `changed` wake a reply's record sends,
+or `now`, a `ring`. There is no quiet value: what can wait asks for no wake. The frame names no principal, task or
+text; the wake goes to the node's owner. Once the wake is durably recorded, or
+was already recorded for the same `wake_id` within a day, the coordinator
+answers:
+
+```json
+{
+  "type": "wake_requested",
+  "request_id": 8
+}
+```
+
+A node with no recorded owner receives `invalid_role` with the `request_id`.
+A surface that sends it receives `invalid_role` with a `null` `request_id`.
 
 ### Host control
 

@@ -9,11 +9,12 @@ use uuid::Uuid;
 use crate::{
     ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
     HostMethod, NodeId, PushToken, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary,
+    WakeUrgency,
     agent_messages::OutgoingMessage,
     operations::{NodeOperation, PushOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 15;
+pub const JSON_WS_VERSION: u32 = 16;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -128,6 +129,13 @@ pub enum ClientMessage {
         target: TargetRef,
         text: String,
     },
+    /// The node asks to wake its owner's phone for `wake_id`, something it has
+    /// for them that no journal record carries.
+    RequestWake {
+        request_id: u64,
+        wake_id: Uuid,
+        urgency: WakeUrgency,
+    },
 }
 
 impl ClientMessage {
@@ -182,6 +190,15 @@ impl ClientMessage {
                     to_target: target,
                     text,
                 },
+            },
+            Self::RequestWake {
+                request_id,
+                wake_id,
+                urgency,
+            } => NodeOperation::RequestWake {
+                request_id,
+                wake_id,
+                urgency,
             },
             Self::ServeHostControl => NodeOperation::ServeHostControl,
             Self::CompleteHostCall {
@@ -309,7 +326,8 @@ impl ClientMessage {
             | Self::PublishLiveActivity { .. }
             | Self::ServeHostControl
             | Self::CompleteHostCall { .. }
-            | Self::SendAgentMessage { .. } => return None,
+            | Self::SendAgentMessage { .. }
+            | Self::RequestWake { .. } => return None,
         };
         Some(JsonOperation::Surface {
             request_id,
@@ -394,6 +412,10 @@ pub enum ServerMessage {
         request_id: u64,
     },
     PushTokenCleared {
+        request_id: u64,
+    },
+    /// The wake a node asked for is durably recorded, or was already.
+    WakeRequested {
         request_id: u64,
     },
     ExecutionEventsAccepted {

@@ -33,7 +33,8 @@ class WireTest {
         setOf(
             "enroll", "enrolled", "advertise_targets", "send_agent_message", "execute", "acknowledge_execution",
             "execution_acknowledged", "publish_execution_events", "execution_events_accepted", "stop", "acknowledge_stop",
-            "publish_live_activity", "serve_host_control", "host_call", "complete_host_call",
+            "publish_live_activity", "serve_host_control", "host_call", "complete_host_call", "request_wake",
+            "wake_requested",
         )
 
     /** Surface frames this client does not offer yet: the app has no page that lists or revokes signed-in devices. */
