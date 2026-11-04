@@ -16,6 +16,7 @@ use crate::{
     AgentToolSelection, capabilities, stable_id::stable_id,
 };
 
+mod apps;
 #[cfg(test)]
 mod commit_fault;
 mod create;
@@ -29,6 +30,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+pub use apps::AgentApp;
 pub(crate) use main_agent::current as main_agent;
 pub use main_agent::{HostMainAgentControl, MainAgent, MainAgentChange, MainAgentError};
 pub(crate) use manage::binding as agent_manage_binding;

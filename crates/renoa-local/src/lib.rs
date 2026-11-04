@@ -58,7 +58,7 @@ pub use compact_invocation::{CompactInvocation, compact_invocation};
 pub use documents::UserProfile;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
-    AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate,
+    AgentApp, AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate,
     HostMainAgentControl, MAX_AGENT_PAGE, MainAgent, MainAgentChange, MainAgentError, PresetMove,
     RenameAgent, ResolvedAgentDefinition, derived_agent_id,
 };
@@ -71,7 +71,8 @@ pub use host::observation::{
 };
 pub use host::{
     AgentPeers, HostResetReport, LocalHost, LocalHostAdapters, LocalHostError,
-    LocalModelConfiguration, PeerAgent, PeerError, PeerMessage, profiles::ProfileEditError,
+    LocalModelConfiguration, PeerAgent, PeerError, PeerMessage,
+    profiles::{MEMORY_PAGE, MemoryNotes, ProfileEditError},
     reset_host_data_root,
 };
 pub use mcp::{

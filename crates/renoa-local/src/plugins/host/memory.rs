@@ -159,6 +159,61 @@ pub(crate) fn mind(data_directory: &Path, principal: Uuid) -> Result<Option<Mind
     memory.mind().map_err(|error| error.to_string())
 }
 
+/// The newest `limit` notes in the person's notebook, oldest first, and how
+/// many it holds; none when they have no notebook, which is not created.
+pub(crate) fn newest(
+    data_directory: &Path,
+    principal: Uuid,
+    limit: usize,
+) -> Result<(Vec<NoteView>, u64), String> {
+    let Some(memory) = read_only(data_directory, principal).map_err(|error| error.to_string())?
+    else {
+        return Ok((Vec::new(), 0));
+    };
+    // Every note's `#<id> <day> <text>` line has a character for `.` to match.
+    let notes = memory
+        .recall(".", limit)
+        .map_err(|error| error.to_string())?;
+    let total = memory.len().map_err(|error| error.to_string())?;
+    Ok((notes, total))
+}
+
+/// When the reminder `text` asks for is due, `YYYY-MM-DDTHH:MM` in the
+/// person's zone, as Mnem reads its `[at …]` tag.
+pub(crate) fn due(text: &str) -> Option<String> {
+    mnem::tags::parse_lenient(text)
+        .reminder
+        .map(|reminder| reminder.at.strftime("%Y-%m-%dT%H:%M").to_string())
+}
+
+/// `text` without the tags Mnem reads in it, for a person to read; the day a
+/// note dates and the time it is due travel beside it. Mnem's own parser
+/// decides what a tag is: a bracket it reads nothing from, such as "[on the
+/// bus]", stays.
+pub(crate) fn readable(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((before, after_open)) = rest.split_once('[') {
+        kept.push_str(before);
+        match after_open.split_once(']') {
+            Some((inside, after_close)) if !inside.contains('[') && is_tag(inside) => {
+                rest = after_close;
+            }
+            _ => {
+                kept.push('[');
+                rest = after_open;
+            }
+        }
+    }
+    kept.push_str(rest);
+    kept.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_tag(inside: &str) -> bool {
+    let tags = mnem::tags::parse_lenient(&format!("[{inside}]"));
+    tags.happened.is_some() || !tags.updates.is_empty() || tags.reminder.is_some()
+}
+
 /// The person's notebook opened for reading, which creates nothing; `None`
 /// when they have none.
 fn read_only(data_directory: &Path, principal: Uuid) -> Result<Option<Memory>, ToolError> {

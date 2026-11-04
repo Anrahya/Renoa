@@ -538,6 +538,26 @@ profile. A stale revision returns 409 and writes nothing, even on a first save. 
 malformed revision, or a stored profile that is linked, not a regular file, or not
 UTF-8, returns 422 `invalid_profile`; a storage failure returns 503.
 
+`GET /v1/host/memory` returns the notes agents keep about the signed-in owner, read
+only, as `{notes, total}`: the newest 100 notes newest first, each
+`{id, written, author, text, happened, due}`, leaving out those a newer note
+corrects. The text is stripped of the tags Mnem reads (`[at …]`, `[on …]`,
+`[updates #…]`); `happened` carries an `[on …]` day and `due` an `[at …]` time,
+`YYYY-MM-DDTHH:MM` in the owner's zone. `total` counts every note in the notebook.
+An owner with no notebook reads `{"notes": [], "total": 0}`, and none is created.
+
+`GET /v1/host/agents/{id}/apps` lists every Host connection with a complete catalog
+as `{apps}`, each `{connection, name, about, endpoint, on}`: the plugin that serves
+it, if one is installed, and whether that agent can use it now. `POST
+/v1/host/agents/{id}/apps/{connection}/enabled` with `{enabled}` gives the agent
+the connection or takes it away, and returns the list. Either is idempotent.
+Taking one away removes its tools from the agent, as `plugin_manage` disconnect
+does, and keeps the connection, its sign-in and its catalog, so giving it back
+needs no new sign-in; the plugin's skills stay. A malformed connection id returns
+422 `invalid_app`. An unknown connection, or turning on one whose catalog is not
+complete, returns 404 `app_not_found`; turning on one whose plugin is switched
+off, replaced or not admitted for the agent returns 409 `app_unavailable`.
+
 `GET /v1/host/discord` reports `setup_required` until the owner connects a bot,
 then `connected` with the bot and server names, the default agent, and saved
 bindings. Connection is not worker liveness. `POST /v1/host/discord/inspection`

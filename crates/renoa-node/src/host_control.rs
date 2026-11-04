@@ -7,11 +7,13 @@
 //! lost on the way is recovered, not repeated.
 
 mod agents;
+mod apps;
 mod automations;
 mod discord;
 mod feed;
 mod heartbeat;
 mod main_agent;
+mod memory;
 mod profile;
 mod reply;
 
@@ -48,8 +50,11 @@ enum Operation {
     AgentCreate,
     HeartbeatRead(String),
     HeartbeatSet(String),
+    AppsList(String),
+    AppSet(String, String),
     ProfileRead,
     ProfileReplace,
+    MemoryRead,
     DiscordStatus,
     DiscordInspect,
     DiscordConnect,
@@ -77,7 +82,12 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
             (Get, Op::HeartbeatRead((*id).to_owned())),
             (Put, Op::HeartbeatSet((*id).to_owned())),
         ],
+        ["agents", id, "apps"] => vec![(Get, Op::AppsList((*id).to_owned()))],
+        ["agents", id, "apps", connection, "enabled"] => {
+            vec![(Post, Op::AppSet((*id).to_owned(), (*connection).to_owned()))]
+        }
         ["profile"] => vec![(Get, Op::ProfileRead), (Put, Op::ProfileReplace)],
+        ["memory"] => vec![(Get, Op::MemoryRead)],
         ["discord"] => vec![(Get, Op::DiscordStatus)],
         ["discord", "inspection"] => vec![(Post, Op::DiscordInspect)],
         ["discord", "connection"] => vec![(Post, Op::DiscordConnect)],
@@ -203,7 +213,17 @@ impl HostControl {
                 )?;
                 heartbeat::set(host, &id, change).await
             }
+            Operation::AppsList(id) => apps::list(host, &id).await,
+            Operation::AppSet(id, connection) => {
+                let switch = decode(
+                    body,
+                    BODY_LIMIT,
+                    "Send the state you want as JSON, such as {\"enabled\": false}.",
+                )?;
+                apps::set(host, &id, &connection, switch).await
+            }
             Operation::ProfileRead => profile::read(host, principal).await,
+            Operation::MemoryRead => memory::read(host, principal).await,
             Operation::ProfileReplace => {
                 let edit = decode(
                     body,
