@@ -24,7 +24,11 @@ use crate::{
     host::{HostInitialization, LocalHost},
     plugins::host::{
         HostPluginId,
-        memory::{fixtures, note_pass::clock, pass},
+        memory::{
+            fixtures,
+            note_pass::{self, clock},
+            pass,
+        },
         settings, state,
     },
 };
@@ -530,7 +534,8 @@ async fn a_quiet_conversation_gets_a_pass_that_notes_and_later_turns_see_only_it
     assert_eq!(seen.len(), 3, "{seen:?}");
     assert!(seen[0].contains(ENOUGH));
     assert_eq!(
-        seen[1], "memory pass: noted #0",
+        seen[1],
+        note_pass::shown_receipt("noted #0"),
         "the pass shows as its receipt"
     );
     assert!(seen[2].contains("Thanks."));
@@ -823,7 +828,7 @@ async fn a_message_during_a_pass_cancels_it_and_is_admitted_once_it_settles() {
     assert_eq!(fixture.events("memory_pass_cancelled").len(), 1);
     assert_eq!(fixture.snapshot().await.memory_passes[0].passes_today, 0);
     let seen = user_texts(fixture.calls_of("turn").last().expect("the reply"));
-    assert_eq!(seen[1], "memory pass interrupted: noted #0");
+    assert_eq!(seen[1], note_pass::shown_receipt("stopped early, noted #0"));
 }
 
 #[tokio::test]
