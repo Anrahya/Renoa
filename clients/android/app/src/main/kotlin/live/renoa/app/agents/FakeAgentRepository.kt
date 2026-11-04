@@ -64,6 +64,8 @@ class FakeAgentRepository(
     routineSeeds: List<RoutineSeed> = FakeWorld.routines(),
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
     feed: Feed = FakeWorld.feed(now().toInstant()),
+    private val notes: List<MemoryNote> = FakeWorld.notes(),
+    appSeeds: List<AgentApp> = FakeWorld.apps(),
 ) : AgentRepository {
     private class Room(val conversation: MutableStateFlow<Conversation>, val doing: String) {
         val queue = ArrayDeque<String>()
@@ -130,6 +132,31 @@ class FakeAgentRepository(
             routineOn[routineId] = on
             routineList.value = routinesLocked()
         }
+    }
+
+    override suspend fun memory(): OwnerMemory = OwnerMemory(notes.reversed(), notes.size.toLong())
+
+    private val connected = appSeeds.map { it.copy(on = false) }
+
+    /** Every agent starts with the apps seeded on. */
+    private val appsOn = mutableMapOf<String, Set<String>>()
+    private val seededOn = appSeeds.filter { it.on }.map { it.connection }.toSet()
+
+    override suspend fun apps(agentId: String): List<AgentApp> = synchronized(lock) { appsLocked(agentId) }
+
+    /** As the Host does: an unknown app is not found, and asking twice is asking once. */
+    override suspend fun setApp(agentId: String, connection: String, on: Boolean): List<AgentApp> =
+        synchronized(lock) {
+            if (connected.none { it.connection == connection }) throw RepositoryException(Problem.NotFound, "There is no such app.")
+            val now = appsOn[agentId] ?: seededOn
+            appsOn[agentId] = if (on) now + connection else now - connection
+            appsLocked(agentId)
+        }
+
+    private fun appsLocked(agentId: String): List<AgentApp> {
+        if (roster.value.none { it.id == agentId }) throw RepositoryException(Problem.NotFound, "There is no such agent.")
+        val on = appsOn[agentId] ?: seededOn
+        return connected.map { it.copy(on = it.connection in on) }
     }
 
     /** Each routine ran at its time today if that has passed, else yesterday, and runs next at the following one. */

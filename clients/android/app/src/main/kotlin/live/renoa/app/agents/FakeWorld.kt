@@ -92,6 +92,23 @@ object FakeWorld {
             RoutineSeed("checkin", "Renoa", "Evening check-in", LocalTime.of(21, 0)),
         )
 
+    /** What the demo agents noted about the owner, oldest first. */
+    fun notes(): List<MemoryNote> =
+        listOf(
+            MemoryNote(0, "2026-10-27", "Tifa", "Aims for 30 g of fibre a day."),
+            MemoryNote(1, "2026-10-28", "Nagisa", "Buys oat milk, never dairy."),
+            MemoryNote(2, "2026-10-29", "Renoa", "Posts on X most evenings, after 8 PM."),
+            MemoryNote(3, "2026-10-29", "Renoa", "Wants to call the bank about the card.", due = "2026-10-30T13:00"),
+        )
+
+    /** The apps connected to Renoa, and whether the main agent starts with each. */
+    fun apps(): List<AgentApp> =
+        listOf(
+            AgentApp("agentmail", "agentmail", "https://mcp.agentmail.to/mcp", on = true),
+            AgentApp("github", "github", "https://api.github.com/mcp", on = true),
+            AgentApp("exa", "exa", "https://mcp.exa.ai/mcp", on = false),
+        )
+
     /** The owner's own day: food, posting, new projects, groceries and deals. No meetings, no flights. */
     fun demo(): List<AgentSeed> =
         listOf(

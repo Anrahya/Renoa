@@ -145,6 +145,15 @@ interface AgentRepository {
      */
     suspend fun saveOwnerProfile(expectedRevision: String, content: String): OwnerProfile
 
+    /** The newest notes the agents keep about the owner, read fresh each time. */
+    suspend fun memory(): OwnerMemory
+
+    /** The apps [agentId] can use, and those connected to Renoa it does not use now. */
+    suspend fun apps(agentId: String): List<AgentApp>
+
+    /** Gives [agentId] an app or takes it away, keeping its sign-in. Asking twice is asking once. Returns the apps after. */
+    suspend fun setApp(agentId: String, connection: String, on: Boolean): List<AgentApp>
+
     /** What the agents do on a schedule, as Renoa last told it. */
     val routines: StateFlow<List<Routine>>
 

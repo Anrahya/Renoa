@@ -1,5 +1,9 @@
 package live.renoa.app.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,18 +27,37 @@ import live.renoa.app.badge.hexPath
 import live.renoa.app.theme.Renoa
 import live.renoa.design.CardSection
 import live.renoa.design.DesignSwitch
+import live.renoa.design.Motion
 import live.renoa.design.Palette
+import live.renoa.design.SegmentedChoice
 import live.renoa.design.Type
 import live.renoa.design.semibold
 import java.time.ZonedDateTime
 
-/** The Renoa tab: the routines. */
+/** The Renoa tab: one segmented choice over its pages, [page] showing, each fading in for the last. */
 @Composable
-internal fun RenoaTab(state: HomeUiState, now: ZonedDateTime, onSwitch: (String, Boolean) -> Unit, top: Dp, bottom: Dp) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = top + 64.dp, bottom = bottom)) {
-        item(key = "routines") { Routines(state, now, onSwitch) }
+internal fun RenoaTab(state: HomeUiState, now: ZonedDateTime, page: HomePage, act: RenoaActions, top: Dp, bottom: Dp) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = top + 64.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        item(key = "segments") { SegmentedChoice(page, HomePage.entries.map { it to it.title }, act.open) }
+        item(key = "page") {
+            AnimatedContent(page, transitionSpec = { fadeIn(Motion.fade()) togetherWith fadeOut(Motion.fade()) }, label = "Renoa page") { shown ->
+                when (shown) {
+                    HomePage.Routines -> Routines(state, now, act.switchRoutine)
+                    HomePage.Memory -> MemoryPage(state)
+                    HomePage.Apps -> AppsPage(state, act.switchApp, act.ask)
+                }
+            }
+        }
     }
 }
+
+/** What the Renoa tab does with the owner's taps: turn to a page, switch a routine or an app, or open a chat to ask for one. */
+internal class RenoaActions(
+    val open: (HomePage) -> Unit,
+    val switchRoutine: (String, Boolean) -> Unit,
+    val switchApp: (String, Boolean) -> Unit,
+    val ask: (String) -> Unit,
+)
 
 /** Every routine, soonest first, with what it does next and a switch to turn it on or off. */
 @Composable
@@ -77,6 +100,6 @@ private fun EmptySocket(size: Dp) {
 }
 
 @Composable
-private fun Empty(words: String) {
+internal fun Empty(words: String) {
     Text(words, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 24.dp), style = Type.body, color = Palette.secondary)
 }

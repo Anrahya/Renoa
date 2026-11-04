@@ -797,6 +797,35 @@ class RcpAgentRepositoryTest {
         assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.saveOwnerProfile(empty.revision, "Name: Asha\n") }.problem)
     }
 
+    @Test
+    fun theOwnersNotesAndAnAgentsAppsAreReadAndSwitchedOnTheHost() = runTest {
+        val renoa = Uuid.random()
+        surface.targets = listOf(TargetSummary(surface.node, "agent:$renoa", "Renoa"))
+        surface.automations = mutableListOf()
+        val repo = started()
+        val id = "${surface.node}/agent:$renoa"
+        surface.hostAnswer = HostAnswer(200, """{"notes":[{"id":2,"written":"2026-11-04","author":"Renoa","text":"Likes tea"}],"total":3}""")
+        assertEquals(OwnerMemory(listOf(MemoryNote(2, "2026-11-04", "Renoa", "Likes tea")), 3), repo.memory())
+        val mail = AgentApp("agentmail", "agentmail", "https://mcp.agentmail.to/mcp", on = true)
+        surface.hostAnswer = HostAnswer(200, """{"apps":[{"connection":"agentmail","name":"agentmail","endpoint":"https://mcp.agentmail.to/mcp","on":true}]}""")
+        assertEquals(listOf(mail), repo.apps(id))
+        surface.hostAnswer = HostAnswer(200, """{"apps":[{"connection":"agentmail","name":"agentmail","endpoint":"https://mcp.agentmail.to/mcp","on":false}]}""")
+        assertEquals(listOf(mail.copy(on = false)), repo.setApp(id, "agentmail", on = false))
+        assertEquals(
+            listOf(
+                Triple(HostMethod.Get, "/v1/host/memory", null),
+                Triple(HostMethod.Get, "/v1/host/agents/$renoa/apps", null),
+                Triple(HostMethod.Post, "/v1/host/agents/$renoa/apps/agentmail/enabled", """{"enabled":false}"""),
+            ),
+            surface.hostCalls.takeLast(3),
+        )
+        surface.hostAnswer = HostAnswer(404, """{"code":"app_not_found"}""")
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.setApp(id, "gone", on = true) }.problem)
+        val calls = surface.hostCalls.size
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.apps("${surface.node}/someone") }.problem)
+        assertEquals(calls, surface.hostCalls.size, "a roster id that is no Host agent asks the Host nothing")
+    }
+
     /** Two Host agents listed in id order, as the Host lists them, with [mainSortsFirst] saying which the Host names main. */
     private fun TestScope.theHostsMainAgentIsMarkedMain(mainSortsFirst: Boolean) {
         val (low, high) = listOf(Uuid.random(), Uuid.random()).sortedBy { it.toString() }

@@ -64,11 +64,11 @@ import live.renoa.design.rememberPress
 import live.renoa.design.semibold
 import java.time.ZonedDateTime
 
-/** Home's two tabs: the agents, and Renoa's routines. */
+/** Home's two tabs: the agents, and Renoa's own pages. */
 private enum class HomeTab { Agents, Renoa }
 
 /**
- * Home is the owner's agents, with the day on top, and a tab of Renoa's routines beside them. The
+ * Home is the owner's agents, with the day on top, and a tab of Renoa's own pages beside them. The
  * bars float as glass over both. Until it is [HomeUiState.known] who is here, Home says it is
  * checking in. The Renoa tab shows while a [HomeUiState.page] is open.
  */
@@ -129,7 +129,7 @@ fun HomeScreen(
     ) {
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Agents)) { AgentList(state, time, lit, { lit = it }, act, onNewAgent, viewModel, top, barSpace) }
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Renoa)) {
-            RenoaTab(state, time, viewModel::switch, top, barSpace)
+            RenoaTab(state, time, state.page ?: HomePage.Routines, RenoaActions(viewModel::open, viewModel::switch, viewModel::switchApp, onOpenChat), top, barSpace)
         }
     }
 }
