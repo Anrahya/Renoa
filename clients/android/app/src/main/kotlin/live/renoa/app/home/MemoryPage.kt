@@ -16,7 +16,8 @@ import java.time.format.DateTimeFormatter
 
 /** What the agents know about the owner: the profile they all read, then the newest notes they keep. Read only. */
 @Composable
-internal fun MemoryPage(state: HomeUiState) {
+internal fun MemoryPage(state: HomeUiState, onRetry: () -> Unit) {
+    if (HomePage.Memory in state.unread) return Unread("What your agents remember could not be read.", onRetry)
     val memory = state.memory ?: return Empty("Reading what your agents remember…")
     val about = memory.profile.lines().map { it.trim() }.filter { it.isNotEmpty() }
     val notes = memory.notes.notes
@@ -29,7 +30,7 @@ internal fun MemoryPage(state: HomeUiState) {
         }
         if (notes.isNotEmpty()) {
             // Corrected notes and those past the newest the Host sends are kept, not shown.
-            val footer = "Older notes are kept too. Ask about them in a chat.".takeIf { memory.notes.total > notes.size }
+            val footer = "Some notes aren't shown here. Ask about them in a chat.".takeIf { memory.notes.total > notes.size }
             CardSection(title = "Notes", footer = footer) {
                 for (note in notes) row { Note(note) }
             }

@@ -43,17 +43,21 @@ internal fun RenoaTab(state: HomeUiState, now: ZonedDateTime, page: HomePage, ac
             AnimatedContent(page, transitionSpec = { fadeIn(Motion.fade()) togetherWith fadeOut(Motion.fade()) }, label = "Renoa page") { shown ->
                 when (shown) {
                     HomePage.Routines -> Routines(state, now, act.switchRoutine)
-                    HomePage.Memory -> MemoryPage(state)
-                    HomePage.Apps -> AppsPage(state, act.switchApp, act.ask)
+                    HomePage.Memory -> MemoryPage(state) { act.retry(HomePage.Memory) }
+                    HomePage.Apps -> AppsPage(state, act.switchApp, act.ask) { act.retry(HomePage.Apps) }
                 }
             }
         }
     }
 }
 
-/** What the Renoa tab does with the owner's taps: turn to a page, switch a routine or an app, or open a chat to ask for one. */
+/**
+ * What the Renoa tab does with the owner's taps: turn to a page, read one again, switch a routine
+ * or an app, or open a chat to ask for one.
+ */
 internal class RenoaActions(
     val open: (HomePage) -> Unit,
+    val retry: (HomePage) -> Unit,
     val switchRoutine: (String, Boolean) -> Unit,
     val switchApp: (String, Boolean) -> Unit,
     val ask: (String) -> Unit,

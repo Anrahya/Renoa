@@ -72,7 +72,7 @@ class HomeViewModelTest {
         assertEquals("Exa", app.label)
         assertEquals("Google calendar", app.copy(name = "google_calendar.mcp").label)
         assertEquals("Mcp", app.copy(name = "mcp", connection = "Mcp").label, "a name that is nothing but plumbing falls back to the connection")
-        assertEquals("agentmail", app.copy(name = null, connection = "agentmail").label.lowercase())
+        assertEquals("GitHub", app.copy(name = "github-mcp", endpoint = "https://api.github.com/mcp").label, "a service the app knows by its address")
     }
 
     @Test
@@ -93,6 +93,32 @@ class HomeViewModelTest {
         runCurrent()
         assertEquals("That app is not connected any more. Ask Renoa to connect it again.", vm.state.value.notice)
         assertEquals(emptyMap(), vm.state.value.appSwitching)
+
+        vm.open(HomePage.Memory)
+        assertNull(vm.state.value.notice, "turning to another page clears it")
+    }
+
+    @Test
+    fun aPageThatCannotBeReadSaysSoAndReadsAgainOnRequest() = runTest {
+        var reachable = false
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val repo =
+            object : AgentRepository by inner {
+                override suspend fun apps(agentId: String) = if (reachable) inner.apps(agentId) else throw RepositoryException(Problem.Unavailable, "not now")
+            }
+        val vm = HomeViewModel(repo)
+        backgroundScope.launch { vm.state.collect {} }
+        runCurrent()
+        vm.open(HomePage.Apps)
+        runCurrent()
+        assertEquals(setOf(HomePage.Apps), vm.state.value.unread)
+        assertNull(vm.state.value.apps)
+
+        reachable = true
+        vm.read(HomePage.Apps)
+        runCurrent()
+        assertEquals(emptySet(), vm.state.value.unread)
+        assertEquals(3, vm.state.value.apps?.size)
     }
 
     @Test

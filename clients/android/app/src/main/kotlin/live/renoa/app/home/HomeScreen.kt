@@ -119,7 +119,8 @@ fun HomeScreen(
                     GlassTabBar(
                         tab,
                         listOf(TabItem(HomeTab.Agents, "Agents", "bubble.left.and.bubble.right.fill", 33.dp), TabItem(HomeTab.Renoa, "Renoa", "hexagon.fill")),
-                        { picked -> if (picked == HomeTab.Agents) viewModel.close() else viewModel.open(HomePage.Routines) },
+                        // Tapping the Renoa tab while it shows keeps the page it is on.
+                        { picked -> if (picked == HomeTab.Agents) viewModel.close() else if (state.page == null) viewModel.open(HomePage.Routines) },
                         Modifier.padding(bottom = maxOf(bottom - 4.dp, 12.dp)),
                     )
                     }
@@ -129,7 +130,8 @@ fun HomeScreen(
     ) {
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Agents)) { AgentList(state, time, lit, { lit = it }, act, onNewAgent, viewModel, top, barSpace) }
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Renoa)) {
-            RenoaTab(state, time, state.page ?: HomePage.Routines, RenoaActions(viewModel::open, viewModel::switch, viewModel::switchApp, onOpenChat), top, barSpace)
+            val renoa = remember(viewModel, onOpenChat) { RenoaActions(viewModel::open, viewModel::read, viewModel::switch, viewModel::switchApp, onOpenChat) }
+            RenoaTab(state, time, state.page ?: HomePage.Routines, renoa, top, barSpace)
         }
     }
 }

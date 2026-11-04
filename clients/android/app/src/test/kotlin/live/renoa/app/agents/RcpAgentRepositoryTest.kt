@@ -820,7 +820,8 @@ class RcpAgentRepositoryTest {
             surface.hostCalls.takeLast(3),
         )
         surface.hostAnswer = HostAnswer(404, """{"code":"app_not_found"}""")
-        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.setApp(id, "gone", on = true) }.problem)
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.setApp(id, "gone/away", on = true) }.problem)
+        assertEquals("/v1/host/agents/$renoa/apps/gone%2Faway/enabled", surface.hostCalls.last().second, "a connection id stays one path segment")
         val calls = surface.hostCalls.size
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.apps("${surface.node}/someone") }.problem)
         assertEquals(calls, surface.hostCalls.size, "a roster id that is no Host agent asks the Host nothing")
