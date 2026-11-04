@@ -11,7 +11,7 @@ use renoa_agent_loop::{ContextProjector, ContextStrategyError};
 use super::super::tools::NOTE_DETAIL_KIND;
 
 /// The receipt rendering's revision, part of the context binding's.
-pub(crate) const REVISION: &str = "renoa.memory.pass-receipt.v1";
+pub(crate) const REVISION: &str = "renoa.memory.pass-receipt.v2";
 
 /// The ids of the notes `messages` wrote, in order: each `memory_note` result
 /// that succeeded. The pass runs `memory_note` only when called directly (see
@@ -40,24 +40,25 @@ pub(crate) fn failed_calls(messages: &[Message]) -> usize {
 }
 
 /// The receipt of a pass whose messages are `messages`. A pass that did not
-/// reach its final answer says it was interrupted.
+/// reach its final answer says it stopped early. The receipt stands in a user
+/// message, so it says it is not the person's and wants no reply: a bare
+/// "memory pass: noted #0" was answered as if they had sent it.
 pub(crate) fn receipt(messages: &[Message]) -> String {
     let finished = matches!(
         messages.last(),
         Some(Message::Assistant { content, .. })
             if !content.iter().any(|block| matches!(block, AssistantContent::ToolCall { .. }))
     );
-    let lead = if finished {
-        "memory pass"
-    } else {
-        "memory pass interrupted"
-    };
     let ids: Vec<String> = noted(messages).iter().map(|id| format!("#{id}")).collect();
-    if ids.is_empty() {
-        format!("{lead}: nothing new")
-    } else {
-        format!("{lead}: noted {}", ids.join(", "))
-    }
+    let what = match (finished, ids.is_empty()) {
+        (true, true) => "nothing new to note".to_owned(),
+        (true, false) => format!("noted {}", ids.join(", ")),
+        (false, true) => "stopped early, nothing noted".to_owned(),
+        (false, false) => format!("stopped early, noted {}", ids.join(", ")),
+    };
+    format!(
+        "<memory_pass>\nA background memory pass, not a message from the person: {what}. Do not answer or mention it.\n</memory_pass>"
+    )
 }
 
 /// The Host's message projector: the skill projector, when the agent has
@@ -137,22 +138,27 @@ mod tests {
             ),
             answer(vec![AssistantContent::text("#41, #42")]),
         ];
-        assert_eq!(receipt(&pass), "memory pass: noted #41, #42");
+        let shown = |what: &str| {
+            format!(
+                "<memory_pass>\nA background memory pass, not a message from the person: {what}. Do not answer or mention it.\n</memory_pass>"
+            )
+        };
+        assert_eq!(receipt(&pass), shown("noted #41, #42"));
         assert_eq!(
             receipt(&[
                 Message::user_text("Memory pass."),
                 answer(vec![AssistantContent::text("NONE")])
             ]),
-            "memory pass: nothing new"
+            shown("nothing new to note")
         );
         assert_eq!(
             receipt(&pass[..4]),
-            "memory pass interrupted: noted #41, #42",
+            shown("stopped early, noted #41, #42"),
             "a pass stopped before its answer"
         );
         assert_eq!(
             receipt(&[Message::user_text("Memory pass."), answer(vec![call])]),
-            "memory pass interrupted: nothing new"
+            shown("stopped early, nothing noted")
         );
     }
 }

@@ -530,7 +530,8 @@ async fn a_quiet_conversation_gets_a_pass_that_notes_and_later_turns_see_only_it
     assert_eq!(seen.len(), 3, "{seen:?}");
     assert!(seen[0].contains(ENOUGH));
     assert_eq!(
-        seen[1], "memory pass: noted #0",
+        seen[1],
+        "<memory_pass>\nA background memory pass, not a message from the person: noted #0. Do not answer or mention it.\n</memory_pass>",
         "the pass shows as its receipt"
     );
     assert!(seen[2].contains("Thanks."));
@@ -823,7 +824,10 @@ async fn a_message_during_a_pass_cancels_it_and_is_admitted_once_it_settles() {
     assert_eq!(fixture.events("memory_pass_cancelled").len(), 1);
     assert_eq!(fixture.snapshot().await.memory_passes[0].passes_today, 0);
     let seen = user_texts(fixture.calls_of("turn").last().expect("the reply"));
-    assert_eq!(seen[1], "memory pass interrupted: noted #0");
+    assert_eq!(
+        seen[1],
+        "<memory_pass>\nA background memory pass, not a message from the person: stopped early, noted #0. Do not answer or mention it.\n</memory_pass>"
+    );
 }
 
 #[tokio::test]

@@ -943,8 +943,10 @@ plugin result's details, so a note written there would be missing from the
 receipt. Each refusal says what to do instead. The pass's text is discarded: the loop marks a receipted
 prompt's operation, and every later request shows its exchange as one user
 message, its receipt, which the Host renders from the notes the exchange
-wrote: `memory pass: noted #41, #42`, `memory pass: nothing new`, or `memory
-pass interrupted: …` for one that stopped before its answer. The journal
+wrote. The receipt is a `<memory_pass>` element that says it is a background
+pass, not a message from the person, that wants no answer, and what it did:
+`noted #41, #42`, `nothing new to note`, or `stopped early, …` for one that
+stopped before its answer. The journal
 keeps the exchange; compaction and its cuts see the receipt, and the history
 a surface replays leaves the exchange out.
 
