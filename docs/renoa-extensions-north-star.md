@@ -944,7 +944,7 @@ receipt. Each refusal says what to do instead. The pass's text is discarded: the
 prompt's operation, and every later request shows its exchange as one user
 message, its receipt, which the Host renders from the notes the exchange
 wrote. The receipt is a `<memory_pass>` element that says it is a background
-pass, not a message from the person, that wants no answer, and what it did:
+pass, not a message from the person, that asks for no reply, and what it did:
 `noted #41, #42`, `nothing new to note`, or `stopped early, …` for one that
 stopped before its answer. The journal
 keeps the exchange; compaction and its cuts see the receipt, and the history

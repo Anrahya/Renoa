@@ -49,6 +49,8 @@ pub(crate) mod store;
 
 pub(crate) use guard::guard;
 pub(crate) use receipt::{REVISION as RECEIPT_REVISION, ReceiptProjector};
+#[cfg(test)]
+pub(crate) use receipt::shown as shown_receipt;
 pub(crate) use runner::{run, sweep};
 pub(crate) use schedule::{timer_id, wanted};
 pub(crate) use settle::close_stale;

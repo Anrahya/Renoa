@@ -40,9 +40,7 @@ pub(crate) fn failed_calls(messages: &[Message]) -> usize {
 }
 
 /// The receipt of a pass whose messages are `messages`. A pass that did not
-/// reach its final answer says it stopped early. The receipt stands in a user
-/// message, so it says it is not the person's and wants no reply: a bare
-/// "memory pass: noted #0" was answered as if they had sent it.
+/// reach its final answer says it stopped early.
 pub(crate) fn receipt(messages: &[Message]) -> String {
     let finished = matches!(
         messages.last(),
@@ -56,8 +54,14 @@ pub(crate) fn receipt(messages: &[Message]) -> String {
         (false, true) => "stopped early, nothing noted".to_owned(),
         (false, false) => format!("stopped early, noted {}", ids.join(", ")),
     };
+    shown(&what)
+}
+
+/// A receipt saying what the pass did. It stands in a user message, so it says
+/// it is not the person's and asks for no reply.
+pub(crate) fn shown(what: &str) -> String {
     format!(
-        "<memory_pass>\nA background memory pass, not a message from the person: {what}. Do not answer or mention it.\n</memory_pass>"
+        "<memory_pass>\nA background memory pass, not a message from the person: {what}. Do not reply to it.\n</memory_pass>"
     )
 }
 
@@ -91,7 +95,7 @@ mod tests {
     use renoa_agent::{AssistantContent, Message, StopReason, ToolCall, ToolResult};
     use serde_json::json;
 
-    use super::{NOTE_DETAIL_KIND, receipt};
+    use super::{NOTE_DETAIL_KIND, REVISION, receipt, shown};
 
     fn result(name: &str, details: Option<serde_json::Value>, is_error: bool) -> Message {
         Message::Tool {
@@ -113,6 +117,18 @@ mod tests {
             usage: None,
             metadata: renoa_agent::AssistantMetadata::default(),
         }
+    }
+
+    #[test]
+    fn the_receipt_wording_moves_with_its_revision() {
+        assert_eq!(
+            (REVISION, shown("noted #1").as_str()),
+            (
+                "renoa.memory.pass-receipt.v2",
+                "<memory_pass>\nA background memory pass, not a message from the person: noted #1. Do not reply to it.\n</memory_pass>"
+            ),
+            "a change to the wording bumps REVISION"
+        );
     }
 
     #[test]
@@ -138,11 +154,6 @@ mod tests {
             ),
             answer(vec![AssistantContent::text("#41, #42")]),
         ];
-        let shown = |what: &str| {
-            format!(
-                "<memory_pass>\nA background memory pass, not a message from the person: {what}. Do not answer or mention it.\n</memory_pass>"
-            )
-        };
         assert_eq!(receipt(&pass), shown("noted #41, #42"));
         assert_eq!(
             receipt(&[
