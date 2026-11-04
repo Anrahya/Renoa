@@ -21,6 +21,11 @@ class VocabularyTest {
     private val unshown = setOf(
         // The address a bare www. link in a reply opens.
         "ReplyLinks.kt" to "https://\$uri",
+        // Endpoints only find a service's mark; "mcp" is a word taken out of an app's name.
+        "FakeWorld.kt" to "https://mcp.agentmail.to/mcp",
+        "FakeWorld.kt" to "https://api.github.com/mcp",
+        "FakeWorld.kt" to "https://mcp.exa.ai/mcp",
+        "AppsPage.kt" to "mcp",
     )
 
     private fun sources(): List<File> =

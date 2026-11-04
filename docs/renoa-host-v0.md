@@ -547,7 +547,7 @@ corrects. The text is stripped of the tags Mnem reads (`[at …]`, `[on …]`,
 An owner with no notebook reads `{"notes": [], "total": 0}`, and none is created.
 
 `GET /v1/host/agents/{id}/apps` lists every Host connection with a complete catalog
-as `{apps}`, each `{connection, name, about, endpoint, on}`: the plugin that serves
+as `{apps}`, each `{connection, name, endpoint, on}`: the plugin that serves
 it, if one is installed, and whether that agent can use it now. `POST
 /v1/host/agents/{id}/apps/{connection}/enabled` with `{enabled}` gives the agent
 the connection or takes it away, and returns the list. Either is idempotent.

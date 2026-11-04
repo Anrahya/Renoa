@@ -19,8 +19,6 @@ pub struct AgentApp {
     pub connection: String,
     /// The name of the installed plugin that serves it, if any.
     pub name: Option<String>,
-    /// What that plugin says it does.
-    pub about: Option<String>,
     /// Where the agent reaches it.
     pub endpoint: String,
     /// Whether the agent can use it now.
@@ -80,8 +78,7 @@ fn read(connection: &Connection, id: AgentId) -> Result<Vec<AgentApp>, LocalHost
     // `integration_id` unique.
     let mut statement = connection
         .prepare(
-            "SELECT configured.connection_id, plugin.name, plugin.description,
-                    integration.endpoint,
+            "SELECT configured.connection_id, plugin.name, integration.endpoint,
                     EXISTS(
                         SELECT 1 FROM host_agent_enabled_mcp_connections AS binding
                         WHERE binding.agent_id = ?1
@@ -104,9 +101,8 @@ fn read(connection: &Connection, id: AgentId) -> Result<Vec<AgentApp>, LocalHost
             Ok(AgentApp {
                 connection: row.get(0)?,
                 name: row.get(1)?,
-                about: row.get(2)?,
-                endpoint: row.get(3)?,
-                on: row.get(4)?,
+                endpoint: row.get(2)?,
+                on: row.get(3)?,
             })
         })
         .map_err(catalog_error)?

@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import live.renoa.app.ui.ButtonKind
 import live.renoa.app.ui.ButtonSize
@@ -53,7 +54,7 @@ fun ConnectCard(link: SetupLink, onConnect: () -> Unit, onNotNow: () -> Unit, mo
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ServiceLogo(link)
+            ServiceLogo(link.url, link.label)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(link.label, style = RenoaType.Label, color = colors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(link.kind.words, style = RenoaType.Caption, color = colors.mutedForeground, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -77,19 +78,19 @@ private val SetupLinkKind.words: String
             SetupLinkKind.Credentials -> "Enter its key on a private Renoa page."
         }
 
-/** The service's mark on a tile, or the first letter of what the link connects. */
+/** The mark of the service at [url] on a tile, or the first letter of [label], what it connects. */
 @Composable
-private fun ServiceLogo(link: SetupLink) {
+internal fun ServiceLogo(url: String, label: String, size: Dp = 46.dp) {
     val colors = Renoa.colors
-    val mark = serviceMark(link.url)
+    val mark = serviceMark(url)
     Box(
-        Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(colors.secondary).clearAndSetSemantics {},
+        Modifier.size(size).clip(RoundedCornerShape(size * 12 / 46)).background(colors.secondary).clearAndSetSemantics {},
         contentAlignment = Alignment.Center,
     ) {
         if (mark != null) {
-            PathIcon(mark.path, colors.foreground, size = 26.dp)
+            PathIcon(mark.path, colors.foreground, size = size * 26 / 46)
         } else {
-            Text(link.label.firstOrNull()?.uppercase() ?: "?", style = RenoaType.Heading, color = colors.foreground)
+            Text(label.firstOrNull()?.uppercase() ?: "?", style = RenoaType.Heading, color = colors.foreground)
         }
     }
 }

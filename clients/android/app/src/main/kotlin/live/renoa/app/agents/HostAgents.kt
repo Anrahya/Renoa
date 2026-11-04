@@ -20,6 +20,16 @@ internal data class AgentRecord(val id: String, val name: String, val operationa
     data class Operational(val purpose: String? = null)
 }
 
+/**
+ * An app an agent can use: a connection on the Host, named by the plugin that serves it, if any.
+ * Switching it off keeps its sign-in, so switching it on again needs none.
+ */
+@Serializable
+data class AgentApp(val connection: String, val name: String? = null, val endpoint: String, val on: Boolean)
+
+@Serializable
+private data class Apps(val apps: List<AgentApp>)
+
 @Serializable
 private data class Created(@SerialName("operation_id") val operationId: String, val record: AgentRecord)
 
@@ -38,4 +48,15 @@ internal class HostAgents(private val host: HostClient) {
     }
 
     suspend fun definition(agentId: Uuid): AgentRecord = host.call(HostMethod.Get, "/v1/host/agents/$agentId", null, AgentRecord.serializer())
+
+    suspend fun apps(agentId: Uuid): List<AgentApp> = host.call(HostMethod.Get, "/v1/host/agents/$agentId/apps", null, Apps.serializer()).apps
+
+    /** Gives the agent [connection] or takes it away; asking twice is asking once. Returns the agent's apps after. */
+    suspend fun setApp(agentId: Uuid, connection: String, on: Boolean): List<AgentApp> {
+        val body = buildJsonObject { put("enabled", on) }
+        return host.call(HostMethod.Post, "/v1/host/agents/$agentId/apps/${connection.encodedSegment()}/enabled", body.toString(), Apps.serializer()).apps
+    }
 }
+
+/** [this] as one path segment, so a connection id cannot reach another path. */
+private fun String.encodedSegment(): String = java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")

@@ -64,11 +64,11 @@ import live.renoa.design.rememberPress
 import live.renoa.design.semibold
 import java.time.ZonedDateTime
 
-/** Home's two tabs: the agents, and Renoa's routines. */
+/** Home's two tabs: the agents, and Renoa's own pages. */
 private enum class HomeTab { Agents, Renoa }
 
 /**
- * Home is the owner's agents, with the day on top, and a tab of Renoa's routines beside them. The
+ * Home is the owner's agents, with the day on top, and a tab of Renoa's own pages beside them. The
  * bars float as glass over both. Until it is [HomeUiState.known] who is here, Home says it is
  * checking in. The Renoa tab shows while a [HomeUiState.page] is open.
  */
@@ -119,7 +119,8 @@ fun HomeScreen(
                     GlassTabBar(
                         tab,
                         listOf(TabItem(HomeTab.Agents, "Agents", "bubble.left.and.bubble.right.fill", 33.dp), TabItem(HomeTab.Renoa, "Renoa", "hexagon.fill")),
-                        { picked -> if (picked == HomeTab.Agents) viewModel.close() else viewModel.open(HomePage.Routines) },
+                        // Tapping the Renoa tab while it shows keeps the page it is on.
+                        { picked -> if (picked == HomeTab.Agents) viewModel.close() else if (state.page == null) viewModel.open(HomePage.Routines) },
                         Modifier.padding(bottom = maxOf(bottom - 4.dp, 12.dp)),
                     )
                     }
@@ -129,7 +130,8 @@ fun HomeScreen(
     ) {
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Agents)) { AgentList(state, time, lit, { lit = it }, act, onNewAgent, viewModel, top, barSpace) }
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Renoa)) {
-            RenoaTab(state, time, viewModel::switch, top, barSpace)
+            val renoa = remember(viewModel, onOpenChat) { RenoaActions(viewModel::open, viewModel::read, viewModel::switch, viewModel::switchApp, onOpenChat) }
+            RenoaTab(state, time, state.page ?: HomePage.Routines, renoa, top, barSpace)
         }
     }
 }

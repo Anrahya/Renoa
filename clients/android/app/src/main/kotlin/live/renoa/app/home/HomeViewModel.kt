@@ -2,6 +2,7 @@ package live.renoa.app.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -10,10 +11,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import live.renoa.app.agents.AgentApp
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.Feed
 import live.renoa.app.agents.Link
+import live.renoa.app.agents.OwnerMemory
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.Routine
@@ -29,8 +32,12 @@ import java.util.UUID
 fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
     agents.sortedWith(compareBy<AgentSummary> { it.state.homeRank }.thenBy { !it.glance.unread })
 
-/** The Renoa tab's pages. Routines is the only one so far. */
-enum class HomePage { Routines }
+/** The Renoa tab's pages, in the order its segments show them. */
+enum class HomePage(val title: String) {
+    Routines("Routines"),
+    Memory("Memory"),
+    Apps("Apps"),
+}
 
 /** What Home keeps of its own while the owner is in a chat and back. */
 private data class Local(
@@ -40,7 +47,14 @@ private data class Local(
     val page: HomePage? = null,
     val ownerName: String? = null,
     val signUp: Boolean = false,
+    val memory: Remembered? = null,
+    val apps: List<AgentApp>? = null,
+    val appSwitching: Map<String, Boolean> = emptyMap(),
+    val unread: Set<HomePage> = emptySet(),
 )
+
+/** What the Memory page shows: the owner's profile, which every agent reads, and the notes agents keep. */
+data class Remembered(val profile: String, val notes: OwnerMemory)
 
 data class HomeUiState(
     /** Every agent, as the roster has them. */
@@ -59,6 +73,14 @@ data class HomeUiState(
     val link: Link = Link.Connected,
     /** Whether Renoa has said who is here, or the phone kept what it last said. Until then an empty roster means not known yet, not no one. */
     val known: Boolean = true,
+    /** The owner's profile and the notes agents keep, as read when the Memory page last opened; null until then. */
+    val memory: Remembered? = null,
+    /** The main agent's apps, as read when the Apps page last opened; null until then. */
+    val apps: List<AgentApp>? = null,
+    /** Apps being switched, with the state asked for, shown until Renoa answers. */
+    val appSwitching: Map<String, Boolean> = emptyMap(),
+    /** Pages whose last read failed, which offer to read again. */
+    val unread: Set<HomePage> = emptySet(),
 ) {
     val main: AgentSummary? get() = mainAgent(roster)
 
@@ -68,6 +90,9 @@ data class HomeUiState(
 
     /** Whether the routine shows as on: what the owner just asked for, else what Renoa last said. */
     fun isOn(routine: Routine): Boolean = switching[routine.id] ?: routine.on
+
+    /** Whether the app shows as on: what the owner just asked for, else what Renoa last said. */
+    fun isOn(app: AgentApp): Boolean = appSwitching[app.connection] ?: app.on
 }
 
 class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
@@ -86,7 +111,7 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
 
     val state: StateFlow<HomeUiState> =
         combine(repository.agents, repository.feed, repository.routines, local, repository.link.combine(repository.rosterKnown, ::Pair)) { agents, feed, routines, mine, (link, known) ->
-            HomeUiState(agents, feed, routines, mine.notice, mine.switching, mine.page, mine.ownerName, mine.signUp, link, known)
+            HomeUiState(agents, feed, routines, mine.notice, mine.switching, mine.page, mine.ownerName, mine.signUp, link, known, mine.memory, mine.apps, mine.appSwitching, mine.unread)
         }.stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
@@ -121,8 +146,47 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
         }
     }
 
-    /** Shows the Renoa tab on [page]; opening the page already shown keeps its notice. It stays shown while the owner visits a chat from it. */
-    fun open(page: HomePage) = local.update { if (it.page == page) it else it.copy(page = page, notice = if (it.page == null) null else it.notice) }
+    /**
+     * Shows the Renoa tab on [page]; opening the page already shown keeps its notice, and turning to
+     * another clears it. It stays shown while the owner visits a chat from it. Memory and Apps are
+     * read again each time they are turned to.
+     */
+    fun open(page: HomePage) {
+        var turned = false
+        local.update {
+            turned = it.page != page
+            if (turned) it.copy(page = page, notice = null) else it
+        }
+        if (turned) read(page)
+    }
+
+    /** The read of each page in flight; a newer one replaces it, so an older answer never lands last. */
+    private val reads = HashMap<HomePage, Job>()
+
+    /** Reads [page] again. A page whose read fails says so and offers this again. */
+    fun read(page: HomePage) {
+        if (page == HomePage.Routines) return
+        reads[page]?.cancel()
+        local.update { it.copy(unread = it.unread - page) }
+        reads[page] =
+            viewModelScope.launch {
+                try {
+                    when (page) {
+                        HomePage.Routines -> Unit
+                        HomePage.Memory -> Remembered(repository.ownerProfile().content, repository.memory()).let { memory -> local.update { it.copy(memory = memory) } }
+                        HomePage.Apps -> {
+                            // The tab shows only once Renoa said who is here, so a main agent is known by now.
+                            val main = mainAgent(repository.agents.value) ?: throw RepositoryException(Problem.NotFound, "no main agent yet")
+                            val apps = repository.apps(main.id)
+                            // A switch's own answer is newer than this read.
+                            local.update { if (it.appSwitching.isEmpty()) it.copy(apps = apps) else it }
+                        }
+                    }
+                } catch (refused: RepositoryException) {
+                    local.update { it.copy(unread = it.unread + page) }
+                }
+            }
+    }
 
     /** Goes back to the agents. A notice shown on the Renoa tab goes with it. */
     fun close() = local.update { it.copy(page = null, notice = null) }
@@ -169,6 +233,32 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
             } finally {
                 answering.remove(agentId)
             }
+        }
+    }
+
+    /** Gives the main agent an app or takes it away. Its sign-in stays either way. */
+    fun switchApp(connection: String, on: Boolean) {
+        val main = mainAgent(repository.agents.value) ?: return
+        local.update { it.copy(notice = null, appSwitching = it.appSwitching + (connection to on)) }
+        viewModelScope.launch {
+            var gone = false
+            try {
+                val apps = repository.setApp(main.id, connection, on)
+                local.update { it.copy(apps = apps) }
+            } catch (refused: RepositoryException) {
+                gone = refused.problem == Problem.NotFound
+                val words =
+                    when (refused.problem) {
+                        Problem.NotFound -> "That app is not connected any more. Ask ${main.name} to connect it again."
+                        Problem.Conflict -> "That app can't be turned on from here. Ask ${main.name} to set it up again."
+                        else -> refused.wordsOr("That app could not be changed. Try again.")
+                    }
+                local.update { it.copy(notice = words) }
+            } finally {
+                local.update { it.copy(appSwitching = it.appSwitching - connection) }
+            }
+            // A vanished app goes from the list rather than snap back.
+            if (gone) read(HomePage.Apps)
         }
     }
 

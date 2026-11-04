@@ -108,6 +108,7 @@ import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import live.renoa.app.agents.Feed
 import live.renoa.app.agents.Note
@@ -287,6 +288,30 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
         compose.onNodeWithText("Next: tomorrow at 1 PM").assertDoesNotExist()
         compose.onNode(hasText("Agents") and isSelected()).assertIsDisplayed()
+    }
+
+    @Test
+    fun theMemoryPageShowsWhatAgentsKeepAndTheAppsPageSwitchesThemForRenoa() {
+        val opened = mutableListOf<String>()
+        home(onOpenChat = { opened += it })
+        openPages()
+        compose.onNode(hasText("Memory") and isSelectable()).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Buys oat milk, never dairy.").assertIsDisplayed()
+        compose.onNodeWithText("Renoa \u00b7 29 Oct \u00b7 Reminds you 30 Oct, 1 PM").assertIsDisplayed()
+        snapshot("home-memory")
+        compose.onNode(hasText("Renoa") and isSelectable()).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Buys oat milk, never dairy.").assertIsDisplayed()
+
+        compose.onNode(hasText("Apps") and isSelectable()).performClick()
+        compose.waitForIdle()
+        compose.onNode(isToggleable() and hasText("GitHub")).performClick()
+        compose.waitForIdle()
+        assertFalse(kotlinx.coroutines.runBlocking { repository.apps("renoa") }.first { it.connection == "github" }.on)
+        snapshot("home-apps")
+        compose.onNodeWithText("Ask Renoa").performClick()
+        assertEquals(listOf("renoa"), opened)
     }
 
     @Test

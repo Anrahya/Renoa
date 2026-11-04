@@ -46,6 +46,82 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun theMemoryPageReadsTheProfileAndNotesEachTimeItOpens() = runTest {
+        val (vm, repo) = model()
+        runCurrent()
+        repo.saveOwnerProfile(repo.ownerProfile().revision, "Name: Yash\n")
+        vm.open(HomePage.Memory)
+        runCurrent()
+        val memory = assertNotNull(vm.state.value.memory)
+        assertEquals("Name: Yash\n", memory.profile)
+        assertEquals(listOf(3L, 2L, 1L, 0L), memory.notes.notes.map { it.id }, "newest first")
+
+        repo.saveOwnerProfile(repo.ownerProfile().revision, "Name: Yash\nLikes tea\n")
+        vm.open(HomePage.Memory)
+        runCurrent()
+        assertEquals("Name: Yash\n", vm.state.value.memory?.profile, "the page shown is not read again")
+        vm.open(HomePage.Routines)
+        vm.open(HomePage.Memory)
+        runCurrent()
+        assertEquals("Name: Yash\nLikes tea\n", vm.state.value.memory?.profile, "turning back to it reads it again")
+    }
+
+    @Test
+    fun anAppIsNamedInPlainWords() {
+        val app = live.renoa.app.agents.AgentApp("exa", "exa-mcp", "https://mcp.exa.ai/mcp", on = true)
+        assertEquals("Exa", app.label)
+        assertEquals("Google calendar", app.copy(name = "google_calendar.mcp").label)
+        assertEquals("Mcp", app.copy(name = "mcp", connection = "Mcp").label, "a name that is nothing but plumbing falls back to the connection")
+        assertEquals("GitHub", app.copy(name = "github-mcp", endpoint = "https://api.github.com/mcp").label, "a service the app knows by its address")
+    }
+
+    @Test
+    fun theMainAgentsAppsAreSwitchedAndARefusalSaysWhatToDo() = runTest {
+        val (vm, _) = model()
+        runCurrent()
+        vm.open(HomePage.Apps)
+        runCurrent()
+        assertEquals(listOf("agentmail" to true, "github" to true, "exa" to false), vm.state.value.apps?.map { it.connection to it.on })
+
+        vm.switchApp("github", on = false)
+        assertFalse(vm.state.value.isOn(vm.state.value.apps!!.first { it.connection == "github" }), "shown as asked at once")
+        runCurrent()
+        assertEquals(emptyMap(), vm.state.value.appSwitching)
+        assertFalse(vm.state.value.apps!!.first { it.connection == "github" }.on, "as Renoa answered")
+
+        vm.switchApp("gone", on = true)
+        runCurrent()
+        assertEquals("That app is not connected any more. Ask Renoa to connect it again.", vm.state.value.notice)
+        assertEquals(emptyMap(), vm.state.value.appSwitching)
+
+        vm.open(HomePage.Memory)
+        assertNull(vm.state.value.notice, "turning to another page clears it")
+    }
+
+    @Test
+    fun aPageThatCannotBeReadSaysSoAndReadsAgainOnRequest() = runTest {
+        var reachable = false
+        val inner = FakeAgentRepository(backgroundScope, FakeWorld.demo())
+        val repo =
+            object : AgentRepository by inner {
+                override suspend fun apps(agentId: String) = if (reachable) inner.apps(agentId) else throw RepositoryException(Problem.Unavailable, "not now")
+            }
+        val vm = HomeViewModel(repo)
+        backgroundScope.launch { vm.state.collect {} }
+        runCurrent()
+        vm.open(HomePage.Apps)
+        runCurrent()
+        assertEquals(setOf(HomePage.Apps), vm.state.value.unread)
+        assertNull(vm.state.value.apps)
+
+        reachable = true
+        vm.read(HomePage.Apps)
+        runCurrent()
+        assertEquals(emptySet(), vm.state.value.unread)
+        assertEquals(3, vm.state.value.apps?.size)
+    }
+
+    @Test
     fun aSwitchShowsWhatWasAskedUntilRenoaAnswersAndEachTapIsItsOwnChange() = runTest {
         val (vm, repo) = model()
         runCurrent()

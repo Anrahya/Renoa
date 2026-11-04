@@ -307,6 +307,14 @@ class RcpAgentRepository(
 
     override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) = heldRoutines.set(routineId, on, operationId)
 
+    override suspend fun memory(): OwnerMemory = owner.memory()
+
+    override suspend fun apps(agentId: String): List<AgentApp> = host.apps(onHost(agentId))
+
+    override suspend fun setApp(agentId: String, connection: String, on: Boolean): List<AgentApp> = host.setApp(onHost(agentId), connection, on)
+
+    private fun onHost(agentId: String): Uuid = hostAgentId(agentId) ?: throw RepositoryException(Problem.NotFound, "$agentId is not an agent on the Host")
+
     /** The agent's chat, once it is followed. One Renoa lists whose chat could not be opened yet is [Problem.Unavailable]. */
     private fun room(agentId: String): Room {
         val room = synchronized(lock) { rooms[agentId]?.takeIf { it.attached } }
@@ -421,8 +429,7 @@ class RcpAgentRepository(
     }
 
     override suspend fun profile(agentId: String): AgentProfile {
-        val hostId = hostAgentId(agentId) ?: throw RepositoryException(Problem.NotFound, "$agentId is not an agent on the Host")
-        return host.definition(hostId).profile(agentId)
+        return host.definition(onHost(agentId)).profile(agentId)
     }
 
     /** The Host's agent API does not list abilities yet, so a new agent starts with none shown. */
