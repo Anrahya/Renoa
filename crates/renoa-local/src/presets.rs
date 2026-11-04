@@ -22,7 +22,7 @@ pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v5";
 /// The seed general purpose agents can use.
 pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 /// The seed for the everyday helpers people make in the app.
-pub(crate) const APP_PRESET_ID: &str = "renoa.app.v4";
+pub(crate) const APP_PRESET_ID: &str = "renoa.app.v5";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
@@ -267,7 +267,7 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "c6f3ad67ba1cecac6df3dece4567b41249818bd8972e29dd57f87b62e4e26256",
+            "a033b38dfe734f1367b2a1845236406589ffa8c815f194d84fc062042d412906",
         ),
         (
             ARCEE_PRESET_ID,

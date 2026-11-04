@@ -1065,10 +1065,10 @@ remained loopback-only, and the proof used the tailnet-only port above.
 ## Shared Host schema readers
 
 The Arcee preset is now `renoa.personal.arcee.v5` and the app preset
-`renoa.app.v4`; the Host no longer creates agents from an earlier Arcee or app
+`renoa.app.v5`; the Host no longer creates agents from an earlier Arcee or app
 preset id. Existing agents keep their own snapshot until the owner runs
 `renoa-host <config> move-to-preset <agent-id> <preset-id>` for each one. An
-Android build that still sends `renoa.app.v3` gets "unknown preset" when it makes
+Android build that still sends `renoa.app.v4` gets "unknown preset" when it makes
 an agent, so the app and the Host ship together.
 
 This release puts `memory_note`, `memory_recall`, `memory_zoom` and
@@ -1076,13 +1076,15 @@ This release puts `memory_note`, `memory_recall`, `memory_zoom` and
 and their descriptions now send
 everything worth knowing next time to the notebook, keeping only facts unlikely
 to change soon in `USER.md`. An existing agent's stored prompt still draws the
-older line until it moves. `renoa.app.v4` also compacts an app agent's chat at
+older line until it moves. `renoa.app.v4` began compacting an app agent's chat at
 457,000 input tokens down to 40,000; under `renoa.app.v3` it compacted only near
-the model's own limit. After the new Host passes its health checks, move each app
-agent and each Arcee agent:
+the model's own limit. `renoa.app.v5` asks for replies sized to the message instead
+of always short, and for a check of the agent's tools before it
+says it cannot do something. After the new Host passes its health checks, move
+each app agent and each Arcee agent:
 
 ```sh
-renoa-host <config> move-to-preset <agent-id> renoa.app.v4
+renoa-host <config> move-to-preset <agent-id> renoa.app.v5
 renoa-host <config> move-to-preset <agent-id> renoa.personal.arcee.v5
 ```
 
