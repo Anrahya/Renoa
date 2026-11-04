@@ -40,7 +40,7 @@ private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val app
 }
 
 /**
- * The binding $RCP_BINDING_VERSION surface client over a WebSocket.
+ * The surface client over a WebSocket, speaking [RCP_BINDING_VERSION].
  *
  * Frames are handled one at a time, in arrival order, on [context]; [attach] callbacks run
  * there, and so are [ApplyLiveActivity] callbacks. Retry timing after a disconnect is the caller's policy: this client never reconnects

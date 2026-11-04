@@ -16,12 +16,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import live.renoa.app.agents.AgentRepository
-import live.renoa.app.agents.AgentState
-import live.renoa.app.agents.AgentSummary
 import live.renoa.app.connect.HeldSetupLinks
+import live.renoa.app.connect.turnsEnded
 import live.renoa.app.agents.RcpAgentRepository
 import live.renoa.app.agents.SavedHome
 import live.renoa.app.agents.SavedOutbox
@@ -204,7 +201,8 @@ class RenoaApplication : Application() {
                 pushing?.cursors.also { pushing = null }
             }
         DeviceKeys.forget()
-        noticeKeys.forget()
+        // A Keystore that refuses now must not keep the phone signed in.
+        runCatching { noticeKeys.forget() }
         SignInStore(this).clear()
         SavedSignUp(this).operationId = null
         (held ?: SavedOutbox(outboxFile())).forget()
@@ -239,16 +237,6 @@ class RenoaApplication : Application() {
     private val noticeKeys by lazy { NoticeKeys(File(filesDir, "notice-key")) }
 }
 
-/** Emits each time an agent that was working stops, as when its turn ends. */
-private fun Flow<List<AgentSummary>>.turnsEnded(): Flow<Unit> =
-    flow {
-        var working = emptySet<String>()
-        collect { agents ->
-            val now = agents.filter { it.state == AgentState.Working }.mapTo(HashSet()) { it.id }
-            if ((working - now).isNotEmpty()) emit(Unit)
-            working = now
-        }
-    }
 
 class MainActivity : ComponentActivity() {
     /** The chat a tapped notice asks for, until the screens open it. */

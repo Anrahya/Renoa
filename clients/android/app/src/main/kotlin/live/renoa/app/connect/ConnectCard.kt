@@ -57,6 +57,8 @@ fun ConnectCard(link: SetupLink, onConnect: () -> Unit, onNotNow: () -> Unit, mo
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(link.label, style = RenoaType.Label, color = colors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(link.kind.words, style = RenoaType.Caption, color = colors.mutedForeground, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                // Where Connect goes, since the label is the link maker's word for it.
+                linkHost(link.url)?.let { Text("Opens $it", style = RenoaType.Caption, color = colors.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
@@ -79,7 +81,7 @@ private val SetupLinkKind.words: String
 @Composable
 private fun ServiceLogo(link: SetupLink) {
     val colors = Renoa.colors
-    val mark = serviceMark(link.url, link.label)
+    val mark = serviceMark(link.url)
     Box(
         Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(colors.muted).clearAndSetSemantics {},
         contentAlignment = Alignment.Center,

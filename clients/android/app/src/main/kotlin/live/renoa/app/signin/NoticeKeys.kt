@@ -8,7 +8,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import live.renoa.rcp.NoticeKey
 import java.io.File
+import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.KeyStoreException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -28,7 +30,16 @@ internal class NoticeKeys(private val file: File) {
             withContext(Dispatchers.IO) {
                 // A kept key that no longer opens, as when the Keystore lost its wrapping key, is replaced:
                 // Renoa then holds the new one, and notices sealed to the old one are acknowledged away.
-                if (file.exists()) runCatching { NoticeKey.decode(unwrap(file.readBytes())) }.getOrNull()?.let { return@withContext it }
+                if (file.exists()) {
+                    try {
+                        return@withContext NoticeKey.decode(unwrap(file.readBytes()))
+                    } catch (lost: GeneralSecurityException) {
+                        // A Keystore that is only busy throws KeyStoreException or ProviderException; those go to the caller and the key stays.
+                        if (lost is KeyStoreException) throw lost
+                    } catch (unreadable: IllegalArgumentException) {
+                        // The kept bytes are not a key.
+                    }
+                }
                 NoticeKey.generate().also { key ->
                     // Written whole, then moved into place, so a crash never leaves half a key.
                     val next = File(file.parentFile, "${file.name}.new")

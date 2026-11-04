@@ -57,6 +57,8 @@ fun SetupLinkCards(links: HeldSetupLinks, modifier: Modifier = Modifier) {
         ConnectCard(
             shown.link,
             onConnect = {
+                // A link that expired while on screen leads nowhere; it is put away instead.
+                if (shown.link.expiresAtMs <= System.currentTimeMillis()) return@ConnectCard putAway(shown.noticeId)
                 val opened = runCatching { uri.openUri(shown.link.url) }.isSuccess
                 if (opened) putAway(shown.noticeId) else problem = shown.noticeId to "This phone has no browser to open the link in."
             },

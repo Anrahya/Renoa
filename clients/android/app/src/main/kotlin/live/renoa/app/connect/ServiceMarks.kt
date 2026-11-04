@@ -2,12 +2,12 @@ package live.renoa.app.connect
 
 import java.net.URI
 
-/** A service's mark: Phosphor path data on its 256 by 256 grid, found by the link's host or the name it connects. */
+/** A service's mark: Phosphor path data on its 256 by 256 grid, found by the host the link goes to. */
 internal class ServiceMark(val name: String, val hosts: List<String>, val path: String)
 
 /**
  * Marks of services a setup link may connect, from Phosphor (MIT; see clients/android/licenses), regular
- * weight. A link to none of them shows the first letter of what it connects.
+ * weight. A link to any other host shows the first letter of what it connects.
  */
 internal val SERVICE_MARKS =
     listOf(
@@ -33,10 +33,15 @@ internal val SERVICE_MARKS =
         ServiceMark("outlook", listOf("microsoft.com", "microsoftonline.com", "live.com", "outlook.com"), "M120,128a32,32,0,1,0-32,32A32,32,0,0,0,120,128Zm-48,0a16,16,0,1,1,16,16A16,16,0,0,1,72,128Zm152-24H208V40a8,8,0,0,0-8-8H104a8,8,0,0,0-8,8V64H40A16,16,0,0,0,24,80v96a16,16,0,0,0,16,16H72v16a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V112A8,8,0,0,0,224,104Zm-58.34,60L216,127.65v72.7ZM112,48h80v77.24l-40,28.89V80a16,16,0,0,0-16-16H112ZM40,80h96v77.9c0,.12,0,.24,0,.36V176H40ZM88,192h48a16,16,0,0,0,16-16v-2.13L199.26,208H88Z"),
     )
 
-/** The mark for a link to [url] connecting [label]: by the host or a parent domain of it, then by a service named in the label. */
-internal fun serviceMark(url: String, label: String): ServiceMark? {
-    val host = runCatching { URI(url).host?.lowercase() }.getOrNull()
-    return SERVICE_MARKS.firstOrNull { mark -> host != null && mark.hosts.any { host == it || host.endsWith(".$it") } }
-        ?: SERVICE_MARKS.firstOrNull { label.contains(it.name, ignoreCase = true) }
+/**
+ * The mark for a link to [url], by its host or a parent domain of it. Never by the label, which whoever
+ * made the link chose: a link to another host must not wear a service's mark.
+ */
+internal fun serviceMark(url: String): ServiceMark? {
+    val host = linkHost(url) ?: return null
+    return SERVICE_MARKS.firstOrNull { mark -> mark.hosts.any { host == it || host.endsWith(".$it") } }
 }
+
+/** The host a link goes to, lowercase. */
+internal fun linkHost(url: String): String? = runCatching { URI(url).host?.lowercase() }.getOrNull()
 

@@ -1,11 +1,15 @@
 package live.renoa.app.connect
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import live.renoa.app.agents.AgentState
+import live.renoa.app.agents.AgentSummary
 import live.renoa.rcp.NoticeKey
 import live.renoa.rcp.RcpSurface
 import live.renoa.rcp.SetupLink
@@ -53,8 +57,21 @@ class HeldSetupLinks(
             held.value = opened.filter { it.link.expiresAtMs > now() }
         }
 
-    suspend fun done(noticeId: Uuid) {
-        surface.acknowledgeNotice(noticeId)
-        held.update { links -> links.filterNot { it.noticeId == noticeId } }
-    }
+    /** Under the same lock as [read], so a read that listed the link before it was acknowledged cannot show it again. */
+    suspend fun done(noticeId: Uuid) =
+        reading.withLock {
+            surface.acknowledgeNotice(noticeId)
+            held.update { links -> links.filterNot { it.noticeId == noticeId } }
+        }
 }
+
+/** Emits each time an agent that was working stops, as when a setup link ends its turn. */
+internal fun Flow<List<AgentSummary>>.turnsEnded(): Flow<Unit> =
+    flow {
+        var working = emptySet<String>()
+        collect { agents ->
+            val now = agents.filter { it.state == AgentState.Working }.mapTo(HashSet()) { it.id }
+            if ((working - now).isNotEmpty()) emit(Unit)
+            working = now
+        }
+    }
