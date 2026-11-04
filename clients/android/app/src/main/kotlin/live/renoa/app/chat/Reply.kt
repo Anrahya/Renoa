@@ -131,7 +131,7 @@ private fun ReplyStyle(links: ReferenceLinkHandler, diagrams: ReplyDiagrams, arr
     val code = RenoaType.Code.copy(color = colors.foreground)
     val inlineCode = code.copy(fontSize = 14.sp, lineHeight = body.lineHeight)
     val markdownColors =
-        markdownColor(text = colors.foreground, codeBackground = colors.background, inlineCodeBackground = colors.background, dividerColor = colors.border, tableBackground = colors.card)
+        markdownColor(text = colors.foreground, codeBackground = colors.background, inlineCodeBackground = colors.background, dividerColor = colors.border, tableBackground = colors.background)
     val typography =
         markdownTypography(
             h1 = heading.copy(fontSize = 20.sp, lineHeight = 26.sp),
@@ -146,7 +146,6 @@ private fun ReplyStyle(links: ReferenceLinkHandler, diagrams: ReplyDiagrams, arr
             quote = body.copy(color = colors.mutedForeground, fontStyle = FontStyle.Italic),
             paragraph = body,
             ordered = body,
-            // Inter draws its bullet small, so it keeps the text's colour rather than fading further.
             bullet = body,
             list = body,
             textLink = TextLinkStyles(SpanStyle(color = colors.foreground, fontWeight = FontWeight.Medium, textDecoration = TextDecoration.Underline)),

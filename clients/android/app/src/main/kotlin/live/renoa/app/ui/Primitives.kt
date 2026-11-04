@@ -33,7 +33,7 @@ fun PathIcon(data: String, tint: Color, modifier: Modifier = Modifier, size: Dp 
     }
 }
 
-/** The app's icons, from Phosphor (MIT; see clients/android/licenses). Regular weight unless noted. */
+/** The app's icons, from Phosphor (MIT; see clients/android/licenses), regular weight. */
 object Glyphs {
     /** X. */
     const val CLOSE = "M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"
@@ -43,7 +43,6 @@ object Glyphs {
 
     /** DeviceMobile. */
     const val PHONE = "M176,16H80A24,24,0,0,0,56,40V216a24,24,0,0,0,24,24h96a24,24,0,0,0,24-24V40A24,24,0,0,0,176,16ZM72,64H184V192H72Zm8-32h96a8,8,0,0,1,8,8v8H72V40A8,8,0,0,1,80,32Zm96,192H80a8,8,0,0,1-8-8v-8H184v8A8,8,0,0,1,176,224Z"
-
 }
 
 /** Draws the Renoa mark, an ink core with six outlined tiles around it, one pulled out as if mid-swap, [size] across, centred on [centre]. */

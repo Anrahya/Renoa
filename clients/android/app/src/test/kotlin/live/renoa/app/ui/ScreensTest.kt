@@ -656,6 +656,18 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
+    fun aLongNameLeavesTheBackButtonClear() {
+        val long = "Tifa Lockhart, keeper of the seventh heaven and every meal plan"
+        val renamed = MutableStateFlow(repository.agents.value.map { if (it.id == "tifa") it.copy(name = long) else it })
+        val model = ChatViewModel(object : AgentRepository by repository { override val agents = renamed }, "tifa")
+        var back = 0
+        show { ChatScreen(model, onBack = { back++ }, onOpenProfile = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Back").performClick()
+        assertEquals(1, back)
+    }
+
+    @Test
     fun typingTurnsStopIntoSendAndAnIdleChatCannotSendNothing() {
         val model = ChatViewModel(repository, "tifa")
         show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }

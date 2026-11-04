@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -136,6 +137,8 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
         },
     ) {
         val padding = PaddingValues(top = top + 60.dp, bottom = under + 8.dp)
+        // Unseen until the composer is measured, so the conversation never shows a frame too low.
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (composerHeight > 0) 1f else 0f }) {
         when {
             !state.loaded ->
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { Text(OPENING, style = Type.footnote, color = Palette.secondary) }
@@ -144,6 +147,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
                 }
             else -> Messages(state, list, old, risen, parses, onRetry = viewModel::retry, onDiscard = viewModel::discard, padding)
+        }
         }
     }
 }
@@ -160,12 +164,13 @@ private fun Header(state: ChatUiState, onBack: () -> Unit, onOpenProfile: (Strin
                 .minimumInteractiveComponentSize()
                 .size(44.dp)
                 .glass(Capsule(), pressed = pressed)
-                .clickable(source, null, role = Role.Button, onClickLabel = "Back", onClick = onBack),
+                .clickable(source, null, role = Role.Button, onClick = onBack)
+                .semantics { contentDescription = "Back" },
             contentAlignment = Alignment.Center,
         ) { Symbol("chevron.left", size = 32.dp, tint = Palette.text) }
         if (agent != null) {
             Column(
-                Modifier.align(Alignment.Center).plainButton { onOpenProfile(agent.id) },
+                Modifier.align(Alignment.Center).padding(horizontal = 56.dp).plainButton { onOpenProfile(agent.id) },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -265,7 +270,7 @@ private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedR
                 ) {
                     Text(
                         message.text,
-                        Modifier.clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleUser).padding(horizontal = 16.dp, vertical = 10.dp),
+                        Modifier.widthIn(max = 300.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleUser).padding(horizontal = 16.dp, vertical = 10.dp),
                         style = Type.body,
                         color = Palette.text,
                     )
@@ -303,7 +308,7 @@ private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedR
 private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel, send: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp), verticalAlignment = Alignment.Bottom) {
         Row(
-            Modifier.weight(1f).glass(RoundedRectangle(RenoaShapes.Composer)).animateContentSize(Motion.layoutSize).padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            Modifier.weight(1f).glass(RoundedRectangle(RenoaShapes.Composer)).animateContentSize(Motion.layoutSize).padding(start = 18.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -323,7 +328,7 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel,
                     }
                 },
             )
-            SendButton(state.action, Modifier.padding(bottom = 4.dp)) { if (state.action == ComposerAction.Stop) viewModel.stop() else send() }
+            SendButton(state.action, Modifier) { if (state.action == ComposerAction.Stop) viewModel.stop() else send() }
         }
     }
 }
@@ -335,14 +340,16 @@ private fun SendButton(action: ComposerAction, modifier: Modifier, onClick: () -
     val fill by animateColorAsState(if (enabled) Palette.accentFill else Palette.accentDim, Motion.morph(), label = "Fill")
     val ink by animateColorAsState(if (enabled) Palette.onAccent else Palette.tertiary, Motion.morph(), label = "Ink")
     val (source, pressed) = rememberPress()
+    // The tap area is the 48dp round the 34dp capsule.
     Box(
         modifier
+            .minimumInteractiveComponentSize()
+            .clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = if (action == ComposerAction.Stop) "Stop" else "Send" }
             .pressScale(pressed)
             .size(34.dp)
             .clip(Capsule())
-            .background(fill)
-            .clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = if (action == ComposerAction.Stop) "Stop" else "Send" },
+            .background(fill),
         contentAlignment = Alignment.Center,
     ) {
         AnimatedContent(
