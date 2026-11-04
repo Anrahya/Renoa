@@ -828,10 +828,7 @@ async fn a_message_during_a_pass_cancels_it_and_is_admitted_once_it_settles() {
     assert_eq!(fixture.events("memory_pass_cancelled").len(), 1);
     assert_eq!(fixture.snapshot().await.memory_passes[0].passes_today, 0);
     let seen = user_texts(fixture.calls_of("turn").last().expect("the reply"));
-    assert_eq!(
-        seen[1],
-        note_pass::shown_receipt("stopped early, noted #0")
-    );
+    assert_eq!(seen[1], note_pass::shown_receipt("stopped early, noted #0"));
 }
 
 #[tokio::test]
