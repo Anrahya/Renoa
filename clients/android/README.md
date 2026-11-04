@@ -1,6 +1,6 @@
 # Renoa for Android
 
-The Kotlin app shell. Two modules:
+The Kotlin app shell. Three modules:
 
 - `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 16)
   behind the `RcpSurface` interface: discovery with task status, each task's last sequence and
@@ -11,16 +11,19 @@ The Kotlin app shell. Two modules:
   revoking signed-in devices are not offered yet. It has no Android dependency and is tested
   against a fake coordinator that speaks the raw wire. Tests cross-check the pinned version and
   every frame shape against the worked examples in that document.
-- `:app` is the screens: theme (Graphite and Paper), the agent badge and its five state
-  motions, Home, Chat, create/edit agent, and sign-in. Sign-in is real: a setup code (or the
-  ID of a passkey the person already has), a passkey through Credential Manager, and a P-256
-  device key in the Android Keystore; the device credential is kept encrypted with a Keystore
-  key. The app signs in to `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for
-  this package and signing certificate (`deploy/README.md`). Once signed in, the screens run on
-  `RcpAgentRepository`: chat over `:rcp`, and making an agent or reading its profile through
-  the Host over the same connection. Tests use `FakeAgentRepository`. Passkeys need Android 9,
-  so `minSdk` is 28. The licences of the fonts, icons and diagram renderer (`licenses/`) ship
-  inside the APK as assets.
+- `:design` is the look, adapted from Codync (`licenses/README.md`): the palette, Inter type,
+  motion springs, glass bars drawn with kyant's `backdrop`, screen chrome and controls. Glass
+  refracts on Android 13 and later, blurs on 12, and falls back to a tinted surface below.
+- `:app` is the screens: theme (Graphite and Paper, on the design module's palette), the agent
+  badge and its five state motions, Home with its Agents and Renoa tabs, Chat, create/edit
+  agent, and sign-in. Sign-in is real: a setup code (or the ID of a passkey the person already
+  has), a passkey through Credential Manager, and a P-256 device key in the Android Keystore;
+  the device credential is kept encrypted with a Keystore key. The app signs in to
+  `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for this package and signing
+  certificate (`deploy/README.md`). Once signed in, the screens run on `RcpAgentRepository`:
+  chat over `:rcp`, and making an agent or reading its profile through the Host over the same
+  connection. Tests use `FakeAgentRepository`. Passkeys need Android 9, so `minSdk` is 28. The
+  licences of the fonts, icons and diagram renderer (`licenses/`) ship inside the APK as assets.
 
 ## Push wake-ups
 
@@ -97,7 +100,7 @@ the app carries one Compose version.
 
 A fenced code block in the `mermaid` language draws as a diagram. Pele (`assets/diagram/`,
 provenance in `licenses/README.md`) runs in a web view per diagram that blocks network loads,
-reads no files and offers the app no bridge; the page carries Pele, Instrument Sans and the
+reads no files and offers the app no bridge; the page carries Pele, Inter and the
 diagram's source as escaped text, and takes its colours from the theme. It tells the app its
 height, or that it cannot draw, through its title. A diagram Pele cannot draw, or one taller than
 4,000 dp, shows as its code; one still arriving is a placeholder until its fence closes.

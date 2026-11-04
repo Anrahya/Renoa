@@ -83,7 +83,7 @@ private fun ServiceLogo(link: SetupLink) {
     val colors = Renoa.colors
     val mark = serviceMark(link.url)
     Box(
-        Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(colors.muted).clearAndSetSemantics {},
+        Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(colors.secondary).clearAndSetSemantics {},
         contentAlignment = Alignment.Center,
     ) {
         if (mark != null) {

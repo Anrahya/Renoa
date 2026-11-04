@@ -1,12 +1,9 @@
 package live.renoa.app.theme
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import live.renoa.app.badge.AgentHue
-import live.renoa.app.home.clockInk
-import live.renoa.app.home.glowStrength
-import live.renoa.app.home.hourHue
+import live.renoa.design.Tones
 import java.io.File
 import kotlin.reflect.full.memberProperties
 import kotlin.test.Test
@@ -25,11 +22,6 @@ class ThemeTest {
     fun theDesignSystemsTwoThemesAreGraphiteDarkAndPaperLight() {
         assertEquals(listOf("Graphite" to true, "Paper" to false), ThemeName.entries.map { it.name to it.dark })
         assertTrue(ThemeName.Graphite.colors.background.luminance() < ThemeName.Paper.colors.background.luminance())
-    }
-
-    @Test
-    fun inkIsTheAccentThePrimaryIsTheForeground() {
-        for (theme in ThemeName.entries) assertEquals(theme.colors.foreground, theme.colors.primary, theme.name)
     }
 
     @Test
@@ -59,11 +51,11 @@ class ThemeTest {
                     "foreground on background" to (c.foreground to c.background),
                     "foreground on card" to (c.foreground to c.card),
                     "foreground on secondary" to (c.foreground to c.secondary),
-                    "soft on background" to (c.foregroundSoft to c.background),
-                    "soft on card" to (c.foregroundSoft to c.card),
+                    "soft on background" to (c.mutedForeground to c.background),
+                    "soft on card" to (c.mutedForeground to c.card),
                     "muted on background" to (c.mutedForeground to c.background),
                     "muted on card" to (c.mutedForeground to c.card),
-                    "muted on muted" to (c.mutedForeground to c.muted),
+                    "muted on secondary" to (c.mutedForeground to c.secondary),
                     "on primary" to (c.primaryForeground to c.primary),
                     "failed on background" to (c.stateFailed to c.background),
                 )
@@ -75,28 +67,12 @@ class ThemeTest {
     }
 
     @Test
-    fun anAgentsNameAndLineReadOnItsWash() {
+    fun anAgentsNameReadsOnTheGround() {
         for (theme in ThemeName.entries) {
             val c = theme.colors
             for (hue in AgentHue.entries.filter { it != AgentHue.Ink }) {
-                val wash = hue.wash(c)!!
-                for ((what, ink) in listOf("name" to hue.name(c)!!, "line" to c.foregroundSoft, "time" to c.mutedForeground)) {
-                    val ratio = contrast(ink, wash)
-                    assertTrue(ratio >= 4.5f, "${theme.name}: ${hue.name}'s $what is only %.2f to 1 on its wash".format(ratio))
-                }
-            }
-        }
-    }
-
-    @Test
-    fun theClockReadsUnderEveryHoursGlow() {
-        for (theme in ThemeName.entries) {
-            val c = theme.colors
-            for (hour in 0..23) {
-                val glow = hourHue(hour).face(c)!!
-                val lit = glow.copy(alpha = glowStrength(c)).compositeOver(c.background)
-                val ratio = contrast(clockInk(c, glow), lit)
-                assertTrue(ratio >= 4.5f, "${theme.name} at $hour:00: the clock is only %.2f to 1".format(ratio))
+                val ratio = contrast(hue.name(c)!!, c.background)
+                assertTrue(ratio >= 4.5f, "${theme.name}: ${hue.name}'s name is only %.2f to 1 on the ground".format(ratio))
             }
         }
     }
@@ -133,15 +109,18 @@ class ThemeTest {
     }
 
     @Test
-    fun everyColourIsTheDesignSystemsToken() {
+    fun theNeutralsAreTheDesignModulesAndThePigmentsTheDesignSystemsTokens() {
         val blocks = mapOf(ThemeName.Paper to tokens(":root"), ThemeName.Graphite to tokens(":root[data-theme=\"dark\"]"))
-        assertTrue(RenoaColors::class.memberProperties.isNotEmpty())
+        val pigments = RenoaColors::class.memberProperties.filter { it.name.startsWith("part") }
+        assertEquals(12, pigments.size)
         for ((theme, declared) in blocks) {
-            for (token in RenoaColors::class.memberProperties) {
+            for (token in pigments) {
                 val name = token.name.replace(Regex("[A-Z]")) { "-" + it.value.lowercase() }
                 assertEquals(declared[name], token.get(theme.colors), "${theme.name} --$name")
             }
         }
+        assertEquals(Tones.Dark.background, ThemeName.Graphite.colors.background)
+        assertEquals(Tones.Light.background, ThemeName.Paper.colors.background)
     }
 
     /** The colours Android draws before the app's first frame, from `colors.xml` in `res/values` and `res/values-night`. */

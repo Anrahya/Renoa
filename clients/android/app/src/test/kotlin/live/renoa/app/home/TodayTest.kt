@@ -29,16 +29,6 @@ class TodayTest {
         Routine(id, null, id, "Every day", on, next?.let { at(nextDays, it) }, ran?.let { LastRun(at(ranDays, it), outcome) })
 
     @Test
-    fun theGreetingFollowsTheHour() {
-        assertEquals(
-            listOf("Good night.", "Good morning.", "Good morning.", "Good afternoon.", "Good afternoon.", "Good evening.", "Good evening.", "Good night."),
-            listOf(4, 5, 11, 12, 16, 17, 21, 22).map { greeting(it) },
-        )
-        assertEquals("Good evening, Yash.", greeting(19, "Yash"))
-        assertEquals("Thu 7:40 PM", clockWords(now))
-    }
-
-    @Test
     fun theStripRunsFromSixToMidnightWithTheHourEitherSideOfNowDrawnWide() {
         val lens = DayLens(LocalTime.of(19, 40))
         assertEquals(0f, lens.at(LocalTime.of(6, 0)))

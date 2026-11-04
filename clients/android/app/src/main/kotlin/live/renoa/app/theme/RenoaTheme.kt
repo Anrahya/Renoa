@@ -11,12 +11,6 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.LocalActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Shapes
-import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -34,59 +28,52 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.drawable.toDrawable
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.ExperimentalTextApi
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontVariation
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
-import androidx.compose.ui.unit.sp
-import live.renoa.app.R
+import live.renoa.design.DesignTheme
+import live.renoa.design.Type
+import live.renoa.design.bold
+import live.renoa.design.medium
+import live.renoa.design.monospaced
+import live.renoa.design.semibold
 
-/** Easing curves from the design: `ease` for arrivals. */
+/** Easing curves: `ease` for arrivals, as the design module's morph curve. */
 object RenoaEasing {
-    val Ease = CubicBezierEasing(.2f, .8f, .2f, 1f)
+    val Ease = CubicBezierEasing(.22f, 1f, .36f, 1f)
     val EaseInOut = CubicBezierEasing(.42f, 0f, .58f, 1f)
 }
 
-/** The design system's radii: small and square. Pills belong to state badges only. */
+/** Corner radii, as the design module's screens round them. */
 object RenoaShapes {
-    /** `radius-lg`: plates, sheets and message bubbles. */
-    val Sheet = 10.dp
-    val Card = 10.dp
-    val Bubble = 10.dp
+    /** Sheets and plates. */
+    val Sheet = 22.dp
 
-    /** `radius-md`: buttons and inputs. */
-    val Control = 6.dp
+    /** Cards and list groups. */
+    val Card = 16.dp
 
-    /** The message composer is softer than the system's inputs: the owner found 6px too sharp for a thing you type into all day. */
-    val Composer = 18.dp
+    /** Message bubbles. */
+    val Bubble = 18.dp
+
+    /** Buttons and inputs. */
+    val Control = 12.dp
+
+    /** The message composer's field. */
+    val Composer = 24.dp
 }
 
-@OptIn(ExperimentalTextApi::class)
-private fun instrument(weight: Int) =
-    Font(R.font.instrument_sans, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
-
-/** Instrument Sans for everything; IBM Plex Mono only for eyebrows, metadata and code, as the design system sets them. */
-private val Sans = FontFamily(instrument(400), instrument(500), instrument(600))
-private val Mono = FontFamily(Font(R.font.ibm_plex_mono_regular, FontWeight.Normal), Font(R.font.ibm_plex_mono_medium, FontWeight.Medium))
-
-/** The design system's type scale (`type-*` in tokens.json), with Display sized for a phone. */
+/** The app's text roles, each one of the design module's [Type] styles set in Inter. */
 object RenoaType {
-    val Display = TextStyle(fontFamily = Sans, fontSize = 40.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.035).em)
-    val Title = TextStyle(fontFamily = Sans, fontSize = 28.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.02).em)
-    val Heading = TextStyle(fontFamily = Sans, fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.01).em)
-    val Body = TextStyle(fontFamily = Sans, fontSize = 15.sp, lineHeight = 23.sp)
-    val Label = TextStyle(fontFamily = Sans, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
-    val Caption = TextStyle(fontFamily = Sans, fontSize = 13.sp, lineHeight = 19.sp)
+    val Display = Type.largeTitle.bold
+    val Title = Type.title.bold
+    val Heading = Type.headline
+    val Body = Type.body
+    val Label = Type.subheadline.medium
+    val Caption = Type.footnote
 
-    /** `type-eyebrow`: mono capitals for kickers, times and metadata. Pass the text already upper-cased. */
-    val Eyebrow = TextStyle(fontFamily = Mono, fontSize = 11.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.08.em)
+    /** Kickers, times and metadata. Pass the text already upper-cased. */
+    val Eyebrow = Type.caption.semibold
 
-    /** `type-code`: code in an agent's reply. */
-    val Code = TextStyle(fontFamily = Mono, fontSize = 13.sp, lineHeight = 19.5.sp)
+    /** Code in an agent's reply. */
+    val Code = Type.footnote.monospaced
 }
 
 val LocalRenoaColors = staticCompositionLocalOf { ThemeName.Graphite.colors }
@@ -114,34 +101,12 @@ fun RenoaTheme(
     content: @Composable () -> Unit,
 ) {
     val colors = theme.colors
-    val scheme =
-        (if (theme.dark) darkColorScheme() else lightColorScheme()).copy(
-            primary = colors.primary,
-            onPrimary = colors.primaryForeground,
-            secondary = colors.secondary,
-            onSecondary = colors.foreground,
-            background = colors.background,
-            onBackground = colors.foreground,
-            surface = colors.card,
-            onSurface = colors.foreground,
-            surfaceVariant = colors.muted,
-            onSurfaceVariant = colors.mutedForeground,
-            outline = colors.input,
-            outlineVariant = colors.border,
-            error = colors.stateFailed,
-        )
-    val shapes =
-        Shapes(
-            small = RoundedCornerShape(RenoaShapes.Control),
-            medium = RoundedCornerShape(RenoaShapes.Card),
-            large = RoundedCornerShape(RenoaShapes.Sheet),
-        )
-    CompositionLocalProvider(
-        LocalRenoaColors provides colors,
-        LocalReducedMotion provides reducedMotion,
-        LocalMotionClock provides clock,
-    ) {
-        MaterialTheme(colorScheme = scheme, shapes = shapes, typography = Typography(bodyLarge = RenoaType.Body)) { content() }
+    DesignTheme(dark = theme.dark) {
+        CompositionLocalProvider(
+            LocalRenoaColors provides colors,
+            LocalReducedMotion provides reducedMotion,
+            LocalMotionClock provides clock,
+        ) { content() }
     }
 }
 

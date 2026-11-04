@@ -29,4 +29,5 @@ dependencyResolutionManagement {
 rootProject.name = "renoa-android"
 
 include(":rcp")
+include(":design")
 include(":app")

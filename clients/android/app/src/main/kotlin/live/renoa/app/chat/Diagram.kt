@@ -103,7 +103,7 @@ internal fun DiagramPlaceholder() = Placeholder(Modifier.padding(vertical = 8.dp
 @Composable
 private fun Placeholder(modifier: Modifier) {
     val colors = Renoa.colors
-    Box(modifier.background(colors.muted, RoundedCornerShape(RenoaShapes.Control)).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+    Box(modifier.background(colors.secondary, RoundedCornerShape(RenoaShapes.Control)).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
         Text(DRAWING, style = RenoaType.Caption, color = colors.mutedForeground)
     }
 }

@@ -121,7 +121,7 @@ class DiagramTest : ScreenTest() {
         val shadow = shadowOf(view)
         assertEquals(null, shadow.lastLoadDataWithBaseURL.baseUrl)
         assertTrue(view.page().contains("A[Check the fridge] --&gt; B{Lentils left?}"))
-        assertTrue(view.page().contains("--pele-bg: #111312;"))
+        assertTrue(view.page().contains("--pele-bg: #0A0A0A;"))
         with(view.settings) {
             assertTrue(javaScriptEnabled)
             assertTrue(blockNetworkLoads)
@@ -160,7 +160,7 @@ class DiagramTest : ScreenTest() {
         compose.runOnUiThread { theme = ThemeName.Paper }
         compose.waitForIdle()
         assertSame(view, theWebView())
-        assertTrue(view.page().contains("--pele-bg: #F5F6F3;"), "the page follows the theme")
+        assertTrue(view.page().contains("--pele-bg: #FFFFFF;"), "the page follows the theme")
     }
 
     @Test

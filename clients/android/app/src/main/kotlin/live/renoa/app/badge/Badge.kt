@@ -130,7 +130,7 @@ private fun DrawScope.drawTile(
     sweep: Float?,
 ) {
     val up = -lift * LIFT
-    val skin = if (frame.retiring) colors.muted else pigment ?: PAPER_SKIN
+    val skin = if (frame.retiring) colors.secondary else pigment ?: PAPER_SKIN
     val edge = pigment ?: FACE_INK
     // The ring goes out over the page, so a Paper face's ring takes the page's ink, not its own.
     val ring = pigment ?: colors.foreground

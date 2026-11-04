@@ -147,7 +147,7 @@ private fun ColumnScope.DayStep(state: SignUpUiState, viewModel: SignUpViewModel
         Tile(60)
         Step(2)
         Heading("How does a usual day go for you, ${state.name}?")
-        Text("A sentence or two is plenty. I'll learn the rest as we talk.", style = RenoaType.Body, color = colors.foregroundSoft)
+        Text("A sentence or two is plenty. I'll learn the rest as we talk.", style = RenoaType.Body, color = colors.mutedForeground)
         Box(
             Modifier
                 .padding(top = 4.dp)
@@ -210,7 +210,7 @@ private fun ColumnScope.MeetStep(state: SignUpUiState, viewModel: SignUpViewMode
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Step(3)
             Heading("I'm Renoa.")
-            Text("I keep track of things, remind you and find things out. Whenever you want to talk, tap me on Home.", style = RenoaType.Body, color = colors.foregroundSoft)
+            Text("I keep track of things, remind you and find things out. Whenever you want to talk, tap me on Home.", style = RenoaType.Body, color = colors.mutedForeground)
         }
     }
     when {

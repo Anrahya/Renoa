@@ -27,10 +27,10 @@ class TabletTest : ScreenTest() {
         compose.setContent { RenoaApp({ FakeAgentRepository(scope) }, signedIn = true, signingIn = { _, _ -> }) }
         compose.waitForIdle()
         val density = compose.activity.resources.displayMetrics.density
-        val mark = compose.onNodeWithContentDescription("Renoa, change colours").fetchSemanticsNode().boundsInRoot
+        val mark = compose.onNodeWithContentDescription("Change colours").fetchSemanticsNode().boundsInRoot
         val margin = (900 - MAX_CONTENT_WIDTH.value) / 2
-        // The mark sits 20dp inside the column's left edge, so the column starts at the margin: centred.
-        assertEquals(margin + 20, mark.left / density, 1f, "Home's left edge")
+        // The owner's capsule sits 18dp inside the column's left edge, its 48dp tap area 16dp in, so the column starts at the margin: centred.
+        assertEquals(margin + 18, mark.left / density, 1f, "Home's left edge")
         snapshot("tablet-home")
     }
 }

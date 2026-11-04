@@ -1,32 +1,31 @@
+// Portions copyright 2026 Po Kai Lee and the Codync contributors.
+// Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0-Codync.txt.
+// The tab layers and the bars over them are adapted from Codync apps/android `MainTabs.kt` and
+// `BotListView.kt` at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app.home
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,41 +33,45 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import com.kyant.shapes.Capsule
+import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.delay
-import live.renoa.app.badge.AgentHue
-import live.renoa.app.theme.Renoa
-import live.renoa.app.theme.RenoaColors
-import live.renoa.app.theme.RenoaType
-import live.renoa.app.ui.ButtonSize
 import live.renoa.app.ui.LinkLine
-import live.renoa.app.ui.RenoaButton
-import live.renoa.app.ui.RenoaIcon
+import live.renoa.design.Edge
+import live.renoa.design.GlassStage
+import live.renoa.design.GlassTabBar
+import live.renoa.design.Palette
+import live.renoa.design.PrimaryButton
+import live.renoa.design.ScrollEdge
+import live.renoa.design.Symbol
+import live.renoa.design.TabItem
+import live.renoa.design.Type
+import live.renoa.design.glass
+import live.renoa.design.rememberPress
+import live.renoa.design.semibold
 import java.time.ZonedDateTime
 
+/** Home's two tabs: the agents, and Renoa's own pages. */
+private enum class HomeTab { Agents, Renoa }
+
 /**
- * Home is the owner's day with their agents: the day strip on top, then the main agent with what
- * needs the owner, then every agent with something to say, the quiet ones in a line each, and an
- * empty seat for someone new. The shelf at the foot opens the pages over Home.
- * Until it is [HomeUiState.known] who is here, Home says it is checking in.
+ * Home is the owner's agents, with the day on top, and a tab of Renoa's own pages beside them. The
+ * bars float as glass over both. Until it is [HomeUiState.known] who is here, Home says it is
+ * checking in. The Renoa tab shows while a [HomeUiState.page] is open.
  */
 @Composable
 fun HomeScreen(
@@ -87,8 +90,11 @@ fun HomeScreen(
             value = now()
         }
     }
-    val colors = Renoa.colors
     var lit by remember { mutableStateOf<String?>(null) }
+    // The segment the Renoa tab opens on again.
+    var segment by rememberSaveable { mutableStateOf(HomePage.entries.first()) }
+    LaunchedEffect(state.page) { state.page?.let { segment = it } }
+    val tab = if (state.page != null) HomeTab.Renoa else HomeTab.Agents
     val act =
         TalkActions(
             open = { talk ->
@@ -100,122 +106,125 @@ fun HomeScreen(
         )
     BackHandler(enabled = state.page != null) { viewModel.close() }
 
-    val glow = hourHue(time.hour).face(colors) ?: colors.foreground
-    Box(Modifier.fillMaxSize().background(colors.background).drawBehind { drawGlow(glow, glowStrength(colors)) }) {
-        // Under an open page, Home is hidden from accessibility, so only the page is read.
-        Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (state.page != null) Modifier.clearAndSetSemantics { } else Modifier)) {
-            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .clickable(role = Role.Button, onClick = onChangeColours)
-                        .semantics { contentDescription = "Renoa, change colours" },
-                    contentAlignment = Alignment.CenterStart,
-                ) { RenoaIcon(30.dp) }
-                Spacer(Modifier.weight(1f))
-                Text(clockWords(time).uppercase(), style = RenoaType.Eyebrow, color = clockInk(colors, glow))
-            }
-            Text(greeting(time.hour, state.ownerName), Modifier.padding(horizontal = 20.dp), style = RenoaType.Title, color = colors.foreground)
-            LinkLine(state.link, Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp))
-            DayStrip(state, time, { lit = it }, { viewModel.open(HomePage.Routines) }, Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp))
-            TalkList(state, time, lit, act, onNewAgent, Modifier.weight(1f))
-            state.notice?.takeIf { state.page == null }?.let { Text(it, Modifier.padding(start = 24.dp, top = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
-            if (state.known) Shelf(viewModel::open)
-        }
-        AnimatedVisibility(
-            visible = state.page != null,
-            enter = slideInVertically(tween(300)) { it / 6 } + fadeIn(tween(300)),
-            exit = slideOutVertically(tween(200)) { it / 6 } + fadeOut(tween(200)),
-        ) {
-            HomeDrawer(state, time, viewModel::open, viewModel::close, onOpenChat, viewModel::answer, onNewAgent, viewModel::switch)
-        }
-    }
-}
-
-/** The main agent pinned on top, everyone with something to say, then the quiet ones. */
-@Composable
-private fun TalkList(state: HomeUiState, now: ZonedDateTime, lit: String?, act: TalkActions, onNewAgent: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = Renoa.colors
-    val talks = state.talks
-    LazyColumn(modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        when {
-            !state.known -> item(key = "checking") { Text(CHECKING_IN, Modifier.padding(4.dp), style = RenoaType.Body, color = colors.mutedForeground) }
-            talks.main == null ->
-                item(key = "first") {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Nobody is here yet.", style = RenoaType.Heading, color = colors.foreground)
-                        Text("Make your first agent, and they will start helping.", style = RenoaType.Body, color = colors.foregroundSoft)
-                        RenoaButton("Make your first agent", onNewAgent, size = ButtonSize.Sm)
-                    }
-                }
-            else -> {
-                val main = talks.main
-                item(key = main.agent.id) { MainCard(main, state.roster, nextWords(state.routines, now), now, lit == main.agent.id, act) }
-                items(talks.talking, key = { it.agent.id }) { TalkRow(it, state.roster, now, lit == it.agent.id, act) }
-                if (talks.quiet.isNotEmpty()) {
-                    item(key = "quiet") { Text("QUIET", Modifier.padding(start = 12.dp, top = 8.dp), style = RenoaType.Eyebrow, color = colors.mutedForeground) }
-                    items(talks.quiet, key = { it.agent.id }) { QuietRow(it, state.roster, lit == it.agent.id, act) }
-                }
-                item(key = "someone new") { MeetSomeoneNew(onNewAgent, socket = 32.dp, inset = 12.dp) }
-            }
-        }
-    }
-}
-
-/**
- * The shelf at the foot of Home: the pages over it, each a tap away, or a swipe up for the first.
- */
-@Composable
-private fun Shelf(onPage: (HomePage) -> Unit) {
-    val colors = Renoa.colors
-    val pull = with(LocalDensity.current) { 24.dp.toPx() }
-    val open by rememberUpdatedState(onPage)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(colors.card, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-            .pointerInput(Unit) {
-                var dragged = 0f
-                detectVerticalDragGestures(onDragStart = { dragged = 0f }) { change, dy ->
-                    dragged += dy
-                    if (dragged < -pull) {
-                        change.consume()
-                        dragged = 0f
-                        open(HomePage.entries.first())
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val barSpace = bottom + 62.dp + 24.dp
+    GlassStage(
+        Modifier.fillMaxSize().background(Palette.background),
+        chrome = {
+            ScrollEdge(Edge.Top, top + 64.dp)
+            TopBar(state, tab, onChangeColours, onNewAgent)
+            Box(Modifier.align(Alignment.BottomCenter), contentAlignment = Alignment.BottomCenter) {
+                ScrollEdge(Edge.Bottom, barSpace)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // A refusal stays in sight above the bar, however far the list scrolled.
+                    state.notice?.let { Text(it, Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = Type.footnote, color = Palette.danger) }
+                    if (state.known) {
+                    GlassTabBar(
+                        tab,
+                        listOf(TabItem(HomeTab.Agents, "Agents", "bubble.left.and.bubble.right.fill", 33.dp), TabItem(HomeTab.Renoa, "Renoa", "hexagon.fill")),
+                        { picked -> if (picked == HomeTab.Agents) viewModel.close() else viewModel.open(segment) },
+                        Modifier.padding(bottom = maxOf(bottom - 4.dp, 12.dp)),
+                    )
                     }
                 }
             }
-            .padding(top = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        },
     ) {
-        Box(Modifier.size(width = 36.dp, height = 4.dp).background(colors.border, CircleShape))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            HomePage.entries.forEach { page ->
-                Box(
-                    Modifier.weight(1f).heightIn(min = 48.dp).clickable(role = Role.Button) { onPage(page) }.padding(horizontal = 4.dp),
-                    contentAlignment = Alignment.Center,
-                ) { Text(page.title, style = RenoaType.Label, color = colors.foregroundSoft, textAlign = TextAlign.Center) }
+        Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Agents)) { AgentList(state, time, lit, { lit = it }, act, onNewAgent, viewModel, top, barSpace) }
+        Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Renoa)) {
+            RenoaTab(state, time, state.page ?: segment, { segment = it; viewModel.open(it) }, viewModel::switch, top, barSpace)
+        }
+    }
+}
+
+/** The bar over Home: the owner's capsule, which changes the colours, the line while Renoa is out of reach, and a way to meet someone new. */
+@Composable
+private fun TopBar(state: HomeUiState, tab: HomeTab, onChangeColours: () -> Unit, onNewAgent: () -> Unit) {
+    Row(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 6.dp).padding(horizontal = 16.dp).height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+        val (source, pressed) = rememberPress()
+        Box(
+            Modifier
+                .minimumInteractiveComponentSize()
+                .size(44.dp)
+                .glass(Capsule(), pressed = pressed)
+                .clickable(source, null, role = Role.Button, onClick = onChangeColours)
+                .semantics { contentDescription = "Change colours" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.size(30.dp).background(Palette.accentDim, Capsule()), contentAlignment = Alignment.Center) {
+                val initial = state.ownerName?.trim()?.take(1)?.uppercase()
+                if (initial.isNullOrEmpty()) Symbol("person.fill", size = 18.dp, tint = Palette.text) else Text(initial, style = Type.subheadline.semibold, color = Palette.text)
+            }
+        }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            if (tab == HomeTab.Renoa) Text("Renoa", style = Type.body.semibold, color = Palette.text) else LinkLine(state.link)
+        }
+        val (plus, plusPressed) = rememberPress()
+        Box(
+            Modifier
+                .minimumInteractiveComponentSize()
+                .size(44.dp)
+                .glass(Capsule(), pressed = plusPressed)
+                .clickable(plus, null, role = Role.Button, onClick = onNewAgent)
+                .semantics { contentDescription = "Meet someone new" },
+            contentAlignment = Alignment.Center,
+        ) { Symbol("plus", size = 30.dp, tint = Palette.text) }
+    }
+}
+
+/** The day on top, then the main agent, everyone with something to say, and the quiet ones. */
+@Composable
+private fun AgentList(
+    state: HomeUiState,
+    now: ZonedDateTime,
+    lit: String?,
+    onLit: (String?) -> Unit,
+    act: TalkActions,
+    onNewAgent: () -> Unit,
+    viewModel: HomeViewModel,
+    top: Dp,
+    bottom: Dp,
+) {
+    val talks = state.talks
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = top + 56.dp, bottom = bottom)) {
+        if (state.known && talks.main == null) {
+            item(key = "first") {
+                Column(Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("Nobody is here yet", style = Type.title3.semibold, color = Palette.text)
+                    Text("Make your first agent, and they will start helping.", style = Type.subheadline, color = Palette.secondary)
+                    PrimaryButton("Make your first agent", action = onNewAgent)
+                }
+            }
+        } else {
+            item(key = "day") {
+                DayStrip(
+                    state,
+                    now,
+                    onLit,
+                    { viewModel.open(HomePage.Routines) },
+                    Modifier.padding(vertical = 8.dp).background(Palette.surface, RoundedRectangle(22.dp)).padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+            }
+            if (talks.main == null) {
+                item(key = "checking") { Text(CHECKING_IN, Modifier.padding(vertical = 12.dp), style = Type.body, color = Palette.secondary) }
+            } else {
+                items(listOf(talks.main) + talks.talking + talks.quiet, key = { it.agent.id }) { AgentRow(it, state.roster, now, lit == it.agent.id, act) }
             }
         }
     }
 }
 
-/** The hour's colour on Home: ochre in the morning, clay in the evening, cobalt through the day and the night. */
-internal fun hourHue(hour: Int): AgentHue =
-    when (hour) {
-        in 5..10 -> AgentHue.Ochre
-        in 17..21 -> AgentHue.Clay
-        else -> AgentHue.Cobalt
-    }
-
-/** How strongly the hour's colour lights the top of Home; light grounds show it more, so it is fainter there. */
-internal fun glowStrength(colors: RenoaColors): Float = if (colors.background.luminance() < 0.5f) 0.2f else 0.13f
-
-/** The clock, leaning a little toward the hour's [glow]. */
-internal fun clockInk(colors: RenoaColors, glow: Color): Color = lerp(colors.mutedForeground, glow, 0.2f)
-
-/** The hour's colour, a faint light from the top corner of the screen. */
-private fun DrawScope.drawGlow(color: Color, strength: Float) {
-    val reach = size.width * 0.95f
-    drawRect(Brush.radialGradient(listOf(color.copy(alpha = strength), Color.Transparent), Offset(size.width * 0.88f, -reach * 0.1f), reach))
-}
+/** One tab's content: shown and touchable only while selected; the other sits under it, deaf to touches. */
+private fun Modifier.tabLayer(selected: Boolean): Modifier =
+    zIndex(if (selected) 1f else 0f)
+        .graphicsLayer { alpha = if (selected) 1f else 0f }
+        .then(
+            if (selected) {
+                Modifier
+            } else {
+                Modifier.clearAndSetSemantics {}.pointerInput(Unit) {
+                    awaitPointerEventScope { while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() } }
+                }
+            },
+        )

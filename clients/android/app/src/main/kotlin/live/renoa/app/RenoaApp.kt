@@ -86,7 +86,7 @@ internal fun RenoaApp(
     chatOpened: () -> Unit = {},
     setupLinks: (() -> HeldSetupLinks)? = null,
 ) {
-    // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
+    // The phone's light or dark setting decides, until the owner taps their capsule on Home to pick the other theme.
     var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
     val theme = picked ?: if (isSystemInDarkTheme()) ThemeName.Graphite else ThemeName.Paper
     val navigator = rememberNavigator(if (signedIn) Route.Home else Route.SignIn)
