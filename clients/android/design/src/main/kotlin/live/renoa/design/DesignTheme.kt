@@ -14,10 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
-/** The agent bubble's ground. */
-val botMessageBackground: Color
-    @Composable get() = if (LocalDark.current) Color(0xFF15263E) else Color(0xFFEAF2FF)
-
 @Composable
 fun DesignTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
     val colors = if (dark) darkColorScheme(
