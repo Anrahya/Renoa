@@ -267,7 +267,7 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "b10111b1256a266ecc3d9f6fee9dffb183ec1b73d4efd133ea28b2a3126c4f01",
+            "a033b38dfe734f1367b2a1845236406589ffa8c815f194d84fc062042d412906",
         ),
         (
             ARCEE_PRESET_ID,

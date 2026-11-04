@@ -1078,8 +1078,8 @@ everything worth knowing next time to the notebook, keeping only facts unlikely
 to change soon in `USER.md`. An existing agent's stored prompt still draws the
 older line until it moves. `renoa.app.v4` began compacting an app agent's chat at
 457,000 input tokens down to 40,000; under `renoa.app.v3` it compacted only near
-the model's own limit. `renoa.app.v5` asks for replies that match the message's
-length rather than short ones, and for a check of the agent's tools before it
+the model's own limit. `renoa.app.v5` asks for replies sized to the message instead
+of always short, and for a check of the agent's tools before it
 says it cannot do something. After the new Host passes its health checks, move
 each app agent and each Arcee agent:
 
