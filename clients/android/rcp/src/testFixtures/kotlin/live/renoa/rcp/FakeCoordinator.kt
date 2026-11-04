@@ -1,5 +1,6 @@
 package live.renoa.rcp
 
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -114,6 +115,10 @@ class FakeCoordinator : AutoCloseable {
 
     /** The push token the signed-in device registered, or null once it is cleared or before it is set. */
     @Volatile var pushToken: String? = null
+
+    /** The notice key the device registered, as sent, and the notices held for it. */
+    @Volatile var noticeKey: String? = null
+    val notices = CopyOnWriteArrayList<HeldNotice>()
 
     private val sockets = CopyOnWriteArrayList<Session>()
     private val server = MockWebServer()
@@ -266,6 +271,7 @@ class FakeCoordinator : AutoCloseable {
                 "call_host" -> callHost(requestId, frame)
                 "set_push_token" -> setPushToken(requestId, frame)
                 "clear_push_token" -> clearPushToken(requestId)
+                "set_notice_key", "list_notices", "acknowledge_notice" -> notices(requestId, type, frame)
                 else -> webSocket.send(error(requestId, "invalid_message", "unsupported frame $type"))
             }
         }
@@ -446,6 +452,26 @@ class FakeCoordinator : AutoCloseable {
             }
             pushToken = frame.getValue("token").jsonPrimitive.content
             reply(requestId, "push_token_set") {}
+        }
+
+        /** Setup notices belong to a device that proved its key; this fake refuses only tickets, as tests need. */
+        private fun notices(requestId: Long, type: String, frame: JsonObject) {
+            if (byTicket) {
+                socket.send(error(requestId, "invalid_role", "setup notices belong to an app that proved its device key; this connection did not"))
+                return
+            }
+            when (type) {
+                "set_notice_key" -> {
+                    noticeKey = frame.getValue("public_key").jsonPrimitive.content
+                    reply(requestId, "notice_key_set") {}
+                }
+                "list_notices" -> reply(requestId, "notice_list") { put("notices", Json.encodeToJsonElement(ListSerializer(HeldNotice.serializer()), notices.toList())) }
+                else -> {
+                    val id = frame.getValue("notice_id").jsonPrimitive.content
+                    notices.removeIf { it.noticeId.toString() == id }
+                    reply(requestId, "notice_acknowledged") {}
+                }
+            }
         }
 
         private fun clearPushToken(requestId: Long) {

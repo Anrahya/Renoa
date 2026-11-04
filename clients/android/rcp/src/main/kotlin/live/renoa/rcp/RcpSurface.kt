@@ -116,6 +116,19 @@ interface RcpSurface {
     suspend fun clearPushToken()
 
     /**
+     * Registers [publicKey], a 65-byte uncompressed P-256 point, as the key this device's setup notices
+     * are sealed to, replacing any it held. Only a device that proved its key may hold notices; any other
+     * connection is refused with `invalid_role`.
+     */
+    suspend fun setNoticeKey(publicKey: ByteArray)
+
+    /** This device's unexpired setup notices, soonest to expire first; acknowledging some lets the next list carry the rest. */
+    suspend fun listNotices(): List<HeldNotice>
+
+    /** Deletes one of this device's notices. Safe to repeat: one it does not hold is acknowledged too. */
+    suspend fun acknowledgeNotice(noticeId: Uuid)
+
+    /**
      * Sends [command] again with its original identity if the outbox still holds it, and removes it
      * once the coordinator admitted it. Safe to repeat: the coordinator converges on one command, and
      * one no longer in the outbox is not sent. The caller decides the order and when to stop.

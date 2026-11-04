@@ -21,8 +21,6 @@ import kotlin.time.Duration
 import kotlin.uuid.Uuid
 
 private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
-private val TICKET_PATTERN = Regex("^[0-9a-fA-F]{64}$")
-private val NONCE_PATTERN = Regex("^[0-9a-f]{64}$")
 
 /** Replay of one attachment: complete once the event at [through] has been applied. [applied] hears each event applied before then. */
 private class Replay {
@@ -42,7 +40,7 @@ private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val app
 }
 
 /**
- * The binding 15 surface client over a WebSocket.
+ * The binding $RCP_BINDING_VERSION surface client over a WebSocket.
  *
  * Frames are handled one at a time, in arrival order, on [context]; [attach] callbacks run
  * there, and so are [ApplyLiveActivity] callbacks. Retry timing after a disconnect is the caller's policy: this client never reconnects
@@ -99,7 +97,7 @@ class WebSocketRcpSurface(
             // The last connection's loop may still be applying the frame it held when it ended;
             // its cursor must be stored before this one asks to replay from it.
             latest?.reader?.join()
-            val identity = identityFrame()
+            val identity = identityFrame(authentication)
             val connection = openConnection(socketClient, endpoint)
             current = connection
             latest = connection
@@ -206,6 +204,18 @@ class WebSocketRcpSurface(
         request(ServerMessage.PushTokenCleared::class, { ClientMessage.ClearPushToken(it) })
     }
 
+    override suspend fun setNoticeKey(publicKey: ByteArray) {
+        require(publicKey.size == 65 && publicKey[0] == 0x04.toByte()) { "a notice key is a 65-byte uncompressed P-256 point" }
+        request(ServerMessage.NoticeKeySet::class, { ClientMessage.SetNoticeKey(it, base64Url(publicKey)) })
+    }
+
+    override suspend fun listNotices(): List<HeldNotice> =
+        request(ServerMessage.NoticeList::class, { ClientMessage.ListNotices(it) }).notices
+
+    override suspend fun acknowledgeNotice(noticeId: Uuid) {
+        request(ServerMessage.NoticeAcknowledged::class, { ClientMessage.AcknowledgeNotice(it, noticeId) })
+    }
+
     override suspend fun resendPending(command: PendingTextCommand) {
         connected()
         if (state.pendingCommands().none { it.commandId == command.commandId }) return
@@ -238,18 +248,6 @@ class WebSocketRcpSurface(
             "text is $bytes bytes once encoded; one RCP message holds at most $MAX_FRAME_BYTES. Send shorter text."
         }
     }
-
-    private suspend fun identityFrame(): String =
-        encodeClientMessage(
-            when (val auth = authentication) {
-                is Authentication.Device -> ClientMessage.Authenticate(RCP_BINDING_VERSION, auth.credentials)
-                is Authentication.Ticket -> {
-                    val ticket = auth.get()
-                    require(TICKET_PATTERN.matches(ticket)) { "connection ticket must be 64 hexadecimal characters" }
-                    ClientMessage.AuthenticateTicket(RCP_BINDING_VERSION, ticket)
-                }
-            },
-        )
 
     private fun connected(): Connection {
         val connection = current
@@ -403,6 +401,9 @@ class WebSocketRcpSurface(
             is ServerMessage.HostAnswer -> complete(connection, message.requestId, message)
             is ServerMessage.PushTokenSet -> complete(connection, message.requestId, message)
             is ServerMessage.PushTokenCleared -> complete(connection, message.requestId, message)
+            is ServerMessage.NoticeKeySet -> complete(connection, message.requestId, message)
+            is ServerMessage.NoticeList -> complete(connection, message.requestId, message)
+            is ServerMessage.NoticeAcknowledged -> complete(connection, message.requestId, message)
         }
     }
 
@@ -412,17 +413,7 @@ class WebSocketRcpSurface(
             throw ProtocolViolation("unexpected device_challenge")
         }
         connection.challenged = true
-        val device =
-            authentication as? Authentication.Device
-                ?: throw ProtocolViolation("a ticket connection was sent a device_challenge")
-        if (!NONCE_PATTERN.matches(nonce)) {
-            throw ProtocolViolation("device_challenge nonce must be 64 lowercase hexadecimal characters")
-        }
-        val sign =
-            device.sign
-                ?: throw DeviceKeyRequired("this device registered a key at sign-in, and the client was given none; sign in again")
-        val signature = base64Url(sign(deviceProofText(device.credentials.deviceId, nonce)))
-        send(connection, encodeClientMessage(ClientMessage.DeviceProof(signature)))
+        send(connection, proofFrame(authentication, nonce))
     }
 
     private fun complete(connection: Connection, requestId: Long, message: ServerMessage) {

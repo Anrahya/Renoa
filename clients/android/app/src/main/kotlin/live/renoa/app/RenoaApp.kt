@@ -36,6 +36,8 @@ import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.Link
 import live.renoa.app.chat.ChatScreen
 import live.renoa.app.chat.ChatViewModel
+import live.renoa.app.connect.HeldSetupLinks
+import live.renoa.app.connect.SetupLinkCards
 import live.renoa.app.editor.AgentEditorScreen
 import live.renoa.app.editor.AgentEditorViewModel
 import live.renoa.app.editor.EditorMode
@@ -70,6 +72,7 @@ internal val MAX_CONTENT_WIDTH = 600.dp
  * [chatShown] hears each chat come on screen and leave it; [notificationsAnswered], the owner's
  * answer when asked to allow notifications. [openChat] is a chat a tapped notice asks for, opened
  * as [Navigator.openChat][live.renoa.app.nav.Navigator.openChat] says; [chatOpened] then clears it.
+ * Past sign-in and sign-up, the [setupLinks] waiting for the owner show over every screen.
  */
 @Composable
 internal fun RenoaApp(
@@ -81,6 +84,7 @@ internal fun RenoaApp(
     notificationsAnswered: () -> Unit = {},
     openChat: String? = null,
     chatOpened: () -> Unit = {},
+    setupLinks: (() -> HeldSetupLinks)? = null,
 ) {
     // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
     var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
@@ -167,6 +171,9 @@ internal fun RenoaApp(
                         AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.replaceTop(Route.Chat(it)) })
                     }
                 }
+            }
+            if (setupLinks != null && navigator.top != Route.SignIn && navigator.top != Route.SignUp) {
+                SetupLinkCards(remember { setupLinks() }, Modifier.align(Alignment.TopCenter))
             }
         }
     }
