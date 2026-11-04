@@ -131,6 +131,25 @@ sealed interface ClientMessage {
     @Serializable
     @SerialName("clear_push_token")
     data class ClearPushToken(@SerialName("request_id") val requestId: Long) : ClientMessage
+
+    /** Registers the key this device's setup notices are sealed to: a 65-byte uncompressed P-256 point, base64url without padding. */
+    @Serializable
+    @SerialName("set_notice_key")
+    data class SetNoticeKey(
+        @SerialName("request_id") val requestId: Long,
+        @SerialName("public_key") val publicKey: String,
+    ) : ClientMessage
+
+    @Serializable
+    @SerialName("list_notices")
+    data class ListNotices(@SerialName("request_id") val requestId: Long) : ClientMessage
+
+    @Serializable
+    @SerialName("acknowledge_notice")
+    data class AcknowledgeNotice(
+        @SerialName("request_id") val requestId: Long,
+        @SerialName("notice_id") val noticeId: Uuid,
+    ) : ClientMessage
 }
 
 /** Frames a surface can receive. Frames only a node receives are deliberately absent. */
@@ -220,6 +239,21 @@ sealed interface ServerMessage {
     @Serializable
     @SerialName("push_token_cleared")
     data class PushTokenCleared(@SerialName("request_id") val requestId: Long) : ServerMessage
+
+    @Serializable
+    @SerialName("notice_key_set")
+    data class NoticeKeySet(@SerialName("request_id") val requestId: Long) : ServerMessage
+
+    @Serializable
+    @SerialName("notice_list")
+    data class NoticeList(
+        @SerialName("request_id") val requestId: Long,
+        val notices: List<HeldNotice>,
+    ) : ServerMessage
+
+    @Serializable
+    @SerialName("notice_acknowledged")
+    data class NoticeAcknowledged(@SerialName("request_id") val requestId: Long) : ServerMessage
 
     @Serializable
     @SerialName("task_event")

@@ -522,8 +522,9 @@ base64url without padding.
 A key that is not such a point receives `invalid_message`. A device holds one
 key, so a new one replaces the old. The app lists its device's unexpired
 notices, soonest to expire first and at most 23 of them, so the list fits one
-1 MiB message; it acknowledges each once shown, which deletes it and lets the
-next list carry the rest:
+1 MiB message. It acknowledges a notice once the owner opened its link or put
+it away, and one that does not open on the device at once; acknowledging deletes
+it and lets the next list carry the rest:
 
 ```json
 {

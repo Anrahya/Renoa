@@ -1,5 +1,7 @@
 package live.renoa.rcp
 
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.elementNames
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -16,17 +18,11 @@ import kotlin.uuid.Uuid
 class WireTest {
     private val bindingDoc = File(System.getProperty("renoa.docs"), "rcp-json-ws-v0.md").readText()
 
-    private val clientTypes =
-        setOf(
-            "authenticate", "authenticate_ticket", "device_proof", "list_tasks", "list_targets", "open_task", "attach",
-            "stop_command", "submit", "delete_task", "call_host", "set_push_token", "clear_push_token",
-        )
-    private val surfaceReceivedTypes =
-        setOf(
-            "authenticated", "device_challenge", "task_list", "target_list", "task_opened", "attached", "live_activity",
-            "stop_accepted", "command_accepted", "task_deleted", "task_event", "host_answer", "push_token_set",
-            "push_token_cleared", "error",
-        )
+    /** The frame types the client's own serializers know, so a frame added there is checked here without a list to update. */
+    private fun serialNames(descriptor: SerialDescriptor): Set<String> = descriptor.getElementDescriptor(1).elementNames.toSet()
+
+    private val clientTypes = serialNames(ClientMessage.serializer().descriptor)
+    private val surfaceReceivedTypes = serialNames(ServerMessage.serializer().descriptor)
 
     /** Frames the binding defines that a surface never sends or receives. Listing them forces a decision when the document grows. */
     private val notSurfaceFrames =
@@ -38,15 +34,8 @@ class WireTest {
             "notices_withdrawn",
         )
 
-    /**
-     * Surface frames this client does not offer yet: the app has no page that lists or revokes signed-in devices, and
-     * it does not hold a setup notice key yet.
-     */
-    private val surfaceFramesNotOffered =
-        setOf(
-            "list_devices", "device_list", "revoke_device", "device_revoked", "set_notice_key", "notice_key_set",
-            "list_notices", "notice_list", "acknowledge_notice", "notice_acknowledged",
-        )
+    /** Surface frames this client does not offer yet: the app has no page that lists or revokes signed-in devices. */
+    private val surfaceFramesNotOffered = setOf("list_devices", "device_list", "revoke_device", "device_revoked")
 
     private fun documentFrames(): List<JsonObject> =
         Regex("```json\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL)

@@ -65,6 +65,14 @@ enum class HostMethod {
 /** The Host's answer to a call: its HTTP status and JSON text, a result or its own refusal. */
 data class HostAnswer(val status: Int, val body: String)
 
+/** A setup notice the coordinator holds for this device: ciphertext only, which [NoticeKey.open] reads. */
+@Serializable
+data class HeldNotice(
+    @SerialName("notice_id") val noticeId: Uuid,
+    val sealed: String,
+    @SerialName("expires_at_ms") val expiresAtMs: Long,
+)
+
 @Serializable
 enum class StopOutcome {
     /** The stop is recorded; the command's terminal event tells whether it won. */

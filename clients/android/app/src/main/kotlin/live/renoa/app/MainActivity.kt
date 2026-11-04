@@ -17,6 +17,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.connect.HeldSetupLinks
+import live.renoa.app.connect.turnsEnded
 import live.renoa.app.agents.RcpAgentRepository
 import live.renoa.app.agents.SavedHome
 import live.renoa.app.agents.SavedOutbox
@@ -31,6 +33,7 @@ import live.renoa.app.push.markRead
 import live.renoa.app.push.sender
 import live.renoa.app.push.firebaseToken
 import live.renoa.app.signin.DeviceKeys
+import live.renoa.app.signin.NoticeKeys
 import live.renoa.app.signin.RENOA_ORIGIN
 import live.renoa.app.signin.SavedSignIn
 import live.renoa.app.signin.SignInStore
@@ -48,6 +51,7 @@ class RenoaApplication : Application() {
     private var home: SavedHome? = null
     private var network: ConnectivityManager.NetworkCallback? = null
     private var pushing: Pushing? = null
+    private var setupLinks: HeldSetupLinks? = null
     private val shownChats = ShownChats()
 
     /** One sign-in's wake cursors and registration, shared by the app's connection and every wake-up, so their changes queue on one lock each. */
@@ -71,8 +75,17 @@ class RenoaApplication : Application() {
             val client = WebSocketRcpSurface(BuildConfig.RENOA_CONNECT, authentication(saved), state)
             val running = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val registration = pushing(saved).registration
-            RcpAgentRepository(client, state, running, home = kept, onConnected = { registration.register(client) }).also {
+            val links = HeldSetupLinks(client, saved.credentials.deviceId, noticeKeys::getOrCreate)
+            val onConnected: suspend () -> Unit = {
+                // Each is told on its own: a failed push registration must not keep the setup links unread.
+                running.launch { runCatching { links.connected() } }
+                registration.register(client)
+            }
+            RcpAgentRepository(client, state, running, home = kept, onConnected = onConnected).also {
                 it.start()
+                // A setup link ends its turn, so a turn that ends may have left one.
+                running.launch { it.agents.turnsEnded().collect { runCatching { links.read() } } }
+                setupLinks = links
                 repository = it
                 surface = client
                 scope = running
@@ -86,6 +99,15 @@ class RenoaApplication : Application() {
     @Synchronized
     fun retryNow() {
         repository?.retryNow()
+        val links = setupLinks ?: return
+        scope?.launch { runCatching { links.read() } }
+    }
+
+    /** The setup links waiting for the owner, held by the connection [repository] made. */
+    @Synchronized
+    fun setupLinks(): HeldSetupLinks {
+        repository()
+        return checkNotNull(setupLinks)
     }
 
     /** The owner may have turned notifications on or off: Renoa hears it on the connection that is open, if one is. */
@@ -161,6 +183,7 @@ class RenoaApplication : Application() {
                 scope?.cancel()
                 scope = null
                 repository = null
+                setupLinks = null
                 // Closed, so the old socket stops pinging Renoa.
                 surface?.close()
                 surface = null
@@ -178,6 +201,8 @@ class RenoaApplication : Application() {
                 pushing?.cursors.also { pushing = null }
             }
         DeviceKeys.forget()
+        // A Keystore that refuses now must not keep the phone signed in.
+        runCatching { noticeKeys.forget() }
         SignInStore(this).clear()
         SavedSignUp(this).operationId = null
         (held ?: SavedOutbox(outboxFile())).forget()
@@ -208,7 +233,10 @@ class RenoaApplication : Application() {
     private fun homeFile() = File(filesDir, "home")
 
     private fun wakeFile() = File(filesDir, "wake")
+
+    private val noticeKeys by lazy { NoticeKeys(File(filesDir, "notice-key")) }
 }
+
 
 class MainActivity : ComponentActivity() {
     /** The chat a tapped notice asks for, until the screens open it. */
@@ -227,7 +255,7 @@ class MainActivity : ComponentActivity() {
             RenoaApp(
                 application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
                 chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
-                openChat = opening, chatOpened = { opening = null },
+                openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
             )
         }
     }
