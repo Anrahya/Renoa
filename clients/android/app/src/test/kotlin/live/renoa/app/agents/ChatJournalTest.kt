@@ -1,5 +1,7 @@
 package live.renoa.app.agents
 
+import live.renoa.rcp.AgentMessageKind
+import live.renoa.rcp.AgentOrigin
 import live.renoa.rcp.CommandEnvelope
 import live.renoa.rcp.CommandInput
 import live.renoa.rcp.ExecutionEvent
@@ -22,8 +24,8 @@ internal class Journal(val taskId: Uuid = Uuid.random()) {
 
     private fun record(kind: TaskEventKind) = TaskEvent(Uuid.random(), taskId, events.size + 1L, kind).also { events += it }
 
-    fun submitted(commandId: Uuid, text: String) =
-        record(TaskEventKind.CommandSubmitted(CommandEnvelope(commandId, Uuid.random(), "android", "agent", CommandInput.Text(text))))
+    fun submitted(commandId: Uuid, text: String, surface: String = "android", origin: AgentOrigin? = null) =
+        record(TaskEventKind.CommandSubmitted(CommandEnvelope(commandId, Uuid.random(), surface, "agent", CommandInput.Text(text), origin)))
 
     fun said(commandId: Uuid, text: String) = executed(commandId, ExecutionEventKind.AssistantMessage(text))
 
@@ -42,6 +44,29 @@ class ChatJournalTest {
     private fun record(event: TaskEvent) = chat.apply(event)
 
     private fun delta(sequence: Long, text: String) = chat.live(command, LiveActivity.TextDelta(sequence, text))
+
+    /** Only the owner's own words are their messages; a routine's run and another agent's message are quiet lines. */
+    @Test
+    fun whatNoOneTypedHereShowsAsALineNotTheOwnersMessage() {
+        val run = Uuid.random()
+        val asked = Uuid.random()
+        val typed = Uuid.random()
+        // The Host's own run text, as `submission` in renoa-local writes it.
+        journal.submitted(run, "(Scheduled run \"Daily AO3 status check\", due 8 PM.)\n\nCheck AO3 and tell me.", surface = AUTOMATIONS_SURFACE)
+        journal.submitted(Uuid.random(), "Wake up and look around.", surface = AUTOMATIONS_SURFACE)
+        journal.submitted(asked, "Here are three posts.", surface = "agent", origin = AgentOrigin("Groky", AgentMessageKind.Reply))
+        journal.submitted(typed, "(not a run) hello", surface = "mac")
+        journal.events.forEach(::record)
+        assertEquals(
+            listOf(
+                Speaker.Event to "Routine ran · Daily AO3 status check",
+                Speaker.Event to "A routine ran",
+                Speaker.Event to "Groky replied",
+                Speaker.Owner to "(not a run) hello",
+            ),
+            chat.conversation.messages.map { it.speaker to it.text },
+        )
+    }
 
     @Test
     fun everyAppOpensTheSameChatWithAnAgentAndADifferentOneWithAnother() {

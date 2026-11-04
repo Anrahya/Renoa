@@ -68,7 +68,8 @@ internal class ChatJournal {
         when (val kind = event.kind) {
             is TaskEventKind.CommandSubmitted -> {
                 val input = kind.command.input as CommandInput.Text
-                messages += ChatMessage(kind.command.commandId.toString(), Speaker.Owner, input.text)
+                val event = chatEvent(kind.command)
+                messages += ChatMessage(kind.command.commandId.toString(), if (event == null) Speaker.Owner else Speaker.Event, event ?: input.text)
                 latestCommand = kind.command.commandId
                 unsent.remove(kind.command.commandId)
                 notSent.remove(kind.command.commandId)

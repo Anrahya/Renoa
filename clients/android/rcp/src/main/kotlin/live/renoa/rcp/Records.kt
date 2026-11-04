@@ -118,6 +118,24 @@ sealed interface CommandInput {
     ) : CommandInput
 }
 
+/** Whether another agent's message asks, answers, or says it could not answer. */
+@Serializable
+enum class AgentMessageKind {
+    @SerialName("request")
+    Request,
+
+    @SerialName("reply")
+    Reply,
+
+    @SerialName("failure")
+    Failure,
+}
+
+/** Which agent caused a command, as the coordinator sets it on an agent's message. */
+@Serializable
+data class AgentOrigin(val name: String, val kind: AgentMessageKind)
+
+/** [origin] is set only on a command another agent caused, whose [surface] is then `agent`. */
 @Serializable
 data class CommandEnvelope(
     val commandId: Uuid,
@@ -125,6 +143,7 @@ data class CommandEnvelope(
     val surface: String,
     val target: String,
     val input: CommandInput,
+    val origin: AgentOrigin? = null,
 )
 
 @OptIn(ExperimentalSerializationApi::class)

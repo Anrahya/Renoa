@@ -67,7 +67,13 @@ data class Glance(
     val with: String? = null,
 )
 
-enum class Speaker { Owner, Agent }
+enum class Speaker {
+    Owner,
+    Agent,
+
+    /** Something that happened in the chat that no one typed here, such as a routine's run: one quiet line. */
+    Event,
+}
 
 /**
  * [notSent]: the app stopped sending the owner's message because Renoa could not take it.
