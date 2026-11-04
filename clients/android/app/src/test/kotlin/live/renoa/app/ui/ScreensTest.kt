@@ -269,26 +269,23 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun aRoutineIsTurnedOnFromItsPageAndWhatIsComingUpIsListed() {
+    fun aRoutineIsTurnedOnFromItsPageAndBackLeavesIt() {
         home()
         openPages()
+        val shown = listOf("Morning brief", "Lunch photo", "GitHub check", "Prices and groceries", "Posts worth a reply", "Evening check-in")
+        val order = shown.sortedBy { compose.onNode(isToggleable() and hasText(it)).fetchSemanticsNode().boundsInRoot.top }
+        assertEquals(listOf("Posts worth a reply", "Evening check-in", "Morning brief", "GitHub check", "Prices and groceries", "Lunch photo"), order, "soonest first, the paused one last")
         compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
         compose.onNodeWithText("Paused").assertIsDisplayed()
         compose.onNode(isToggleable() and hasText("Lunch photo")).performClick()
         compose.waitForIdle()
         assertTrue(repository.routines.value.first { it.id == "lunch" }.on)
         compose.onNodeWithText("Next: tomorrow at 1 PM").assertIsDisplayed()
-
-        compose.onNodeWithText("Upcoming").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithText("Later today").assertIsDisplayed()
-        compose.onNodeWithText("Posts worth a reply").assertIsDisplayed()
-        compose.onNodeWithText("Tomorrow").assertIsDisplayed()
-        snapshot("home-upcoming")
+        snapshot("home-routines")
 
         compose.activity.onBackPressedDispatcher.onBackPressed()
         compose.waitForIdle()
-        compose.onNodeWithText("Later today").assertDoesNotExist()
+        compose.onNodeWithText("Next: tomorrow at 1 PM").assertDoesNotExist()
         compose.onNode(hasText("Agents") and isSelected()).assertIsDisplayed()
     }
 

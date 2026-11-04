@@ -33,7 +33,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,11 +64,11 @@ import live.renoa.design.rememberPress
 import live.renoa.design.semibold
 import java.time.ZonedDateTime
 
-/** Home's two tabs: the agents, and Renoa's own pages. */
+/** Home's two tabs: the agents, and Renoa's routines. */
 private enum class HomeTab { Agents, Renoa }
 
 /**
- * Home is the owner's agents, with the day on top, and a tab of Renoa's own pages beside them. The
+ * Home is the owner's agents, with the day on top, and a tab of Renoa's routines beside them. The
  * bars float as glass over both. Until it is [HomeUiState.known] who is here, Home says it is
  * checking in. The Renoa tab shows while a [HomeUiState.page] is open.
  */
@@ -91,9 +90,6 @@ fun HomeScreen(
         }
     }
     var lit by remember { mutableStateOf<String?>(null) }
-    // The segment the Renoa tab opens on again.
-    var segment by rememberSaveable { mutableStateOf(HomePage.entries.first()) }
-    LaunchedEffect(state.page) { state.page?.let { segment = it } }
     val tab = if (state.page != null) HomeTab.Renoa else HomeTab.Agents
     val act =
         TalkActions(
@@ -123,7 +119,7 @@ fun HomeScreen(
                     GlassTabBar(
                         tab,
                         listOf(TabItem(HomeTab.Agents, "Agents", "bubble.left.and.bubble.right.fill", 33.dp), TabItem(HomeTab.Renoa, "Renoa", "hexagon.fill")),
-                        { picked -> if (picked == HomeTab.Agents) viewModel.close() else viewModel.open(segment) },
+                        { picked -> if (picked == HomeTab.Agents) viewModel.close() else viewModel.open(HomePage.Routines) },
                         Modifier.padding(bottom = maxOf(bottom - 4.dp, 12.dp)),
                     )
                     }
@@ -133,7 +129,7 @@ fun HomeScreen(
     ) {
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Agents)) { AgentList(state, time, lit, { lit = it }, act, onNewAgent, viewModel, top, barSpace) }
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Renoa)) {
-            RenoaTab(state, time, state.page ?: segment, { segment = it; viewModel.open(it) }, viewModel::switch, top, barSpace)
+            RenoaTab(state, time, viewModel::switch, top, barSpace)
         }
     }
 }

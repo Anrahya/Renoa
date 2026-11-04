@@ -124,24 +124,16 @@ class TodayTest {
     }
 
     @Test
-    fun upcomingGroupsEachNextRunByHowFarOffItIs() {
+    fun routinesListSoonestFirstOverdueBeforeThatAndPausedLast() {
         val routines =
             listOf(
+                routine("off", on = false, next = 8),
                 routine("monthly", next = 9, nextDays = 11),
                 routine("brief", next = 7, nextDays = 1),
+                routine("done", next = null),
+                routine("overdue", next = 9, nextDays = -1),
                 routine("posts", next = 20),
-                routine("weekly", next = 10, nextDays = 3),
-                routine("gone", next = 19),
-                routine("off", on = false),
             )
-        assertEquals(
-            listOf(
-                "Later today" to listOf("posts" to "8 PM"),
-                "Tomorrow" to listOf("brief" to "7 AM"),
-                "This week" to listOf("weekly" to "Sun 10 AM"),
-                "Later" to listOf("monthly" to "9 Nov"),
-            ),
-            upcoming(routines, now).map { group -> group.horizon.heading to group.runs.map { (r, time) -> r.id to time } },
-        )
+        assertEquals(listOf("overdue", "posts", "brief", "monthly", "off", "done"), soonestFirst(routines).map { it.id })
     }
 }
