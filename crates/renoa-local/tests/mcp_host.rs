@@ -10,7 +10,7 @@ use std::{
 
 use renoa_local::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentId, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalHostError, LocalModelConfiguration, ModelProvider,
+    LocalHostAdapters, LocalHostError, LocalModelConfiguration, McpHostError, ModelProvider,
 };
 use serde_json::{Value, json};
 use tempfile::tempdir;
@@ -139,6 +139,59 @@ async fn host_discovers_enables_and_restores_one_real_mcp_connection() {
         .expect("second agent exists")
         .connections;
     assert_eq!(enabled.into_iter().collect::<Vec<_>>(), ["primary"]);
+
+    owner_switches_the_app(&reopened, alpha, second, &endpoint, &refreshed).await;
+}
+
+/// The owner switches the app off and on again for `alpha` alone. Switching
+/// twice is switching once, and the connection and its catalog stay.
+async fn owner_switches_the_app(
+    host: &LocalHost,
+    alpha: AgentId,
+    second: AgentId,
+    endpoint: &str,
+    refreshed: &renoa_local::McpCatalogSnapshot,
+) {
+    let listed = host.agent_apps(alpha).await.expect("Alpha's apps");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].connection, "primary");
+    assert_eq!(listed[0].name.as_deref(), Some("fixture"));
+    assert_eq!(listed[0].endpoint, endpoint);
+    assert!(listed[0].on);
+    for _ in 0..2 {
+        let off = host
+            .set_agent_app(alpha, "primary", false)
+            .await
+            .expect("switch the app off");
+        assert!(!off[0].on);
+    }
+    assert!(
+        host.agent_definition(alpha)
+            .await
+            .expect("read Alpha agent")
+            .expect("Alpha agent exists")
+            .connections
+            .is_empty()
+    );
+    assert!(
+        host.agent_apps(second).await.expect("second's apps")[0].on,
+        "the second agent keeps the app"
+    );
+    assert_eq!(
+        host.mcp_catalog("primary").await.expect("catalog stays"),
+        *refreshed
+    );
+    let on = host
+        .set_agent_app(alpha, "primary", true)
+        .await
+        .expect("switch the app on again without a new sign-in");
+    assert!(on[0].on);
+    for wanted in [false, true] {
+        assert!(matches!(
+            host.set_agent_app(alpha, "missing", wanted).await,
+            Err(LocalHostError::Mcp(McpHostError::NotFound(_)))
+        ));
+    }
 }
 
 #[tokio::test]

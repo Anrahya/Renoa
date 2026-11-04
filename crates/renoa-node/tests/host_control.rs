@@ -510,6 +510,101 @@ async fn a_host_whose_node_is_offline_is_unavailable_and_returns_with_the_node()
 }
 
 #[tokio::test]
+async fn the_owner_reads_the_notes_agents_keep_newest_first_without_corrected_ones() {
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let person = f.root().join("users").join(f.owner.as_uuid().to_string());
+        assert_eq!(
+            f.browser.json_of("/v1/host/memory").await,
+            json!({"notes": [], "total": 0})
+        );
+        assert!(!person.exists(), "reading creates no notebook");
+
+        let notebook = mnem::memory::Memory::create(&person.join("mnem")).expect("notebook");
+        let at = "2026-11-04T09:00".parse().expect("time");
+        for (author, text) in [
+            ("Renoa", "Dentist on Friday"),
+            ("Kai", "Reads [on the bus] most days"),
+            (
+                "Renoa",
+                "[updates #0] Dentist moved to Monday [at 2026-11-09T09:00]",
+            ),
+        ] {
+            notebook.note(author, text, at).expect("note");
+        }
+        let read = f.browser.json_of("/v1/host/memory").await;
+        assert_eq!(read["total"], 3);
+        let shown: Vec<_> = read["notes"]
+            .as_array()
+            .expect("notes")
+            .iter()
+            .map(|note| {
+                (
+                    note["id"].clone(),
+                    note["author"].clone(),
+                    note["text"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (json!(2), json!("Renoa"), json!("Dentist moved to Monday")),
+                (
+                    json!(1),
+                    json!("Kai"),
+                    json!("Reads [on the bus] most days")
+                ),
+            ],
+            "{read}"
+        );
+        assert_eq!(read["notes"][0]["written"], "2026-11-04");
+        f.close().await;
+    }))
+    .await;
+}
+
+#[tokio::test]
+async fn an_agents_apps_are_listed_and_switched_by_the_owner() {
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let body = json!({
+            "operation_id": Uuid::new_v4(),
+            "preset_id": "renoa.app.v5",
+            "name": "Kcal",
+        });
+        let (id, _) = make_agent(&f, &body).await;
+        assert_eq!(
+            f.browser
+                .json_of(&format!("/v1/host/agents/{id}/apps"))
+                .await,
+            json!({"apps": []})
+        );
+        for enabled in [false, true] {
+            let missing = f
+                .browser
+                .post(
+                    &format!("/v1/host/agents/{id}/apps/missing/enabled"),
+                    &json!({"enabled": enabled}),
+                )
+                .await;
+            assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+            let missing: Value = missing.json().await.expect("refusal");
+            assert_eq!(missing["code"], "app_not_found", "{missing}");
+        }
+        let unknown = f
+            .browser
+            .get(&format!("/v1/host/agents/{}/apps", Uuid::new_v4()))
+            .send()
+            .await
+            .expect("GET");
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        f.close().await;
+    }))
+    .await;
+}
+
+#[tokio::test]
 async fn the_owner_reads_and_edits_their_profile_for_agent_creation() {
     within(Box::pin(async {
         let f = Fixture::serving().await;

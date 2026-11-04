@@ -1,14 +1,46 @@
-//! The owner-facing view of one person's `USER.md`.
+//! The owner-facing view of one person's `USER.md` and of the notes agents
+//! keep about them.
 //!
 //! Agents edit a profile through `agent_documents`; this is the same edit for a
-//! person who reads and changes their own profile outside a turn.
+//! person who reads and changes their own profile outside a turn. The notes are
+//! read only: agents write them with `memory_note`.
 
 use renoa_agent::ToolErrorCode;
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError};
-use crate::documents::{UserProfile, read_user_profile, replace_user_profile};
+use crate::{
+    documents::{UserProfile, read_user_profile, replace_user_profile},
+    plugins::host::memory,
+};
+
+/// How many of the newest notes [`LocalHost::memory_notes`] reads. Mnem caps a
+/// note at `mnem::memory::ENTRY_CHARS` (280) characters, so even escaped they
+/// stay far below one RCP message.
+pub const MEMORY_PAGE: usize = 100;
+
+/// The notes agents keep about one person, newest first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MemoryNotes {
+    /// The newest [`MEMORY_PAGE`] notes, without those a newer note corrects.
+    pub notes: Vec<MemoryNote>,
+    /// How many notes the notebook holds, older and corrected ones included.
+    pub total: u64,
+}
+
+/// One note, as its agent wrote it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MemoryNote {
+    pub id: u64,
+    /// The day it was written, `YYYY-MM-DD`.
+    pub written: String,
+    /// The name of the agent that wrote it.
+    pub author: Option<String>,
+    /// Its words, without the tags agents write for Mnem.
+    pub text: String,
+}
 
 /// Why a profile edit did not apply.
 #[derive(Debug, thiserror::Error)]
@@ -68,5 +100,33 @@ impl LocalHost {
             _ => ProfileEditError::Unavailable(error.to_string()),
         })?;
         Ok(UserProfile { content, revision })
+    }
+
+    /// Reads the newest notes agents keep about `principal`. A person with no
+    /// notebook has none, and none is created.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the person's directory is unsafe or the notebook
+    /// cannot be read.
+    pub async fn memory_notes(&self, principal: Uuid) -> Result<MemoryNotes, LocalHostError> {
+        let data_directory = self.config.home.path().to_path_buf();
+        let (notes, total) = tokio::task::spawn_blocking(move || {
+            memory::newest(&data_directory, principal, MEMORY_PAGE)
+        })
+        .await?
+        .map_err(|reason| LocalHostError::Io(std::io::Error::other(reason)))?;
+        let notes = notes
+            .into_iter()
+            .rev()
+            .filter(|note| note.superseded_by.is_none())
+            .map(|note| MemoryNote {
+                id: note.id,
+                written: note.written,
+                author: note.author,
+                text: memory::readable(&note.text),
+            })
+            .collect();
+        Ok(MemoryNotes { notes, total })
     }
 }
