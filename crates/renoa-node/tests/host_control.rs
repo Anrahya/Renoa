@@ -524,7 +524,7 @@ async fn the_owner_reads_the_notes_agents_keep_newest_first_without_corrected_on
         let at = "2026-11-04T09:00".parse().expect("time");
         for (author, text) in [
             ("Renoa", "Dentist on Friday"),
-            ("Kai", "Reads [on the bus] most days"),
+            ("Kai", "Reads [on the bus] most days, since [on 2026-10-01]"),
             (
                 "Renoa",
                 "[updates #0] Dentist moved to Monday [at 2026-11-09T09:00]",
@@ -553,12 +553,32 @@ async fn the_owner_reads_the_notes_agents_keep_newest_first_without_corrected_on
                 (
                     json!(1),
                     json!("Kai"),
-                    json!("Reads [on the bus] most days")
+                    json!("Reads [on the bus] most days, since")
                 ),
             ],
             "{read}"
         );
         assert_eq!(read["notes"][0]["written"], "2026-11-04");
+        assert_eq!(read["notes"][0]["due"], "2026-11-09T09:00");
+        assert_eq!(read["notes"][1]["happened"], "2026-10-01");
+        assert_eq!(read["notes"][1]["due"], Value::Null);
+
+        // Past the newest hundred, older notes are counted, not sent.
+        for n in 3..=renoa_local::MEMORY_PAGE {
+            notebook
+                .note("Renoa", &format!("Fact {n}"), at)
+                .expect("note");
+        }
+        let read = f.browser.json_of("/v1/host/memory").await;
+        let page = read["notes"].as_array().expect("notes");
+        assert_eq!(read["total"], renoa_local::MEMORY_PAGE + 1);
+        assert_eq!(page.len(), renoa_local::MEMORY_PAGE);
+        assert_eq!(page[0]["id"], renoa_local::MEMORY_PAGE);
+        assert_eq!(
+            page[page.len() - 1]["id"],
+            1,
+            "the oldest, note 0, is past the page"
+        );
         f.close().await;
     }))
     .await;
@@ -599,6 +619,35 @@ async fn an_agents_apps_are_listed_and_switched_by_the_owner() {
             .await
             .expect("GET");
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let off = json!({"enabled": false});
+        let nobody = f
+            .browser
+            .post(
+                &format!("/v1/host/agents/{}/apps/missing/enabled", Uuid::new_v4()),
+                &off,
+            )
+            .await;
+        assert_eq!(nobody.status(), StatusCode::NOT_FOUND);
+        for (path, body) in [
+            (
+                format!("/v1/host/agents/{id}/apps/bad%20id/enabled"),
+                off.clone(),
+            ),
+            (
+                format!("/v1/host/agents/{id}/apps/missing/enabled"),
+                json!({"enabled": false, "operation_id": Uuid::new_v4()}),
+            ),
+        ] {
+            let refused = f.browser.post(&path, &body).await;
+            assert!(
+                matches!(
+                    refused.status(),
+                    StatusCode::UNPROCESSABLE_ENTITY | StatusCode::BAD_REQUEST
+                ),
+                "{path}: {}",
+                refused.status()
+            );
+        }
         f.close().await;
     }))
     .await;

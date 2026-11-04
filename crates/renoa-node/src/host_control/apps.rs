@@ -1,5 +1,6 @@
 //! The apps an agent can use, listed and switched by the owner. Switching one
-//! off keeps its sign-in; switching it on again needs none.
+//! off takes its tools away and keeps its sign-in; switching it on again needs
+//! none.
 
 use renoa_kernel::AgentId;
 use renoa_local::{AgentApp, LocalHost, LocalHostError, McpHostError};
@@ -58,11 +59,12 @@ fn answer(outcome: Result<Vec<AgentApp>, LocalHostError>) -> Reply {
         Err(LocalHostError::Mcp(McpHostError::Invalid(reason))) => {
             Reply::failure(UNPROCESSABLE, "invalid_app", &reason)
         }
-        // The agent switched off or replaced the plugin that serves it.
+        // The plugin that serves it is switched off, replaced or not admitted
+        // for this agent.
         Err(LocalHostError::Mcp(McpHostError::Conflict(_))) => Reply::failure(
             CONFLICT,
             "app_unavailable",
-            "This app can't be turned on from here. Ask the agent to turn it on.",
+            "This app can't be turned on from here. Ask the agent to set it up again.",
         ),
         Err(error) => {
             log("apps", &error.to_string());

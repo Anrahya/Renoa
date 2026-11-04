@@ -17,8 +17,8 @@ use crate::{
 };
 
 /// How many of the newest notes [`LocalHost::memory_notes`] reads. Mnem caps a
-/// note at `mnem::memory::ENTRY_CHARS` (280) characters, so even escaped they
-/// stay far below one RCP message.
+/// note at `mnem::memory::ENTRY_CHARS` (280) bytes, so even escaped they stay
+/// far below one RCP message.
 pub const MEMORY_PAGE: usize = 100;
 
 /// The notes agents keep about one person, newest first.
@@ -40,6 +40,11 @@ pub struct MemoryNote {
     pub author: Option<String>,
     /// Its words, without the tags agents write for Mnem.
     pub text: String,
+    /// The day it says something happened, `YYYY-MM-DD`, when that was not
+    /// the day it was written.
+    pub happened: Option<String>,
+    /// When it asks to be brought up, `YYYY-MM-DDTHH:MM` in the person's zone.
+    pub due: Option<String>,
 }
 
 /// Why a profile edit did not apply.
@@ -124,7 +129,9 @@ impl LocalHost {
                 id: note.id,
                 written: note.written,
                 author: note.author,
+                due: memory::due(&note.text),
                 text: memory::readable(&note.text),
+                happened: note.happened,
             })
             .collect();
         Ok(MemoryNotes { notes, total })

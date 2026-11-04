@@ -72,7 +72,7 @@ pub use host::observation::{
 pub use host::{
     AgentPeers, HostResetReport, LocalHost, LocalHostAdapters, LocalHostError,
     LocalModelConfiguration, PeerAgent, PeerError, PeerMessage,
-    profiles::{MemoryNotes, ProfileEditError},
+    profiles::{MEMORY_PAGE, MemoryNotes, ProfileEditError},
     reset_host_data_root,
 };
 pub use mcp::{

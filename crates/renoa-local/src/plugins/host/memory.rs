@@ -166,16 +166,30 @@ pub(crate) fn newest(
     principal: Uuid,
     limit: usize,
 ) -> Result<(Vec<NoteView>, u64), String> {
+    let Some(memory) = read_only(data_directory, principal).map_err(|error| error.to_string())?
+    else {
+        return Ok((Vec::new(), 0));
+    };
     // Every note's `#<id> <day> <text>` line has a character for `.` to match.
-    let notes = recall(data_directory, principal, ".", limit).map_err(|error| error.to_string())?;
-    // Mnem numbers notes from 0 in the order they were written.
-    let total = notes.last().map_or(0, |note| note.id + 1);
+    let notes = memory
+        .recall(".", limit)
+        .map_err(|error| error.to_string())?;
+    let total = memory.len().map_err(|error| error.to_string())?;
     Ok((notes, total))
 }
 
-/// `text` without the tags Mnem reads in it, for a person to read. Mnem's own
-/// parser decides what a tag is: a bracket it reads nothing from, such as
-/// "[on the bus]", stays.
+/// When the reminder `text` asks for is due, `YYYY-MM-DDTHH:MM` in the
+/// person's zone, as Mnem reads its `[at …]` tag.
+pub(crate) fn due(text: &str) -> Option<String> {
+    mnem::tags::parse_lenient(text)
+        .reminder
+        .map(|reminder| reminder.at.strftime("%Y-%m-%dT%H:%M").to_string())
+}
+
+/// `text` without the tags Mnem reads in it, for a person to read; the day a
+/// note dates and the time it is due travel beside it. Mnem's own parser
+/// decides what a tag is: a bracket it reads nothing from, such as "[on the
+/// bus]", stays.
 pub(crate) fn readable(text: &str) -> String {
     let mut kept = String::with_capacity(text.len());
     let mut rest = text;

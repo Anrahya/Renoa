@@ -1,14 +1,16 @@
 //! The apps an agent can use, as the owner sees and switches them: every Host
-//! connection, named by the plugin that serves it, and whether the agent has
-//! it. Switching one off keeps the connection and its sign-in, so switching it
-//! back on needs no new sign-in.
+//! connection with a complete catalog, named by the plugin that serves it,
+//! and whether the agent has it. Switching one off takes its tools away from
+//! the agent and keeps the connection, its sign-in and its catalog, so
+//! switching it back on needs no new sign-in; the plugin's skills stay, as
+//! after `plugin_manage` disconnect.
 
 use renoa_kernel::AgentId;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde::Serialize;
 
 use super::{LocalHost, LocalHostError, catalog, catalog_error, store};
-use crate::mcp::McpHostError;
+use crate::mcp::validate_identity;
 
 /// One Host connection, as an agent's owner sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -26,7 +28,8 @@ pub struct AgentApp {
 }
 
 impl LocalHost {
-    /// Lists every Host connection and whether `id` can use it.
+    /// Lists every Host connection with a complete catalog and whether `id`
+    /// can use it.
     ///
     /// # Errors
     /// Returns `AgentNotFound` for an unknown agent and catalog storage errors.
@@ -46,77 +49,38 @@ impl LocalHost {
     /// the agent's apps. Either is idempotent.
     ///
     /// # Errors
-    /// Rejects unknown agents or connections, turning on a connection whose
-    /// catalog is not complete or whose plugin the agent has switched off, and
-    /// storage failures.
+    /// Rejects a malformed connection id, unknown agents or connections,
+    /// turning on a connection whose catalog is not complete or whose plugin
+    /// the agent cannot select, and storage failures.
     pub async fn set_agent_app(
         &self,
         id: AgentId,
         connection_id: &str,
         on: bool,
     ) -> Result<Vec<AgentApp>, LocalHostError> {
+        validate_identity("connection", connection_id)?;
         if on {
             self.enable_agent_connection(id, connection_id).await?;
         } else {
-            let database = self.config.database.clone();
+            self.require_agent(id).await?;
+            let catalog = self.config.mcp_catalog.clone();
+            let agent = id.to_string();
             let connection_id = connection_id.to_owned();
-            tokio::task::spawn_blocking(move || disable(&database, id, &connection_id)).await??;
+            tokio::task::spawn_blocking(move || {
+                catalog.disable_agent_connection(&agent, &connection_id)
+            })
+            .await??;
         }
         self.agent_apps(id).await
     }
 }
 
-fn disable(
-    database: &std::path::Path,
-    id: AgentId,
-    connection_id: &str,
-) -> Result<(), LocalHostError> {
-    let mut catalog_connection = catalog::open_verified(database)?;
-    let transaction = catalog_connection
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(catalog_error)?;
-    if !store::exists(&transaction, id)? {
-        return Err(LocalHostError::AgentNotFound(id));
-    }
-    let registered = transaction
-        .query_row(
-            "SELECT 1 FROM mcp_connections WHERE connection_id = ?1",
-            [connection_id],
-            |_| Ok(()),
-        )
-        .optional()
-        .map_err(catalog_error)?
-        .is_some();
-    if !registered {
-        return Err(McpHostError::NotFound(format!(
-            "connection '{connection_id}' is not registered"
-        ))
-        .into());
-    }
-    let mut selected = store::read_connections(&transaction, id)?;
-    if selected.remove(connection_id) {
-        store::set_connections(&transaction, id, &selected)?;
-        transaction.commit().map_err(catalog_error)?;
-    }
-    Ok(())
-}
-
 fn read(connection: &Connection, id: AgentId) -> Result<Vec<AgentApp>, LocalHostError> {
-    // A connection a plugin serves takes the name of the first plugin by name
-    // that packages its integration.
+    // At most one plugin serves an integration: `plugin_mcp_servers` keeps
+    // `integration_id` unique.
     let mut statement = connection
         .prepare(
-            "SELECT configured.connection_id,
-                    (SELECT plugin.name FROM plugin_mcp_servers AS server
-                     JOIN installed_plugins AS plugin
-                       ON plugin.plugin_digest = server.plugin_digest
-                     WHERE server.integration_id = configured.integration_id
-                     ORDER BY plugin.name, plugin.plugin_digest LIMIT 1),
-                    (SELECT plugin.description FROM plugin_mcp_servers AS server
-                     JOIN installed_plugins AS plugin
-                       ON plugin.plugin_digest = server.plugin_digest
-                     WHERE server.integration_id = configured.integration_id
-                     ORDER BY plugin.name, plugin.plugin_digest LIMIT 1),
+            "SELECT configured.connection_id, plugin.name, plugin.description,
                     integration.endpoint,
                     EXISTS(
                         SELECT 1 FROM host_agent_enabled_mcp_connections AS binding
@@ -126,6 +90,12 @@ fn read(connection: &Connection, id: AgentId) -> Result<Vec<AgentApp>, LocalHost
              FROM mcp_connections AS configured
              JOIN mcp_integrations AS integration
                ON integration.integration_id = configured.integration_id
+             JOIN mcp_catalogs AS complete
+               ON complete.connection_id = configured.connection_id
+             LEFT JOIN plugin_mcp_servers AS server
+               ON server.integration_id = configured.integration_id
+             LEFT JOIN installed_plugins AS plugin
+               ON plugin.plugin_digest = server.plugin_digest
              ORDER BY configured.connection_id",
         )
         .map_err(catalog_error)?;
