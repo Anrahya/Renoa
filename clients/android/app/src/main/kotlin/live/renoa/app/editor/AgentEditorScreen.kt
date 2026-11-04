@@ -175,7 +175,7 @@ private fun Purpose(state: EditorUiState, called: String, viewModel: AgentEditor
             BasicTextField(
                 value = state.purpose,
                 onValueChange = viewModel::setPurpose,
-                textStyle = RenoaType.Body.copy(color = colors.foregroundSoft),
+                textStyle = RenoaType.Body.copy(color = colors.mutedForeground),
                 cursorBrush = SolidColor(colors.ring),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "What $called is for" },

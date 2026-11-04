@@ -52,7 +52,7 @@ fun Reply(text: String, parsed: State, modifier: Modifier = Modifier, diagrams: 
 @Composable
 private fun ParsedReply(text: String, parsed: State, modifier: Modifier, diagrams: ReplyDiagrams, arriving: Boolean) {
     if (parsed !is State.Success) {
-        Text(text, modifier, style = RenoaType.Body, color = Renoa.colors.foregroundSoft)
+        Text(text, modifier, style = RenoaType.Body, color = Renoa.colors.mutedForeground)
         return
     }
     ReplyStyle(parsed.referenceLinkHandler, diagrams, arriving) { look ->
@@ -126,12 +126,12 @@ private class Look(
 @Composable
 private fun ReplyStyle(links: ReferenceLinkHandler, diagrams: ReplyDiagrams, arriving: Boolean, content: @Composable (Look) -> Unit) {
     val colors = Renoa.colors
-    val body = RenoaType.Body.copy(color = colors.foregroundSoft)
+    val body = RenoaType.Body.copy(color = colors.mutedForeground)
     val heading = RenoaType.Heading.copy(color = colors.foreground)
     val code = RenoaType.Code.copy(color = colors.foreground)
     val inlineCode = code.copy(fontSize = 14.sp, lineHeight = body.lineHeight)
     val markdownColors =
-        markdownColor(text = colors.foregroundSoft, codeBackground = colors.muted, inlineCodeBackground = colors.muted, dividerColor = colors.border, tableBackground = colors.card)
+        markdownColor(text = colors.mutedForeground, codeBackground = colors.secondary, inlineCodeBackground = colors.secondary, dividerColor = colors.border, tableBackground = colors.card)
     val typography =
         markdownTypography(
             h1 = heading.copy(fontSize = 20.sp, lineHeight = 26.sp),
@@ -146,7 +146,7 @@ private fun ReplyStyle(links: ReferenceLinkHandler, diagrams: ReplyDiagrams, arr
             quote = body.copy(color = colors.mutedForeground, fontStyle = FontStyle.Italic),
             paragraph = body,
             ordered = body.copy(color = colors.mutedForeground),
-            // Instrument Sans draws its bullet small, so it keeps the text's colour rather than fading further.
+            // Inter draws its bullet small, so it keeps the text's colour rather than fading further.
             bullet = body,
             list = body,
             textLink = TextLinkStyles(SpanStyle(color = colors.foreground, fontWeight = FontWeight.Medium, textDecoration = TextDecoration.Underline)),
@@ -155,7 +155,7 @@ private fun ReplyStyle(links: ReferenceLinkHandler, diagrams: ReplyDiagrams, arr
         )
     val annotator =
         remember(links, inlineCode, markdownColors) {
-            ReplyAnnotator(inlineCode.copy(background = colors.muted).toSpanStyle(), SpanStyle(color = markdownColors.highlightText, background = markdownColors.highlightBackground), links).annotator
+            ReplyAnnotator(inlineCode.copy(background = colors.secondary).toSpanStyle(), SpanStyle(color = markdownColors.highlightText, background = markdownColors.highlightBackground), links).annotator
         }
     val platform = LocalUriHandler.current
     val web = remember(platform) { WebLinks(platform) }

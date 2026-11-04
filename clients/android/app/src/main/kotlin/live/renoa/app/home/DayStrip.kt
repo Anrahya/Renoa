@@ -181,7 +181,7 @@ internal fun DayStrip(state: HomeUiState, now: ZonedDateTime, onLit: (String?) -
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(line, Modifier.weight(1f), style = RenoaType.Caption, color = if (scrub == null) colors.mutedForeground else colors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (scrub == null) Text("\u203a", Modifier.padding(start = 8.dp).clearAndSetSemantics { }, style = RenoaType.Label, color = colors.foregroundSoft)
+            if (scrub == null) Text("\u203a", Modifier.padding(start = 8.dp).clearAndSetSemantics { }, style = RenoaType.Label, color = colors.mutedForeground)
         }
     }
 }

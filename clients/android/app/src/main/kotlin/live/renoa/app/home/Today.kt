@@ -21,23 +21,8 @@ private const val STRIP_ENDS = 24
 /** How much of the strip's width the two hours round now take, so a busy evening does not pile up. */
 private const val LENS = 0.36f
 
-private val WEEKDAY_CLOCK = DateTimeFormatter.ofPattern("EEE h:mm a", Locale.ENGLISH)
 private val WEEKDAY = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH)
 private val DATE = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
-
-fun greeting(hour: Int, name: String? = null): String {
-    val words =
-        when (hour) {
-            in 5..11 -> "Good morning"
-            in 12..16 -> "Good afternoon"
-            in 17..21 -> "Good evening"
-            else -> "Good night"
-        }
-    return if (name == null) "$words." else "$words, $name."
-}
-
-/** "Thu 7:40 PM". */
-fun clockWords(now: ZonedDateTime): String = now.format(WEEKDAY_CLOCK)
 
 /**
  * The day strip's scale on [now]: 6 am at 0 and midnight at 1, with the hour either side of now

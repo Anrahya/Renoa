@@ -63,7 +63,7 @@ class FoundationsTest : ScreenTest() {
     @Test
     fun theFontAndIconLicencesShipInsideTheApp() {
         val shipped = compose.activity.assets.list("").orEmpty().toSet()
-        for (licence in listOf("MIT-Phosphor.txt", "OFL-IBMPlexMono.txt", "OFL-InstrumentSans.txt", "README.md")) {
+        for (licence in listOf("MIT-Phosphor.txt", "OFL-Inter.txt", "Apache-2.0-Codync.txt", "README.md")) {
             assertTrue(licence in shipped, "$licence is not in the APK's assets: $shipped")
         }
     }

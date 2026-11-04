@@ -31,7 +31,7 @@ internal fun diagramKit(context: Context): DiagramKit =
         DiagramKit(
             template = assets.open("diagram/page.html").use { String(it.readBytes(), Charsets.UTF_8) },
             pele = assets.open("diagram/pele.global.js").use { String(it.readBytes(), Charsets.UTF_8) },
-            font = context.resources.openRawResource(R.font.instrument_sans).use { Base64.getEncoder().encodeToString(it.readBytes()) },
+            font = context.resources.openRawResource(live.renoa.design.R.font.inter).use { Base64.getEncoder().encodeToString(it.readBytes()) },
         ).also { kit = it }
     }
 
@@ -81,16 +81,16 @@ internal fun peleTheme(colors: RenoaColors): String {
             "bg" to hex(colors.background),
             "fg" to hex(colors.foreground),
             "muted" to hex(colors.mutedForeground),
-            "line" to hex(colors.foregroundSoft),
+            "line" to hex(colors.mutedForeground),
             "surface" to hex(colors.secondary),
-            "surface-alt" to hex(colors.muted),
+            "surface-alt" to hex(colors.secondary),
             "border" to hex(colors.input),
             "accent" to hex(colors.primary),
             "critical" to hex(colors.stateFailed),
             "error" to hex(colors.stateFailed),
             "fg-on-light" to hex(ThemeName.Paper.colors.foreground),
             "fg-on-dark" to hex(ThemeName.Graphite.colors.foreground),
-            "font" to "\"Instrument Sans\", sans-serif",
+            "font" to "\"Inter\", sans-serif",
             "font-mono" to "monospace",
             "radius" to "${RenoaShapes.Control.value}px",
         ) + series.mapIndexed { i, colour -> "series-${i + 1}" to hex(colour) }

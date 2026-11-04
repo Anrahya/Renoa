@@ -10,9 +10,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.onAllNodesWithContentDescription
-import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.onFirst
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -119,11 +117,12 @@ class RenoaAppTest : ScreenTest() {
 
         assertEquals(listOf("Renoa"), fresh.agents.value.map { it.name })
         compose.onNode(hasContentDescription("your main agent", substring = true)).assertIsDisplayed()
-        compose.onNode(hasText(", Yash.", substring = true)).assertIsDisplayed()
+        // The owner's capsule wears the initial of the name they gave.
+        compose.onNodeWithContentDescription("Change colours").assert(hasText("Y"))
         assertEquals(1, ViewModelProvider(compose.activity)[EntryStores::class.java].held, "only Home is on the stack, so back leaves the app, not sign-up")
 
         // Her chat is empty, so it offers a start; a starter fills the composer and does not send.
-        compose.onNode(hasClickLabel("Talk to Renoa")).performClick()
+        compose.onNode(hasClickLabel("Open Renoa")).performClick()
         compose.waitForIdle()
         compose.onNodeWithText("Say hello to Renoa").assertIsDisplayed()
         snapshot("chat-start")
@@ -145,18 +144,14 @@ class RenoaAppTest : ScreenTest() {
 
     private fun onHome(description: String): SemanticsNodeInteraction = compose.onNodeWithContentDescription(description)
 
-    /** Everyone is in Chats, a page over Home; [description] may need scrolling to. The page stays open after. */
+    /** Everyone is on Home; [description] may need scrolling to. */
     private fun inChats(description: String): SemanticsNodeInteraction {
-        if (compose.onAllNodesWithContentDescription("Back to Home").fetchSemanticsNodes().isEmpty()) {
-            compose.onNodeWithText("Chats").performClick()
-            compose.waitForIdle()
-        }
-        compose.onAllNodes(hasScrollToNodeAction()).filter(hasAnyAncestor(hasScrollToNodeAction())).onFirst().performScrollToNode(hasContentDescription(description))
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasContentDescription(description))
         return compose.onNodeWithContentDescription(description)
     }
 
     private fun meetSomeoneNew() {
-        inChats("Meet someone new").performClick()
+        compose.onNodeWithContentDescription("Meet someone new").performClick()
     }
 
     private fun makeAnAgent(name: String) {
@@ -173,7 +168,6 @@ class RenoaAppTest : ScreenTest() {
         start()
         makeAnAgent("Mira")
         back()
-        compose.onNodeWithContentDescription("Back to Home").assertIsDisplayed()
         inChats("Mira, resting").assertIsDisplayed()
 
         meetSomeoneNew()
@@ -232,7 +226,7 @@ class RenoaAppTest : ScreenTest() {
         compose.onNodeWithText("Continue with passkey").performClick()
         compose.waitForIdle()
         assertEquals(listOf<SignInCode>(SignInCode.Setup("ab12cd"), SignInCode.Setup("ab12cd")), codes)
-        inChats("Meet someone new").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Meet someone new").assertIsDisplayed()
     }
 
     @Test
@@ -277,7 +271,7 @@ class RenoaAppTest : ScreenTest() {
         fun ground() = (window.decorView.background as ColorDrawable).color
         assertEquals(true to true, lightBars(), "a phone in light mode opens on Paper, with dark icons")
         assertEquals(ThemeName.Paper.colors.background.toArgb(), ground())
-        compose.onNodeWithContentDescription("Renoa, change colours").performClick()
+        compose.onNodeWithContentDescription("Change colours").performClick()
         compose.waitForIdle()
         assertEquals(false to false, lightBars(), "the mark picks Graphite, with light icons")
         assertEquals(ThemeName.Graphite.colors.background.toArgb(), ground(), "and the window under every screen")

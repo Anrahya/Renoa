@@ -29,10 +29,8 @@ import java.util.UUID
 fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
     agents.sortedWith(compareBy<AgentSummary> { it.state.homeRank }.thenBy { !it.glance.unread })
 
-private const val MAX_GREETED_NAME = 40
-
-/** The pages over Home, in the order they are swiped through. */
-enum class HomePage(val title: String) { Chats("Chats"), Routines("Routines"), Upcoming("Upcoming") }
+/** The Renoa tab's pages, in the order its segments show them. */
+enum class HomePage(val title: String) { Routines("Routines"), Upcoming("Upcoming") }
 
 /** What Home keeps of its own while the owner is in a chat and back. */
 private data class Local(
@@ -52,7 +50,7 @@ data class HomeUiState(
     val routines: List<Routine> = emptyList(),
     val notice: String? = null,
     val switching: Map<String, Boolean> = emptyMap(),
-    /** The page open over Home, or null while Home itself shows. */
+    /** The Renoa tab's page while that tab shows, or null while the agents do. */
     val page: HomePage? = null,
     /** The owner's name from their profile, once read. */
     val ownerName: String? = null,
@@ -113,8 +111,7 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
                     local.update { it.copy(signUp = true) }
                     return
                 }
-                // A name too long for the greeting, as an agent might have written, is left out of it.
-                val name = ProfileLines.name(repository.ownerProfile().content)?.takeIf { it.length <= MAX_GREETED_NAME }
+                val name = ProfileLines.name(repository.ownerProfile().content)
                 local.update { it.copy(ownerName = name) }
                 return
             } catch (refused: RepositoryException) {
@@ -126,10 +123,10 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
         }
     }
 
-    /** Opens a page over Home, or turns to another. It stays open while the owner visits a chat from it. */
+    /** Shows the Renoa tab on [page], or turns it to another. It stays shown while the owner visits a chat from it. */
     fun open(page: HomePage) = local.update { if (it.page == page) it else it.copy(page = page, notice = if (it.page == null) null else it.notice) }
 
-    /** Closes the page. A notice shown on it goes with it. */
+    /** Goes back to the agents. A notice shown on the Renoa tab goes with it. */
     fun close() = local.update { it.copy(page = null, notice = null) }
 
     /**

@@ -15,8 +15,9 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.isSelected
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.hasAnyAncestor
@@ -98,8 +99,6 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeDown
-import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.swipe
 import live.renoa.app.agents.StreamingReply
 import live.renoa.app.chat.ArrivingReply
@@ -194,9 +193,9 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
     }
 
-    /** Opens the pages over Home, on Routines. */
+    /** Opens the Renoa tab, on Routines. */
     private fun openPages() {
-        compose.onNodeWithText("Routines").performClick()
+        compose.onNode(hasText("Renoa") and isSelectable()).performClick()
         compose.waitForIdle()
     }
 
@@ -209,8 +208,6 @@ class ScreensTest : ScreenTest() {
     @Test
     fun homeShowsTheDayRenoaOnTopAndWhoeverHasSomethingToSay() {
         home(seconds = 3.97f)
-        compose.onNodeWithText("Good evening.").assertIsDisplayed()
-        compose.onNodeWithText("THU 7:40 PM").assertIsDisplayed()
         compose.onNode(hasContentDescription("Today. Morning brief ran at 7:30 AM. GitHub check ran at 6:30 PM. Optimus: Three projects", substring = true)).assertIsDisplayed()
         compose.onNode(hasContentDescription("Prices and groceries failed at 7:15 PM. Tifa asks: What's the plan for dinner? You were light on fibre at lunch. Posts worth a reply at 8 PM. Evening check-in at 9 PM.", substring = true)).assertExists()
         compose.onNodeWithText("Next: Posts worth a reply at 8 PM \u00b7 2 ran \u00b7 1 didn\u2019t finish").assertIsDisplayed()
@@ -218,9 +215,8 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithText("Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").assertIsDisplayed()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
         onList(hasText("Three projects are trending on GitHub that fit what you build. I can walk you through them tonight.")).assertIsDisplayed()
-        onList(hasText("QUIET")).assertIsDisplayed()
         onList(hasText("\u201cPrices and groceries\u201d didn\u2019t finish")).assertIsDisplayed()
-        onList(hasContentDescription("Meet someone new")).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Meet someone new").assertIsDisplayed()
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToIndex(0)
         snapshot("home")
     }
@@ -253,7 +249,7 @@ class ScreensTest : ScreenTest() {
         onList(hasContentDescription("Echo, asleep")).performClick()
         assertEquals("echo", opened.last())
 
-        onList(hasContentDescription("Meet someone new")).performClick()
+        compose.onNodeWithContentDescription("Meet someone new").performClick()
         assertEquals(1, made)
     }
 
@@ -278,65 +274,43 @@ class ScreensTest : ScreenTest() {
         openPages()
         compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
         compose.onNodeWithText("Paused").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Lunch photo").performClick()
+        compose.onNode(isToggleable() and hasText("Lunch photo")).performClick()
         compose.waitForIdle()
         assertTrue(repository.routines.value.first { it.id == "lunch" }.on)
         compose.onNodeWithText("Next: tomorrow at 1 PM").assertIsDisplayed()
 
         compose.onNodeWithText("Upcoming").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("LATER TODAY").assertIsDisplayed()
+        compose.onNodeWithText("Later today").assertIsDisplayed()
         compose.onNodeWithText("Posts worth a reply").assertIsDisplayed()
-        compose.onNodeWithText("TOMORROW").assertIsDisplayed()
+        compose.onNodeWithText("Tomorrow").assertIsDisplayed()
         snapshot("home-upcoming")
 
         compose.activity.onBackPressedDispatcher.onBackPressed()
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
-        compose.onNodeWithText("LATER TODAY").assertDoesNotExist()
-        compose.onNodeWithText("Chats").assertIsDisplayed()
+        compose.onNodeWithText("Later today").assertDoesNotExist()
+        compose.onNode(hasText("Agents") and isSelected()).assertIsDisplayed()
     }
 
     @Test
-    fun theStripsLineOpensRoutinesAndASwipeUpTheShelfOpensChats() {
+    fun theStripsLineOpensRoutinesAndTheAgentsTabComesBack() {
         home()
         compose.onNodeWithText("Next: Posts worth a reply at 8 PM \u00b7 2 ran \u00b7 1 didn\u2019t finish").performClick()
         compose.waitForIdle()
         compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
-        compose.activity.onBackPressedDispatcher.onBackPressed()
+        compose.onNode(hasText("Agents") and isSelectable()).performClick()
         compose.waitForIdle()
-
-        compose.onNodeWithText("Routines").performTouchInput { swipeUp(startY = centerY, endY = centerY - 300f) }
-        compose.waitForIdle()
-        compose.onNode(hasText("Chats") and isSelected()).assertIsDisplayed()
+        compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertDoesNotExist()
+        compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
     }
 
     @Test
-    fun thePagesClosePulledDownFromTheTopAndSpringBackFromAShortPull() {
-        home()
-        openPages()
-        val page = compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM")
-        val close = compose.onNodeWithContentDescription("Back to Home")
-        val top = close.getBoundsInRoot().top
-        page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 200f, durationMillis = 800) }
-        compose.waitForIdle()
-        assertEquals(top, close.getBoundsInRoot().top, "a short pull springs back to where it started")
-
-        page.performTouchInput { swipeDown(startY = centerY, endY = centerY + 900f, durationMillis = 600) }
-        compose.waitForIdle()
-        compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
-        compose.onNodeWithText("Chats").assertIsDisplayed()
-    }
-
-    @Test
-    fun anEmptyPageStillClosesPulledDown() {
+    fun anEmptyRoutinesPageSaysHowToMakeOne() {
         val model = HomeViewModel(FakeAgentRepository(scope, now = { EVENING }, routineSeeds = emptyList()))
         show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
         compose.waitForIdle()
         openPages()
-        compose.onNodeWithText("No routines yet", substring = true).performTouchInput { swipeDown(startY = top, endY = top + 900f, durationMillis = 600) }
-        compose.waitForIdle()
-        compose.onNodeWithContentDescription("Back to Home").assertDoesNotExist()
+        compose.onNodeWithText("No routines yet", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -364,14 +338,13 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithText(CHECKING_IN).assertIsDisplayed()
         compose.onNodeWithContentDescription("Today.").assertIsDisplayed()
         compose.onNodeWithText("Make your first agent").assertDoesNotExist()
-        compose.onNodeWithText("Nobody is here yet.").assertDoesNotExist()
+        compose.onNodeWithText("Nobody is here yet").assertDoesNotExist()
         compose.onNodeWithText("Routines").assertDoesNotExist()
         snapshot("home-connecting")
 
         // Once Renoa says no one is here, Home says so and offers to make someone.
         known.value = true
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Today. Nothing runs today.").assertIsDisplayed()
         compose.onNodeWithText("Make your first agent").assertIsDisplayed()
         compose.onNodeWithText(CHECKING_IN).assertDoesNotExist()
     }
@@ -380,7 +353,7 @@ class ScreensTest : ScreenTest() {
     fun theColourChangeLivesOnTheMark() {
         var changed = 0
         home(onChangeColours = { changed++ })
-        compose.onNodeWithContentDescription("Renoa, change colours").performClick()
+        compose.onNodeWithContentDescription("Change colours").performClick()
         assertEquals(1, changed)
     }
 
@@ -431,8 +404,8 @@ class ScreensTest : ScreenTest() {
         assertTrue(intro.spanStyles.any { it.item.fontWeight == FontWeight.Bold && intro.text.substring(it.start, it.end) == "what I found" }, "bold")
         compose.onAllNodes(hasText("•", substring = true)).assertCountEquals(2)
         val dal = textOf(compose.onNode(hasText("brown rice", substring = true)))
-        val muted = ThemeName.Graphite.colors.muted
-        assertTrue(dal.spanStyles.any { it.item.background == muted && it.item.fontFamily == RenoaType.Code.fontFamily && dal.text.substring(it.start, it.end).trim() == "brown rice" }, "inline code")
+        val secondary = ThemeName.Graphite.colors.secondary
+        assertTrue(dal.spanStyles.any { it.item.background == secondary && it.item.fontFamily == RenoaType.Code.fontFamily && dal.text.substring(it.start, it.end).trim() == "brown rice" }, "inline code")
 
         // A code block scrolls sideways rather than wrapping, and its language puts no bar over it.
         val code = "val cups = mapOf(\"rice\" to 1, \"dal\" to 2, \"salt\" to 0, \"water\" to 4, \"ghee\" to 1)"

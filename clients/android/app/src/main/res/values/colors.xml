@@ -3,5 +3,5 @@
     <!-- Clay (part-model): the launcher icon's ground in either theme. -->
     <color name="ic_launcher_background">#C4553F</color>
     <!-- Paper's background, shown before the first frame; values-night has Graphite's. -->
-    <color name="window_background">#F5F6F3</color>
+    <color name="window_background">#FFFFFF</color>
 </resources>

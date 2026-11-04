@@ -64,9 +64,9 @@ class DiagramPageTest {
     }
 
     @Test
-    fun theKitIsPeleAsShippedAndRenoasSans() {
+    fun theKitIsPeleAsShippedAndInter() {
         assertTrue(kit.pele.startsWith("/*! Pele 1.12.0 | MIT License"), kit.pele.take(60))
-        val sans = context.resources.openRawResource(R.font.instrument_sans).use { it.readBytes() }
+        val sans = context.resources.openRawResource(live.renoa.design.R.font.inter).use { it.readBytes() }
         assertTrue(sans.contentEquals(Base64.getDecoder().decode(kit.font)))
     }
 
@@ -86,7 +86,7 @@ class DiagramPageTest {
             assertEquals(hex(colors.primary), variables["accent"])
             assertEquals(hex(colors.partSkills), variables["series-1"])
             assertEquals((1..8).map { "series-$it" }.toSet(), variables.keys.filter { it.startsWith("series-") }.toSet())
-            assertTrue(variables.getValue("font").startsWith("\"Instrument Sans\""))
+            assertTrue(variables.getValue("font").startsWith("\"Inter\""))
             page(
                 "flowchart TD\n  A[Check the fridge] --> B{Lentils left?}\n  B -->|Yes| C[Dal and rice]\n  B -->|No| D[Order groceries]\n  D --> C\n  C --> E[Salad on the side]",
                 theme,
