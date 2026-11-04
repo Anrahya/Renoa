@@ -269,7 +269,7 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun aRoutineIsTurnedOnFromItsPageAndWhatIsComingUpIsListed() {
+    fun aRoutineIsTurnedOnFromItsPageAndBackLeavesIt() {
         home()
         openPages()
         compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
@@ -278,17 +278,11 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
         assertTrue(repository.routines.value.first { it.id == "lunch" }.on)
         compose.onNodeWithText("Next: tomorrow at 1 PM").assertIsDisplayed()
-
-        compose.onNodeWithText("Upcoming").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithText("Later today").assertIsDisplayed()
-        compose.onNodeWithText("Posts worth a reply").assertIsDisplayed()
-        compose.onNodeWithText("Tomorrow").assertIsDisplayed()
-        snapshot("home-upcoming")
+        snapshot("home-routines")
 
         compose.activity.onBackPressedDispatcher.onBackPressed()
         compose.waitForIdle()
-        compose.onNodeWithText("Later today").assertDoesNotExist()
+        compose.onNodeWithText("Next: tomorrow at 1 PM").assertDoesNotExist()
         compose.onNode(hasText("Agents") and isSelected()).assertIsDisplayed()
     }
 

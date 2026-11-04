@@ -170,12 +170,12 @@ fun nextWords(routines: List<Routine>, now: ZonedDateTime): String =
     dayMarks(routines, now).firstOrNull { it.ran == null }?.let { "Next: ${it.routine.name} at ${clockTime(it.at.toLocalTime())}" }
         ?: "Nothing else is set for today"
 
-/** How far off a day is: the Upcoming page's headings, and how a time names its day. */
-enum class Horizon(val heading: String) {
-    Today("Later today"),
-    Tomorrow("Tomorrow"),
-    ThisWeek("This week"),
-    Later("Later"),
+/** How far off a day is, which names it in a time. */
+enum class Horizon {
+    Today,
+    Tomorrow,
+    ThisWeek,
+    Later,
     ;
 
     companion object {
@@ -214,25 +214,5 @@ fun routineStatus(routine: Routine, now: ZonedDateTime): String {
     return if (routine.lastRun?.outcome == RunOutcome.Failed) "$status · Last run failed" else status
 }
 
-/** One heading of the Upcoming page and the runs under it, each with its time as the row shows it. */
-data class UpcomingGroup(val horizon: Horizon, val runs: List<Pair<Routine, String>>)
-
-/** Every routine's next run from now on, under its [Horizon], soonest first. */
-fun upcoming(routines: List<Routine>, now: ZonedDateTime): List<UpcomingGroup> =
-    routines
-        .mapNotNull { r -> nextRun(r, now)?.let { r to it } }
-        .sortedBy { it.second }
-        .groupBy { (_, at) -> Horizon.of(at, now) }
-        .map { (horizon, group) ->
-            UpcomingGroup(
-                horizon,
-                group.map { (routine, at) ->
-                    routine to
-                        when (horizon) {
-                            Horizon.Today, Horizon.Tomorrow -> clockTime(at.toLocalTime())
-                            Horizon.ThisWeek -> "${at.format(WEEKDAY)} ${clockTime(at.toLocalTime())}"
-                            Horizon.Later -> at.format(DATE)
-                        }
-                },
-            )
-        }
+/** The routines page's order: each that is on by its next run, soonest (or overdue) first, then the rest as the roster has them. */
+fun soonestFirst(routines: List<Routine>): List<Routine> = routines.sortedWith(compareBy(nullsLast()) { routine -> routine.next.takeIf { routine.on } })

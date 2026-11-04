@@ -30,7 +30,7 @@ fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
     agents.sortedWith(compareBy<AgentSummary> { it.state.homeRank }.thenBy { !it.glance.unread })
 
 /** The Renoa tab's pages, in the order its segments show them. */
-enum class HomePage(val title: String) { Routines("Routines"), Upcoming("Upcoming") }
+enum class HomePage { Routines }
 
 /** What Home keeps of its own while the owner is in a chat and back. */
 private data class Local(
