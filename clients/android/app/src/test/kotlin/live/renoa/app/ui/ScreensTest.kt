@@ -404,8 +404,8 @@ class ScreensTest : ScreenTest() {
         assertTrue(intro.spanStyles.any { it.item.fontWeight == FontWeight.Bold && intro.text.substring(it.start, it.end) == "what I found" }, "bold")
         compose.onAllNodes(hasText("•", substring = true)).assertCountEquals(2)
         val dal = textOf(compose.onNode(hasText("brown rice", substring = true)))
-        val secondary = ThemeName.Graphite.colors.secondary
-        assertTrue(dal.spanStyles.any { it.item.background == secondary && it.item.fontFamily == RenoaType.Code.fontFamily && dal.text.substring(it.start, it.end).trim() == "brown rice" }, "inline code")
+        val ground = ThemeName.Graphite.colors.background
+        assertTrue(dal.spanStyles.any { it.item.background == ground && it.item.fontFamily == RenoaType.Code.fontFamily && dal.text.substring(it.start, it.end).trim() == "brown rice" }, "inline code")
 
         // A code block scrolls sideways rather than wrapping, and its language puts no bar over it.
         val code = "val cups = mapOf(\"rice\" to 1, \"dal\" to 2, \"salt\" to 0, \"water\" to 4, \"ghee\" to 1)"

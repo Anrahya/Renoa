@@ -1,47 +1,64 @@
+// Portions copyright 2026 Po Kai Lee and the Codync contributors.
+// Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0-Codync.txt.
+// The header, bubbles and composer are adapted from Codync apps/android `ChatScreen.kt`, `ChatRows.kt`
+// and `MessageComposer.kt` at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app.chat
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
@@ -52,24 +69,33 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.kyant.shapes.Capsule
+import com.kyant.shapes.RoundedRectangle
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Speaker
 import live.renoa.app.badge.Badge
+import live.renoa.app.badge.describe
 import live.renoa.app.theme.LocalReducedMotion
-import live.renoa.app.theme.Renoa
-import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaShapes
-import live.renoa.app.theme.RenoaType
-import live.renoa.app.ui.LinkLine
 import live.renoa.app.ui.AskCard
-import live.renoa.app.ui.Glyphs
-import live.renoa.app.ui.PathIcon
+import live.renoa.app.ui.LinkLine
+import live.renoa.design.Edge
+import live.renoa.design.GlassStage
+import live.renoa.design.Motion
+import live.renoa.design.Palette
+import live.renoa.design.ScrollEdge
+import live.renoa.design.Symbol
+import live.renoa.design.Type
+import live.renoa.design.bold
+import live.renoa.design.glass
+import live.renoa.design.plainButton
+import live.renoa.design.pressScale
+import live.renoa.design.rememberPress
+import live.renoa.design.semibold
 
 @Composable
 fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (String) -> Unit) {
     val state by viewModel.state.collectAsState()
-    val colors = Renoa.colors
     val agent = state.agent
     val list = rememberLazyListState()
     val focus = LocalFocusManager.current
@@ -90,34 +116,64 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     LaunchedEffect(state.messages.size) { viewModel.seen() }
     QuickWifi()
 
-    Box(Modifier.fillMaxSize().background(colors.background)) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-            Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Back", onClick = onBack), contentAlignment = Alignment.Center) {
-                    PathIcon(Glyphs.BACK, colors.foreground)
-                }
-                Row(
-                    Modifier.weight(1f).clickable(enabled = agent != null) { agent?.let { onOpenProfile(it.id) } }.padding(start = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (agent != null) Badge(agent.name, agent.state, 50.dp, primary = state.main, arriveAfterMillis = 0, hue = state.hue)
-                    Text(agent?.name.orEmpty(), style = RenoaType.Heading, color = colors.foreground)
-                }
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val density = LocalDensity.current
+    var composerHeight by remember { mutableIntStateOf(0) }
+    val under = with(density) { composerHeight.toDp() }
+    GlassStage(
+        Modifier.fillMaxSize().background(Palette.background),
+        chrome = {
+            ScrollEdge(Edge.Top, top + 84.dp)
+            ScrollEdge(Edge.Bottom, under + 4.dp, Modifier.align(Alignment.BottomCenter))
+            Header(state, onBack, onOpenProfile)
+            // Measured with the keyboard and navigation bar under it, so the last message clears them too.
+            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { composerHeight = it.height }.imePadding().navigationBarsPadding()) {
+                LinkLine(state.link, Modifier.padding(start = 24.dp, bottom = 6.dp))
+                state.notice?.let { Text(it, Modifier.padding(start = 24.dp, end = 24.dp, bottom = 6.dp), style = Type.footnote, color = Palette.danger) }
+                state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
+                Composer(state, agent?.name.orEmpty(), viewModel, send)
             }
-            if (!state.loaded) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(OPENING, style = RenoaType.Caption, color = colors.mutedForeground)
-                }
-            } else if (state.empty) {
-                Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
+        },
+    ) {
+        val padding = PaddingValues(top = top + 60.dp, bottom = under + 8.dp)
+        when {
+            !state.loaded ->
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { Text(OPENING, style = Type.footnote, color = Palette.secondary) }
+            state.empty ->
+                Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding), contentAlignment = Alignment.Center) {
                     ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
                 }
-            } else {
-                Messages(state, list, old, risen, parses, onRetry = viewModel::retry, onDiscard = viewModel::discard, Modifier.weight(1f))
+            else -> Messages(state, list, old, risen, parses, onRetry = viewModel::retry, onDiscard = viewModel::discard, padding)
+        }
+    }
+}
+
+/** The glass back button, and the agent with its state under its name, which opens its profile. */
+@Composable
+private fun Header(state: ChatUiState, onBack: () -> Unit, onOpenProfile: (String) -> Unit) {
+    val agent = state.agent
+    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 6.dp).padding(horizontal = 16.dp).height(44.dp)) {
+        val (source, pressed) = rememberPress()
+        Box(
+            Modifier
+                .align(Alignment.CenterStart)
+                .minimumInteractiveComponentSize()
+                .size(44.dp)
+                .glass(Capsule(), pressed = pressed)
+                .clickable(source, null, role = Role.Button, onClickLabel = "Back", onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) { Symbol("chevron.left", size = 32.dp, tint = Palette.text) }
+        if (agent != null) {
+            Column(
+                Modifier.align(Alignment.Center).plainButton { onOpenProfile(agent.id) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Badge(agent.name, agent.state, 26.dp, primary = state.main, arriveAfterMillis = 0, hue = state.hue)
+                    Text(agent.name, style = Type.body.semibold, color = Palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(if (state.working) "Working" else agent.state.describe().replaceFirstChar { it.uppercase() }, style = Type.caption, color = Palette.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
-            Composer(state, agent?.name.orEmpty(), viewModel, send)
         }
     }
 }
@@ -141,9 +197,8 @@ private fun Messages(
     parses: ParsedReplies,
     onRetry: (String) -> Unit,
     onDiscard: (String) -> Unit,
-    modifier: Modifier,
+    padding: PaddingValues,
 ) {
-    val colors = Renoa.colors
     val agent = state.agent
     val reduced = LocalReducedMotion.current
     val showsWorking = agent != null && state.working && state.streaming == null
@@ -158,19 +213,23 @@ private fun Messages(
     // Keyed on the last message too: what the owner says while the agent works sits under the working line.
     LaunchedEffect(newest, shown.lastOrNull()?.id) { if (follow) list.toNewest(reduced) }
     LazyColumn(
-        modifier.fillMaxWidth(),
+        Modifier.fillMaxSize(),
         state = list,
-        // Room under the newest message, so it does not sit on the composer, and a little over the oldest.
-        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
+        // Under the header and over the composer, which float over the conversation.
+        contentPadding = padding,
         reverseLayout = true,
-        verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.Top),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Top),
     ) {
         // Reversed layout: the first item sits at the bottom, nearest the composer.
         if (showsWorking) {
             item(key = WORKING) {
-                Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Badge(agent.name, agent.state, 56.dp, primary = state.main, hue = state.hue)
-                    WorkingLine(colors.foreground, agent.glance.doing, colors.mutedForeground)
+                Row(
+                    Modifier.padding(start = 16.dp, end = 56.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleAgent).padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Badge(agent.name, agent.state, 30.dp, primary = state.main, hue = state.hue)
+                    WorkingLine(Palette.text, agent.glance.doing, Palette.secondary)
                 }
             }
         }
@@ -186,7 +245,7 @@ private fun Messages(
 private fun Rise(animate: Boolean, content: @Composable () -> Unit) {
     val reduced = LocalReducedMotion.current
     val progress = remember { Animatable(if (animate && !reduced) 0f else 1f) }
-    LaunchedEffect(Unit) { if (progress.value < 1f) progress.animateTo(1f, tween(800, easing = RenoaEasing.Ease)) }
+    LaunchedEffect(Unit) { if (progress.value < 1f) progress.animateTo(1f, Motion.conversation()) }
     Box(Modifier.graphicsLayer { alpha = progress.value; translationY = (1f - progress.value) * 14.dp.toPx() }) { content() }
 }
 
@@ -195,49 +254,43 @@ private const val WORKING = "working"
 
 @Composable
 private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedReplies, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
-    val colors = Renoa.colors
     when (message.speaker) {
         Speaker.Owner ->
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.End) {
+            Column(Modifier.fillMaxWidth().padding(start = 56.dp, end = 16.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 // A message that did not go is the retry button, with its line under it.
                 Column(
                     if (message.notSent) Modifier.clickable(role = Role.Button, onClickLabel = "Retry") { onRetry(message.id) } else Modifier,
                     horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
                         message.text,
-                        Modifier
-                            .widthIn(max = 300.dp)
-                            .background(colors.secondary, RoundedCornerShape(RenoaShapes.Bubble, RenoaShapes.Bubble, 6.dp, RenoaShapes.Bubble))
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        style = RenoaType.Body,
-                        color = colors.foreground,
+                        Modifier.clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleUser).padding(horizontal = 16.dp, vertical = 10.dp),
+                        style = Type.body,
+                        color = Palette.text,
                     )
-                    if (message.notSent) Text("Didn't send · Tap to retry", style = RenoaType.Caption, color = colors.stateFailed)
+                    if (message.notSent) Text("Didn't send · Tap to retry", style = Type.caption2.bold, color = Palette.danger)
                 }
                 if (message.notSent) {
                     Box(
                         Modifier.heightIn(min = 48.dp).clickable(role = Role.Button) { onDiscard(message.id) }.padding(horizontal = 4.dp),
                         contentAlignment = Alignment.Center,
-                    ) {
-                        Text("Delete", style = RenoaType.Caption, color = colors.mutedForeground)
-                    }
+                    ) { Text("Delete", style = Type.footnote, color = Palette.secondary) }
                 }
             }
         Speaker.Event ->
             Text(
                 message.text,
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                style = RenoaType.Caption,
-                color = colors.mutedForeground,
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp),
+                style = Type.footnote,
+                color = Palette.tertiary,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        // The owner's own words stay plain; an agent's reply is markdown.
+        // The owner's own words stay plain; an agent's reply is markdown, in its bubble.
         Speaker.Agent -> {
-            val modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f)
+            val modifier = Modifier.padding(start = 16.dp, end = 40.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleAgent).padding(horizontal = 16.dp, vertical = 10.dp)
             // One for both, so a diagram drawn while the reply arrives stays drawn once the reply is whole.
             val diagrams = remember { ReplyDiagrams() }
             if (streaming) ArrivingReply(message.text, modifier, diagrams) else Reply(message.text, parses.of(message.id, message.text), modifier, diagrams)
@@ -245,53 +298,57 @@ private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedR
     }
 }
 
+/** The field in glass, and one button that turns between send and stop. */
 @Composable
 private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel, send: () -> Unit) {
-    val colors = Renoa.colors
-    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)) {
-        LinkLine(state.link, Modifier.padding(start = 8.dp, bottom = 6.dp))
-        state.notice?.let {
-            Text(it, Modifier.padding(start = 8.dp, bottom = 6.dp), style = RenoaType.Caption, color = colors.stateFailed)
-        }
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp), verticalAlignment = Alignment.Bottom) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .background(colors.card, RoundedCornerShape(RenoaShapes.Composer))
-                .border(1.dp, colors.input, RoundedCornerShape(RenoaShapes.Composer))
-                .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier.weight(1f).glass(RoundedRectangle(RenoaShapes.Composer)).animateContentSize(Motion.layoutSize).padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Box(Modifier.weight(1f).padding(vertical = 10.dp)) {
-                if (state.draft.isEmpty()) Text("Message $name".trim(), style = RenoaType.Body, color = colors.mutedForeground)
-                BasicTextField(
-                    value = state.draft,
-                    onValueChange = viewModel::onDraft,
-                    textStyle = RenoaType.Body.copy(color = colors.foreground),
-                    cursorBrush = SolidColor(colors.ring),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { send() }),
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Message $name".trim() },
-                )
-            }
-            val enabled = state.action != ComposerAction.Idle
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .alpha(if (enabled) 1f else 0.45f)
-                    .background(colors.primary, RoundedCornerShape(RenoaShapes.Composer - 6.dp))
-                    .semantics { contentDescription = if (state.action == ComposerAction.Stop) "Stop" else "Send" }
-                    .clickable(enabled = enabled, role = Role.Button) {
-                        if (state.action == ComposerAction.Stop) viewModel.stop() else send()
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (state.action == ComposerAction.Stop) {
-                    PathIcon(Glyphs.STOP, colors.primaryForeground, size = 16.dp)
-                } else {
-                    PathIcon(Glyphs.SEND, colors.primaryForeground, size = 18.dp)
-                }
-            }
+            BasicTextField(
+                value = state.draft,
+                onValueChange = viewModel::onDraft,
+                textStyle = Type.body.copy(color = Palette.text),
+                cursorBrush = SolidColor(Palette.accent),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { send() }),
+                maxLines = 8,
+                modifier = Modifier.weight(1f).padding(vertical = 10.dp).semantics { contentDescription = "Message $name".trim() },
+                decorationBox = { input ->
+                    Box {
+                        if (state.draft.isEmpty()) Text("Message $name".trim(), style = Type.body, color = Palette.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        input()
+                    }
+                },
+            )
+            SendButton(state.action, Modifier.padding(bottom = 4.dp)) { if (state.action == ComposerAction.Stop) viewModel.stop() else send() }
         }
+    }
+}
+
+/** Send or stop: its symbol swaps, its fill crossfades, and it dims while there is nothing to send. */
+@Composable
+private fun SendButton(action: ComposerAction, modifier: Modifier, onClick: () -> Unit) {
+    val enabled = action != ComposerAction.Idle
+    val fill by animateColorAsState(if (enabled) Palette.accentFill else Palette.accentDim, Motion.morph(), label = "Fill")
+    val ink by animateColorAsState(if (enabled) Palette.onAccent else Palette.tertiary, Motion.morph(), label = "Ink")
+    val (source, pressed) = rememberPress()
+    Box(
+        modifier
+            .pressScale(pressed)
+            .size(34.dp)
+            .clip(Capsule())
+            .background(fill)
+            .clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = if (action == ComposerAction.Stop) "Stop" else "Send" },
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedContent(
+            action == ComposerAction.Stop,
+            transitionSpec = { (fadeIn(Motion.morph()) + scaleIn(Motion.morph(), 0.6f)) togetherWith (fadeOut(Motion.morph()) + scaleOut(Motion.morph(), 0.6f)) },
+            label = "Symbol",
+        ) { stop -> if (stop) Symbol("stop.fill", size = 16.dp, tint = ink) else Symbol("arrow.up", size = 19.dp, tint = ink) }
     }
 }
