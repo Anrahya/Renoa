@@ -43,7 +43,7 @@ private data class Local(
 )
 
 data class HomeUiState(
-    /** Every agent, as the roster has them; [people] is Home's order. */
+    /** Every agent, as the roster has them. */
     val roster: List<AgentSummary> = emptyList(),
     /** The day's line and the notes agents left the owner. */
     val feed: Feed = Feed(),
@@ -60,8 +60,6 @@ data class HomeUiState(
     /** Whether Renoa has said who is here, or the phone kept what it last said. Until then an empty roster means not known yet, not no one. */
     val known: Boolean = true,
 ) {
-    val people: List<AgentSummary> get() = homeOrder(roster)
-
     val main: AgentSummary? get() = mainAgent(roster)
 
     val talks: TalkList get() = talks(roster, feed)

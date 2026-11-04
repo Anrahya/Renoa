@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,7 +92,8 @@ fun HomeScreen(
     }
     var lit by remember { mutableStateOf<String?>(null) }
     // The segment the Renoa tab opens on again.
-    var segment by remember { mutableStateOf(HomePage.entries.first()) }
+    var segment by rememberSaveable { mutableStateOf(HomePage.entries.first()) }
+    LaunchedEffect(state.page) { state.page?.let { segment = it } }
     val tab = if (state.page != null) HomeTab.Renoa else HomeTab.Agents
     val act =
         TalkActions(
@@ -113,13 +116,17 @@ fun HomeScreen(
             TopBar(state, tab, onChangeColours, onNewAgent)
             Box(Modifier.align(Alignment.BottomCenter), contentAlignment = Alignment.BottomCenter) {
                 ScrollEdge(Edge.Bottom, barSpace)
-                if (state.known) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // A refusal stays in sight above the bar, however far the list scrolled.
+                    state.notice?.let { Text(it, Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = Type.footnote, color = Palette.danger) }
+                    if (state.known) {
                     GlassTabBar(
                         tab,
                         listOf(TabItem(HomeTab.Agents, "Agents", "bubble.left.and.bubble.right.fill", 33.dp), TabItem(HomeTab.Renoa, "Renoa", "hexagon.fill")),
                         { picked -> if (picked == HomeTab.Agents) viewModel.close() else viewModel.open(segment) },
                         Modifier.padding(bottom = maxOf(bottom - 4.dp, 12.dp)),
                     )
+                    }
                 }
             }
         },
@@ -138,6 +145,7 @@ private fun TopBar(state: HomeUiState, tab: HomeTab, onChangeColours: () -> Unit
         val (source, pressed) = rememberPress()
         Box(
             Modifier
+                .minimumInteractiveComponentSize()
                 .size(44.dp)
                 .glass(Capsule(), pressed = pressed)
                 .clickable(source, null, role = Role.Button, onClick = onChangeColours)
@@ -155,6 +163,7 @@ private fun TopBar(state: HomeUiState, tab: HomeTab, onChangeColours: () -> Unit
         val (plus, plusPressed) = rememberPress()
         Box(
             Modifier
+                .minimumInteractiveComponentSize()
                 .size(44.dp)
                 .glass(Capsule(), pressed = plusPressed)
                 .clickable(plus, null, role = Role.Button, onClick = onNewAgent)
@@ -203,7 +212,6 @@ private fun AgentList(
                 items(listOf(talks.main) + talks.talking + talks.quiet, key = { it.agent.id }) { AgentRow(it, state.roster, now, lit == it.agent.id, act) }
             }
         }
-        state.notice?.takeIf { state.page == null }?.let { notice -> item(key = "notice") { Text(notice, Modifier.padding(vertical = 8.dp), style = Type.footnote, color = Palette.danger) } }
     }
 }
 

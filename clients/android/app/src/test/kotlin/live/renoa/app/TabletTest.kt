@@ -29,8 +29,8 @@ class TabletTest : ScreenTest() {
         val density = compose.activity.resources.displayMetrics.density
         val mark = compose.onNodeWithContentDescription("Change colours").fetchSemanticsNode().boundsInRoot
         val margin = (900 - MAX_CONTENT_WIDTH.value) / 2
-        // The owner's capsule sits 16dp inside the column's left edge, so the column starts at the margin: centred.
-        assertEquals(margin + 16, mark.left / density, 1f, "Home's left edge")
+        // The owner's capsule sits 18dp inside the column's left edge, its 48dp tap area 16dp in, so the column starts at the margin: centred.
+        assertEquals(margin + 18, mark.left / density, 1f, "Home's left edge")
         snapshot("tablet-home")
     }
 }

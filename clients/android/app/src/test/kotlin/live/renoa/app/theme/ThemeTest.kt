@@ -67,15 +67,12 @@ class ThemeTest {
     }
 
     @Test
-    fun anAgentsNameAndLineReadOnItsWash() {
+    fun anAgentsNameReadsOnTheGround() {
         for (theme in ThemeName.entries) {
             val c = theme.colors
             for (hue in AgentHue.entries.filter { it != AgentHue.Ink }) {
-                val wash = hue.wash(c)!!
-                for ((what, ink) in listOf("name" to hue.name(c)!!, "line" to c.mutedForeground, "time" to c.mutedForeground)) {
-                    val ratio = contrast(ink, wash)
-                    assertTrue(ratio >= 4.5f, "${theme.name}: ${hue.name}'s $what is only %.2f to 1 on its wash".format(ratio))
-                }
+                val ratio = contrast(hue.name(c)!!, c.background)
+                assertTrue(ratio >= 4.5f, "${theme.name}: ${hue.name}'s name is only %.2f to 1 on the ground".format(ratio))
             }
         }
     }

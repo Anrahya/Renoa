@@ -16,14 +16,14 @@ The Kotlin app shell. Three modules:
   refracts on Android 13 and later, blurs on 12, and falls back to a tinted surface below.
 - `:app` is the screens: theme (Graphite and Paper, on the design module's palette), the agent
   badge and its five state motions, Home with its Agents and Renoa tabs, Chat, create/edit
-  agent, and sign-in. Sign-in is real: a setup code (or the ID of a passkey the person already has), a passkey through Credential Manager, and a P-256
-  device key in the Android Keystore; the device credential is kept encrypted with a Keystore
-  key. The app signs in to `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for
-  this package and signing certificate (`deploy/README.md`). Once signed in, the screens run on
-  `RcpAgentRepository`: chat over `:rcp`, and making an agent or reading its profile through
-  the Host over the same connection. Tests use `FakeAgentRepository`. Passkeys need Android 9,
-  so `minSdk` is 28. The licences of the fonts, icons and diagram renderer (`licenses/`) ship
-  inside the APK as assets.
+  agent, and sign-in. Sign-in is real: a setup code (or the ID of a passkey the person already
+  has), a passkey through Credential Manager, and a P-256 device key in the Android Keystore;
+  the device credential is kept encrypted with a Keystore key. The app signs in to
+  `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for this package and signing
+  certificate (`deploy/README.md`). Once signed in, the screens run on `RcpAgentRepository`:
+  chat over `:rcp`, and making an agent or reading its profile through the Host over the same
+  connection. Tests use `FakeAgentRepository`. Passkeys need Android 9, so `minSdk` is 28. The
+  licences of the fonts, icons and diagram renderer (`licenses/`) ship inside the APK as assets.
 
 ## Push wake-ups
 

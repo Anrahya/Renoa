@@ -33,9 +33,6 @@ enum class AgentHue {
             Ochre -> colors.partLoop
         }
 
-    /** The faint wash behind the agent's row on Home, or null for ink, which keeps the ground. */
-    fun wash(colors: RenoaColors): Color? = face(colors)?.let { lerp(colors.background, it, 0.09f) }
-
     /** The agent's name in its colour, eased toward the foreground so it reads as text; null for ink. */
     fun name(colors: RenoaColors): Color? = face(colors)?.let { lerp(it, colors.foreground, 0.3f) }
 

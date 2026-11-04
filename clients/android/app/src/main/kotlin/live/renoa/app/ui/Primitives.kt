@@ -1,41 +1,23 @@
 package live.renoa.app.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.PathParser
-import androidx.compose.ui.res.colorResource
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
-import live.renoa.app.R
 import live.renoa.app.badge.hexPath
-import live.renoa.app.theme.LocalMotionClock
-import live.renoa.app.theme.LocalReducedMotion
-import live.renoa.app.theme.RenoaEasing
 
 /** Parses SVG path data once per distinct string. */
 @Composable
@@ -62,9 +44,6 @@ object Glyphs {
     /** CaretUp. */
     const val OPEN_UP = "M213.66,165.66a8,8,0,0,1-11.32,0L128,91.31,53.66,165.66a8,8,0,0,1-11.32-11.32l80-80a8,8,0,0,1,11.32,0l80,80A8,8,0,0,1,213.66,165.66Z"
 
-    /** CaretDown. */
-    const val CLOSE_DOWN = "M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"
-
     /** X. */
     const val CLOSE = "M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"
 
@@ -79,16 +58,6 @@ object Glyphs {
 
     /** Stop, fill weight. */
     const val STOP = "M216,56V200a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V56A16,16,0,0,1,56,40H200A16,16,0,0,1,216,56Z"
-}
-
-/** The app icon, [size] across: Renoa waving on clay, as the launcher shows her. */
-@Composable
-fun RenoaIcon(size: Dp, modifier: Modifier = Modifier) {
-    Box(modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(colorResource(R.color.ic_launcher_background)), contentAlignment = Alignment.Center) {
-        // The launcher shows the middle 72 of the icon's 108 units, and the art fills 0.8 of that safe
-        // for round masks; a square has no such corners to clear, so the art fills it.
-        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.requiredSize(size * 1.5f / 0.8f))
-    }
 }
 
 /** Draws the Renoa mark, an ink core with six outlined tiles around it, one pulled out as if mid-swap, [size] across, centred on [centre]. */

@@ -36,7 +36,7 @@ import live.renoa.design.Type
 import live.renoa.design.semibold
 import java.time.ZonedDateTime
 
-/** The Renoa tab: its pages side by side under one segmented choice, [page] showing. */
+/** The Renoa tab: one segmented choice over its pages, [page] showing, each fading in for the last. */
 @Composable
 internal fun RenoaTab(state: HomeUiState, now: ZonedDateTime, page: HomePage, onPage: (HomePage) -> Unit, onSwitch: (String, Boolean) -> Unit, top: Dp, bottom: Dp) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = top + 64.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -49,7 +49,6 @@ internal fun RenoaTab(state: HomeUiState, now: ZonedDateTime, page: HomePage, on
                 }
             }
         }
-        state.notice?.let { notice -> item(key = "notice") { Text(notice, style = Type.footnote, color = Palette.danger) } }
     }
 }
 

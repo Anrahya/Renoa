@@ -13,7 +13,7 @@ import java.time.Instant
  * One agent's row on Home. [line] is its question, else its newest note, else its newest failed
  * routine, else what it is doing or last said; [note] is the note the line shows, which opening the
  * row puts away, so a note the row does not show stays for later; [problem] is its newest failed
- * routine, which can run again.
+ * routine, which can run again; [partner] is the agent it is working with, if any.
  */
 data class Talk(
     val agent: AgentSummary,
@@ -22,6 +22,7 @@ data class Talk(
     val ask: Ask?,
     val note: Note?,
     val problem: Note?,
+    val partner: AgentSummary? = null,
 ) {
     /** The owner is the one who has to act: a question, or an agent that cannot go on. */
     val needsOwner: Boolean get() = ask != null || agent.state.needsOwner
@@ -36,7 +37,7 @@ data class TalkList(val main: Talk?, val talking: List<Talk>, val quiet: List<Ta
 
 fun talks(roster: List<AgentSummary>, feed: Feed): TalkList {
     val main = mainAgent(roster)
-    val all = homeOrder(roster).map { talk(it, feed, today = feed.today.takeIf { _ -> it.id == main?.id }) }
+    val all = homeOrder(roster).map { agent -> talk(agent, feed, today = feed.today.takeIf { agent.id == main?.id }, partner = roster.firstOrNull { it.id == agent.glance.with }) }
     val (talking, quiet) = all.filter { it.agent.id != main?.id }.partition { it.saysSomething() }
     return TalkList(
         all.firstOrNull { it.agent.id == main?.id },
@@ -47,7 +48,7 @@ fun talks(roster: List<AgentSummary>, feed: Feed): TalkList {
 
 private fun Talk.saysSomething(): Boolean = needsOwner || note != null || agent.state == AgentState.Working || agent.glance.unread
 
-private fun talk(agent: AgentSummary, feed: Feed, today: String?): Talk {
+private fun talk(agent: AgentSummary, feed: Feed, today: String?, partner: AgentSummary?): Talk {
     val mine = feed.notes.filter { it.agentId == agent.id }
     val notes = mine.filter { it.kind != NoteKind.Problem }
     val problem = mine.firstOrNull { it.kind == NoteKind.Problem }
@@ -58,8 +59,12 @@ private fun talk(agent: AgentSummary, feed: Feed, today: String?): Talk {
             ?: note?.words
             ?: problem?.title
             ?: today
-            ?: (if (agent.state == AgentState.Working) glance.doing?.let { "$it…" } ?: "Working on it…" else null)
+            ?: (if (agent.state == AgentState.Working) working(glance.doing, partner) else null)
             ?: glance.line
     val at = listOfNotNull(glance.ask?.at, notes.firstOrNull()?.at).maxOrNull()
-    return Talk(agent, line, at, glance.ask, note, problem)
+    return Talk(agent, line, at, glance.ask, note, problem, partner)
 }
+
+/** What a working agent's line says: who it works with and what it is doing. */
+private fun working(doing: String?, partner: AgentSummary?): String =
+    listOfNotNull(partner?.let { "With ${it.name}" }, doing?.let { "$it…" }).joinToString(" · ").ifEmpty { "Working on it…" }

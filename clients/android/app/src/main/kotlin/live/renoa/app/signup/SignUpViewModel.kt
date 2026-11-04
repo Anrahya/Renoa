@@ -24,7 +24,7 @@ val DAY_PHRASES = listOf("I cook at home", "I work from home", "I'm a student", 
 
 /**
  * The lines sign-up keeps in the owner's profile, which every agent reads as written. Agents may
- * rewrite the profile later, so the app reads these lines only to resume sign-up and to greet. A
+ * rewrite the profile later, so the app reads these lines only to resume sign-up and to show the owner's initial. A
  * change touches one line and leaves every other byte of the profile as it was.
  */
 internal object ProfileLines {

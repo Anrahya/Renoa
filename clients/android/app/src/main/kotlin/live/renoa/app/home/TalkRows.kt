@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,7 +56,8 @@ private fun Talk.time(now: ZonedDateTime): String? =
 
 /**
  * One agent: its face, its name in a touch of its colour and when it last spoke, then its line: a
- * question, a note, a failed routine, what it is doing, or what it last said. A question shows its
+ * question, a note, a failed routine, what it is doing and with whom, or what it last said; an
+ * agent working with another wears that one's small face on its own. A question shows its
  * answers under it; a failed routine, once nothing is asked, a way to run it again. A row [lit]
  * from the day strip shows its ground.
  */
@@ -74,7 +76,10 @@ internal fun AgentRow(talk: Talk, roster: List<AgentSummary>, now: ZonedDateTime
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Badge(talk.agent, roster, 46.dp)
+            Box(Modifier.size(46.dp)) {
+                Badge(talk.agent, roster, 46.dp)
+                talk.partner?.let { Badge(it, roster, 22.dp, Modifier.align(Alignment.BottomEnd).offset(5.dp, 5.dp), label = "") }
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val name = AgentHue.of(talk.agent.id, roster).name(colors) ?: Palette.text
@@ -91,7 +96,7 @@ internal fun AgentRow(talk: Talk, roster: List<AgentSummary>, now: ZonedDateTime
                             talk.agent.state == AgentState.Working || !glance.unread -> Palette.secondary
                             else -> Palette.text
                         }
-                    Text(talk.line.orEmpty(), Modifier.weight(1f), style = Type.subheadline, color = ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    talk.line?.let { Text(it, Modifier.weight(1f), style = Type.subheadline, color = ink, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     if (glance.unread) Unread()
                 }
             }
