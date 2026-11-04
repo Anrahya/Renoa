@@ -64,11 +64,11 @@ import live.renoa.design.rememberPress
 import live.renoa.design.semibold
 import java.time.ZonedDateTime
 
-/** Home's two tabs: the agents, and Renoa's own pages. */
+/** Home's two tabs: the agents, and Renoa's routines. */
 private enum class HomeTab { Agents, Renoa }
 
 /**
- * Home is the owner's agents, with the day on top, and a tab of Renoa's own pages beside them. The
+ * Home is the owner's agents, with the day on top, and a tab of Renoa's routines beside them. The
  * bars float as glass over both. Until it is [HomeUiState.known] who is here, Home says it is
  * checking in. The Renoa tab shows while a [HomeUiState.page] is open.
  */

@@ -29,7 +29,7 @@ import java.util.UUID
 fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
     agents.sortedWith(compareBy<AgentSummary> { it.state.homeRank }.thenBy { !it.glance.unread })
 
-/** The Renoa tab's pages, in the order its segments show them. */
+/** The Renoa tab's pages. Routines is the only one so far. */
 enum class HomePage { Routines }
 
 /** What Home keeps of its own while the owner is in a chat and back. */
@@ -121,7 +121,7 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
         }
     }
 
-    /** Shows the Renoa tab on [page], or turns it to another. It stays shown while the owner visits a chat from it. */
+    /** Shows the Renoa tab on [page]; opening the page already shown keeps its notice. It stays shown while the owner visits a chat from it. */
     fun open(page: HomePage) = local.update { if (it.page == page) it else it.copy(page = page, notice = if (it.page == null) null else it.notice) }
 
     /** Goes back to the agents. A notice shown on the Renoa tab goes with it. */

@@ -89,6 +89,8 @@ class HomeViewModelTest {
             assertFalse(vm.state.value.isOn(vm.state.value.routines.first { it.id == "lunch" }), "back to what Renoa last said")
         }
 
+        vm.open(HomePage.Routines)
+        assertEquals(words.getValue(Problem.Unavailable), vm.state.value.notice, "opening the page again keeps it")
         vm.close()
         assertNull(vm.state.value.notice, "it does not follow the owner back to Home")
     }

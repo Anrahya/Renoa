@@ -272,6 +272,9 @@ class ScreensTest : ScreenTest() {
     fun aRoutineIsTurnedOnFromItsPageAndBackLeavesIt() {
         home()
         openPages()
+        val shown = listOf("Morning brief", "Lunch photo", "GitHub check", "Prices and groceries", "Posts worth a reply", "Evening check-in")
+        val order = shown.sortedBy { compose.onNode(isToggleable() and hasText(it)).fetchSemanticsNode().boundsInRoot.top }
+        assertEquals(listOf("Posts worth a reply", "Evening check-in", "Morning brief", "GitHub check", "Prices and groceries", "Lunch photo"), order, "soonest first, the paused one last")
         compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
         compose.onNodeWithText("Paused").assertIsDisplayed()
         compose.onNode(isToggleable() and hasText("Lunch photo")).performClick()
