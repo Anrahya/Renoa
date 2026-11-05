@@ -313,7 +313,7 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel,
     if (state.files.isNotEmpty()) PickedFiles(state.files, viewModel::unattach, Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp))
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp), verticalAlignment = Alignment.Bottom) {
         Row(
-            Modifier.weight(1f).glass(RoundedRectangle(RenoaShapes.Composer)).animateContentSize(Motion.layoutSize).padding(start = 8.dp, top = 6.dp, bottom = 6.dp),
+            Modifier.weight(1f).glass(RoundedRectangle(RenoaShapes.Composer)).animateContentSize(Motion.layoutSize).padding(vertical = 6.dp),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {

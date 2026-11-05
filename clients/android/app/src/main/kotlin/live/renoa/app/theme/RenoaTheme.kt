@@ -19,17 +19,18 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.toArgb
-import androidx.core.graphics.drawable.toDrawable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toDrawable
 import live.renoa.design.DesignTheme
+import live.renoa.design.OverlayRoot
 import live.renoa.design.Type
 import live.renoa.design.bold
 import live.renoa.design.medium
@@ -106,7 +107,10 @@ fun RenoaTheme(
             LocalRenoaColors provides colors,
             LocalReducedMotion provides reducedMotion,
             LocalMotionClock provides clock,
-        ) { content() }
+        ) {
+            // Menus and sheets draw above every screen, in the app's own window.
+            OverlayRoot(content)
+        }
     }
 }
 
