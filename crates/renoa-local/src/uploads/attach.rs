@@ -8,11 +8,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use renoa_agent::ContentBlock;
 use uuid::Uuid;
 
 use super::{FILE, UploadError, Uploads, read_record};
+use crate::images::{inline_image, shown_size};
 use crate::workspace::hex_sha256;
 
 /// The folder of an agent's workspace that attached files are copied into.
@@ -21,10 +21,6 @@ const FOLDER: &str = "attachments";
 /// The most bytes a file name may have on Linux file systems: the copy's name,
 /// mark included, must fit it whatever name the command carried.
 const MAX_NAME_BYTES: usize = 255;
-
-/// The longest base64 image shown to the model: Anthropic's API refuses an
-/// image over 5 MiB. A larger one is still copied into the workspace.
-const MAX_INLINE_IMAGE_BASE64_BYTES: usize = 5 * 1024 * 1024;
 
 impl Uploads {
     /// What a turn receives for upload `id`, attached under `name`: a line
@@ -69,16 +65,20 @@ fn attach(
             "The attached file {name:?} arrived, but every name it could take in {FOLDER}/ holds another file."
         ))]);
     };
-    let mut blocks = vec![ContentBlock::text(format!(
-        "Attached file: {path} ({}).",
-        shown_size(bytes.len())
-    ))];
-    if let Some(mime_type) = image_type(&bytes)
-        && bytes.len().div_ceil(3) * 4 <= MAX_INLINE_IMAGE_BASE64_BYTES
-    {
-        blocks.push(ContentBlock::image(STANDARD.encode(&bytes), mime_type));
-    }
-    Ok(blocks)
+    let size = shown_size(bytes.len());
+    // The line says the image is here, or a model may take the path for a
+    // file it cannot open and never look at the image.
+    Ok(match inline_image(&bytes) {
+        Some(image) => vec![
+            ContentBlock::text(format!(
+                "Attached image, included here so you can see it: {path} ({size})."
+            )),
+            image,
+        ],
+        None => vec![ContentBlock::text(format!(
+            "Attached file: {path} ({size})."
+        ))],
+    })
 }
 
 fn missing(name: &str) -> ContentBlock {
@@ -183,37 +183,9 @@ fn file_name(name: &str, reserve: usize) -> (String, String) {
     (stem[..end].to_owned(), extension)
 }
 
-/// The media type of an image a model can be shown, from its first bytes.
-fn image_type(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        Some("image/jpeg")
-    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        Some("image/gif")
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        Some("image/webp")
-    } else {
-        None
-    }
-}
-
-fn shown_size(bytes: usize) -> String {
-    const KIB: usize = 1024;
-    match bytes {
-        0..KIB => format!("{bytes} bytes"),
-        KIB..1_048_576 => format!("{} KB", bytes.div_ceil(KIB)),
-        _ => format!(
-            "{}.{} MB",
-            bytes / 1_048_576,
-            bytes % 1_048_576 * 10 / 1_048_576
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{file_name, image_type, shown_size};
+    use super::file_name;
 
     #[test]
     fn a_name_stays_in_the_folder_and_fits_with_its_mark() {
@@ -229,21 +201,5 @@ mod tests {
         let (stem, extension) = file_name(&format!("{}.pdf", "é".repeat(200)), 11);
         assert!(stem.len() + extension.len() + 11 <= 255);
         assert_eq!(extension, ".pdf");
-    }
-
-    #[test]
-    fn images_are_known_by_their_bytes() {
-        assert_eq!(image_type(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
-        assert_eq!(image_type(b"\x89PNG\r\n\x1a\n...."), Some("image/png"));
-        assert_eq!(image_type(b"GIF89a.."), Some("image/gif"));
-        assert_eq!(image_type(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
-        assert_eq!(image_type(b"%PDF-1.7"), None);
-    }
-
-    #[test]
-    fn sizes_read_plainly() {
-        assert_eq!(shown_size(900), "900 bytes");
-        assert_eq!(shown_size(312 * 1024 - 5), "312 KB");
-        assert_eq!(shown_size(3 * 1_048_576 + 524_288), "3.5 MB");
     }
 }

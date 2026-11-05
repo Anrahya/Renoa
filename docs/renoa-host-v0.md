@@ -580,8 +580,9 @@ completed uploads. The node copies each into the agent's workspace under
 `attachments/`, keeping the name unless another file holds it, then adding the
 start of the file's hash, and gives the turn the command's text, a line naming each
 copy, and each image (JPEG, PNG, GIF or WebP, known by its bytes, up to 5 MiB in
-base64) as an image block. A model without image input receives the adapter's
-placeholder. An upload the command's principal did not complete becomes a line
+base64) as an image block; an image's line says the image is included, so the
+model looks at it rather than at the path. A model without image input receives
+the adapter's placeholder. An upload the command's principal did not complete becomes a line
 saying it did not arrive. Attaching the same upload again reuses the copy, so a
 retried turn copies nothing twice.
 
@@ -825,6 +826,10 @@ bash
 grep
 find
 ```
+
+`read_file` returns a JPEG, PNG, GIF or WebP file, known by its bytes and no larger
+than an image block may be, as a line and the image itself; a larger image is
+refused with a request to read a smaller copy.
 
 An explicit creation selection replaces the optional template's tools, including
 `tools: []`. Without a template or a selection, a new agent has no machine tools.

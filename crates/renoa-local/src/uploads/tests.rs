@@ -323,7 +323,7 @@ async fn an_attached_image_is_copied_once_and_shown() {
     let blocks = attach().await.expect("attached");
     assert_eq!(
         texts(&blocks),
-        ["Attached file: attachments/fridge.jpg (604 bytes)."]
+        ["Attached image, included here so you can see it: attachments/fridge.jpg (604 bytes)."]
     );
     assert!(matches!(
         &blocks[1],

@@ -5,11 +5,12 @@ use renoa_agent::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt as _, BufReader};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     atomic_file::{content_hash, replace},
+    images::{MAX_INLINE_IMAGE_BYTES, image_type, inline_image, shown_size},
     output::{HeadOutput, MAX_TOOL_OUTPUT_BYTES, MAX_TOOL_OUTPUT_LINES, truncation_notice},
     tool_error::io_error,
     tool_input::{bounded_limit, decode, non_empty},
@@ -91,11 +92,13 @@ impl ReadFile {
             root,
             spec: ToolSpec {
                 name: "read_file".to_owned(),
-                description: concat!(
-                    "Read UTF-8 text from a workspace file. Line offsets are 1-based. ",
-                    "Output is capped at 2,000 lines or 50 KiB; continue with the returned offset."
-                )
-                .to_owned(),
+                description: format!(
+                    "Read UTF-8 text from a workspace file. Line offsets are 1-based. \
+                     Output is capped at 2,000 lines or 50 KiB; continue with the returned offset. \
+                     A JPEG, PNG, GIF or WebP image up to {} is returned as the image itself, \
+                     so you can look at it; offset and limit do not apply to it.",
+                    shown_size(MAX_INLINE_IMAGE_BYTES)
+                ),
                 input_schema: object_schema(
                     &["path"],
                     &json!({
@@ -140,6 +143,9 @@ impl Tool for ReadFile {
             }
             let limit = bounded_limit(input.limit, MAX_TOOL_OUTPUT_LINES)?;
             let path = existing_file(&self.root, &input.path).await?;
+            if let Some(image) = read_image(&path, &input.path).await? {
+                return Ok(image);
+            }
             let page = read_page(&path, offset, limit, &cancellation).await?;
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(page.text)],
@@ -155,6 +161,58 @@ impl Tool for ReadFile {
             })
         })
     }
+}
+
+/// The file at `path` as an image the model can look at, when its first bytes
+/// say it is one; `None` for any other file.
+async fn read_image(path: &PathBuf, shown_path: &str) -> Result<Option<ToolOutput>, ToolError> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| io_error("open file", &error, false))?;
+    let mut head = Vec::with_capacity(12);
+    (&mut file)
+        .take(12)
+        .read_to_end(&mut head)
+        .await
+        .map_err(|error| io_error("read file", &error, false))?;
+    let Some(mime_type) = image_type(&head) else {
+        return Ok(None);
+    };
+    let size = file
+        .metadata()
+        .await
+        .map_err(|error| io_error("read file", &error, false))?
+        .len();
+    let size = usize::try_from(size).unwrap_or(usize::MAX);
+    if size > MAX_INLINE_IMAGE_BYTES {
+        return Err(ToolError::invalid_input(format!(
+            "{shown_path} is a {mime_type} image of {}; an image you are shown is at most {}. \
+             Make a smaller copy with bash and read that.",
+            shown_size(size),
+            shown_size(MAX_INLINE_IMAGE_BYTES)
+        )));
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|error| io_error("read file", &error, false))?;
+    // The file may have changed since its first bytes were read.
+    let Some(image) = inline_image(&bytes) else {
+        return Err(ToolError::invalid_input(format!(
+            "{shown_path} changed while it was read; read it again."
+        )));
+    };
+    Ok(Some(ToolOutput {
+        content: vec![
+            ContentBlock::text(format!(
+                "{shown_path} is an image ({}), shown here.",
+                shown_size(bytes.len())
+            )),
+            image,
+        ],
+        details: Some(json!({ "path": path, "mime_type": mime_type, "bytes": bytes.len() })),
+        is_error: false,
+        closing: None,
+    }))
 }
 
 struct ReadPage {
