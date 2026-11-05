@@ -447,6 +447,81 @@ mod security_behaviors {
     }
 
     #[tokio::test]
+    async fn a_submit_the_binding_refuses_is_answered_under_its_request_and_the_session_goes_on() {
+        let files = TempDir::new().expect("temporary directory");
+        let coordinator =
+            Coordinator::open(files.path().join("control.sqlite")).expect("open coordinator store");
+        let server = TestServer::start(&coordinator).await;
+        let credentials = enroll_peer(
+            &coordinator,
+            &server.url,
+            PeerIdentity::Surface {
+                principal_id: PrincipalId::new(),
+                surface: SurfaceRef::new("typescript"),
+            },
+        )
+        .await;
+        let mut socket = authenticate(&server.url, &credentials).await;
+        // An attachment name with a control character, which the binding
+        // refuses as it reads the frame, before any handler sees it.
+        let submit = serde_json::json!({
+            "type": "submit",
+            "request_id": 7,
+            "task_id": TaskId::new(),
+            "command_id": CommandId::new(),
+            "input": {
+                "type": "text",
+                "text": "look",
+                "attachments": [{
+                    "uploadId": uuid::Uuid::new_v4(),
+                    "name": "a\u{7}b",
+                    "mimeType": "image/jpeg",
+                }],
+            },
+        });
+        let largest = 9_007_199_254_740_991_u64;
+        // Each refused frame with the request id its refusal names.
+        let frames = [
+            (Some(7), submit.to_string()),
+            (
+                Some(largest),
+                serde_json::json!({"type": "no_such_operation", "request_id": largest}).to_string(),
+            ),
+            (None, "not json".to_owned()),
+            (None, "[7]".to_owned()),
+            (
+                None,
+                r#"{"type": "no_such_operation", "request_id": "7"}"#.to_owned(),
+            ),
+        ];
+        for (named, frame) in frames {
+            socket
+                .send(Message::Text(frame.clone().into()))
+                .await
+                .expect("send a refused frame");
+            let refusal = receive(&mut socket).await;
+            assert!(
+                matches!(
+                    &refusal,
+                    ServerMessage::Error {
+                        request_id,
+                        code: ErrorCode::InvalidMessage,
+                        ..
+                    } if *request_id == named
+                ),
+                "{frame}: {refusal:?}"
+            );
+        }
+
+        send(&mut socket, &ClientMessage::ListTasks { request_id: 8 }).await;
+        assert!(matches!(
+            receive(&mut socket).await,
+            ServerMessage::TaskList { request_id: 8, .. }
+        ));
+        server.stop().await;
+    }
+
+    #[tokio::test]
     async fn json_binding_rejects_integers_that_javascript_cannot_preserve() {
         let files = TempDir::new().expect("temporary directory");
         let coordinator =
@@ -463,58 +538,79 @@ mod security_behaviors {
         .await;
         let mut socket = authenticate(&server.url, &credentials).await;
         let unsafe_integer = 9_007_199_254_740_992_u64;
+        // Each frame with the request id its refusal names: one an unsafe
+        // integer would round names none.
         let messages = [
-            serde_json::json!({
-                "type": "list_tasks",
-                "request_id": unsafe_integer,
-            }),
-            serde_json::json!({
-                "type": "attach",
-                "request_id": 1,
-                "task_id": TaskId::new(),
-                "after_sequence": unsafe_integer,
-                "live": false,
-            }),
-            serde_json::json!({
-                "type": "publish_execution_events",
-                "task_id": TaskId::new(),
-                "command_id": CommandId::new(),
-                "events": [{
-                    "eventId": uuid::Uuid::new_v4(),
-                    "executionId": uuid::Uuid::new_v4(),
-                    "sequence": 0,
-                    "recordedAtMs": unsafe_integer,
-                    "kind": { "type": "execution_started" },
-                }],
-            }),
-            serde_json::json!({
-                "type": "stop_command",
-                "request_id": unsafe_integer,
-                "task_id": TaskId::new(),
-                "command_id": CommandId::new(),
-            }),
+            (
+                None,
+                serde_json::json!({
+                    "type": "list_tasks",
+                    "request_id": unsafe_integer,
+                }),
+            ),
+            (
+                Some(1),
+                serde_json::json!({
+                    "type": "attach",
+                    "request_id": 1,
+                    "task_id": TaskId::new(),
+                    "after_sequence": unsafe_integer,
+                    "live": false,
+                }),
+            ),
+            (
+                None,
+                serde_json::json!({
+                    "type": "publish_execution_events",
+                    "task_id": TaskId::new(),
+                    "command_id": CommandId::new(),
+                    "events": [{
+                        "eventId": uuid::Uuid::new_v4(),
+                        "executionId": uuid::Uuid::new_v4(),
+                        "sequence": 0,
+                        "recordedAtMs": unsafe_integer,
+                        "kind": { "type": "execution_started" },
+                    }],
+                }),
+            ),
+            (
+                None,
+                serde_json::json!({
+                    "type": "stop_command",
+                    "request_id": unsafe_integer,
+                    "task_id": TaskId::new(),
+                    "command_id": CommandId::new(),
+                }),
+            ),
             // A surface may not publish live activity at all, so only the
             // number check can make this InvalidMessage instead of InvalidRole.
-            serde_json::json!({
-                "type": "publish_live_activity",
-                "task_id": TaskId::new(),
-                "command_id": CommandId::new(),
-                "activity": { "type": "text_delta", "sequence": unsafe_integer, "text": "x" },
-            }),
+            (
+                None,
+                serde_json::json!({
+                    "type": "publish_live_activity",
+                    "task_id": TaskId::new(),
+                    "command_id": CommandId::new(),
+                    "activity": { "type": "text_delta", "sequence": unsafe_integer, "text": "x" },
+                }),
+            ),
         ];
-        for message in messages {
+        for (named, message) in messages {
             socket
                 .send(Message::Text(message.to_string().into()))
                 .await
                 .expect("send non-interoperable integer");
-            assert!(matches!(
-                receive(&mut socket).await,
-                ServerMessage::Error {
-                    request_id: None,
-                    code: ErrorCode::InvalidMessage,
-                    ..
-                }
-            ));
+            let refusal = receive(&mut socket).await;
+            assert!(
+                matches!(
+                    &refusal,
+                    ServerMessage::Error {
+                        request_id,
+                        code: ErrorCode::InvalidMessage,
+                        ..
+                    } if *request_id == named
+                ),
+                "{refusal:?}"
+            );
         }
 
         send(&mut socket, &ClientMessage::ListTasks { request_id: 2 }).await;

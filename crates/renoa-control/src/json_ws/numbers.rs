@@ -10,6 +10,24 @@ pub(super) const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 
 impl ClientMessage {
+    /// The `request_id` of a frame that is not a valid client message, when
+    /// it is an object carrying one as an interoperable integer, so the
+    /// refusal names the request the surface sent.
+    pub(crate) fn refused_request_id(json: &str) -> Option<u64> {
+        #[derive(serde::Deserialize)]
+        struct Envelope {
+            request_id: u64,
+        }
+        // A derived struct also reads a JSON array, which is no frame.
+        if !json.trim_start().starts_with('{') {
+            return None;
+        }
+        serde_json::from_str::<Envelope>(json)
+            .ok()
+            .map(|envelope| envelope.request_id)
+            .filter(|request_id| interoperable(*request_id))
+    }
+
     pub(crate) fn has_interoperable_numbers(&self) -> bool {
         match self {
             Self::Enroll { .. }

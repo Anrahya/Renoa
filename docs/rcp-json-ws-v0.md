@@ -1188,8 +1188,13 @@ under the same `operation_id` and the Host answers from the receipt it recorded.
 }
 ```
 
-`request_id` is `null` when no surface request can be correlated. Valid codes
-are:
+`request_id` is `null` when no surface request can be correlated. A frame the
+coordinator refuses as `invalid_message` after authentication, because it is
+not a valid client frame, is answered under its `request_id` when it is a JSON
+object whose `request_id` is an integer in range (see Numbers), so a surface can
+drop the request it sent;
+any other such frame is answered with `null`. Either way the session goes on.
+Valid codes are:
 
 - `authentication_failed`
 - `invalid_message`

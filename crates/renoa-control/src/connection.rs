@@ -145,10 +145,10 @@ async fn serve_messages(
                 InboundMessage::Application(message) => message,
                 InboundMessage::Control => continue,
                 InboundMessage::Closed => break,
-                InboundMessage::Invalid => {
+                InboundMessage::Invalid(request_id) => {
                     send_error(
                         outgoing,
-                        None,
+                        request_id,
                         ErrorCode::InvalidMessage,
                         "message is not valid Renoa JSON",
                     )

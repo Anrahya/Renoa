@@ -14,7 +14,9 @@ pub(crate) enum InboundMessage {
     Application(ClientMessage),
     Control,
     Closed,
-    Invalid,
+    /// Not a valid client message, with the `request_id` it carries when one
+    /// can be read.
+    Invalid(Option<u64>),
 }
 
 pub(crate) async fn publish_task_event(state: &CoordinatorState, event: TaskEvent) {
@@ -58,13 +60,15 @@ pub(crate) async fn cleanup_connection(
 
 pub(crate) fn classify_message(message: Message) -> InboundMessage {
     match message {
-        Message::Text(json) => serde_json::from_str::<ClientMessage>(&json)
-            .ok()
-            .filter(ClientMessage::has_interoperable_numbers)
-            .map_or(InboundMessage::Invalid, InboundMessage::Application),
+        Message::Text(json) => match serde_json::from_str::<ClientMessage>(&json) {
+            Ok(message) if message.has_interoperable_numbers() => {
+                InboundMessage::Application(message)
+            }
+            _ => InboundMessage::Invalid(ClientMessage::refused_request_id(&json)),
+        },
         Message::Ping(_) | Message::Pong(_) => InboundMessage::Control,
         Message::Close(_) => InboundMessage::Closed,
-        Message::Binary(_) => InboundMessage::Invalid,
+        Message::Binary(_) => InboundMessage::Invalid(None),
     }
 }
 
@@ -81,7 +85,7 @@ pub(crate) async fn next_application_message(
                 InboundMessage::Application(message) => return Some(message),
                 InboundMessage::Control => {}
                 InboundMessage::Closed => return None,
-                InboundMessage::Invalid => {
+                InboundMessage::Invalid(_) => {
                     send_error(
                         outgoing,
                         None,
