@@ -637,6 +637,7 @@ mod delivery {
                     context: None,
                     author: renoa_protocol::Author::Principal,
                     quiet: false,
+                    attachments: Vec::new(),
                 },
             },
         )
@@ -668,6 +669,7 @@ mod delivery {
             context: None,
             author: renoa_protocol::Author::Principal,
             quiet: false,
+            attachments: Vec::new(),
         };
 
         send(
@@ -861,6 +863,7 @@ mod delivery {
                     context: None,
                     author: renoa_protocol::Author::Principal,
                     quiet: false,
+                    attachments: Vec::new(),
                 },
             },
         )
@@ -909,6 +912,7 @@ mod delivery {
                     context: None,
                     author: renoa_protocol::Author::Principal,
                     quiet: false,
+                    attachments: Vec::new(),
                 },
             },
         )
@@ -1053,6 +1057,7 @@ mod delivery {
                 context: context.map(str::to_owned),
                 author,
                 quiet: false,
+                attachments: Vec::new(),
             },
         };
         let desk = Some("channel #desk (202)");
@@ -2671,6 +2676,7 @@ async fn submit(socket: &mut Socket, task_id: TaskId, command_id: CommandId, tex
                 context: None,
                 author: renoa_protocol::Author::Principal,
                 quiet: false,
+                attachments: Vec::new(),
             },
         },
     )

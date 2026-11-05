@@ -1,6 +1,7 @@
 package live.renoa.app.agents
 
 import kotlinx.coroutines.test.runTest
+import live.renoa.rcp.Attachment
 import live.renoa.rcp.PendingTextCommand
 import java.io.File
 import java.io.IOException
@@ -32,6 +33,17 @@ class SavedOutboxTest {
         SavedOutbox(file).removeCommand(first.commandId)
         assertEquals(listOf(second), SavedOutbox(file).pendingCommands())
         assertEquals(listOf("outbox.json"), dir.list()?.toList(), "nothing is left beside it")
+    }
+
+    @Test
+    fun theFilesAMessageNamesAreKeptWithItAndAnOlderOutboxStillLoads() = runTest {
+        val photo = PendingTextCommand(Uuid.random(), chat, "", listOf(Attachment(Uuid.random(), "fridge.jpg", "image/jpeg")))
+        SavedOutbox(file).enqueueCommand(photo)
+        assertEquals(listOf(photo), SavedOutbox(file).pendingCommands())
+
+        val older = Uuid.random()
+        file.writeText("""[{"commandId":"$older","taskId":"$chat","text":"from before files"}]""")
+        assertEquals(listOf(PendingTextCommand(older, chat, "from before files")), SavedOutbox(file).pendingCommands())
     }
 
     @Test

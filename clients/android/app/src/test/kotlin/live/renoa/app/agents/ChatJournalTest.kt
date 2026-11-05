@@ -1,5 +1,6 @@
 package live.renoa.app.agents
 
+import live.renoa.rcp.Attachment
 import live.renoa.rcp.AgentMessageKind
 import live.renoa.rcp.AgentOrigin
 import live.renoa.rcp.CommandEnvelope
@@ -24,8 +25,8 @@ internal class Journal(val taskId: Uuid = Uuid.random()) {
 
     private fun record(kind: TaskEventKind) = TaskEvent(Uuid.random(), taskId, events.size + 1L, kind).also { events += it }
 
-    fun submitted(commandId: Uuid, text: String, surface: String = "android", origin: AgentOrigin? = null) =
-        record(TaskEventKind.CommandSubmitted(CommandEnvelope(commandId, Uuid.random(), surface, "agent", CommandInput.Text(text), origin)))
+    fun submitted(commandId: Uuid, text: String, surface: String = "android", origin: AgentOrigin? = null, attachments: List<Attachment> = emptyList()) =
+        record(TaskEventKind.CommandSubmitted(CommandEnvelope(commandId, Uuid.random(), surface, "agent", CommandInput.Text(text, attachments = attachments), origin)))
 
     fun said(commandId: Uuid, text: String) = executed(commandId, ExecutionEventKind.AssistantMessage(text))
 

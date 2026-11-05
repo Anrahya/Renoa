@@ -466,12 +466,16 @@ async fn nothing_reaches_the_node_without_the_origin_the_session_and_the_owners_
         answer_of(text).await.status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE
     );
-    let huge = f.caller.write(
-        Method::POST,
-        "/v1/host/agents",
-        &json!({"x": "a".repeat(64 * 1024)}),
-    );
-    assert_eq!(answer_of(huge).await.status, StatusCode::PAYLOAD_TOO_LARGE);
+    // Over the 1 MiB read, and under it with no room left for the frame that
+    // would carry it to the node.
+    for length in [1024 * 1024, 1024 * 1024 - 16] {
+        let huge = f.caller.write(
+            Method::POST,
+            "/v1/host/agents",
+            &json!({"x": "a".repeat(length)}),
+        );
+        assert_eq!(answer_of(huge).await.status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
 
     BrowserSessions::open(f.files.path().join("control.sqlite"))
         .expect("session admin")

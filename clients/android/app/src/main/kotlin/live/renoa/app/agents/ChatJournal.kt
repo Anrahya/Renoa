@@ -1,5 +1,6 @@
 package live.renoa.app.agents
 
+import live.renoa.rcp.Attachment
 import live.renoa.rcp.CommandInput
 import live.renoa.rcp.ExecutionEventKind
 import live.renoa.rcp.ExecutionTerminal
@@ -35,6 +36,9 @@ internal fun hostAgentId(agentId: String): Uuid? {
     return Uuid.parseOrNull(target.removePrefix(AGENT_TARGET))
 }
 
+/** A message the owner sent, as it waits to be admitted. */
+internal data class Outgoing(val text: String, val attachments: List<Attachment>)
+
 /**
  * One agent's chat, rebuilt from its task's journal and the live text of the turn that is running.
  * Not thread-safe: the caller serializes [apply], [live] and [markSeen].
@@ -49,7 +53,7 @@ internal class ChatJournal {
     private var latestCommand: Uuid? = null
 
     /** Messages the owner sent that the coordinator has not admitted yet, by command. */
-    private val unsent = LinkedHashMap<Uuid, String>()
+    private val unsent = LinkedHashMap<Uuid, Outgoing>()
 
     /** Commands that will never arrive, refused or deleted, so a late [sending] from an older read of the outbox cannot bring one back. */
     private val gone = HashSet<Uuid>()
@@ -69,7 +73,13 @@ internal class ChatJournal {
             is TaskEventKind.CommandSubmitted -> {
                 val input = kind.command.input as CommandInput.Text
                 val event = chatEvent(kind.command)
-                messages += ChatMessage(kind.command.commandId.toString(), if (event == null) Speaker.Owner else Speaker.Event, event ?: input.text)
+                messages +=
+                    ChatMessage(
+                        kind.command.commandId.toString(),
+                        if (event == null) Speaker.Owner else Speaker.Event,
+                        event ?: input.text,
+                        attachments = input.attachments,
+                    )
                 latestCommand = kind.command.commandId
                 unsent.remove(kind.command.commandId)
                 notSent.remove(kind.command.commandId)
@@ -125,8 +135,8 @@ internal class ChatJournal {
     }
 
     /** Shows a message the owner sent until its record arrives; it keeps the record's id, so nothing jumps. */
-    fun sending(commandId: Uuid, text: String) {
-        if (commandId !in gone && messages.none { it.id == commandId.toString() }) unsent[commandId] = text
+    fun sending(commandId: Uuid, text: String, attachments: List<Attachment> = emptyList()) {
+        if (commandId !in gone && messages.none { it.id == commandId.toString() }) unsent[commandId] = Outgoing(text, attachments)
     }
 
     /** The coordinator refused the message, so it will never arrive. */
@@ -142,7 +152,7 @@ internal class ChatJournal {
     }
 
     /** The words of a message the app stopped sending, now sent again; null if there is none. */
-    fun resend(commandId: Uuid): String? = unsent[commandId]?.takeIf { notSent.remove(commandId) }
+    fun resend(commandId: Uuid): Outgoing? = unsent[commandId]?.takeIf { notSent.remove(commandId) }
 
     /** The owner deleted a message the app stopped sending. Returns whether there was one. */
     fun delete(commandId: Uuid): Boolean {
@@ -155,7 +165,10 @@ internal class ChatJournal {
     val conversation: Conversation
         get() =
             Conversation(
-                messages + unsent.map { (commandId, text) -> ChatMessage(commandId.toString(), Speaker.Owner, text, notSent = commandId in notSent) },
+                messages +
+                    unsent.map { (commandId, outgoing) ->
+                        ChatMessage(commandId.toString(), Speaker.Owner, outgoing.text, notSent = commandId in notSent, attachments = outgoing.attachments)
+                    },
                 draft?.takeIf { it.text.isNotEmpty() }?.let { StreamingReply(messageId(it.commandId, it.index), it.text) },
             )
 

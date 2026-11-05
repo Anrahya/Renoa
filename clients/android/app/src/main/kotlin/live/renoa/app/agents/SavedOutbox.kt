@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import live.renoa.rcp.Attachment
 import live.renoa.rcp.PendingTextCommand
 import live.renoa.rcp.RcpState
 import java.io.File
@@ -27,8 +28,9 @@ import kotlin.uuid.Uuid
  * and the one on disk never part.
  */
 internal class SavedOutbox(private val file: File) : RcpState {
+    /** The files are already on the Host; only what names them is kept here. */
     @Serializable
-    private data class Saved(val commandId: String, val taskId: String, val text: String)
+    private data class Saved(val commandId: String, val taskId: String, val text: String, val attachments: List<Attachment> = emptyList())
 
     private val lock = Any()
     private val cursors = HashMap<Uuid, Long>()
@@ -93,7 +95,7 @@ internal class SavedOutbox(private val file: File) : RcpState {
         val text = file.readText()
         return try {
             Json.decodeFromString(ListSerializer(Saved.serializer()), text)
-                .map { PendingTextCommand(Uuid.parse(it.commandId), Uuid.parse(it.taskId), it.text) }
+                .map { PendingTextCommand(Uuid.parse(it.commandId), Uuid.parse(it.taskId), it.text, it.attachments) }
                 .associateByTo(LinkedHashMap()) { it.commandId }
         } catch (_: IllegalArgumentException) {
             LinkedHashMap()
@@ -101,7 +103,7 @@ internal class SavedOutbox(private val file: File) : RcpState {
     }
 
     private fun write(all: Map<Uuid, PendingTextCommand>) {
-        val saved = all.values.map { Saved(it.commandId.toString(), it.taskId.toString(), it.text) }
+        val saved = all.values.map { Saved(it.commandId.toString(), it.taskId.toString(), it.text, it.attachments) }
         file.replaceAtomically(Json.encodeToString(ListSerializer(Saved.serializer()), saved).toByteArray(Charsets.UTF_8))
     }
 

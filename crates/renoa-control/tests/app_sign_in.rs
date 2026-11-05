@@ -1673,7 +1673,20 @@ async fn a_call_outside_the_host_or_with_a_wrong_body_never_leaves_the_coordinat
     let (owner, phone, _tablet) = owner_with_two_apps(&server).await;
     let mut node = serving_node(&server, owner.principal).await;
     let mut app = phone.connect(&server).await;
-    let large = format!("\"{}\"", "a".repeat(64 * 1024));
+    // The longest body whose frame to the node fits one message. Digits need
+    // no escaping in the frame.
+    let path = "/v1/host/agents";
+    let frame_without_body = serde_json::to_vec(&ServerMessage::HostCall {
+        call_id: Uuid::nil(),
+        principal_id: owner.principal,
+        method: HostMethod::Post,
+        path: path.to_owned(),
+        body: Some(String::new()),
+    })
+    .expect("frame")
+    .len();
+    let longest = 1024 * 1024 - frame_without_body;
+    let large = "1".repeat(longest + 1);
     let calls = [
         (HostMethod::Get, "/v1/identity/session".to_owned(), None),
         (HostMethod::Get, "/v1/hostile".to_owned(), None),
@@ -1693,11 +1706,7 @@ async fn a_call_outside_the_host_or_with_a_wrong_body_never_leaves_the_coordinat
             None,
         ),
         (HostMethod::Get, "/v1/host".to_owned(), Some("{}")),
-        (
-            HostMethod::Post,
-            "/v1/host/agents".to_owned(),
-            Some(large.as_str()),
-        ),
+        (HostMethod::Post, path.to_owned(), Some(large.as_str())),
     ];
     for (request_id, (method, path, body)) in (1..).zip(calls) {
         send(&mut app, &call_host(request_id, method, &path, body)).await;
@@ -1706,17 +1715,17 @@ async fn a_call_outside_the_host_or_with_a_wrong_body_never_leaves_the_coordinat
     }
     assert!(hears_nothing(&mut node).await);
 
-    // The largest body the Host accepts, and the bare Host path, still go.
-    let fits = format!("\"{}\"", "a".repeat(64 * 1024 - 2));
+    // The longest body that fits, and the bare Host path, still go.
+    let fits = "1".repeat(longest);
     send(
         &mut app,
-        &call_host(20, HostMethod::Post, "/v1/host/agents", Some(&fits)),
+        &call_host(20, HostMethod::Post, path, Some(&fits)),
     )
     .await;
-    let (_, _, _, path, body) = next_call(&mut node).await;
+    let (_, _, _, called, body) = next_call(&mut node).await;
     assert_eq!(
-        (path.as_str(), body.map(|body| body.len())),
-        ("/v1/host/agents", Some(64 * 1024))
+        (called.as_str(), body.map(|body| body.len())),
+        (path, Some(longest))
     );
     send(&mut app, &call_host(21, HostMethod::Get, "/v1/host", None)).await;
     assert_eq!(next_call(&mut node).await.3, "/v1/host");

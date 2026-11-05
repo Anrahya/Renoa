@@ -448,6 +448,7 @@ function encodeCommand(command: ExecuteCommand): string {
     target: command.target,
     text: command.text,
     ...(command.guest === true ? { guest: true } : {}),
+    ...(command.attached === true ? { attached: true } : {}),
   });
 }
 

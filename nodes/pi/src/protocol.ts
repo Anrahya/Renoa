@@ -1,4 +1,4 @@
-export const RCP_VERSION = 17;
+export const RCP_VERSION = 18;
 
 export interface DeviceCredentials {
   readonly deviceId: string;
@@ -14,6 +14,8 @@ export interface ExecuteCommand {
   readonly text: string;
   /** Written by someone other than the principal in a shared conversation. */
   readonly guest?: true;
+  /** The text came with files uploaded to a Renoa Host, which Pi cannot open. */
+  readonly attached?: true;
 }
 
 export interface QueuedExecution extends ExecuteCommand {
@@ -125,6 +127,7 @@ function parseExecute(message: Record<string, unknown>): ExecuteCommand {
     target: string(command.target, "target"),
     text: string(input.text, "command text"),
     ...guest(input.author),
+    ...(input.attachments === undefined ? {} : { attached: true as const }),
   };
 }
 

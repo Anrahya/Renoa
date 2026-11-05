@@ -1277,6 +1277,7 @@ async fn the_records_of_a_quiet_command_wake_no_one() {
         context: None,
         author: Author::Principal,
         quiet: true,
+        attachments: Vec::new(),
     };
 
     let mut heartbeat = node.start_with(&mut phone, 2, quiet()).await;

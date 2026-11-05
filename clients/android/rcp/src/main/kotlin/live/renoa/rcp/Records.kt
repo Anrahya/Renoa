@@ -115,7 +115,41 @@ sealed interface CommandInput {
         /** Where the submitting surface received the text, in its own words. */
         val context: String? = null,
         val author: Author? = null,
+        /** Files uploaded to the Host for this text; at most [Attachment.MAX_PER_COMMAND]. */
+        val attachments: List<Attachment> = emptyList(),
     ) : CommandInput
+}
+
+/**
+ * A file uploaded to the Host, attached to a command's text under the name and media type it is
+ * shown with. It refuses what the coordinator refuses, so a command it cannot take is never queued.
+ */
+@Serializable
+data class Attachment(val uploadId: Uuid, val name: String, val mimeType: String) {
+    init {
+        require(validName(name)) { "An attachment name is 1 to $MAX_NAME_BYTES bytes with no control character." }
+        require(validMediaType(mimeType)) { "An attachment media type is type/subtype in printable ASCII, at most $MAX_MEDIA_TYPE_BYTES bytes." }
+    }
+
+    companion object {
+        /** The most attachments one command may carry. */
+        const val MAX_PER_COMMAND = 10
+
+        /** The most bytes a name may have. */
+        const val MAX_NAME_BYTES = 255
+
+        /** The most bytes a media type may have. */
+        const val MAX_MEDIA_TYPE_BYTES = 255
+
+        fun validName(name: String): Boolean = name.isNotEmpty() && name.encodeToByteArray().size <= MAX_NAME_BYTES && name.none { it.isISOControl() }
+
+        fun validMediaType(type: String): Boolean {
+            if (type.length > MAX_MEDIA_TYPE_BYTES || type.any { it !in '!'..'~' }) return false
+            val kind = type.substringBefore('/', "")
+            val subtype = type.substringAfter('/', "")
+            return kind.isNotEmpty() && subtype.isNotEmpty() && '/' !in subtype
+        }
+    }
 }
 
 /** Whether another agent's message asks, answers, or says it could not answer. */

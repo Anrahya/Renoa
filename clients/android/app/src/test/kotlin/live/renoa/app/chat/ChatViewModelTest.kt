@@ -15,6 +15,7 @@ import live.renoa.app.agents.CreateAgent
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.agents.FakeWorld
 import live.renoa.app.badge.AgentHue
+import live.renoa.app.agents.OutgoingFile
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.Reply
 import live.renoa.app.agents.ReplyScript
@@ -38,9 +39,9 @@ class ChatViewModelTest {
         var refuseSend = false
         var refuseStop: Problem? = null
 
-        override suspend fun send(agentId: String, text: String) {
+        override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
             if (refuseSend) throw RepositoryException(Problem.Invalid, "refused")
-            inner.send(agentId, text)
+            inner.send(agentId, text, files)
         }
 
         override suspend fun stop(agentId: String) {
@@ -88,7 +89,7 @@ class ChatViewModelTest {
             object : AgentRepository by inner {
                 override fun conversation(agentId: String) = kotlinx.coroutines.flow.flow<live.renoa.app.agents.Conversation> { kotlinx.coroutines.awaitCancellation() }
 
-                override suspend fun send(agentId: String, text: String) = throw RepositoryException(Problem.Unavailable, "not reached")
+                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) = throw RepositoryException(Problem.Unavailable, "not reached")
             }
         val vm = ChatViewModel(waiting, "nagisa").also { vm -> backgroundScope.launch { vm.state.collect {} } }
         runCurrent()
@@ -140,7 +141,7 @@ class ChatViewModelTest {
                     inner.answer(agentId, choice)
                 }
 
-                override suspend fun send(agentId: String, text: String) {
+                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
                     calls += "send $text"
                     inner.send(agentId, text)
                 }
@@ -199,7 +200,7 @@ class ChatViewModelTest {
         val inner = FakeAgentRepository(backgroundScope, seeds = emptyList())
         val repo =
             object : AgentRepository by inner {
-                override suspend fun send(agentId: String, text: String) {
+                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
                     held.await()
                     inner.send(agentId, text)
                 }
@@ -234,6 +235,23 @@ class ChatViewModelTest {
         assertEquals("hello", vm.state.value.draft)
         assertFalse(vm.state.value.sending)
         assertTrue(vm.state.value.empty)
+    }
+
+    @Test
+    fun aPhotoAloneIsSendableAndARefusedOneComesBackToTheComposer() = runTest {
+        val photo = OutgoingFile("fridge.jpg", "image/jpeg", byteArrayOf(1, 2, 3))
+        assertEquals(ComposerAction.Send, ChatUiState(agent = working, files = listOf(photo)).action, "a photo wins over stop")
+        val (vm, repo) = model(flaky = true)
+        runCurrent()
+        vm.attach(listOf(photo))
+        vm.send()
+        runCurrent()
+        assertEquals(listOf(photo), vm.state.value.files, "a refused photo comes back")
+        assertNotNull(vm.state.value.notice)
+        repo.refuseSend = false
+        vm.send()
+        runCurrent()
+        assertEquals(listOf(listOf("fridge.jpg")), vm.state.value.messages.map { m -> m.attachments.map { it.name } })
     }
 
     @Test

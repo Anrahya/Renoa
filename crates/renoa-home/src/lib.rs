@@ -131,6 +131,11 @@ impl RenoaHome {
     pub fn node_database(&self) -> PathBuf {
         self.root.join("state/node.sqlite3")
     }
+    /// Where the files a principal uploads for its agents wait to be attached.
+    #[must_use]
+    pub fn uploads(&self) -> PathBuf {
+        self.root.join("state/uploads")
+    }
     #[must_use]
     pub fn coordinator_database(&self) -> PathBuf {
         self.root.join("state/coordinator.sqlite3")

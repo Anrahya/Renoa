@@ -139,6 +139,7 @@ mod tests {
             context: None,
             author: Author::Guest,
             quiet: false,
+            attachments: Vec::new(),
         };
         assert_eq!(speaker(&guest), Speaker::Guest);
 

@@ -53,6 +53,33 @@ test("an execute message marks a guest's command and rejects an unknown author",
   assert.throws(() => execute("principal"), /command author/);
 });
 
+test("an execute message marks a command that came with attached files", () => {
+  const execute = (input: Record<string, unknown>) =>
+    parseServerMessage(
+      JSON.stringify({
+        type: "execute",
+        task_id: "00000000-0000-0000-0000-000000000001",
+        command: {
+          commandId: "00000000-0000-0000-0000-000000000002",
+          principalId: "00000000-0000-0000-0000-000000000004",
+          surface: "app",
+          target: "workspace:renoa",
+          input: { type: "text", text: "what is this?", ...input },
+        },
+      }),
+    );
+  const attached = execute({
+    attachments: [
+      { uploadId: "00000000-0000-0000-0000-000000000005", name: "a.jpg", mimeType: "image/jpeg" },
+    ],
+  });
+  assert.equal(attached.type, "execute");
+  assert.equal(attached.command.attached, true);
+  const plain = execute({});
+  assert.equal(plain.type, "execute");
+  assert.equal(plain.command.attached, undefined);
+});
+
 test("RCP numbers outside JavaScript's exact range are rejected", () => {
   assert.throws(
     () =>

@@ -93,6 +93,7 @@ import live.renoa.design.plainButton
 import live.renoa.design.pressScale
 import live.renoa.design.rememberPress
 import live.renoa.design.semibold
+import live.renoa.rcp.Attachment
 
 @Composable
 fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (String) -> Unit) {
@@ -268,12 +269,15 @@ private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedR
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(
-                        message.text,
-                        Modifier.widthIn(max = 300.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleUser).padding(horizontal = 16.dp, vertical = 10.dp),
-                        style = Type.body,
-                        color = Palette.text,
-                    )
+                    if (message.attachments.isNotEmpty()) SentFiles(message.attachments)
+                    if (message.text.isNotBlank()) {
+                        Text(
+                            message.text,
+                            Modifier.widthIn(max = 300.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleUser).padding(horizontal = 16.dp, vertical = 10.dp),
+                            style = Type.body,
+                            color = Palette.text,
+                        )
+                    }
                     if (message.notSent) Text("Didn't send · Tap to retry", style = Type.caption2.bold, color = Palette.danger)
                 }
                 if (message.notSent) {
@@ -303,15 +307,17 @@ private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedR
     }
 }
 
-/** The field in glass, and one button that turns between send and stop. */
+/** The files waiting to go, then the field in glass with the "+" and one button that turns between send and stop. */
 @Composable
 private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel, send: () -> Unit) {
+    if (state.files.isNotEmpty()) PickedFiles(state.files, viewModel::unattach, Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp))
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp), verticalAlignment = Alignment.Bottom) {
         Row(
-            Modifier.weight(1f).glass(RoundedRectangle(RenoaShapes.Composer)).animateContentSize(Motion.layoutSize).padding(start = 18.dp, top = 6.dp, bottom = 6.dp),
+            Modifier.weight(1f).glass(RoundedRectangle(RenoaShapes.Composer)).animateContentSize(Motion.layoutSize).padding(start = 8.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            AttachButton(Attachment.MAX_PER_COMMAND - state.files.size, viewModel::attach, viewModel::problem)
             BasicTextField(
                 value = state.draft,
                 onValueChange = viewModel::onDraft,

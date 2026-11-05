@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `17`.
+first implemented transport binding. The current binding version is `18`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -55,14 +55,17 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `17` with `version_mismatch` and ends the session.
+rejects any value other than `18` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `17` supersedes version `16` by adding sealed setup notices: a signed-in
+Version `18` supersedes version `17` by adding text input's `attachments`. A
+version `17` peer is rejected at authentication.
+
+Version `17` superseded version `16` by adding sealed setup notices: a signed-in
 app's `set_notice_key`, `list_notices` and `acknowledge_notice` (answered by
 `notice_key_set`, `notice_list` and `notice_acknowledged`), and a node's
 `list_notice_keys`, `put_notice` and `withdraw_notices` (answered by
@@ -130,7 +133,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 17,
+  "version": 18,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -140,7 +143,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 17,
+  "version": 18,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -153,7 +156,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 17,
+  "version": 18,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -166,7 +169,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 17,
+  "version": 18,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -182,7 +185,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 17
+  "version": 18
 }
 ```
 
@@ -415,8 +418,10 @@ A device that proved its key may call the owner's Host, as a browser does under
 
 `method` is `GET`, `POST` or `PUT`. `path` is `/v1/host` or a path under it,
 at most 1,024 bytes of visible ASCII, with no query or fragment and no empty,
-`.` or `..` segment. `body` is the request's JSON text, at most 64 KiB, or
-`null`; a `GET` carries `null`. The Host's answer,
+`.` or `..` segment. `body` is the request's JSON text, or `null`; a `GET`
+carries `null`. The coordinator relays a call only when the `host_call` frame
+that carries it to the node fits one 1 MiB message, and otherwise refuses it
+with `invalid_message`; each Host operation applies its own, smaller limit. The Host's answer,
 a result or its own refusal, returns as its HTTP status and JSON text:
 
 ```json
@@ -740,9 +745,39 @@ itself with `request_wake`. The Renoa node submits an agent's heartbeat runs
 quiet, and the coordinator makes an agent's message sent from a quiet command,
 and the answer to it, quiet too. It is omitted when false.
 
+Text input may also carry `attachments`: at most 10 files the principal
+uploaded to its Host first (`PUT /v1/host/uploads/{id}`, `renoa-host-v0.md`):
+
+```json
+{
+  "type": "submit",
+  "request_id": 43,
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000021",
+  "input": {
+    "type": "text",
+    "text": "What can I cook with this?",
+    "attachments": [
+      {
+        "uploadId": "00000000-0000-0000-0000-000000000030",
+        "name": "fridge.jpg",
+        "mimeType": "image/jpeg"
+      }
+    ]
+  }
+}
+```
+
+A name is 1 to 255 bytes with no control character, and a media type is
+`type/subtype` in printable ASCII, at most 255 bytes; anything else, an unknown
+field included, is `invalid_message`. RCP checks the shape only and carries the
+list with the command, so a surface can show what was sent. The Renoa node gives
+the agent each file (see `renoa-host-v0.md`); the Pi node fails the command
+without running. It is omitted when empty.
+
 `request_id` correlates one connection attempt. `command_id` is the durable
 idempotency identity and must be reused with identical content, `context`,
-`author` and `quiet` included, after an uncertain response.
+`author`, `quiet` and `attachments` included, after an uncertain response.
 
 ### Task event
 

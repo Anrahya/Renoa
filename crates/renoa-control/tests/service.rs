@@ -205,6 +205,7 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
         context: None,
         author: renoa_protocol::Author::Principal,
         quiet: false,
+        attachments: Vec::new(),
     };
     send(
         &mut surface,

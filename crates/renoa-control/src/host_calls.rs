@@ -20,14 +20,16 @@ use tokio::{sync::oneshot, time::timeout};
 use uuid::Uuid;
 
 use crate::{
-    ControlError, HostMethod, NodeId, ServerMessage, control_log, coordinator::CoordinatorState,
+    ControlError, HostMethod, NodeId, ServerMessage, connection::MAX_APPLICATION_MESSAGE_BYTES,
+    control_log, coordinator::CoordinatorState,
 };
 
 pub(crate) const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The largest body any Host operation accepts; the node applies each
-/// operation's own, smaller limit.
-pub(crate) const MAX_BODY_BYTES: usize = 64 * 1024;
+/// The largest body read from a caller: no larger one fits the one message
+/// that carries it to the node. Whether a call fits is decided on that
+/// message ([`dispatch`]), and the node applies each operation's own limit.
+pub(crate) const MAX_BODY_BYTES: usize = MAX_APPLICATION_MESSAGE_BYTES;
 
 /// What the owner reads when the Host's answer cannot be passed on.
 pub(crate) const INVALID_REPLY: &str =
@@ -62,6 +64,9 @@ pub(crate) enum HostCallError {
     Offline,
     /// Several of the owner's nodes serve Host control at once.
     Ambiguous,
+    /// The call does not fit the one message that carries it to the node.
+    /// It was not sent.
+    TooLarge,
     /// The serving node's connection ended before it answered.
     Disconnected,
     TimedOut,
@@ -76,6 +81,9 @@ impl HostCallError {
             Self::NotAnOwner => "This login does not own a Host.",
             Self::Offline => "Your Host is not connected. Retry when it returns.",
             Self::Ambiguous => "More than one Host of yours is connected. Disconnect all but one.",
+            Self::TooLarge => {
+                "The call is larger than one message to your Host can carry; send a smaller body."
+            }
             Self::Disconnected => {
                 "Your Host disconnected before it answered. If this was a change, retry the same request to recover its outcome."
             }
@@ -186,6 +194,17 @@ pub(crate) async fn dispatch(
     request: HostRequest,
 ) -> Result<HostReply, HostCallError> {
     let call_id = Uuid::new_v4();
+    let (method, path) = (request.method, request.path.clone());
+    let message = ServerMessage::HostCall {
+        call_id,
+        principal_id,
+        method: request.method,
+        path: request.path,
+        body: request.body,
+    };
+    if !fits(&message) {
+        return Err(HostCallError::TooLarge);
+    }
     let (reply, answer) = oneshot::channel();
     let (node_id, outgoing, _registration) = {
         let nodes = state.nodes.lock().await;
@@ -210,17 +229,10 @@ pub(crate) async fn dispatch(
         &serde_json::json!({
             "call_id": call_id,
             "node_id": node_id,
-            "method": request.method,
-            "path": request.path,
+            "method": method,
+            "path": path,
         }),
     );
-    let message = ServerMessage::HostCall {
-        call_id,
-        principal_id,
-        method: request.method,
-        path: request.path,
-        body: request.body,
-    };
     let outcome = timeout(HOST_CALL_TIMEOUT, async {
         outgoing
             .send(message)
@@ -230,6 +242,12 @@ pub(crate) async fn dispatch(
     })
     .await;
     outcome.unwrap_or(Err(HostCallError::TimedOut))
+}
+
+/// Whether `message` fits one application message, as the node's connection
+/// reads it.
+fn fits(message: &ServerMessage) -> bool {
+    serde_json::to_vec(message).is_ok_and(|frame| frame.len() <= MAX_APPLICATION_MESSAGE_BYTES)
 }
 
 #[cfg(test)]

@@ -712,6 +712,165 @@ async fn the_owner_reads_and_edits_their_profile_for_agent_creation() {
 const APP_INSTRUCTIONS: &str = include_str!("../../renoa-local/prompts/app-v1/system.md");
 const APP_SOUL: &str = include_str!("../../renoa-local/prompts/app-v1/SOUL.md");
 
+/// Uploads `bytes` in parts through the owner's Host route, as an app does,
+/// and returns the upload's id.
+async fn upload(f: &Fixture, bytes: &[u8]) -> Uuid {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let sha256 = ring::digest::digest(&ring::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        });
+    let id = Uuid::new_v4();
+    let put = |path: String, body: Value| async move {
+        let answer = f
+            .browser
+            .write(Method::PUT, &path, ORIGIN, &body)
+            .send()
+            .await
+            .expect("PUT");
+        (answer.status(), answer.json::<Value>().await.expect("JSON"))
+    };
+    let started = put(
+        format!("/v1/host/uploads/{id}"),
+        json!({"size": bytes.len(), "sha256": sha256}),
+    )
+    .await;
+    assert_eq!(
+        started,
+        (
+            StatusCode::OK,
+            json!({"size": bytes.len(), "received": 0, "complete": false})
+        )
+    );
+    let first = bytes.chunks(renoa_local::UPLOAD_PART_BYTES).next();
+    let (status, _) = put(
+        format!("/v1/host/uploads/{id}/parts/00"),
+        json!({"data": STANDARD.encode(first.expect("a part"))}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a part has one spelling");
+    for (index, part) in bytes.chunks(renoa_local::UPLOAD_PART_BYTES).enumerate() {
+        let (status, answer) = put(
+            format!("/v1/host/uploads/{id}/parts/{index}"),
+            json!({"data": STANDARD.encode(part)}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+    }
+    id
+}
+
+/// Sends `text` with `attachment` on `task` and returns the task's events
+/// through the command's end.
+async fn send_attached(
+    surface: &mut support::Socket,
+    task: renoa_control::TaskId,
+    text: &str,
+    attachment: renoa_protocol::Attachment,
+) -> Vec<renoa_control::TaskEvent> {
+    use renoa_protocol::{Author, CommandId, CommandInput};
+
+    support::submit_input_when_node_is_online(
+        surface,
+        task,
+        CommandId::new(),
+        CommandInput::Text {
+            text: text.to_owned(),
+            context: None,
+            author: Author::Principal,
+            quiet: false,
+            attachments: vec![attachment],
+        },
+    )
+    .await;
+    support::collect_through_terminal(surface).await
+}
+
+/// What the fixture model last received from the owner.
+fn last_user_content(f: &Fixture) -> Vec<Value> {
+    let request: Value = serde_json::from_slice(
+        &std::fs::read(f.system.files.path().join("request.json")).expect("request"),
+    )
+    .expect("request JSON");
+    request["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .rfind(|message| message["role"] == "user")
+        .expect("the owner's message")["content"]
+        .as_array()
+        .expect("content")
+        .clone()
+}
+
+/// A whole part, the largest body an upload sends through the relay, and a
+/// short last one reach the agent as one photo.
+#[tokio::test]
+async fn a_photo_uploaded_through_the_relay_reaches_the_agent_and_its_workspace() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use renoa_control::TaskEventKind;
+    use renoa_protocol::{Attachment, ExecutionEventKind};
+
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let (id, _) = make_agent(&f, &creation()).await;
+        let photo: Vec<u8> = [0xFF, 0xD8, 0xFF, 0xE0]
+            .into_iter()
+            .chain(
+                (0..renoa_local::UPLOAD_PART_BYTES)
+                    .map(|index| u8::try_from(index % 199).expect("a byte")),
+            )
+            .collect();
+        let attachment = Attachment::new(upload(&f, &photo).await, "fridge.jpg".into(), "image/jpeg".into())
+            .expect("attachment");
+        let mut surface = f.system.connect_surface().await;
+        support::wait_for_targets(&mut surface, 1).await;
+        let task =
+            support::open_task(&mut surface, f.system.node_id(), support::agent_target(id)).await;
+        support::attach(&mut surface, task).await;
+
+        let events = send_attached(&mut surface, task, "What can I cook?", attachment.clone()).await;
+        assert!(events.iter().any(|event| matches!(
+            &event.kind,
+            TaskEventKind::ExecutionEvent { event, .. }
+                if matches!(&event.kind, ExecutionEventKind::AssistantMessage { text } if text == "Owner-created agent ran.")
+        )));
+        assert!(
+            events.iter().any(|event| matches!(
+                &event.kind,
+                TaskEventKind::CommandSubmitted { command }
+                    if command.input.attachments() == [attachment.clone()]
+            )),
+            "the journal shows what was attached"
+        );
+        let line = json!({"type": "text", "text": "Attached file: attachments/fridge.jpg (513 KB)."});
+        let content = last_user_content(&f);
+        assert_eq!(content[..2], [json!({"type": "text", "text": "What can I cook?"}), line.clone()]);
+        // The Host's own turn context follows what the owner sent.
+        assert_eq!(content.len(), 4);
+        assert!(content[3]["text"].as_str().is_some_and(|text| text.starts_with("<turn_context>")));
+        assert_eq!((&content[2]["type"], &content[2]["mime_type"]), (&json!("image"), &json!("image/jpeg")));
+        let shown = STANDARD.decode(content[2]["data"].as_str().expect("image data")).expect("base64");
+        assert!(shown == photo, "the model saw {} bytes, not the photo's {}", shown.len(), photo.len());
+        let attachments = f.host.agent_workspace(id).await.expect("workspace").join("attachments");
+        assert_eq!(std::fs::read(attachments.join("fridge.jpg")).expect("the copy"), photo);
+
+        // The same photo again with no words: no blank text is sent, and the
+        // copy already in the workspace is reused.
+        send_attached(&mut surface, task, " ", attachment).await;
+        let content = last_user_content(&f);
+        assert_eq!((&content[0], &content[1]["type"]), (&line, &json!("image")));
+        assert_eq!(std::fs::read_dir(attachments).expect("attachments").count(), 1);
+        f.close().await;
+    }))
+    .await;
+}
+
 /// The prompt that makes the fixture model save a fact with `agent_documents`.
 const REMEMBER: &str = "Remember that I am vegetarian.";
 /// A person with no profile yet: an empty `USER.md` block carries the revision

@@ -805,6 +805,7 @@ pub(crate) async fn submit_placed_when_node_is_online(
             context: context.map(str::to_owned),
             author: Author::Principal,
             quiet: false,
+            attachments: Vec::new(),
         },
     )
     .await;

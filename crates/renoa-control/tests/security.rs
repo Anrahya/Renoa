@@ -369,6 +369,7 @@ mod security_behaviors {
                     context: None,
                     author: renoa_protocol::Author::Principal,
                     quiet: false,
+                    attachments: Vec::new(),
                 },
             },
         )
@@ -790,6 +791,7 @@ mod security_behaviors {
                     context: None,
                     author: renoa_protocol::Author::Principal,
                     quiet: false,
+                    attachments: Vec::new(),
                 },
             },
         )

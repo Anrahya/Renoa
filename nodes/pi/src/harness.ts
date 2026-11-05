@@ -54,6 +54,14 @@ export class PiHarness {
       );
       return;
     }
+    if (execution.attached === true) {
+      state.finish(
+        execution.commandId,
+        { status: "failed", error: "Pi harness takes text only; send the message without attached files" },
+        state.loadMessages<AgentMessage>(execution.taskId),
+      );
+      return;
+    }
     const agent = new Agent({
       initialState: {
         systemPrompt: this.#instructions,

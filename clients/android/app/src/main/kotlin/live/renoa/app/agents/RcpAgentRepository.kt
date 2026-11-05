@@ -101,6 +101,7 @@ class RcpAgentRepository(
     private val hostClient = HostClient(surface)
     private val host = HostAgents(hostClient)
     private val owner = HostOwner(hostClient)
+    private val uploads = HostUploads(hostClient)
     private val heldRoutines = HeldRoutines(HostRoutines(hostClient), changed = ::publish)
     private val heldFeed = HeldFeed(HostFeed(hostClient), changed = ::publish)
 
@@ -219,7 +220,7 @@ class RcpAgentRepository(
             // Sent before the app last closed: shown until its record arrives. Read once the room exists,
             // so a refusal from here on reaches the room and outlasts this read.
             val held = state.pendingCommands().filter { it.taskId == room.taskId }
-            if (held.isNotEmpty()) update(room) { held.forEach { sending(it.commandId, it.text) } }
+            if (held.isNotEmpty()) update(room) { held.forEach { sending(it.commandId, it.text, it.attachments) } }
             try {
                 surface.openTask(room.taskId, target.nodeId, target.target)
                 surface.attach(room.taskId, live = { commandId, activity -> update(room) { live(commandId, activity) } }) { event ->
@@ -335,12 +336,13 @@ class RcpAgentRepository(
      * Returns once the message is in the outbox and shown. A refusal takes it back out and throws;
      * any other failure leaves it to be sent again.
      */
-    override suspend fun send(agentId: String, text: String) {
+    override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
         val room = room(agentId)
-        if (text.isBlank()) throw RepositoryException(Problem.Invalid, "A message needs some words in it.")
+        if (text.isBlank() && files.isEmpty()) throw RepositoryException(Problem.Invalid, "A message needs some words in it.")
+        val attachments = files.map { uploads.upload(it) }
         val submission =
             try {
-                surface.submitText(room.taskId, text.trim())
+                surface.submitText(room.taskId, text.trim(), attachments)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (offline: IllegalStateException) {
@@ -350,7 +352,7 @@ class RcpAgentRepository(
             } catch (tooLong: IllegalArgumentException) {
                 throw RepositoryException(Problem.Invalid, tooLong.message.orEmpty())
             }
-        update(room) { sending(submission.commandId, text.trim()) }
+        update(room) { sending(submission.commandId, text.trim(), attachments) }
         try {
             submission.accepted.await()
         } catch (cancelled: CancellationException) {
@@ -374,11 +376,11 @@ class RcpAgentRepository(
     override suspend fun retry(agentId: String, messageId: String) {
         val room = room(agentId)
         val commandId = Uuid.parseOrNull(messageId) ?: return
-        var text: String? = null
-        update(room) { text = resend(commandId) }
-        val words = text ?: return
+        var outgoing: Outgoing? = null
+        update(room) { outgoing = resend(commandId) }
+        val message = outgoing ?: return
         try {
-            unsent.retry(PendingTextCommand(commandId, room.taskId, words))
+            unsent.retry(PendingTextCommand(commandId, room.taskId, message.text, message.attachments))
         } catch (refused: RcpException) {
             update(room) { refused(commandId) }
             throw refused.asProblem()

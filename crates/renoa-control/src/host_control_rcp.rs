@@ -14,8 +14,7 @@ use crate::{
     coordinator::CoordinatorState,
     device_admin::SurfaceSession,
     host_calls::{
-        HOST_UNREACHABLE, HostCallError, HostReply, HostRequest, INVALID_REPLY, MAX_BODY_BYTES,
-        call, relayable,
+        HOST_UNREACHABLE, HostCallError, HostReply, HostRequest, INVALID_REPLY, call, relayable,
     },
     wire::send_error,
 };
@@ -109,9 +108,6 @@ fn check(request: &HostRequest) -> Result<(), &'static str> {
     }
     match (&request.body, request.method) {
         (Some(_), HostMethod::Get) => Err("A GET call has no body; send body null."),
-        (Some(body), _) if body.len() > MAX_BODY_BYTES => {
-            Err("The call's body is larger than the Host accepts (64 KiB).")
-        }
         _ => Ok(()),
     }
 }
@@ -152,6 +148,7 @@ async fn answer(
             (ErrorCode::Internal, HOST_UNREACHABLE)
         }
         Err(error @ HostCallError::NotAnOwner) => (ErrorCode::InvalidRole, error.message()),
+        Err(error @ HostCallError::TooLarge) => (ErrorCode::InvalidMessage, error.message()),
         // Whether a change took effect is unknown, so these are never refusals:
         // the caller retries under the operation identity the Host records.
         Err(
