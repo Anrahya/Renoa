@@ -197,6 +197,7 @@ fn reply_response(reply: HostReply) -> Response {
 fn call_failure(error: &HostCallError) -> Response {
     let (status, code) = match error {
         HostCallError::NotAnOwner => (StatusCode::FORBIDDEN, "wrong_owner"),
+        HostCallError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "body_too_large"),
         HostCallError::Offline => (StatusCode::SERVICE_UNAVAILABLE, "host_offline"),
         HostCallError::Ambiguous => (StatusCode::SERVICE_UNAVAILABLE, "host_ambiguous"),
         HostCallError::Disconnected => (StatusCode::SERVICE_UNAVAILABLE, "host_disconnected"),

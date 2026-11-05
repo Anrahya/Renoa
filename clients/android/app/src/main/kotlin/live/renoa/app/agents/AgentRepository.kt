@@ -99,8 +99,11 @@ interface AgentRepository {
 
     fun conversation(agentId: String): Flow<Conversation>
 
-    /** Returns once the message is kept. The reply arrives later through [conversation]. */
-    suspend fun send(agentId: String, text: String)
+    /**
+     * Uploads [files], then returns once the message is kept. The reply arrives later through
+     * [conversation]. A message needs words or a file.
+     */
+    suspend fun send(agentId: String, text: String, files: List<OutgoingFile> = emptyList())
 
     /** Sends again, under its own identity, a message the app stopped sending ([ChatMessage.notSent]). */
     suspend fun retry(agentId: String, messageId: String)

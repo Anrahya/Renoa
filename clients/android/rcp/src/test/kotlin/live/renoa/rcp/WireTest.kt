@@ -46,6 +46,28 @@ class WireTest {
 
     private fun typeOf(frame: JsonObject) = frame.getValue("type").jsonPrimitive.content
 
+    /** The cases the coordinator's `Attachment::new` refuses (crates/renoa-protocol/src/attachment.rs). */
+    @Test
+    fun anAttachmentTheCoordinatorWouldRefuseCannotBeMade() {
+        val id = Uuid.random()
+        Attachment(id, "n".repeat(Attachment.MAX_NAME_BYTES), "text/plain")
+        Attachment(id, "冷蔵庫.jpg", "image/jpeg")
+        for ((name, type) in listOf(
+            "" to "text/plain",
+            "n".repeat(Attachment.MAX_NAME_BYTES + 1) to "text/plain",
+            "冷".repeat(86) to "text/plain",
+            "a\nb" to "text/plain",
+            "a" to "text",
+            "a" to "/plain",
+            "a" to "text/",
+            "a" to "text/plain/x",
+            "a" to "text/pla in",
+            "a" to "t/" + "x".repeat(Attachment.MAX_MEDIA_TYPE_BYTES - 1),
+        )) {
+            assertFailsWith<IllegalArgumentException>("$name $type") { Attachment(id, name, type) }
+        }
+    }
+
     @Test
     fun theDocumentedBindingVersionIsTheOneTheClientSpeaks() {
         val documented = Regex("current binding version is `(\\d+)`").find(bindingDoc)!!.groupValues[1].toInt()
@@ -108,9 +130,9 @@ class WireTest {
     }
 
     @Test
-    fun textInputOmitsContextAndAuthorWhenAbsent() {
+    fun textInputOmitsContextAuthorAndAttachmentsWhenAbsent() {
         val frame = encodeClientMessage(ClientMessage.Submit(1, Uuid.random(), Uuid.random(), CommandInput.Text("hi")))
-        assertTrue("context" !in frame && "author" !in frame, frame)
+        assertTrue("context" !in frame && "author" !in frame && "attachments" !in frame, frame)
     }
 
     @Test

@@ -871,6 +871,11 @@ at authentication. A setup link for a command from any surface but Discord
 reaches only an app that registered a notice key, so until the Android app does,
 such a link stops its turn: release the app with this version.
 
+RCP binding version 18 adds text input's `attachments`, so the coordinator, node,
+Pi node, Android app and every surface must again be upgraded together; a peer
+still on version 17 is refused at authentication. The node keeps uploads under
+`state/uploads` in the Renoa home; nothing removes them yet.
+
 Without a service account push is off: apps still register tokens, owed wakes
 are dropped, and the coordinator logs `push_disabled` once. Turning it on later
 needs no app change. Provisioning is manual and outside the repository:
@@ -1014,7 +1019,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 17; the recorded version-8 proof establishes only the deployment
+binding version 18; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

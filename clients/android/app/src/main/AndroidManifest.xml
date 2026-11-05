@@ -35,6 +35,16 @@
             android:exported="false"
             android:noHistory="true"
             android:theme="@android:style/Theme.NoDisplay" />
+        <!-- Where the camera app saves a photo the owner takes to send an agent. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.camera"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/camera_paths" />
+        </provider>
         <!-- Renoa's wake-ups and new push tokens, from Firebase Cloud Messaging. -->
         <service
             android:name=".push.PushMessages"

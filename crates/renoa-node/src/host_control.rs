@@ -16,12 +16,13 @@ mod main_agent;
 mod memory;
 mod profile;
 mod reply;
+mod uploads;
 
 use std::sync::Arc;
 
 use renoa_control::HostMethod;
 use renoa_discord::DiscordControl;
-use renoa_local::{HostObserver, LocalHost};
+use renoa_local::{HostObserver, LocalHost, Uploads};
 use renoa_protocol::PrincipalId;
 
 use crate::{bridge::NodeError, node_store::NodeStore};
@@ -40,6 +41,7 @@ pub(crate) struct HostControl {
     discord: DiscordControl,
     /// Which task each Host session is, for the items that name one.
     tasks: NodeStore,
+    uploads: Uploads,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -66,6 +68,8 @@ enum Operation {
     FeedList(Option<String>),
     FeedSee,
     FeedDismiss(String),
+    UploadStart(String),
+    UploadPart(String, String),
 }
 
 /// Every operation at a path, by method. The one table of the Host's control
@@ -100,6 +104,10 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         ["feed", "before", sequence] => vec![(Get, Op::FeedList(Some((*sequence).to_owned())))],
         ["feed", "seen"] => vec![(Post, Op::FeedSee)],
         ["feed", "items", id, "dismissal"] => vec![(Post, Op::FeedDismiss((*id).to_owned()))],
+        ["uploads", id] => vec![(Put, Op::UploadStart((*id).to_owned()))],
+        ["uploads", id, "parts", index] => {
+            vec![(Put, Op::UploadPart((*id).to_owned(), (*index).to_owned()))]
+        }
         _ => Vec::new(),
     }
 }
@@ -150,11 +158,13 @@ impl HostControl {
             .map_err(|error| NodeError::Configuration(error.to_string()))?;
         let discord = DiscordControl::open(root)
             .map_err(|error| NodeError::Configuration(error.to_string()))?;
+        let uploads = Uploads::open(host.home());
         Ok(Self {
             host,
             observer,
             discord,
             tasks,
+            uploads,
         })
     }
 
@@ -268,6 +278,14 @@ impl HostControl {
                 feed::see(host, seen).await
             }
             Operation::FeedDismiss(id) => feed::dismiss(host, &id).await,
+            Operation::UploadStart(id) => {
+                let start = decode(body, BODY_LIMIT, uploads::START_HINT)?;
+                uploads::start(&self.uploads, principal, &id, start).await
+            }
+            Operation::UploadPart(id, index) => {
+                let part = decode(body, uploads::PART_BODY_LIMIT, uploads::PART_HINT)?;
+                uploads::put_part(&self.uploads, principal, &id, &index, part).await
+            }
             Operation::MainAgentSet => {
                 let change = decode(
                     body,

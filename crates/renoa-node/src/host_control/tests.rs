@@ -30,6 +30,8 @@ fn name(operation: &Operation) -> &'static str {
         Operation::FeedList(Some(_)) => "feed_list_before",
         Operation::FeedSee => "feed_see",
         Operation::FeedDismiss(_) => "feed_dismiss",
+        Operation::UploadStart(_) => "upload_start",
+        Operation::UploadPart(..) => "upload_part",
     }
 }
 
@@ -37,10 +39,10 @@ fn status(method: HostMethod, path: &str) -> u16 {
     resolve(method, path).expect_err("no operation").status
 }
 
-#[test]
-fn every_operation_has_a_route_and_every_route_one_operation() {
+/// One route to each operation, with the operation's name.
+fn routes() -> Vec<(HostMethod, String, &'static str)> {
     let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
-    let routes = [
+    vec![
         (Get, "/v1/host".to_owned(), "observe"),
         (Get, "/v1/host/agents/options".to_owned(), "agent_options"),
         (Get, format!("/v1/host/agents/{id}"), "agent_definition"),
@@ -104,9 +106,15 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
             format!("/v1/host/feed/items/{id}/dismissal"),
             "feed_dismiss",
         ),
-    ];
+        (Put, format!("/v1/host/uploads/{id}"), "upload_start"),
+        (Put, format!("/v1/host/uploads/{id}/parts/0"), "upload_part"),
+    ]
+}
+
+#[test]
+fn every_operation_has_a_route_and_every_route_one_operation() {
     let mut reached = BTreeSet::new();
-    for (method, path, expected) in &routes {
+    for (method, path, expected) in &routes() {
         let operation = resolve(*method, path).expect("route resolves");
         assert_eq!(name(&operation), *expected, "{method:?} {path}");
         reached.insert(*expected);
@@ -135,6 +143,8 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
         "feed_list_before",
         "feed_see",
         "feed_dismiss",
+        "upload_start",
+        "upload_part",
     ]
     .into_iter()
     .collect();
@@ -151,6 +161,8 @@ fn a_known_path_with_another_method_is_refused_and_an_unknown_path_is_not_found(
     assert_eq!(status(Post, "/v1/host/feed"), 405);
     assert_eq!(status(Get, "/v1/host/feed/seen"), 405);
     assert_eq!(status(Get, "/v1/host/automations/a/run"), 405);
+    assert_eq!(status(Get, "/v1/host/uploads/a"), 405);
+    assert_eq!(status(Post, "/v1/host/uploads/a/parts/0"), 405);
     for path in [
         "/v1/hostile",
         "/v1/host/",

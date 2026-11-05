@@ -13,8 +13,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v17_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 17);
+fn json_websocket_v18_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 18);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -27,7 +27,7 @@ fn json_websocket_v17_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 17,
+            "version": 18,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -101,12 +101,7 @@ fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_pr
         request_id: 7,
         task_id,
         command_id,
-        input: CommandInput::Text {
-            text: "continue here".to_owned(),
-            context: None,
-            author: renoa_protocol::Author::Principal,
-            quiet: false,
-        },
+        input: CommandInput::from_text("continue here"),
     };
     let submit_json = json!({
         "type": "submit",
@@ -135,6 +130,7 @@ fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_pr
             context: Some("Discord channel #general (5)".to_owned()),
             author: renoa_protocol::Author::Principal,
             quiet: false,
+            attachments: Vec::new(),
         },
     };
     let placed_json = json!({
@@ -165,6 +161,7 @@ fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_pr
             context: None,
             author: renoa_protocol::Author::Guest,
             quiet: false,
+            attachments: Vec::new(),
         },
     };
     let guest_json = json!({
@@ -195,6 +192,38 @@ fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_pr
             "{author:?} is rejected: the principal is never named on the wire"
         );
     }
+}
+
+#[test]
+fn json_websocket_v18_text_input_carries_at_most_ten_attachments() {
+    let attachment = json!({
+        "uploadId": "00000000-0000-0000-0000-000000000003",
+        "name": "fridge.jpg",
+        "mimeType": "image/jpeg"
+    });
+    let attached_json = json!({
+        "type": "submit",
+        "request_id": 11,
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002",
+        "input": {"type": "text", "text": "what can I cook?", "attachments": [attachment]}
+    });
+    let attached = serde_json::from_value::<ClientMessage>(attached_json.clone())
+        .expect("deserialize attached files");
+    let ClientMessage::Submit { input, .. } = &attached else {
+        panic!("a submit");
+    };
+    assert_eq!(input.attachments()[0].name(), "fridge.jpg");
+    assert_eq!(
+        serde_json::to_value(&attached).expect("serialize attached files"),
+        attached_json
+    );
+    let mut over = attached_json;
+    over["input"]["attachments"] = json!(vec![
+        attachment;
+        renoa_protocol::Attachment::MAX_PER_COMMAND + 1
+    ]);
+    assert!(serde_json::from_value::<ClientMessage>(over).is_err());
 }
 
 #[test]
@@ -509,6 +538,7 @@ fn execute_delivery_contains_only_continuity_data() {
                 context: None,
                 author: renoa_protocol::Author::Principal,
                 quiet: false,
+                attachments: Vec::new(),
             },
             origin: None,
         },

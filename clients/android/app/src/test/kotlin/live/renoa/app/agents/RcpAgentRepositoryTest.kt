@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import live.renoa.app.badge.mainAgent
+import live.renoa.rcp.Attachment
 import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.ApplyLiveActivity
 import live.renoa.rcp.CommandSubmission
@@ -43,6 +44,7 @@ import live.renoa.rcp.TaskSummary
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -98,6 +100,16 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     /** When set, the Host gives this answer to the next call. */
     var hostAnswer: HostAnswer? = null
+
+    /** Each upload the Host was asked to start, by id: its size and the bytes its parts brought, in order. */
+    val uploads = LinkedHashMap<String, Pair<Long, java.io.ByteArrayOutputStream>>()
+
+    /** When set, the Host answers every upload call with it. */
+    var uploadAnswer: HostAnswer? = null
+
+    /** A part lost on the way once, as a dropped connection loses it; every part sent is counted in [partsSent]. */
+    var losePart: Int? = null
+    val partsSent = mutableListOf<Int>()
 
     /**
      * The automations the Host's observation lists, kept apart from [hostCalls]: the app reads them on
@@ -245,12 +257,29 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         replay(taskId, apply)
     }
 
+    private fun uploadCall(path: String, body: String): HostAnswer {
+        uploadAnswer?.let { return it }
+        val (id, part) = path.removePrefix("/v1/host/uploads/").split("/parts/").let { it[0] to it.getOrNull(1) }
+        val fields = Json.parseToJsonElement(body).jsonObject
+        if (part == null) {
+            uploads.getOrPut(id) { fields.getValue("size").jsonPrimitive.long to java.io.ByteArrayOutputStream() }
+        } else if (part.toInt() == losePart) {
+            losePart = null
+            return HostAnswer(503, """{"code":"host_unreachable"}""")
+        } else {
+            partsSent += part.toInt()
+            uploads.getValue(id).second.write(kotlin.io.encoding.Base64.decode(fields.getValue("data").jsonPrimitive.content))
+        }
+        val (size, received) = uploads.getValue(id)
+        return HostAnswer(200, """{"size":$size,"received":${received.size()},"complete":${received.size().toLong() == size}}""")
+    }
+
     private suspend fun deliver(command: PendingTextCommand) {
         when (val answer = answers.removeFirstOrNull() ?: Answer.Admit) {
             Answer.Admit -> {
                 admitted += command
                 state.removeCommand(command.commandId)
-                record(journals.getValue(command.taskId).submitted(command.commandId, command.text))
+                record(journals.getValue(command.taskId).submitted(command.commandId, command.text, attachments = command.attachments))
             }
             is Answer.Refuse -> throw RcpException(answer.code, "refused", answer.requestId)
             Answer.Lose -> {
@@ -260,13 +289,13 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         }
     }
 
-    override suspend fun submitText(taskId: Uuid, text: String): CommandSubmission {
+    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>): CommandSubmission {
         check(online) { "RCP client is not connected" }
         submitHeld?.let {
             submitHeld = null
             it.await()
         }
-        val command = PendingTextCommand(Uuid.random(), taskId, text)
+        val command = PendingTextCommand(Uuid.random(), taskId, text, files)
         state.enqueueCommand(command)
         val accepted = CompletableDeferred<Unit>()
         runCatching { deliver(command) }.fold({ accepted.complete(Unit) }, { accepted.completeExceptionally(it) })
@@ -327,6 +356,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             )
         }
         if (path == "/v1/host/profile") return profileCall(method, body)
+        if (path.startsWith("/v1/host/uploads/")) return uploadCall(path, body.orEmpty())
         if (path == "/v1/host/feed" || path.startsWith("/v1/host/feed/") || path.endsWith("/run")) return feedCall(method, path)
         hostCalls += Triple(method, path, body)
         hostFailure?.let {
@@ -825,6 +855,58 @@ class RcpAgentRepositoryTest {
         val calls = surface.hostCalls.size
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.apps("${surface.node}/someone") }.problem)
         assertEquals(calls, surface.hostCalls.size, "a roster id that is no Host agent asks the Host nothing")
+    }
+
+    @Test
+    fun filesAreUploadedInPartsBeforeTheMessageThatNamesThem() = runTest {
+        val renoa = Uuid.random()
+        surface.targets = listOf(TargetSummary(surface.node, "agent:$renoa", "Renoa"))
+        surface.automations = mutableListOf()
+        val repo = started()
+        val id = "${surface.node}/agent:$renoa"
+        val photo = OutgoingFile("fridge.jpg", "image/jpeg", ByteArray(HostUploads.PART_BYTES + 10) { (it % 7).toByte() })
+        repo.send(id, "  ", listOf(photo))
+        val (upload, held) = surface.uploads.entries.single()
+        assertContentEquals(photo.bytes, held.second.toByteArray(), "two parts, in order")
+        val attachment = Attachment(Uuid.parse(upload), "fridge.jpg", "image/jpeg")
+        assertEquals(listOf(attachment), surface.admitted.single().attachments)
+        assertEquals(listOf(attachment), repo.conversation(id).first().messages.single().attachments)
+    }
+
+    @Test
+    fun aRefusedUploadSendsNothing() = runTest {
+        val renoa = Uuid.random()
+        surface.targets = listOf(TargetSummary(surface.node, "agent:$renoa", "Renoa"))
+        surface.automations = mutableListOf()
+        val repo = started()
+        val id = "${surface.node}/agent:$renoa"
+        surface.uploadAnswer = HostAnswer(422, """{"code":"invalid_upload"}""")
+        val refused = assertFailsWith<RepositoryException> { repo.send(id, "look", listOf(OutgoingFile("a.txt", "text/plain", byteArrayOf(1)))) }
+        assertEquals(Problem.Invalid, refused.problem)
+        assertTrue(surface.admitted.isEmpty())
+        assertTrue(repo.conversation(id).first().messages.isEmpty())
+    }
+
+    @Test
+    fun aFileSentAgainResumesItsUploadAndOneTheCoordinatorWouldRefuseNeverStarts() = runTest {
+        val renoa = Uuid.random()
+        surface.targets = listOf(TargetSummary(surface.node, "agent:$renoa", "Renoa"))
+        surface.automations = mutableListOf()
+        val repo = started()
+        val id = "${surface.node}/agent:$renoa"
+        val photo = OutgoingFile("fridge.jpg", "image/jpeg", ByteArray(2 * HostUploads.PART_BYTES + 10) { (it % 5).toByte() })
+        surface.losePart = 1
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.send(id, "", listOf(photo)) }.problem)
+        repo.send(id, "", listOf(photo))
+        assertEquals(listOf(0, 1, 2), surface.partsSent, "the second send starts where the first stopped")
+        val (upload, held) = surface.uploads.entries.single()
+        assertEquals(photo.uploadId.toString(), upload)
+        assertContentEquals(photo.bytes, held.second.toByteArray())
+
+        surface.uploads.clear()
+        val refused = assertFailsWith<RepositoryException> { repo.send(id, "", listOf(OutgoingFile("a\u0007b", "image/jpeg", byteArrayOf(1)))) }
+        assertEquals(Problem.Invalid, refused.problem)
+        assertTrue(surface.uploads.isEmpty(), "nothing was uploaded")
     }
 
     /** Two Host agents listed in id order, as the Host lists them, with [mainSortsFirst] saying which the Host names main. */

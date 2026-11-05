@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{CommandId, PrincipalId};
+use crate::{Attachment, CommandId, PrincipalId, attachment};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -98,6 +98,14 @@ pub enum CommandInput {
         /// heartbeat's run is quiet. Omitted on the wire when it is not.
         #[serde(default, skip_serializing_if = "is_loud")]
         quiet: bool,
+        /// Files the principal uploaded to its Host for this text. Omitted on
+        /// the wire when there are none.
+        #[serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            deserialize_with = "attachment::bounded"
+        )]
+        attachments: Vec<Attachment>,
     },
 }
 
@@ -140,6 +148,14 @@ impl CommandInput {
             context: None,
             author: Author::Principal,
             quiet: false,
+            attachments: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn attachments(&self) -> &[Attachment] {
+        match self {
+            Self::Text { attachments, .. } => attachments,
         }
     }
 

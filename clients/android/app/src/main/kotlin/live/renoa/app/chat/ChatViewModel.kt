@@ -20,12 +20,14 @@ import live.renoa.app.agents.Ask
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Conversation
 import live.renoa.app.agents.Link
+import live.renoa.app.agents.OutgoingFile
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.StreamingReply
 import live.renoa.app.agents.wordsOr
 import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.mainAgent
+import live.renoa.rcp.Attachment
 
 /** What the composer's round button does right now. */
 enum class ComposerAction {
@@ -56,6 +58,8 @@ data class ChatUiState(
     val link: Link = Link.Connected,
     /** A send the owner started has not finished yet. */
     val sending: Boolean = false,
+    /** Photos and files waiting in the composer to go with the next message. */
+    val files: List<OutgoingFile> = emptyList(),
 ) {
     val working: Boolean get() = agent?.state == AgentState.Working
 
@@ -68,7 +72,7 @@ data class ChatUiState(
     val action: ComposerAction
         get() =
             when {
-                draft.isNotBlank() -> ComposerAction.Send
+                draft.isNotBlank() || files.isNotEmpty() -> ComposerAction.Send
                 working -> ComposerAction.Stop
                 else -> ComposerAction.Idle
             }
@@ -76,16 +80,18 @@ data class ChatUiState(
 
 class ChatViewModel(private val repository: AgentRepository, private val agentId: String) : ViewModel() {
     private val draft = MutableStateFlow("")
+    private val files = MutableStateFlow<List<OutgoingFile>>(emptyList())
     private val notice = MutableStateFlow<String?>(null)
 
     /** Sends the repository has not finished with yet. */
     private val inFlight = MutableStateFlow(0)
 
     val state: StateFlow<ChatUiState> =
-        combine(repository.agents, conversation(), draft, notice.combine(inFlight, ::Pair), repository.link) { agents, conversation, draft, (notice, inFlight), link ->
+        combine(repository.agents, conversation(), draft.combine(files, ::Pair), notice.combine(inFlight, ::Pair), repository.link) {
+            agents, conversation, (draft, files), (notice, inFlight), link ->
             ChatUiState(
                 agents.firstOrNull { it.id == agentId }, conversation?.messages.orEmpty(), conversation?.streaming, draft, notice, loaded = conversation != null,
-                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId, link = link, sending = inFlight > 0,
+                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId, link = link, sending = inFlight > 0, files = files,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(link = repository.link.value))
 
@@ -128,21 +134,39 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         notice.value = null
     }
 
+    /** Adds photos or files to go with the next message, up to [Attachment.MAX_PER_COMMAND]. */
+    fun attach(picked: List<OutgoingFile>) {
+        notice.value = null
+        files.update { (it + picked).take(Attachment.MAX_PER_COMMAND) }
+    }
+
+    fun unattach(index: Int) {
+        files.update { it.filterIndexed { at, _ -> at != index } }
+    }
+
+    /** A picked file could not be read, so it is not attached. */
+    fun problem(words: String) {
+        notice.value = words
+    }
+
     /**
-     * Sends the draft. The words leave the composer at once; if they are not kept, they come back.
-     * While the agent waits on a question, they are the answer.
+     * Sends the draft and its files. They leave the composer at once; if they are not kept, they
+     * come back. While the agent waits on a question, words alone are the answer.
      */
     fun send() {
         val text = draft.value.trim()
-        if (text.isEmpty()) return
+        val sent = files.value
+        if (text.isEmpty() && sent.isEmpty()) return
         draft.value = ""
+        files.value = emptyList()
         notice.value = null
         inFlight.update { it + 1 }
         viewModelScope.launch {
             try {
-                if (state.value.ask == null) repository.send(agentId, text) else repository.answer(agentId, text)
+                if (state.value.ask == null || sent.isNotEmpty()) repository.send(agentId, text, sent) else repository.answer(agentId, text)
             } catch (refused: RepositoryException) {
                 draft.update { if (it.isEmpty()) text else it }
+                files.update { (sent + it).take(Attachment.MAX_PER_COMMAND) }
                 notice.value = refused.wordsOr("That did not go through. Try again.")
             } finally {
                 inFlight.update { it - 1 }

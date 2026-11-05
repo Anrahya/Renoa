@@ -31,7 +31,7 @@ private class Replay {
     var through: Long? = null
 }
 
-private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val apply: suspend (TaskEvent) -> Unit) {
+private class TaskAttachment(val taskId: Uuid, val live: ApplyLiveActivity?, val apply: suspend (TaskEvent) -> Unit) {
     @Volatile
     var cursor: Long? = null
 
@@ -72,7 +72,7 @@ class WebSocketRcpSurface(
             .pingInterval(timeouts.keepalive.inWholeMilliseconds, TimeUnit.MILLISECONDS)
             .build()
 
-    private val attachments = LinkedHashMap<Uuid, Attachment>()
+    private val attachments = LinkedHashMap<Uuid, TaskAttachment>()
     private val nextRequestId = AtomicLong(1)
     private val connecting = AtomicBoolean(false)
 
@@ -166,7 +166,7 @@ class WebSocketRcpSurface(
 
     override suspend fun attach(taskId: Uuid, live: ApplyLiveActivity?, apply: suspend (TaskEvent) -> Unit) {
         connected()
-        val attachment = Attachment(taskId, live, apply)
+        val attachment = TaskAttachment(taskId, live, apply)
         synchronized(attachments) {
             check(taskId !in attachments) { "task $taskId is already attached" }
             attachments[taskId] = attachment
@@ -179,9 +179,10 @@ class WebSocketRcpSurface(
         }
     }
 
-    override suspend fun submitText(taskId: Uuid, text: String): CommandSubmission {
+    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>): CommandSubmission {
         connected()
-        val command = PendingTextCommand(newCommandId(), taskId, text)
+        require(files.size <= Attachment.MAX_PER_COMMAND) { "A message carries at most ${Attachment.MAX_PER_COMMAND} files." }
+        val command = PendingTextCommand(newCommandId(), taskId, text, files)
         requireFits(command)
         state.enqueueCommand(command)
         return CommandSubmission(command.commandId, scope.async { sendPending(command) })
@@ -229,7 +230,7 @@ class WebSocketRcpSurface(
     }
 
     private suspend fun sendPending(command: PendingTextCommand) {
-        val input = CommandInput.Text(command.text)
+        val input = CommandInput.Text(command.text, attachments = command.attachments)
         request(
             ServerMessage.CommandAccepted::class,
             { ClientMessage.Submit(it, command.taskId, command.commandId, input) },
@@ -242,7 +243,12 @@ class WebSocketRcpSurface(
     /** A frame the coordinator would refuse must not reach the outbox: it could never be admitted. */
     private fun requireFits(command: PendingTextCommand) {
         val worstCase =
-            ClientMessage.Submit(MAX_SAFE_INTEGER, command.taskId, command.commandId, CommandInput.Text(command.text))
+            ClientMessage.Submit(
+                MAX_SAFE_INTEGER,
+                command.taskId,
+                command.commandId,
+                CommandInput.Text(command.text, attachments = command.attachments),
+            )
         val bytes = encodeClientMessage(worstCase).toByteArray(Charsets.UTF_8).size
         require(bytes <= MAX_FRAME_BYTES) {
             "text is $bytes bytes once encoded; one RCP message holds at most $MAX_FRAME_BYTES. Send shorter text."
@@ -313,7 +319,7 @@ class WebSocketRcpSurface(
     }
 
     /** A task the coordinator no longer has would fail every later connect, so it is forgotten as the failure is reported. */
-    private suspend fun reattach(attachment: Attachment) {
+    private suspend fun reattach(attachment: TaskAttachment) {
         try {
             attachExisting(attachment)
         } catch (gone: RcpException) {
@@ -322,7 +328,7 @@ class WebSocketRcpSurface(
         }
     }
 
-    private suspend fun attachExisting(attachment: Attachment) {
+    private suspend fun attachExisting(attachment: TaskAttachment) {
         val connection = connected()
         attachment.cursor = state.cursor(attachment.taskId)
         val replay = Replay()

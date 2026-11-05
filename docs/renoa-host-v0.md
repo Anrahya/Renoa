@@ -558,6 +558,33 @@ needs no new sign-in; the plugin's skills stay. A malformed connection id return
 complete, returns 404 `app_not_found`; turning on one whose plugin is switched
 off, replaced or not admitted for the agent returns 409 `app_unavailable`.
 
+`PUT /v1/host/uploads/{id}` with `{size, sha256}` starts an upload of a file the
+signed-in owner will attach to a message; the app chooses `id`, a UUID. The size is
+1 byte to 25 MiB and the hash 64 lowercase hex digits. `PUT
+/v1/host/uploads/{id}/parts/{index}` with `{data}`, the part's bytes in base64,
+stores part `index`, counted from 0. Every part but the last is 512 KiB, the largest
+power of two whose base64 body fits one 1 MiB RCP message, and parts arrive in
+order. Both return `{size, received, complete}`; a caller sends the part that starts
+at `received` next. Starting the same upload again changes nothing and a part sent
+again is written again, so a caller unsure of an answer sends the same request
+again, and one resuming starts the same upload again. A part is on disk before its
+answer. The last part checks the hash: a match completes the upload, and a mismatch
+removes it and returns 422 `invalid_upload`, as does a bad size, hash, part number
+or part length. An upload the caller did not start returns 404 `upload_not_found`;
+an id already started with another size or hash, a part past the one expected next,
+or a part of a completed upload sent with other bytes returns 409 `upload_conflict`.
+Uploads are kept under `state/uploads` and are not yet removed.
+
+A command whose text input carries `attachments` (`rcp-json-ws-v0.md`) names
+completed uploads. The node copies each into the agent's workspace under
+`attachments/`, keeping the name unless another file holds it, then adding the
+start of the file's hash, and gives the turn the command's text, a line naming each
+copy, and each image (JPEG, PNG, GIF or WebP, known by its bytes, up to 5 MiB in
+base64) as an image block. A model without image input receives the adapter's
+placeholder. An upload the command's principal did not complete becomes a line
+saying it did not arrive. Attaching the same upload again reuses the copy, so a
+retried turn copies nothing twice.
+
 `GET /v1/host/discord` reports `setup_required` until the owner connects a bot,
 then `connected` with the bot and server names, the default agent, and saved
 bindings. Connection is not worker liveness. `POST /v1/host/discord/inspection`

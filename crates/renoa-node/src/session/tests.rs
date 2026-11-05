@@ -48,6 +48,7 @@ async fn a_frame_queued_before_a_record_is_read_reaches_the_coordinator_before_i
             context: None,
             author: renoa_protocol::Author::Principal,
             quiet: false,
+            attachments: Vec::new(),
         },
         origin: None,
     };

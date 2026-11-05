@@ -1,5 +1,7 @@
 package live.renoa.app.agents
 
+import live.renoa.rcp.Attachment
+
 import kotlinx.serialization.Serializable
 import java.time.Instant
 
@@ -79,7 +81,14 @@ enum class Speaker {
  * [notSent]: the app stopped sending the owner's message because Renoa could not take it.
  * [AgentRepository.retry] sends it again and [AgentRepository.discard] deletes it.
  */
-data class ChatMessage(val id: String, val speaker: Speaker, val text: String, val notSent: Boolean = false)
+data class ChatMessage(
+    val id: String,
+    val speaker: Speaker,
+    val text: String,
+    val notSent: Boolean = false,
+    /** The files the owner sent with the text. */
+    val attachments: List<Attachment> = emptyList(),
+)
 
 /**
  * A reply still arriving. It is never stored. It already has the id its whole [ChatMessage] will

@@ -196,6 +196,7 @@ async fn seed_journal(
                 context: None,
                 author: renoa_protocol::Author::Principal,
                 quiet: false,
+                attachments: Vec::new(),
             },
         },
     )

@@ -481,6 +481,39 @@ test("the Pi harness refuses a guest's command before the model runs", async () 
   }
 });
 
+test("the Pi harness refuses a command with attached files before the model runs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "renoa-pi-attached-"));
+  try {
+    const faux = fauxProvider();
+    const harness = new PiHarness({
+      instructions: "Answer clearly.",
+      model: faux.getModel(),
+      streamFn: () => {
+        throw new Error("Pi must not run with attachments");
+      },
+      target: "workspace:renoa",
+    });
+    const state = new NodeState(join(directory, "node.sqlite"));
+    state.admit({ ...command("00000000-0000-0000-0000-000000000026", "what is this?"), attached: true });
+    const execution = state.claimNext();
+    assert.ok(execution);
+    assert.equal(execution.attached, true, "the attachment mark survives admission");
+
+    await harness.execute(execution, state, new AbortController().signal);
+
+    assert.deepEqual(state.pendingPublications()[0]?.events.at(-1)?.kind, {
+      type: "execution_terminated",
+      terminal: {
+        status: "failed",
+        error: "Pi harness takes text only; send the message without attached files",
+      },
+    });
+    state.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 function command(commandId: string, text: string): ExecuteCommand {
   return {
     taskId: "00000000-0000-0000-0000-000000000001",

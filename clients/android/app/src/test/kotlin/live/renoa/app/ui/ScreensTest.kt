@@ -38,6 +38,7 @@ import live.renoa.app.agents.Speaker
 import kotlinx.coroutines.flow.flowOf
 import live.renoa.app.agents.AgentProfile
 import live.renoa.app.agents.EditProfile
+import live.renoa.app.agents.OutgoingFile
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import androidx.compose.ui.test.assertCountEquals
@@ -396,7 +397,7 @@ class ScreensTest : ScreenTest() {
         object : AgentRepository by repository {
             override fun conversation(agentId: String) = talk
 
-            override suspend fun send(agentId: String, text: String) {
+            override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
                 sent += text
             }
         }

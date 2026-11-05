@@ -132,6 +132,7 @@ async fn submit_queued(link: &Link, connection: &Connection) -> Result<(), Disco
                     context: turn.context.clone(),
                     author: turn.author,
                     quiet: false,
+                    attachments: Vec::new(),
                 },
             )
             .await

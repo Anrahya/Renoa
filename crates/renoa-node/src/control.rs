@@ -59,6 +59,7 @@ mod tests {
                 context: None,
                 author,
                 quiet: false,
+                attachments: Vec::new(),
             },
             origin: None,
         }

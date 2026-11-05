@@ -1,13 +1,16 @@
 //! Running one admitted command on its Host session, and scheduling the
 //! admitted commands of each task one at a time.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use renoa_agent::ContentBlock;
 use renoa_control::TaskId;
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHostError, LocalTurnOutcome, TurnObservation};
-use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal};
+use renoa_local::{
+    AgentSession, LocalHost, LocalHostError, LocalTurnOutcome, TurnObservation, UploadError,
+    Uploads,
+};
+use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEventKind, ExecutionTerminal};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
 
@@ -58,24 +61,10 @@ impl NodeRuntime {
                 "session_id": record.binding.session_id,
             }),
         );
-        // The workspace call also refuses an agent that no longer exists, which
-        // ends this execution as failed instead of stopping the node.
-        let session = match self.host.agent_workspace(agent_id).await {
-            Ok(_) => {
-                self.host
-                    .ensure_agent_session(
-                        agent_id,
-                        &record.binding.workspace,
-                        record.binding.session_id,
-                    )
-                    .await
-            }
-            Err(error) => Err(error),
-        };
-        let session = match session {
-            Ok(session) => session,
+        let (session, content) = match self.prepare(&record, agent_id, request).await {
+            Ok(prepared) => prepared,
             Err(error) => {
-                self.finish_failed(command_id, error.to_string()).await?;
+                self.finish_failed(command_id, error).await?;
                 return Ok(());
             }
         };
@@ -91,7 +80,7 @@ impl NodeRuntime {
         let events = Arc::new(
             LiveEvents::start(Arc::clone(&self), record.task_id, command_id, setup.clone()).await?,
         );
-        let result = run_request(request, &record, &session, events, cancellation).await?;
+        let result = run_request(request, content, &record, &session, events, cancellation).await?;
         // A setup link that could not be delivered stopped the turn; its
         // reason is the command's outcome. The turn has settled (a tool runs
         // to its end even when cancelled), so every setup its calls saved is
@@ -122,6 +111,41 @@ impl NodeRuntime {
         self.state.finish(command_id, events).await?;
         self.signal_commit();
         Ok(())
+    }
+
+    /// Opens the command's session and gathers what its turn receives. The
+    /// workspace call also refuses an agent that no longer exists, which ends
+    /// the execution as failed, with the returned reason, instead of stopping
+    /// the node.
+    async fn prepare(
+        &self,
+        record: &ExecutionRecord,
+        agent_id: AgentId,
+        request: Request,
+    ) -> Result<(Arc<AgentSession>, Vec<ContentBlock>), String> {
+        let workspace = self
+            .host
+            .agent_workspace(agent_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let session = self
+            .host
+            .ensure_agent_session(
+                agent_id,
+                &record.binding.workspace,
+                record.binding.session_id,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let content = match request {
+            Request::Turn => turn_content(&self.host, &record.command, &workspace)
+                .await
+                .map_err(|error| {
+                    format!("An attached file could not be given to the agent: {error}")
+                })?,
+            Request::Compact => Vec::new(),
+        };
+        Ok((session, content))
     }
 
     async fn finish_session_error(
@@ -165,11 +189,43 @@ impl NodeRuntime {
     }
 }
 
+/// What the agent receives for a turn: the command's text, then each attached
+/// file as the Host gives it ([`Uploads::attach`]). Text left blank beside an
+/// attachment is not sent.
+async fn turn_content(
+    host: &LocalHost,
+    command: &CommandEnvelope,
+    workspace: &Path,
+) -> Result<Vec<ContentBlock>, UploadError> {
+    let attachments = command.input.attachments();
+    let text = origin::prompt_text(command);
+    let mut content = Vec::new();
+    if attachments.is_empty() || !text.trim().is_empty() {
+        content.push(ContentBlock::text(text));
+    }
+    let uploads = Uploads::open(host.home());
+    for attachment in attachments {
+        content.extend(
+            uploads
+                .attach(
+                    command.principal_id.as_uuid(),
+                    attachment.upload_id(),
+                    attachment.name().to_owned(),
+                    workspace.to_path_buf(),
+                )
+                .await?,
+        );
+    }
+    Ok(content)
+}
+
 /// Runs one admitted command on its session. A turn observes when its text was
-/// received; a compaction needs only the command's identity. The inner result
-/// is the Host's outcome, the outer one a failure of the node itself.
+/// received and receives `content`; a compaction needs only the command's
+/// identity. The inner result is the Host's outcome, the outer one a failure
+/// of the node itself.
 async fn run_request(
     request: Request,
+    content: Vec<ContentBlock>,
     record: &ExecutionRecord,
     session: &AgentSession,
     events: Arc<LiveEvents>,
@@ -184,7 +240,7 @@ async fn run_request(
             session
                 .execute_turn_observed_with_cancellation(
                     command.command_id.as_uuid(),
-                    vec![ContentBlock::text(origin::prompt_text(command))],
+                    content,
                     observation,
                     events,
                     cancellation,

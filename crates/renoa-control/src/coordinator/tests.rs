@@ -75,6 +75,7 @@ async fn a_lagging_surface_is_told_to_replay() {
             context: None,
             author: renoa_protocol::Author::Principal,
             quiet: false,
+            attachments: Vec::new(),
         },
         origin: None,
     };
@@ -590,6 +591,7 @@ fn write_command(principal_id: PrincipalId, target: TargetRef) -> CommandEnvelop
             context: None,
             author: renoa_protocol::Author::Principal,
             quiet: false,
+            attachments: Vec::new(),
         },
         origin: None,
     }

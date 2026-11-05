@@ -39,6 +39,7 @@ mod tool_error;
 mod tool_input;
 mod trace;
 mod turn_observation;
+mod uploads;
 mod workspace;
 
 #[cfg(test)]
@@ -104,6 +105,7 @@ pub use skills::SkillError;
 pub use skills::store::{SkillComponentRejection, SkillComponentReport};
 pub use speaker::Speaker;
 pub use turn_observation::{TurnObservation, TurnObservationError};
+pub use uploads::{MAX_UPLOAD_BYTES, UPLOAD_PART_BYTES, UploadError, UploadStatus, Uploads};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 
 pub use host::automations::{

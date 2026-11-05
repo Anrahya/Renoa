@@ -220,8 +220,10 @@ Inputs:
   with an optional `context`: the surface's own description of where the text
   was written, and an optional guest `author` for text the surface received
   from someone other than its principal. RCP carries both with the command and
-  gives them no other meaning. A surface cannot supply an `origin`; only the
-  coordinator sets one, on an agent message.
+  gives them no other meaning. Text input may also carry up to 10
+  `attachments`, each an upload id with a name and media type; RCP checks
+  their shape only, and the executor finds the uploads. A surface cannot supply
+  an `origin`; only the coordinator sets one, on an agent message.
 
 The coordinator derives principal and surface identity from the authenticated
 session and target and execution node from durable task state. A surface cannot

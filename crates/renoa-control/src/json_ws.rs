@@ -13,7 +13,7 @@ use crate::{
     setup_notices::{DeviceNoticeKey, HeldNotice, NoticeKey, SealedNotice},
 };
 
-pub const JSON_WS_VERSION: u32 = 17;
+pub const JSON_WS_VERSION: u32 = 18;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

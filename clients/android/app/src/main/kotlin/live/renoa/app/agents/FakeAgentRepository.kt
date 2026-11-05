@@ -12,8 +12,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import live.renoa.rcp.Attachment
 import java.time.ZonedDateTime
 import java.util.UUID
+import kotlin.uuid.Uuid
 
 /** What an agent says back, or that it could not. */
 sealed interface Reply {
@@ -194,10 +196,11 @@ class FakeAgentRepository(
 
     override fun conversation(agentId: String): Flow<Conversation> = room(agentId).conversation
 
-    override suspend fun send(agentId: String, text: String) {
+    override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
         val room = room(agentId)
-        if (text.isBlank()) throw RepositoryException(Problem.Invalid, "A message needs some words in it.")
-        synchronized(lock) { keepLocked(agentId, room, text.trim()) }
+        if (text.isBlank() && files.isEmpty()) throw RepositoryException(Problem.Invalid, "A message needs some words in it.")
+        val attachments = files.map { Attachment(Uuid.random(), it.name, it.mimeType) }
+        synchronized(lock) { keepLocked(agentId, room, text.trim(), attachments) }
     }
 
     /** Every message here is kept the moment it is sent, so none is ever left unsent. */
@@ -217,8 +220,9 @@ class FakeAgentRepository(
     }
 
     /** Keeps the owner's words and starts a turn if none is running. Call under the lock. */
-    private fun keepLocked(agentId: String, room: Room, text: String) {
-        room.conversation.update { it.copy(messages = it.messages + ChatMessage("$agentId-${room.nextMessage++}", Speaker.Owner, text)) }
+    private fun keepLocked(agentId: String, room: Room, text: String, attachments: List<Attachment> = emptyList()) {
+        val message = ChatMessage("$agentId-${room.nextMessage++}", Speaker.Owner, text, attachments = attachments)
+        room.conversation.update { it.copy(messages = it.messages + message) }
         room.queue.addLast(text)
         if (room.turn?.isActive != true) {
             // The turn is recorded before it runs, so even an immediate dispatcher finds itself the room's turn.
