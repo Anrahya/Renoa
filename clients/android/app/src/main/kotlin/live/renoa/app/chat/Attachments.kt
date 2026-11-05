@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -107,10 +108,11 @@ internal fun AttachButton(room: Int, onFiles: (List<OutgoingFile>) -> Unit, onPr
                 MenuItem("Files", icon = "doc") { files.launch(arrayOf("*/*")) },
             )
         },
-        modifier = Modifier.size(34.dp),
+        // The tap area is the 48dp round the symbol, as the send button's is, so the two sit level.
+        modifier = Modifier.minimumInteractiveComponentSize().size(34.dp),
         enabled = room > 0,
         label = "Add a photo or file",
-    ) { Symbol("plus", size = 20.dp, tint = if (room > 0) Palette.secondary else Palette.tertiary) }
+    ) { Symbol("plus", size = 22.dp, tint = if (room > 0) Palette.text else Palette.tertiary) }
 }
 
 /** The files waiting in the composer, each with a way to take it back out. */
