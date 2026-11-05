@@ -4,8 +4,8 @@ use renoa_agent::{ContentBlock, ToolCall, invoke_tool};
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
-use super::{EditFile, MAX_FILE_WRITE_BYTES, ReadFileInput, WriteFile, read_page};
-use crate::{output::MAX_TOOL_OUTPUT_BYTES, tool_input::decode};
+use super::{EditFile, MAX_FILE_WRITE_BYTES, ReadFile, ReadFileInput, WriteFile, read_page};
+use crate::{images::MAX_INLINE_IMAGE_BYTES, output::MAX_TOOL_OUTPUT_BYTES, tool_input::decode};
 
 #[tokio::test]
 async fn read_page_uses_one_based_offsets_and_returns_a_continuation() {
@@ -156,6 +156,54 @@ async fn a_dangling_symlink_cannot_redirect_a_workspace_write() {
 
     assert!(result.is_error);
     assert!(!outside.exists(), "write followed a dangling symlink");
+}
+
+#[tokio::test]
+async fn an_image_is_read_as_the_image_itself_and_one_too_large_says_what_to_do() {
+    let directory = tempdir().expect("temporary directory");
+    let root = Arc::new(directory.path().to_path_buf());
+    let read = ReadFile::new(Arc::clone(&root));
+    let call = |path: &str| {
+        invoke_tool(
+            Some(&read),
+            tool_call("read_file", serde_json::json!({ "path": path })),
+            CancellationToken::new(),
+            None,
+        )
+    };
+    // Known by its bytes, whatever its name says.
+    let png = [&b"\x89PNG\r\n\x1a\n"[..], &[3; 100]].concat();
+    fs::write(directory.path().join("photo.dat"), &png).expect("write image");
+    let shown = call("photo.dat").await.expect("image result is definite");
+    assert!(!shown.is_error);
+    let [
+        ContentBlock::Text { text },
+        ContentBlock::Image { mime_type, data },
+    ] = &shown.content[..]
+    else {
+        panic!("an image read is a line and the image: {:?}", shown.content)
+    };
+    assert_eq!(text, "photo.dat is an image (108 bytes), shown here.");
+    assert_eq!(mime_type, "image/png");
+    assert_eq!(
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).expect("base64"),
+        png
+    );
+
+    let mut large = vec![0; MAX_INLINE_IMAGE_BYTES + 1];
+    large[..3].copy_from_slice(&[0xFF, 0xD8, 0xFF]);
+    fs::write(directory.path().join("large.jpg"), &large).expect("write large image");
+    let refused = call("large.jpg").await.expect("refusal is definite");
+    assert!(refused.is_error);
+    assert!(
+        result_text(&refused.content).contains("Make a smaller copy with bash"),
+        "{:?}",
+        refused.content
+    );
+
+    fs::write(directory.path().join("notes.txt"), "plain\n").expect("write text");
+    let text = call("notes.txt").await.expect("text result is definite");
+    assert!(result_text(&text.content).starts_with("plain\n"));
 }
 
 fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {

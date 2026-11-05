@@ -848,7 +848,7 @@ async fn a_photo_uploaded_through_the_relay_reaches_the_agent_and_its_workspace(
             )),
             "the journal shows what was attached"
         );
-        let line = json!({"type": "text", "text": "Attached file: attachments/fridge.jpg (513 KB)."});
+        let line = json!({"type": "text", "text": "Attached image, included here so you can see it: attachments/fridge.jpg (513 KB)."});
         let content = last_user_content(&f);
         assert_eq!(content[..2], [json!({"type": "text", "text": "What can I cook?"}), line.clone()]);
         // The Host's own turn context follows what the owner sent.

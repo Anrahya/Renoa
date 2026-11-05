@@ -16,6 +16,7 @@ mod file_tools;
 mod git_repository;
 mod host;
 mod host_storage;
+mod images;
 mod mcp;
 mod model_bridge;
 mod model_catalog;
