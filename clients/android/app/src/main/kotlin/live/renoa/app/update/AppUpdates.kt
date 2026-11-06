@@ -5,6 +5,10 @@ import android.content.Intent
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -54,39 +58,52 @@ class AppUpdates(
             }?.takeIf { it.versionCode > installed }
         }
 
-    /** Downloads [release]'s app and returns it once its size and digest match. A mismatch throws and keeps nothing. */
+    /** One download at a time: a second tap, or a screen made again by a rotation, waits for the first. */
+    private val downloading = Mutex()
+
+    /**
+     * Downloads [release]'s app and returns it once its size and digest match. A mismatch throws and
+     * keeps nothing, and a download that starts drops the one kept before it.
+     */
     suspend fun download(release: AppRelease): File =
-        withContext(Dispatchers.IO) {
-            if (!APK_NAME.matches(release.apk)) throw IOException("the update is named ${release.apk}")
-            dir.mkdirs()
-            val partial = File(dir, "renoa.apk.part")
-            val digest = MessageDigest.getInstance("SHA-256")
-            try {
-                val url = checkNotNull(releaseUrl.toHttpUrl().resolve(release.apk))
-                http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                    if (!response.isSuccessful) throw IOException("the update download failed with ${response.code}")
-                    var written = 0L
-                    response.body.byteStream().use { input ->
-                        partial.outputStream().use { output ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read < 0) break
-                                written += read
-                                if (written > release.size) throw IOException("the update is larger than described")
-                                digest.update(buffer, 0, read)
-                                output.write(buffer, 0, read)
-                            }
+        downloading.withLock {
+            withContext(Dispatchers.IO) { fetch(release) }
+        }
+
+    private suspend fun fetch(release: AppRelease): File {
+        if (!APK_NAME.matches(release.apk)) throw IOException("the update is named ${release.apk}")
+        dir.mkdirs()
+        val kept = File(dir, "renoa.apk")
+        kept.delete()
+        val partial = File(dir, "renoa.apk.part")
+        val digest = MessageDigest.getInstance("SHA-256")
+        try {
+            val url = checkNotNull(releaseUrl.toHttpUrl().resolve(release.apk))
+            http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("the update download failed with ${response.code}")
+                var written = 0L
+                response.body.byteStream().use { input ->
+                    partial.outputStream().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            written += read
+                            if (written > release.size) throw IOException("the update is larger than described")
+                            digest.update(buffer, 0, read)
+                            output.write(buffer, 0, read)
                         }
                     }
-                    val hex = digest.digest().joinToString("") { "%02x".format(it) }
-                    if (written != release.size || hex != release.sha256) throw IOException("the update does not match its description")
                 }
-                File(dir, "renoa.apk").also { if (!partial.renameTo(it)) throw IOException("the update could not be kept") }
-            } finally {
-                partial.delete()
+                val hex = digest.digest().joinToString("") { "%02x".format(it) }
+                if (written != release.size || hex != release.sha256) throw IOException("the update does not match its description")
             }
+            return kept.also { if (!partial.renameTo(it)) throw IOException("the update could not be kept") }
+        } finally {
+            partial.delete()
         }
+    }
 }
 
 /** Hands a downloaded update to the phone's installer, which asks the owner, and the first time to allow it. */

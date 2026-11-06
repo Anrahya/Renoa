@@ -63,7 +63,7 @@ class AppUpdatesTest {
         val kept = updates(installed = 1).download(release)
         assertEquals("the app", kept.readText())
 
-        kept.delete()
+        // A download drops the one kept before it, so a failed one leaves no older app to install.
         for (wrong in listOf(release.copy(sha256 = "0".repeat(64)), release.copy(size = 3L), release.copy(size = 99L))) {
             assertFailsWith<IOException> { updates(installed = 1).download(wrong) }
             assertTrue(folder.root.listFiles().orEmpty().isEmpty(), "a mismatch keeps nothing: ${folder.root.list()?.toList()}")

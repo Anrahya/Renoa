@@ -155,6 +155,9 @@ class RenoaApplication : Application() {
         chatToOpen = agentId
     }
 
+    /** Where Settings checks renoa.live for a newer app, and keeps its download: one for the process, so a rotation cannot start a second. */
+    val updates by lazy { AppUpdates(File(cacheDir, "update")) }
+
     /** Takes the chat a tapped notice asked for, once. */
     @Synchronized
     fun takeChatToOpen(): String? = chatToOpen.also { chatToOpen = null }
@@ -271,10 +274,8 @@ class MainActivity : ComponentActivity() {
         // A credential from another Renoa, as after a build that signs in elsewhere, does not count.
         val signedIn = store.load()?.origin == RENOA_ORIGIN
         opening = application.takeChatToOpen()
-        // Settings checks renoa.live for a newer app and keeps its download here.
-        val updates = AppUpdates(File(cacheDir, "update"))
         setContent {
-            CompositionLocalProvider(LocalAppUpdates provides updates) {
+            CompositionLocalProvider(LocalAppUpdates provides application.updates) {
                 RenoaApp(
                     application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
                     revoke = application::revokeThisPhone, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,

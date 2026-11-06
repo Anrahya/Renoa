@@ -4,8 +4,12 @@
 #
 #   scripts/publish-android-app v0.16.0
 #
-# Run it on the machine that holds the app's signing key, from a clean checkout
-# of the tag, after the release workflow has published the release. It adds
+# Until the app has a release key, it ships the debug build, signed with the
+# debug key of the machine it runs on: the key the owner's phone already trusts.
+# Run it on that machine, from a clean checkout of the tag, after the release
+# workflow has published the release; another machine's key would make every
+# phone refuse the update. Publish before `renoa-deploy install <tag>`, or run
+# that install again afterwards to serve the app. It adds
 # renoa-<tag>-android.apk and renoa-<tag>-android.json (version code, version
 # name, digest and size) and lists both in the release's SHA256SUMS. Publishing
 # again replaces them.

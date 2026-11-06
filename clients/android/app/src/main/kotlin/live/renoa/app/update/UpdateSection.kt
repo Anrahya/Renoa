@@ -1,5 +1,6 @@
 package live.renoa.app.update
 
+import android.content.ActivityNotFoundException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -22,7 +23,7 @@ private sealed interface Update {
 
     data class Downloading(val release: AppRelease) : Update
 
-    data class Failed(val release: AppRelease) : Update
+    data class Failed(val release: AppRelease, val words: String) : Update
 }
 
 /** This app's version and, when Renoa serves a newer one, the button that downloads and installs it. */
@@ -33,24 +34,38 @@ internal fun AppVersionSection() {
     val scope = rememberCoroutineScope()
     var update by remember { mutableStateOf<Update>(Update.None) }
     // Not finding out is the same as being newest: Settings has nothing to offer then.
-    LaunchedEffect(updates) { update = updates?.let { runCatching { it.newer() }.getOrNull() }?.let(Update::Ready) ?: Update.None }
+    LaunchedEffect(updates) {
+        update =
+            try {
+                updates?.newer()?.let(Update::Ready) ?: Update.None
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                Update.None
+            }
+    }
     val get = { release: AppRelease ->
         if (updates != null) {
             update = Update.Downloading(release)
             scope.launch {
                 update =
                     try {
-                        install(context, updates.download(release))
-                        Update.Ready(release)
+                        val apk = updates.download(release)
+                        try {
+                            install(context, apk)
+                            Update.Ready(release)
+                        } catch (_: ActivityNotFoundException) {
+                            Update.Failed(release, "This phone has no installer to open the update with.")
+                        }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Exception) {
-                        Update.Failed(release)
+                        Update.Failed(release, "The update didn't download. Try again.")
                     }
             }
         }
     }
-    val footer = (update as? Update.Failed)?.let { "The update didn't download. Try again." }
+    val footer = (update as? Update.Failed)?.words
     CardSection(footer = footer) {
         row { ValueRow("App version", BuildConfig.VERSION_NAME) }
         when (val shown = update) {
