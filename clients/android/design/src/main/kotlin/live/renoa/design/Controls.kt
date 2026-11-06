@@ -56,6 +56,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
@@ -75,6 +76,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -120,11 +122,33 @@ import com.kyant.shapes.RoundedRectangle
 @Composable fun SecondaryButton(action: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, label: @Composable () -> Unit) =
     StyledButton(Palette.bubbleUser, Palette.text, modifier, enabled, action, label)
 
+/** The full-width 50-point button of the onboarding and create pages: headline label, a spinner while busy. */
+@Composable fun WideButton(title: String, modifier: Modifier = Modifier, primary: Boolean = true, enabled: Boolean = true,
+    busy: Boolean = false, action: () -> Unit) =
+    WideButton(modifier, primary, enabled, busy, action) { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+
+@Composable fun WideButton(modifier: Modifier = Modifier, primary: Boolean = true, enabled: Boolean = true, busy: Boolean = false,
+    action: () -> Unit, label: @Composable () -> Unit) {
+    val content: @Composable () -> Unit = {
+        Box(Modifier.fillMaxWidth().heightIn(min = 50.dp), contentAlignment = Alignment.Center) {
+            Row(Modifier.graphicsLayer { alpha = if (busy) 0f else 1f }, verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CompositionLocalProvider(LocalTextStyle provides Type.headline) { label() }
+            }
+            if (busy) Spinner(size = 18.dp, color = if (primary) Palette.onAccent else Palette.secondary)
+        }
+    }
+    if (primary) PrimaryButton(action, modifier.fillMaxWidth(), enabled && !busy, content)
+    else SecondaryButton(action, modifier.fillMaxWidth(), enabled && !busy, content)
+}
+
 @Composable private fun StyledButton(fill: Color, ink: Color, modifier: Modifier, enabled: Boolean, action: () -> Unit, label: @Composable () -> Unit) {
     val (source, pressed) = rememberPress()
-    Box(modifier.pressScale(pressed).graphicsLayer { alpha = if (enabled) (if (pressed) 0.85f else 1f) else 0.4f }
-        .clip(Capsule()).background(fill)
+    // Drawn about 44 tall, it keeps 48 to itself, so a tap just past its edge is still its own.
+    Box(modifier.minimumInteractiveComponentSize()
         .clickable(source, null, enabled = enabled, role = Role.Button, onClick = action)
+        .pressScale(pressed).graphicsLayer { alpha = if (enabled) (if (pressed) 0.85f else 1f) else 0.4f }
+        .clip(Capsule()).background(fill)
         .padding(horizontal = 18.dp, vertical = 11.dp), contentAlignment = Alignment.Center) {
         CompositionLocalProvider(LocalTextStyle provides Type.body.medium, LocalContentColor provides ink) { label() }
     }
@@ -156,8 +180,8 @@ import com.kyant.shapes.RoundedRectangle
 
 /** Loading indicator: a thin arc that turns. */
 @Composable fun Spinner(modifier: Modifier = Modifier, size: Dp = 14.dp, color: Color = Palette.secondary) {
-    val turn by rememberInfiniteTransition(label = "Spinner").animateFloat(0f, 360f,
-        infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Restart), label = "Turn")
+    val turn = if (LocalReducedMotion.current) 0f else rememberInfiniteTransition(label = "Spinner").animateFloat(0f, 360f,
+        infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Restart), label = "Turn").value
     val width = with(LocalDensity.current) { maxOf(1.5.dp, size / 9).toPx() }
     Canvas(modifier.size(size).rotate(turn).semantics { contentDescription = "Loading" }) {
         drawArc(color, 0f, 252f, false, style = Stroke(width, cap = StrokeCap.Round))
@@ -383,3 +407,39 @@ private fun plainDecoration(empty: Boolean, prompt: String, style: TextStyle, si
 
 /** An outlined value pill, like ChatGPT's settings dropdowns (outline or fill, never both). */
 @Composable fun Modifier.outline() = border(1.dp, Palette.border, RoundedRectangle(10.dp))
+
+/** A labeled input inside a section row: label (and an optional note) over the field. */
+@Composable fun Field(label: String, detail: String? = null, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(label, style = Type.body, color = Palette.text)
+            if (detail != null) Text(detail, style = Type.caption.copy(lineHeight = Type.caption.lineHeight * 1.12f), color = Palette.secondary)
+        }
+        content()
+    }
+}
+
+/** A rounded input box (`fieldBox`): a plain field on the ground color, or on the card color in an outlined card. */
+@Composable fun FieldBox(text: String, onChange: (String) -> Unit, prompt: String, modifier: Modifier = Modifier,
+    fieldModifier: Modifier = Modifier, minLines: Int = 1, maxLines: Int = 1, style: TextStyle = Type.body,
+    fill: Color = if (LocalCardStyle.current == CardStyle.Outlined) Palette.surface else Palette.background,
+    capitalize: Boolean = true, enabled: Boolean = true, imeAction: ImeAction = ImeAction.Default,
+    actions: KeyboardActions = KeyboardActions.Default) {
+    Box(modifier.fillMaxWidth().clip(RoundedRectangle(12.dp)).background(fill).padding(horizontal = 14.dp, vertical = 11.dp)) {
+        PlainTextField(text, onChange, fieldModifier.fillMaxWidth(), prompt, singleLine = maxLines == 1, style = style, minLines = minLines,
+            maxLines = maxLines, enabled = enabled,
+            keyboard = KeyboardOptions(capitalization = if (capitalize) KeyboardCapitalization.Sentences else KeyboardCapitalization.None,
+                autoCorrectEnabled = capitalize, imeAction = imeAction), actions = actions)
+    }
+}
+
+/** An on/off row: title and a short note, the switch on the right. */
+@Composable fun SwitchRow(title: String, isOn: Boolean, onChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier, detail: String? = null, enabled: Boolean = true) {
+    DesignSwitch(isOn, onChange, modifier.fillMaxWidth(), enabled) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = Type.body, color = Palette.text)
+            if (detail != null) Text(detail, style = Type.caption.copy(lineHeight = Type.caption.lineHeight * 1.12f), color = Palette.secondary)
+        }
+    }
+}

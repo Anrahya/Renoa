@@ -2,46 +2,64 @@ package live.renoa.app.ui
 
 import android.provider.Settings
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.test.click
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.click
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.RenoaTheme
 import live.renoa.app.theme.ThemeName
+import live.renoa.design.PrimaryButton
+import live.renoa.design.SecondaryButton
+import live.renoa.design.WideButton
 import org.junit.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** What every screen stands on: hit areas, the animation setting and the bundled licences. */
+/** What every screen stands on: controls, the animation setting and the bundled licences. */
 class FoundationsTest : ScreenTest() {
     @Test
-    fun aSmallButtonTakesATapAcrossFortyEightAndGrowsWithAWrappedLabel() {
-        val label = "Remind me tomorrow after I get back from the gym"
+    fun aSmallButtonTakesATapAcrossFortyEight() {
         var tapped = 0
         var next = 0
         show {
             Column {
-                RenoaButton("OK", { tapped++ }, size = ButtonSize.Sm)
-                RenoaButton(label, { next++ }, Modifier.width(120.dp), size = ButtonSize.Sm)
+                SecondaryButton("OK") { tapped++ }
+                SecondaryButton("Next") { next++ }
             }
         }
-        // Drawn 32 tall, it keeps 48 to itself, so a tap just under its edge is still its own.
-        compose.onNodeWithText("OK").performTouchInput { click(Offset(centerX, height + 6.dp.toPx())) }
+        // Drawn about 44 tall, it keeps 48 to itself, so a tap just under its edge is still its own.
+        val ok = compose.onNodeWithText("OK").getUnclippedBoundsInRoot()
+        val below = compose.onNodeWithText("Next").getUnclippedBoundsInRoot()
+        assertTrue(below.top - ok.top >= 48.dp, "the next button starts 48 below, not ${below.top - ok.top}")
+        compose.onNodeWithText("OK").performTouchInput { click(Offset(centerX, height + 1.dp.toPx())) }
         assertEquals(1 to 0, tapped to next)
-        val layouts = mutableListOf<TextLayoutResult>()
-        compose.onNodeWithText(label, useUnmergedTree = true).fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!(layouts)
-        assertTrue(layouts.single().lineCount > 1, "the label wraps")
-        assertFalse(layouts.single().didOverflowHeight, "and the button grows to show all of it")
+    }
+
+    @Test
+    fun buttonsTakeTapsWhenReadyAndShowASpinnerWithoutTakingTapsWhileBusy() {
+        var tapped = 0
+        var busyTaps = 0
+        show {
+            Column {
+                PrimaryButton("Save") { tapped++ }
+                WideButton("Continue", busy = true) { busyTaps++ }
+            }
+        }
+        compose.onNodeWithText("Save").performClick()
+        assertEquals(1, tapped)
+        compose.onNodeWithContentDescription("Loading").assertIsDisplayed()
+        compose.onNodeWithText("Continue").assertIsNotEnabled()
+        assertEquals(0, busyTaps)
     }
 
     @Test
@@ -63,7 +81,7 @@ class FoundationsTest : ScreenTest() {
     @Test
     fun theFontAndIconLicencesShipInsideTheApp() {
         val shipped = compose.activity.assets.list("").orEmpty().toSet()
-        for (licence in listOf("MIT-Phosphor.txt", "OFL-Inter.txt", "Apache-2.0-Codync.txt", "README.md")) {
+        for (licence in listOf("MIT-Phosphor.txt", "MIT-ThinkingOrbs.txt", "OFL-Inter.txt", "Apache-2.0-Codync.txt", "README.md")) {
             assertTrue(licence in shipped, "$licence is not in the APK's assets: $shipped")
         }
     }

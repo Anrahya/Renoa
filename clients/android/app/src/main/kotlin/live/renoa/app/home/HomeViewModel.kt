@@ -98,17 +98,6 @@ data class HomeUiState(
 class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     private val local = MutableStateFlow(Local())
 
-    /**
-     * Whether Home has already shown its tiles dropping in. It lives as long as Home's place on the
-     * back stack, so coming back from a chat does not replay it.
-     */
-    var assembled: Boolean = false
-        private set
-
-    fun markAssembled() {
-        assembled = true
-    }
-
     val state: StateFlow<HomeUiState> =
         combine(repository.agents, repository.feed, repository.routines, local, repository.link.combine(repository.rosterKnown, ::Pair)) { agents, feed, routines, mine, (link, known) ->
             HomeUiState(agents, feed, routines, mine.notice, mine.switching, mine.page, mine.ownerName, mine.signUp, link, known, mine.memory, mine.apps, mine.appSwitching, mine.unread)
@@ -188,6 +177,9 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
             }
     }
 
+    /** Says the phone is still signed in because Renoa could not be told it signed out. */
+    fun couldNotSignOut() = local.update { it.copy(notice = "Renoa couldn't be reached, so this phone is still signed in. Try again when you're online.") }
+
     /** Goes back to the agents. A notice shown on the Renoa tab goes with it. */
     fun close() = local.update { it.copy(page = null, notice = null) }
 
@@ -201,6 +193,19 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
                 repository.dismiss(note)
             } catch (unconfirmed: RepositoryException) {
                 // The note is back on Home; the owner can open it again.
+            }
+        }
+    }
+
+    /** Marks [agentId] as read from Home, putting away its note if one is shown. */
+    fun markRead(agentId: String) {
+        state.value.talks.let { listOfNotNull(it.main) + it.talking + it.quiet }
+            .firstOrNull { it.agent.id == agentId }?.note?.let { seen(it.id) }
+        viewModelScope.launch {
+            try {
+                repository.markSeen(agentId)
+            } catch (unconfirmed: RepositoryException) {
+                // The unread mark stays on Home; the owner can mark it again.
             }
         }
     }

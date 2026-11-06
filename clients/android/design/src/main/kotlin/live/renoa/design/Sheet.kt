@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
@@ -125,7 +126,7 @@ val LocalDismissModal = staticCompositionLocalOf<() -> Unit> { {} }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = (if (dark) 0.48f else 0.2f) * shown))
             .clickable(remember { MutableInteractionSource() }, null, onClick = dismiss))
         val offset = (1f - shown) * height + drag.value
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 600.dp).fillMaxSize()) {
             Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
             Spacer(Modifier.height(10.dp))
             Box(Modifier.fillMaxSize()

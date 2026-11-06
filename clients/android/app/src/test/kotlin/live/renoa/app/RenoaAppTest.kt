@@ -9,6 +9,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -92,21 +93,53 @@ class RenoaAppTest : ScreenTest() {
     }
 
     @Test
+    fun signingOutTellsRenoaFirstAndStaysSignedInWhenItCannot() {
+        var reachable = false
+        var revoked = 0
+        var forgotten = 0
+        Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        compose.setContent {
+            RenoaApp(
+                { repository }, signedIn = true, signingIn = { _, _ -> }, signedOut = { forgotten++ },
+                revoke = { check(reachable) { "offline" }; revoked++ },
+            )
+        }
+        compose.onNodeWithText("Settings").performClick()
+        compose.waitForIdle()
+        fun signOut() {
+            compose.onNodeWithText("Sign out").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Sign out").performClick()
+            compose.waitForIdle()
+        }
+
+        signOut()
+        assertEquals(0 to 0, revoked to forgotten, "nothing is forgotten while Renoa cannot be told")
+        compose.onNodeWithText("Renoa couldn't be reached, so this phone is still signed in. Try again when you're online.").assertIsDisplayed()
+
+        reachable = true
+        signOut()
+        assertEquals(1 to 1, revoked to forgotten, "Renoa is told, then the phone forgets")
+        compose.onAllNodesWithText(SIGNED_OUT).assertCountEquals(0)
+        assertEquals(1, ViewModelProvider(compose.activity)[EntryStores::class.java].held, "sign-in alone, so back leaves the app")
+    }
+
+    @Test
     fun aNewOwnerSignsUpMeetsRenoaAndLandsOnHomeWithHer() {
         val fresh = FakeAgentRepository(scope, seeds = emptyList())
         start(fresh)
         compose.onNodeWithText("Hi. What should I call you?").assertIsDisplayed()
-        compose.onNodeWithText("Next").assertIsNotEnabled()
+        compose.onNodeWithText("Continue").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Your name").performTextInput("Yash")
         snapshot("sign-up-1")
-        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Continue").performClick()
         compose.waitForIdle()
 
         compose.onNodeWithText("How does a usual day go for you, Yash?").assertIsDisplayed()
         compose.onNodeWithText("I work out").performClick()
         compose.waitForIdle()
         snapshot("sign-up-2")
-        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Continue").performClick()
         compose.waitForIdle()
 
         compose.onNodeWithText("I'm Renoa.").assertIsDisplayed()
@@ -118,7 +151,7 @@ class RenoaAppTest : ScreenTest() {
         assertEquals(listOf("Renoa"), fresh.agents.value.map { it.name })
         compose.onNode(hasContentDescription("your main agent", substring = true)).assertIsDisplayed()
         // The owner's capsule wears the initial of the name they gave.
-        compose.onNodeWithContentDescription("Change colours").assert(hasText("Y"))
+        compose.onNodeWithContentDescription("Account").assert(hasText("Y"))
         assertEquals(1, ViewModelProvider(compose.activity)[EntryStores::class.java].held, "only Home is on the stack, so back leaves the app, not sign-up")
 
         // Her chat is empty, so it offers a start; a starter fills the composer and does not send.
@@ -216,6 +249,9 @@ class RenoaAppTest : ScreenTest() {
                 if (refuse) throw SignInRefused(401, "authentication_failed", "authentication failed")
             })
         }
+        compose.waitForIdle()
+        compose.onNodeWithText("Get started").performClick()
+        compose.waitForIdle()
         compose.onNodeWithText("Continue with passkey").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Sign-in code").performTextInput("ab12cd")
         compose.onNodeWithText("Continue with passkey").performClick()
@@ -263,7 +299,7 @@ class RenoaAppTest : ScreenTest() {
     }
 
     @Test
-    fun theWindowAndBarsFollowThePhoneUntilTheMarkPicksTheOtherTheme() {
+    fun theWindowAndBarsFollowThePhoneUntilSettingsPicksTheOtherTheme() {
         start()
         val window = compose.activity.window
         val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -271,9 +307,13 @@ class RenoaAppTest : ScreenTest() {
         fun ground() = (window.decorView.background as ColorDrawable).color
         assertEquals(true to true, lightBars(), "a phone in light mode opens on Paper, with dark icons")
         assertEquals(ThemeName.Paper.colors.background.toArgb(), ground())
-        compose.onNodeWithContentDescription("Change colours").performClick()
+        compose.onNode(hasText("Settings") and isSelectable()).performClick()
         compose.waitForIdle()
-        assertEquals(false to false, lightBars(), "the mark picks Graphite, with light icons")
+        compose.onNodeWithContentDescription("Theme: System").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Graphite").performClick()
+        compose.waitForIdle()
+        assertEquals(false to false, lightBars(), "Settings picks Graphite, with light icons")
         assertEquals(ThemeName.Graphite.colors.background.toArgb(), ground(), "and the window under every screen")
     }
 }

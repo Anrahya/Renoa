@@ -270,4 +270,16 @@ class HomeViewModelTest {
         runCurrent()
         assertEquals("That routine could not run again. Try again.", vm.state.value.notice)
     }
+
+    @Test
+    fun markingAnAgentReadClearsItsUnreadFlagAndPutsItsNotesAway() = runTest {
+        val (vm, _) = model()
+        runCurrent()
+        assertTrue(vm.state.value.roster.first { it.id == "optimus" }.glance.unread)
+        assertTrue(vm.state.value.feed.notes.any { it.agentId == "optimus" })
+        vm.markRead("optimus")
+        runCurrent()
+        assertFalse(vm.state.value.roster.first { it.id == "optimus" }.glance.unread)
+        assertTrue(vm.state.value.feed.notes.none { it.agentId == "optimus" })
+    }
 }

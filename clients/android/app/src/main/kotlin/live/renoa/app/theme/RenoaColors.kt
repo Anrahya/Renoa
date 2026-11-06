@@ -96,7 +96,19 @@ enum class ThemeName(val dark: Boolean, val colors: RenoaColors) {
         ),
     ),
     ;
+}
 
-    /** The other theme. */
-    fun next(): ThemeName = entries[(ordinal + 1) % entries.size]
+/** The appearance choice in Settings: follow the phone, or stay on Paper or Graphite. */
+enum class Appearance(val label: String) {
+    System("System"),
+    Paper("Paper"),
+    Graphite("Graphite"),
+    ;
+
+    fun resolve(systemDark: Boolean): ThemeName =
+        when (this) {
+            System -> if (systemDark) ThemeName.Graphite else ThemeName.Paper
+            Paper -> ThemeName.Paper
+            Graphite -> ThemeName.Graphite
+        }
 }

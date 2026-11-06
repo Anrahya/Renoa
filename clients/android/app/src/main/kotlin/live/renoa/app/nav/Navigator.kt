@@ -21,6 +21,9 @@ sealed interface Route {
 
     data object Create : Route
 
+    /** Whether this screen rises as a modal sheet over the push stack rather than pushing onto it. */
+    val isModal: Boolean get() = this is Create || this is Edit
+
     /** A string that [parse] turns back into this route, so the stack survives the process being recreated. */
     fun encode(): String =
         when (this) {
@@ -64,11 +67,6 @@ class Navigator private constructor(entries: List<Entry>, private var nextId: In
         entries = entries + Entry(nextId++, route)
     }
 
-    /** Swaps the top screen, so back skips it. */
-    fun replaceTop(route: Route) {
-        entries = entries.dropLast(1) + Entry(nextId++, route)
-    }
-
     /** Starts over with [route] alone, so back cannot return to what came before. */
     fun resetTo(route: Route) {
         entries = listOf(Entry(nextId++, route))
@@ -76,11 +74,23 @@ class Navigator private constructor(entries: List<Entry>, private var nextId: In
 
     /**
      * Opens the chat with [agentId] over whatever is shown, as a tapped notice asks, so back returns
-     * there. One already on top stays as it is; before Home is reached, as on sign-in, nothing opens.
+     * there. An open sheet closes first, so back never brings it up again. One already on top stays as
+     * it is; before Home is reached, as on sign-in, nothing opens.
      */
     fun openChat(agentId: String) {
-        if (entries.none { it.route == Route.Home } || top == Route.Chat(agentId)) return
-        push(Route.Chat(agentId))
+        if (entries.none { it.route == Route.Home }) return
+        val screens = entries.filterNot { it.route.isModal }
+        entries = if (screens.last().route == Route.Chat(agentId)) screens else screens + Entry(nextId++, Route.Chat(agentId))
+    }
+
+    /** Closes [entry] if it is still on top; a second close of the same screen, as a sheet slides away, does nothing. */
+    fun close(entry: Entry) {
+        if (entries.size > 1 && topEntry.id == entry.id) entries = entries.dropLast(1)
+    }
+
+    /** Swaps [entry] for [route] if it is still on top, so back skips it. */
+    fun replace(entry: Entry, route: Route) {
+        if (topEntry.id == entry.id) entries = entries.dropLast(1) + Entry(nextId++, route)
     }
 
     /** Goes back one screen. Returns false at the bottom, where the system should take over. */

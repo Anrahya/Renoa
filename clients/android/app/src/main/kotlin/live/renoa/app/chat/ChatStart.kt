@@ -1,3 +1,6 @@
+// Portions copyright 2026 Po Kai Lee and the Codync contributors.
+// Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0-Codync.txt.
+// Adapted from Codync apps/android `ChatRows.kt` (`IntroCard`) at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app.chat
 
 import androidx.compose.foundation.layout.Arrangement
@@ -15,11 +18,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import live.renoa.app.badge.Badge
-import live.renoa.app.theme.Renoa
-import live.renoa.app.theme.RenoaType
-import live.renoa.app.ui.ButtonKind
-import live.renoa.app.ui.ButtonSize
-import live.renoa.app.ui.RenoaButton
+import live.renoa.design.Palette
+import live.renoa.design.SecondaryButton
+import live.renoa.design.Type
+import live.renoa.design.semibold
 
 /** What the owner might first ask the main agent: everyday help, not set-up. */
 val MAIN_STARTERS = listOf("What can you help me with?", "Plan my meals for this week", "Remind me about something later")
@@ -36,15 +38,29 @@ val AGENT_STARTERS = listOf("What can you do?", "What should I tell you about me
 @Composable
 internal fun ChatStart(state: ChatUiState, onStarter: (String) -> Unit, modifier: Modifier = Modifier) {
     val agent = state.agent ?: return
-    val colors = Renoa.colors
-    Column(modifier.fillMaxWidth().padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Badge(agent.name, agent.state, 104.dp, primary = state.main, hue = state.hue, label = "")
-        Text("Say hello to ${agent.name}", Modifier.semantics { heading() }, style = RenoaType.Heading, color = colors.foreground, textAlign = TextAlign.Center)
-        agent.purpose.takeIf { it.isNotBlank() }?.let { Text(it, style = RenoaType.Body, color = colors.mutedForeground, textAlign = TextAlign.Center) }
+    Column(
+        modifier.fillMaxWidth().padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Badge(agent.name, agent.state, 72.dp, primary = state.main, hue = state.hue, label = "")
+        Text(
+            "Say hello to ${agent.name}",
+            Modifier.semantics { heading() },
+            style = Type.title2.semibold,
+            color = Palette.text,
+            textAlign = TextAlign.Center,
+        )
+        val subtitle = agent.purpose.takeIf { it.isNotBlank() } ?: "Tell it what you need. You'll get a notification when it's done or needs you."
+        Text(subtitle, style = Type.subheadline, color = Palette.secondary, textAlign = TextAlign.Center)
         if (state.draft.isBlank()) {
-            FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+            FlowRow(
+                Modifier.padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 (if (state.main) MAIN_STARTERS else AGENT_STARTERS).forEach { starter ->
-                    RenoaButton(starter, { onStarter(starter) }, kind = ButtonKind.Secondary, size = ButtonSize.Sm)
+                    SecondaryButton(starter) { onStarter(starter) }
                 }
             }
         }

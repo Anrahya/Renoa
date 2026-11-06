@@ -117,6 +117,12 @@ interface RcpSurface {
     suspend fun clearPushToken()
 
     /**
+     * Revokes [deviceId], one of the owner's signed-in apps, this one included: Renoa forgets its push
+     * token and its key never signs in again. Answered once the revocation is kept, and again on a retry.
+     */
+    suspend fun revokeDevice(deviceId: Uuid)
+
+    /**
      * Registers [publicKey], a 65-byte uncompressed P-256 point, as the key this device's setup notices
      * are sealed to, replacing any it held. Only a device that proved its key may hold notices; any other
      * connection is refused with `invalid_role`.

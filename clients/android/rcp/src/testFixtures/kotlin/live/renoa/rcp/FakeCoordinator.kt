@@ -116,6 +116,9 @@ class FakeCoordinator : AutoCloseable {
     /** The push token the signed-in device registered, or null once it is cleared or before it is set. */
     @Volatile var pushToken: String? = null
 
+    /** The devices revoked, by id, in order. */
+    val revokedDevices: MutableList<String> = CopyOnWriteArrayList()
+
     /** The notice key the device registered, as sent, and the notices held for it. */
     @Volatile var noticeKey: String? = null
     val notices = CopyOnWriteArrayList<HeldNotice>()
@@ -271,6 +274,7 @@ class FakeCoordinator : AutoCloseable {
                 "call_host" -> callHost(requestId, frame)
                 "set_push_token" -> setPushToken(requestId, frame)
                 "clear_push_token" -> clearPushToken(requestId)
+                "revoke_device" -> revokeDevice(requestId, frame)
                 "set_notice_key", "list_notices", "acknowledge_notice" -> notices(requestId, type, frame)
                 else -> webSocket.send(error(requestId, "invalid_message", "unsupported frame $type"))
             }
@@ -472,6 +476,14 @@ class FakeCoordinator : AutoCloseable {
                     reply(requestId, "notice_acknowledged") {}
                 }
             }
+        }
+
+        /** Revokes the device, answers, then ends the connection, as Renoa does when a device revokes itself. */
+        private fun revokeDevice(requestId: Long, frame: JsonObject) {
+            val deviceId = frame.getValue("device_id").jsonPrimitive.content
+            revokedDevices += deviceId
+            reply(requestId, "device_revoked") { put("device_id", deviceId) }
+            socket.close(1000, "revoked")
         }
 
         private fun clearPushToken(requestId: Long) {

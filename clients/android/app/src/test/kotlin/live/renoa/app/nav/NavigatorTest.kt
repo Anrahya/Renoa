@@ -21,9 +21,9 @@ class NavigatorTest {
     @Test
     fun aTappedNoticeOpensItsChatOverWhatIsShownOnceAndNeverBeforeHome() {
         val nav = Navigator.starting(Route.Home)
-        nav.push(Route.Edit("tifa"))
+        nav.push(Route.Chat("ledger"))
         nav.openChat("tifa")
-        assertEquals(listOf(Route.Home, Route.Edit("tifa"), Route.Chat("tifa")), nav.stack, "back returns to where the owner was")
+        assertEquals(listOf(Route.Home, Route.Chat("ledger"), Route.Chat("tifa")), nav.stack, "back returns to where the owner was")
         nav.openChat("tifa")
         assertEquals(3, nav.stack.size, "a chat already on top is not opened twice")
         nav.openChat("ledger")
@@ -32,6 +32,31 @@ class NavigatorTest {
         val signingIn = Navigator.starting(Route.SignIn)
         signingIn.openChat("tifa")
         assertEquals(listOf(Route.SignIn), signingIn.stack, "no chat opens before sign-in")
+    }
+
+    @Test
+    fun aTappedNoticeClosesAnOpenSheetSoBackNeverBringsItUp() {
+        val nav = Navigator.starting(Route.Home)
+        nav.push(Route.Edit("tifa"))
+        nav.openChat("tifa")
+        assertEquals(listOf(Route.Home, Route.Chat("tifa")), nav.stack)
+        nav.push(Route.Chat("ledger"))
+        nav.push(Route.Edit("ledger"))
+        nav.openChat("ledger")
+        assertEquals(listOf(Route.Home, Route.Chat("tifa"), Route.Chat("ledger")), nav.stack, "the chat under the sheet is the one asked for")
+    }
+
+    @Test
+    fun closingASheetTwiceLeavesTheScreenUnderIt() {
+        val nav = Navigator.starting(Route.Home)
+        nav.push(Route.Chat("tifa"))
+        nav.push(Route.Edit("tifa"))
+        val sheet = nav.topEntry
+        nav.close(sheet)
+        nav.close(sheet)
+        assertEquals(listOf(Route.Home, Route.Chat("tifa")), nav.stack)
+        nav.replace(sheet, Route.Chat("mira"))
+        assertEquals(listOf(Route.Home, Route.Chat("tifa")), nav.stack, "a sheet already gone replaces nothing")
     }
 
     @Test
@@ -50,7 +75,7 @@ class NavigatorTest {
     fun makingAnAgentReplacesTheCreateScreenSoBackSkipsIt() {
         val nav = Navigator.starting(Route.Home)
         nav.push(Route.Create)
-        nav.replaceTop(Route.Chat("mira"))
+        nav.replace(nav.topEntry, Route.Chat("mira"))
         assertEquals(listOf(Route.Home, Route.Chat("mira")), nav.stack)
         nav.pop()
         assertEquals(Route.Home, nav.top)
@@ -83,7 +108,7 @@ class NavigatorTest {
         assertEquals(first.route, nav.topEntry.route)
         assertNotEquals(first.id, nav.topEntry.id, "a second visit must not share what the first one kept")
         val replaced = nav.topEntry
-        nav.replaceTop(Route.Create)
+        nav.replace(replaced, Route.Create)
         assertNotEquals(replaced.id, nav.topEntry.id)
     }
 
