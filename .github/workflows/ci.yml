@@ -18,8 +18,22 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  rust:
-    name: Rust fmt, clippy, tests
+  # The lints and the tests build separately and run side by side.
+  rust-lint:
+    name: Rust module size, fmt, clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/check-module-size.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+  rust-test:
+    name: Rust tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -42,10 +56,13 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: scripts/check-module-size.sh
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo test --locked --workspace
+      # nextest runs every test binary at once; cargo test runs them in turn.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --locked --workspace --no-fail-fast
+      # nextest does not run doc tests.
+      - run: cargo test --locked --workspace --doc
 
   adapters:
     name: Node adapters
