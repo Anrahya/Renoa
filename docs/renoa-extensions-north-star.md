@@ -587,8 +587,8 @@ adds the conversations and passes of its note pass, schema 47 adds its
 reminders, schema 48 adds `renoa.owner`, schema 49 records each feed
 item's acknowledged wake, schema 50 lets every compiled plugin keep
 settings and triggers, for `renoa.owner`'s heartbeat, schema 51 marks
-`renoa.automations`' follow-ups, and schema 52 saves the `plugin_manage` calls
-waiting on the person.
+`renoa.automations`' follow-ups, schema 52 saves the `plugin_manage` calls
+waiting on the person, and schema 53 keeps the files `renoa.owner` shares.
 
 ## Contribution model
 
@@ -704,7 +704,7 @@ never does, so the Host binds each resident tool directly in the agent's tool
 list, beside `plugin_search`, `plugin_manage` and the executor.
 `renoa.memory` keeps `memory_note`, `memory_recall` and `memory_zoom`
 resident, `renoa.documents` keeps `agent_documents`, `renoa.owner` keeps
-`ask_owner`, `notify_owner` and `set_today`, and `renoa.automations` keeps
+`ask_owner`, `notify_owner`, `set_today`, `share_file` and `stop_sharing`, and `renoa.automations` keeps
 `follow_up`.
 
 1. The plugin's declaration is the one list, and each name is a tool that

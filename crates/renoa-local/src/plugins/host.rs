@@ -106,7 +106,13 @@ impl HostPluginId {
         match self {
             Self::Documents => &[crate::capabilities::AGENT_DOCUMENTS],
             Self::Memory if notebook => &[memory::NOTE, memory::RECALL, memory::ZOOM],
-            Self::Owner => &[owner::ASK, owner::NOTIFY, owner::TODAY],
+            Self::Owner => &[
+                owner::ASK,
+                owner::NOTIFY,
+                owner::TODAY,
+                owner::share::SHARE,
+                owner::share::STOP,
+            ],
             Self::Automations => &[crate::capabilities::FOLLOW_UP],
             Self::Memory | Self::Agents | Self::Skills | Self::Git | Self::Time => &[],
         }
@@ -121,7 +127,11 @@ impl HostPluginId {
             "skill_search" | "skill_load" => Some(Self::Skills),
             "git_changes" | "git_diff" | "git_show" => Some(Self::Git),
             memory::NOTE | memory::RECALL | memory::ZOOM => Some(Self::Memory),
-            owner::ASK | owner::NOTIFY | owner::TODAY => Some(Self::Owner),
+            owner::ASK
+            | owner::NOTIFY
+            | owner::TODAY
+            | owner::share::SHARE
+            | owner::share::STOP => Some(Self::Owner),
             _ => None,
         }
     }

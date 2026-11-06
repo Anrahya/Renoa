@@ -282,6 +282,8 @@ async fn migrated_selections_remain_usable_through_host_consumers_and_replays() 
                 "follow_up",
                 "notify_owner",
                 "set_today",
+                "share_file",
+                "stop_sharing",
                 "plugin_manage",
                 "plugin_search",
                 "tool_execute",

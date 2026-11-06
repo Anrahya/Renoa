@@ -424,7 +424,8 @@ its items, counted in `automation_runs_pruned` and `automation_purged`.
 ### Reaching the owner
 
 The compiled plugin `renoa.owner` ("Reach you") keeps `ask_owner`,
-`notify_owner` and `set_today` resident in every agent's tool list, also while
+`notify_owner`, `set_today`, `share_file` and `stop_sharing` resident in every
+agent's tool list, also while
 the owner has turned it off for the agent, when each call is refused with
 "nothing was sent". A guest's turn refuses them as it refuses every tool. Both take a flat
 object and a required `urgency`: `ask_owner` a `question` of at most 240
@@ -447,6 +448,18 @@ automation run answer nothing. A mark that fails is logged as
 `owner_asks_unanswered`, and the person's next message closes it. Deleting a
 conversation removes the asks and updates made in it.
 `notify_owner` does not end the turn.
+
+`share_file` takes a `path` in the agent's workspace and shares that file with
+the person the turn talks to, or with whoever is signed in to the Host when the
+turn has no person. It refuses a path that leaves the workspace, a folder, a
+missing file and a file over 25 MiB, the most a person may upload, and stores
+nothing then. The share is one row of `host_shares` (schema 53, an agent-owned
+table): the agent, the person, the canonical workspace and the file's path in
+it, never its bytes. Sharing the same file again returns the same share, so the
+tool is safe to replay. Its result gives the link the model puts in its reply,
+`[name](/s/{share})`, relative so each surface opens it against the Renoa it
+signed in to. `stop_sharing` takes the same `path`, also for a file already
+gone, and removes the row; a later share of that file gets a new link.
 
 An agent's heartbeat is `renoa.owner`'s trigger: a check-in of its own at
 minute 0 every `heartbeat_hours` from 08:00 to 22:00 in the agent's
@@ -574,6 +587,20 @@ or part length. An upload the caller did not start returns 404 `upload_not_found
 an id already started with another size or hash, a part past the one expected next,
 or a part of a completed upload sent with other bytes returns 409 `upload_conflict`.
 Uploads are kept under `state/uploads` and are not yet removed.
+
+`GET /v1/host/shares/{id}` describes a file an agent shared with the signed-in
+person, or with no person: `{name, media_type, size, sha256, part_bytes,
+parts}`, with the media type from the file's extension and
+`application/octet-stream` for any other. `GET
+/v1/host/shares/{id}/parts/{index}` returns `{data}`, part `index` of the file
+in base64, in the uploads' 512 KiB parts. Each call resolves the stored path
+again and reads the file as it is then, so a surface checks the parts it put
+together against the description's hash and starts again when the file
+changed. A share kept for another person, an unknown one, and one whose file is
+gone, is a folder, now resolves outside its workspace or cannot be reached
+through its folders return 404 `share_not_found`; a part past the end returns 404 `share_part_not_found`, a
+file grown past 25 MiB 413 `share_too_large`, and a malformed id or part number
+400 `invalid_request`.
 
 A command whose text input carries `attachments` (`rcp-json-ws-v0.md`) names
 completed uploads. The node copies each into the agent's workspace under
@@ -807,8 +834,8 @@ machine-tool selections. Beside them, each compiled plugin binds its resident
 tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
 `renoa.memory` for a turn that talks to a person or comes from a guest,
 `agent_documents` from `renoa.documents` for an agent that keeps documents,
-`ask_owner`, `notify_owner` and `set_today` from `renoa.owner` for every
-agent, and `follow_up` from `renoa.automations` for every agent.
+`ask_owner`, `notify_owner`, `set_today`, `share_file` and `stop_sharing` from
+`renoa.owner` for every agent, and `follow_up` from `renoa.automations` for every agent.
 The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
@@ -1479,7 +1506,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 52
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 53
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1510,8 +1537,9 @@ acknowledged wake, so an open `soon` or `now` item written by schema 48 is
 owed its wake. Every catalog below schema 50 lets every compiled plugin keep
 settings and triggers, keeping every stored setting, trigger and reminder; no
 agent has a heartbeat until it is set. Every catalog below schema 51 gains the
-mark of follow-ups, empty, and every catalog below schema 52 gains the saved
-setups waiting on the person, empty. Live selections
+mark of follow-ups, empty, every catalog below schema 52 gains the saved
+setups waiting on the person, empty, and every catalog below schema 53 gains
+the shares agents keep, empty. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.

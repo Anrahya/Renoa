@@ -871,6 +871,97 @@ async fn a_photo_uploaded_through_the_relay_reaches_the_agent_and_its_workspace(
     .await;
 }
 
+/// A page the agent shares reaches its owner through the Host routes as the
+/// file is now, part by part, and only its owner can read it.
+#[tokio::test]
+async fn a_file_an_agent_shares_is_read_back_through_the_owners_host_routes() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let (id, _) = make_agent(&f, &creation()).await;
+        let workspace = f.host.agent_workspace(id).await.expect("workspace");
+        let page: Vec<u8> = (0..renoa_local::UPLOAD_PART_BYTES + 7)
+            .map(|index| u8::try_from(index % 97).expect("a byte"))
+            .collect();
+        std::fs::write(workspace.join("page.html"), &page).expect("page");
+        let (shared, _) = owner_turn(&f, id, Uuid::new_v4(), "Share the page.").await;
+        let LocalTurnOutcome::Completed { output, .. } = shared else {
+            panic!("{shared:?}");
+        };
+        let link = output
+            .split_once("[page.html](/s/")
+            .and_then(|(_, rest)| rest.strip_suffix(')'))
+            .unwrap_or_else(|| panic!("{output}"));
+        let share = Uuid::parse_str(link).expect("a share id");
+
+        let described = f.browser.json_of(&format!("/v1/host/shares/{share}")).await;
+        assert_eq!(described["name"], "page.html");
+        assert_eq!(described["media_type"], "text/html");
+        assert_eq!(described["size"], page.len());
+        assert_eq!(described["parts"], 2);
+        let mut read = Vec::new();
+        for index in 0..2 {
+            let part = f
+                .browser
+                .json_of(&format!("/v1/host/shares/{share}/parts/{index}"))
+                .await;
+            read.extend(
+                STANDARD
+                    .decode(part["data"].as_str().expect("data"))
+                    .expect("base64"),
+            );
+        }
+        assert!(
+            read == page,
+            "read {} bytes, not the page's {}",
+            read.len(),
+            page.len()
+        );
+
+        let browser = &f.browser;
+        let status = |path: String| async move {
+            let answer = browser.get(&path).send().await.expect("GET");
+            let status = answer.status();
+            (
+                status,
+                answer.json::<Value>().await.expect("JSON")["code"].clone(),
+            )
+        };
+        for (path, expected) in [
+            (
+                format!("/v1/host/shares/{share}/parts/2"),
+                (StatusCode::NOT_FOUND, "share_part_not_found"),
+            ),
+            (
+                format!("/v1/host/shares/{share}/parts/01"),
+                (StatusCode::BAD_REQUEST, "invalid_request"),
+            ),
+            (
+                format!("/v1/host/shares/{}", Uuid::new_v4()),
+                (StatusCode::NOT_FOUND, "share_not_found"),
+            ),
+            (
+                "/v1/host/shares/page".to_owned(),
+                (StatusCode::BAD_REQUEST, "invalid_request"),
+            ),
+        ] {
+            assert_eq!(
+                status(path.clone()).await,
+                (expected.0, json!(expected.1)),
+                "{path}"
+            );
+        }
+        std::fs::remove_file(workspace.join("page.html")).expect("remove");
+        assert_eq!(
+            status(format!("/v1/host/shares/{share}")).await,
+            (StatusCode::NOT_FOUND, json!("share_not_found"))
+        );
+        f.close().await;
+    }))
+    .await;
+}
+
 /// The prompt that makes the fixture model save a fact with `agent_documents`.
 const REMEMBER: &str = "Remember that I am vegetarian.";
 /// A person with no profile yet: an empty `USER.md` block carries the revision
@@ -1539,7 +1630,9 @@ else if(action==='stream') {
  const results=request.messages.slice(lastUser+1).filter(message=>message.role==='tool').map(message=>message.result);
  const reply=(content,stop_reason)=>process.stdout.write(JSON.stringify({event:'completed',response:{content,stop_reason,usage:{input:8,output:4,cache_read:0,cache_write:0},metadata:{api:'test',provider:process.env.RENOA_MODEL_PROVIDER,model:JSON.parse(spec).id}}})+'\n');
  const call=(id,name,args)=>reply([{type:'tool_call',id,name,arguments:args}],'tool_use');
- if(request.messages[lastUser].content[0].text!=='Remember that I am vegetarian.') reply([{type:'text',text:'Owner-created agent ran.'}],'stop');
+ const said=request.messages[lastUser].content[0].text;
+ if(said==='Share the page.') { if(results.length===0) call('share','share_file',{path:'page.html'}); else reply([{type:'text',text:results.at(-1).content[0].text}],'stop'); }
+ else if(said!=='Remember that I am vegetarian.') reply([{type:'text',text:'Owner-created agent ran.'}],'stop');
  else if(results.length===0) call('find','plugin_search',{query:'agent_documents'});
  else {
   const last=results.at(-1); if(last.is_error) throw Error(JSON.stringify(last));

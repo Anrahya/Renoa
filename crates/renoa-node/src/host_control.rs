@@ -16,13 +16,14 @@ mod main_agent;
 mod memory;
 mod profile;
 mod reply;
+mod shares;
 mod uploads;
 
 use std::sync::Arc;
 
 use renoa_control::HostMethod;
 use renoa_discord::DiscordControl;
-use renoa_local::{HostObserver, LocalHost, Uploads};
+use renoa_local::{HostObserver, LocalHost, Shares, Uploads};
 use renoa_protocol::PrincipalId;
 
 use crate::{bridge::NodeError, node_store::NodeStore};
@@ -42,6 +43,7 @@ pub(crate) struct HostControl {
     /// Which task each Host session is, for the items that name one.
     tasks: NodeStore,
     uploads: Uploads,
+    shares: Shares,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -70,6 +72,8 @@ enum Operation {
     FeedDismiss(String),
     UploadStart(String),
     UploadPart(String, String),
+    ShareDescribe(String),
+    SharePart(String, String),
 }
 
 /// Every operation at a path, by method. The one table of the Host's control
@@ -107,6 +111,10 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         ["uploads", id] => vec![(Put, Op::UploadStart((*id).to_owned()))],
         ["uploads", id, "parts", index] => {
             vec![(Put, Op::UploadPart((*id).to_owned(), (*index).to_owned()))]
+        }
+        ["shares", id] => vec![(Get, Op::ShareDescribe((*id).to_owned()))],
+        ["shares", id, "parts", index] => {
+            vec![(Get, Op::SharePart((*id).to_owned(), (*index).to_owned()))]
         }
         _ => Vec::new(),
     }
@@ -159,12 +167,14 @@ impl HostControl {
         let discord = DiscordControl::open(root)
             .map_err(|error| NodeError::Configuration(error.to_string()))?;
         let uploads = Uploads::open(host.home());
+        let shares = Shares::open(host.home());
         Ok(Self {
             host,
             observer,
             discord,
             tasks,
             uploads,
+            shares,
         })
     }
 
@@ -286,6 +296,8 @@ impl HostControl {
                 let part = decode(body, uploads::PART_BODY_LIMIT, uploads::PART_HINT)?;
                 uploads::put_part(&self.uploads, principal, &id, &index, part).await
             }
+            Operation::ShareDescribe(id) => shares::describe(&self.shares, principal, &id).await,
+            Operation::SharePart(id, n) => shares::part(&self.shares, principal, &id, &n).await,
             Operation::MainAgentSet => {
                 let change = decode(
                     body,

@@ -97,4 +97,8 @@ fn a_turned_off_owner_tool_says_nothing_was_sent() {
         HostPluginId::Owner.turned_off("ask_owner"),
         "ask_owner is turned off for this agent, so nothing was sent. Say it in your reply instead."
     );
+    assert_eq!(
+        HostPluginId::Owner.turned_off("share_file"),
+        "share_file is turned off for this agent, so nothing changed. Tell the person in your reply that you cannot share files right now."
+    );
 }

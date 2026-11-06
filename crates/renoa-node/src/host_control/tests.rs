@@ -32,6 +32,8 @@ fn name(operation: &Operation) -> &'static str {
         Operation::FeedDismiss(_) => "feed_dismiss",
         Operation::UploadStart(_) => "upload_start",
         Operation::UploadPart(..) => "upload_part",
+        Operation::ShareDescribe(_) => "share_describe",
+        Operation::SharePart(..) => "share_part",
     }
 }
 
@@ -108,6 +110,8 @@ fn routes() -> Vec<(HostMethod, String, &'static str)> {
         ),
         (Put, format!("/v1/host/uploads/{id}"), "upload_start"),
         (Put, format!("/v1/host/uploads/{id}/parts/0"), "upload_part"),
+        (Get, format!("/v1/host/shares/{id}"), "share_describe"),
+        (Get, format!("/v1/host/shares/{id}/parts/0"), "share_part"),
     ]
 }
 
@@ -145,6 +149,8 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
         "feed_dismiss",
         "upload_start",
         "upload_part",
+        "share_describe",
+        "share_part",
     ]
     .into_iter()
     .collect();
@@ -163,6 +169,8 @@ fn a_known_path_with_another_method_is_refused_and_an_unknown_path_is_not_found(
     assert_eq!(status(Get, "/v1/host/automations/a/run"), 405);
     assert_eq!(status(Get, "/v1/host/uploads/a"), 405);
     assert_eq!(status(Post, "/v1/host/uploads/a/parts/0"), 405);
+    assert_eq!(status(Put, "/v1/host/shares/a"), 405);
+    assert_eq!(status(Post, "/v1/host/shares/a/parts/0"), 405);
     for path in [
         "/v1/hostile",
         "/v1/host/",

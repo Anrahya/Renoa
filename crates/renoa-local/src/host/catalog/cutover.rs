@@ -94,6 +94,7 @@ fn migrate(
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             super::owner_heartbeat::admit_every_plugin_trigger(&transaction)?;
             crate::host::plugin_setups::initialize(&transaction)?;
+            crate::shares::initialize(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
