@@ -8,8 +8,18 @@ import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.State
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+
+/** True when the person turned animations off in system settings; looping motion must stop. */
+val LocalReducedMotion = compositionLocalOf { false }
+
+/** One clock, in seconds, shared by looping motion on screen so a screenful costs one frame loop. */
+val LocalMotionClock = staticCompositionLocalOf<State<Float>> { mutableFloatStateOf(0f) }
 
 /** The app's motion: one set of curves and springs for every screen. */
 object Motion {
@@ -40,12 +50,4 @@ object Motion {
 
     /** `--ui-press-scale`. */
     const val PRESS_SCALE = 0.98f
-}
-
-/** The system's "Remove animations" setting, iOS Reduce Motion's counterpart. */
-@androidx.compose.runtime.Composable fun reduceMotion(): Boolean {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    return androidx.compose.runtime.remember {
-        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-    }
 }

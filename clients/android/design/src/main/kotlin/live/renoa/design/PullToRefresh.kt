@@ -129,7 +129,7 @@ private const val MinimumRefreshMillis = 600L
 
 /** The arrow, swept in from its tail as the pull grows, turning while it refreshes. */
 @Composable private fun PullIndicator(progress: Float, refreshing: Boolean, modifier: Modifier) {
-    val still = reduceMotion() || !refreshing
+    val still = LocalReducedMotion.current || !refreshing
     val turn = if (still) 0f else rememberInfiniteTransition(label = "Refreshing")
         .animateFloat(0f, 360f, infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Restart), label = "Turn").value
     Box(modifier.padding(8.dp).graphicsLayer { alpha = if (refreshing) 1f else minOf(1f, progress * 2) }

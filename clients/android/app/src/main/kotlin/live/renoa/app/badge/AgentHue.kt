@@ -1,14 +1,13 @@
 package live.renoa.app.badge
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.theme.RenoaColors
 
 /**
  * The main agent: the one marked [AgentSummary.primary], as the Host names it. While none is marked,
  * before the Host has named one or while the one it names is not on this roster, the first on the
- * roster stands in. Home seats it in the middle, and it is the one the owner talks to first.
+ * roster stands in.
  */
 fun mainAgent(roster: List<AgentSummary>): AgentSummary? = roster.firstOrNull { it.primary } ?: roster.firstOrNull()
 
@@ -32,9 +31,6 @@ enum class AgentHue {
             Cobalt -> colors.partSkills
             Ochre -> colors.partLoop
         }
-
-    /** The agent's name in its colour, eased toward the foreground so it reads as text; null for ink. */
-    fun name(colors: RenoaColors): Color? = face(colors)?.let { lerp(it, colors.foreground, 0.3f) }
 
     companion object {
         private val PIGMENTS = listOf(Clay, Cobalt, Ochre)

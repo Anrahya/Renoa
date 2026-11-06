@@ -1,211 +1,237 @@
+// Portions copyright 2026 Po Kai Lee and the Codync contributors.
+// Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0-Codync.txt.
+// Adapted from Codync apps/android `NewBotView.kt`, `BotEditor.kt` and `BotSettingsForm.kt`
+// at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app.editor
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.kyant.shapes.RoundedRectangle
 import live.renoa.app.agents.AbilityKind
+import live.renoa.app.agents.AbilitySwitch
 import live.renoa.app.agents.AgentState
 import live.renoa.app.badge.Badge
-import live.renoa.app.theme.Renoa
-import live.renoa.app.theme.RenoaType
-import live.renoa.app.ui.Glyphs
-import live.renoa.app.ui.PathIcon
-import live.renoa.app.ui.RenoaButton
+import live.renoa.design.CardForm
+import live.renoa.design.CardSection
+import live.renoa.design.Field
+import live.renoa.design.FieldBox
+import live.renoa.design.IconButton
+import live.renoa.design.LinkButton
+import live.renoa.design.LocalDismissModal
+import live.renoa.design.ModalHeader
+import live.renoa.design.Palette
+import live.renoa.design.PlainTextField
+import live.renoa.design.Spinner
+import live.renoa.design.SwitchRow
+import live.renoa.design.Type
+import live.renoa.design.ValueRow
+import live.renoa.design.WideButton
+import live.renoa.design.semibold
 
-/** Make an agent, or edit one. The two share one screen: a picture, a name, what it is for, and its switches. */
+/** Make an agent (`NewBotView` sheet), or edit one (`BotEditor` + `BotSettingsForm` sheet). */
 @Composable
 fun AgentEditorScreen(viewModel: AgentEditorViewModel, onClose: () -> Unit, onFinished: (agentId: String) -> Unit) {
     val state by viewModel.state.collectAsState()
-    val colors = Renoa.colors
     val called = state.name.trim().ifEmpty { "this one" }
 
     LaunchedEffect(state.finishedAgentId) { state.finishedAgentId?.let(onFinished) }
 
-    Box(Modifier.fillMaxSize().background(colors.background)) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-            Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Close", onClick = onClose), contentAlignment = Alignment.Center) {
-                    PathIcon(Glyphs.CLOSE, colors.foreground, size = 20.dp)
-                }
-                Spacer(Modifier.weight(1f))
-                if (!state.creating) {
-                    Pill("Done", state.canSave, onClick = viewModel::save)
-                }
-            }
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                if (state.creating) CreateHeader(state, viewModel) else EditHeader(state, viewModel)
-                Purpose(state, called, viewModel)
-                // Renoa does not list abilities to the app yet; an empty grid would only look broken.
-                if (state.abilities.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 22.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                        Text("What $called can do", style = RenoaType.Heading, color = colors.foreground)
-                        Text("Tap to switch", style = RenoaType.Caption, color = colors.mutedForeground)
-                    }
-                    Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.TopCenter) {
-                        AbilityGrid(state.abilities, state.creating, Renoa.colors.foreground, viewModel::toggle)
-                    }
-                    Legend(state, called)
-                }
-                state.notice?.let { Text(it, Modifier.padding(horizontal = 28.dp, vertical = 8.dp), style = RenoaType.Caption, color = colors.stateFailed) }
-                Spacer(Modifier.height(16.dp))
-            }
-            if (state.creating) {
-                Box(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 22.dp)) {
-                    Pill("Bring ${state.name.trim().ifEmpty { "them" }} to life", state.canSave, onClick = viewModel::save, wide = true)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Pill(text: String, enabled: Boolean, onClick: () -> Unit, wide: Boolean = false) {
-    RenoaButton(text, onClick, if (wide) Modifier.fillMaxWidth() else Modifier, enabled = enabled)
-}
-
-@Composable
-private fun CreateHeader(state: EditorUiState, viewModel: AgentEditorViewModel) {
-    val colors = Renoa.colors
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 164.dp, state.main, state.hue, label = state.name.trim())
-        Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
-            NameField(state, viewModel, TextAlign.Center)
-        }
-        if (state.name.isNotEmpty() && state.nameProblem != null) {
-            Text("A name needs at least one letter and fewer than 512 bytes.", style = RenoaType.Caption, color = colors.stateFailed)
-        }
-    }
-}
-
-@Composable
-private fun EditHeader(state: EditorUiState, viewModel: AgentEditorViewModel) {
-    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 104.dp, state.main, state.hue, label = state.name.trim())
-        Column(Modifier.weight(1f)) {
-            NameField(state, viewModel, TextAlign.Start)
-        }
-    }
-}
-
-@Composable
-private fun NameField(state: EditorUiState, viewModel: AgentEditorViewModel, align: TextAlign) {
-    val colors = Renoa.colors
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .drawBehind { drawLine(colors.input, Offset(0f, size.height), Offset(size.width, size.height), 1.5.dp.toPx()) }
-            .padding(bottom = 6.dp),
-    ) {
-        if (state.name.isEmpty()) {
-            Text("A name", Modifier.fillMaxWidth(), style = RenoaType.Title.copy(fontSize = 30.sp, lineHeight = 36.sp), color = colors.mutedForeground, textAlign = align)
-        }
-        BasicTextField(
-            value = state.name,
-            onValueChange = viewModel::setName,
-            singleLine = true,
-            textStyle = RenoaType.Title.copy(fontSize = 30.sp, lineHeight = 36.sp, color = colors.foreground, textAlign = align),
-            cursorBrush = SolidColor(colors.ring),
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Name" },
-        )
-    }
-}
-
-@Composable
-private fun Purpose(state: EditorUiState, called: String, viewModel: AgentEditorViewModel) {
-    val colors = Renoa.colors
-    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp)) {
+    CompositionLocalProvider(LocalDismissModal provides onClose) {
         if (state.creating) {
-            Text("What is $called for?", Modifier.padding(horizontal = 4.dp), style = RenoaType.Heading, color = colors.foreground)
+            CreateAgentSheet(state, called, viewModel)
+        } else {
+            EditAgentSheet(state, called, viewModel)
         }
-        Box(
-            Modifier
-                .padding(top = if (state.creating) 10.dp else 0.dp)
-                .fillMaxWidth()
-                .heightIn(min = 76.dp)
-                .background(colors.card, RoundedCornerShape(if (state.creating) 20.dp else 18.dp))
-                .border(1.dp, colors.border, RoundedCornerShape(if (state.creating) 20.dp else 18.dp))
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-        ) {
-            if (state.purpose.isEmpty()) {
-                Text("Keep the house running. Groceries, bills, reminders.", style = RenoaType.Body, color = colors.mutedForeground)
+    }
+}
+
+@Composable
+private fun CreateAgentSheet(state: EditorUiState, called: String, viewModel: AgentEditorViewModel) {
+    Column(Modifier.fillMaxSize().background(Palette.background)) {
+        ModalHeader("New agent") {
+            if (state.saving) {
+                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) { Spinner() }
+            } else {
+                IconButton("Create", "checkmark", enabled = state.canSave, action = viewModel::save)
             }
-            BasicTextField(
-                value = state.purpose,
-                onValueChange = viewModel::setPurpose,
-                textStyle = RenoaType.Body.copy(color = colors.mutedForeground),
-                cursorBrush = SolidColor(colors.ring),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "What $called is for" },
+        }
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(22.dp),
+        ) {
+            Badge(state.name.ifBlank { "?" }, AgentState.Resting, 96.dp, state.main, state.hue, label = "")
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                PlainTextField(
+                    text = state.name,
+                    onChange = viewModel::setName,
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Name" },
+                    prompt = "Name your agent",
+                    singleLine = true,
+                    style = Type.title2.semibold.copy(textAlign = TextAlign.Center),
+                    keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+                )
+                if (state.name.isNotEmpty() && state.nameProblem != null) {
+                    Text(
+                        "A name needs at least one letter and fewer than 512 bytes.",
+                        style = Type.caption,
+                        color = Palette.danger,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+            CardSection {
+                row {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Field("What $called is for") {
+                            FieldBox(
+                                text = state.purpose,
+                                onChange = viewModel::setPurpose,
+                                prompt = "Keep the house running. Groceries, bills, reminders.",
+                                fieldModifier = Modifier.semantics { contentDescription = "What $called is for" },
+                                minLines = 2,
+                                maxLines = 5,
+                            )
+                        }
+                        if (state.purposeProblem != null) {
+                            Text("That is too long, or has characters that cannot be kept.", style = Type.caption, color = Palette.danger)
+                        }
+                    }
+                }
+            }
+            state.notice?.let { Text(it, Modifier.fillMaxWidth(), style = Type.footnote, color = Palette.danger) }
+            if (state.abilities.isNotEmpty()) {
+                AbilitiesSection(state.abilities, creating = true, called = called, onToggle = viewModel::toggle)
+            }
+        }
+        Box(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 18.dp)) {
+            WideButton(
+                title = "Bring ${state.name.trim().ifEmpty { "them" }} to life",
+                enabled = state.canSave,
+                busy = state.saving,
+                action = viewModel::save,
             )
         }
-        if (state.purposeProblem != null) {
-            Text("That is too long, or has characters that cannot be kept.", Modifier.padding(start = 4.dp, top = 6.dp), style = RenoaType.Caption, color = colors.stateFailed)
+    }
+}
+
+@Composable
+private fun EditAgentSheet(state: EditorUiState, called: String, viewModel: AgentEditorViewModel) {
+    Column(Modifier.fillMaxSize().background(Palette.background)) {
+        ModalHeader("Profile") {
+            if (state.saving) {
+                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) { Spinner() }
+            } else {
+                LinkButton("Done", enabled = state.canSave, style = Type.body.semibold, action = viewModel::save)
+            }
+        }
+        CardForm(
+            Modifier.weight(1f),
+            padding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
+        ) {
+            CardSection {
+                row {
+                    ValueRow("Avatar") {
+                        Box(Modifier.clip(RoundedRectangle(10.dp)).background(Palette.bubbleAgent).padding(4.dp)) {
+                            Badge(state.name.ifBlank { "?" }, AgentState.Resting, 32.dp, state.main, state.hue, label = "")
+                        }
+                    }
+                }
+                row {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Field("Name") {
+                            FieldBox(
+                                text = state.name,
+                                onChange = viewModel::setName,
+                                prompt = "Name",
+                                fieldModifier = Modifier.semantics { contentDescription = "Name" },
+                                imeAction = ImeAction.Next,
+                                actions = KeyboardActions(onDone = { if (state.canSave) viewModel.save() }),
+                            )
+                        }
+                        if (state.name.isNotEmpty() && state.nameProblem != null) {
+                            Text("A name needs at least one letter and fewer than 512 bytes.", style = Type.caption, color = Palette.danger)
+                        }
+                    }
+                }
+                row {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Field("What $called is for") {
+                            FieldBox(
+                                text = state.purpose,
+                                onChange = viewModel::setPurpose,
+                                prompt = "Keep the house running. Groceries, bills, reminders.",
+                                fieldModifier = Modifier.semantics { contentDescription = "What $called is for" },
+                                minLines = 2,
+                                maxLines = 6,
+                            )
+                        }
+                        if (state.purposeProblem != null) {
+                            Text("That is too long, or has characters that cannot be kept.", style = Type.caption, color = Palette.danger)
+                        }
+                    }
+                }
+            }
+            state.notice?.let { Text(it, style = Type.footnote, color = Palette.danger) }
+            // Renoa does not list abilities to the app yet; an empty card would only look broken.
+            if (state.abilities.isNotEmpty()) {
+                AbilitiesSection(state.abilities, creating = false, called = called, onToggle = viewModel::toggle)
+            }
         }
     }
 }
 
 @Composable
-private fun Legend(state: EditorUiState, called: String) {
-    val colors = Renoa.colors
-    val added = state.abilities.filter { it.addedByAgent }
-    val fixed = state.abilities.any { it.kind != AbilityKind.Everyday }
-    Column(Modifier.padding(start = 28.dp, end = 28.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (added.isNotEmpty()) {
-            LegendLine("$called found and added ${added.joinToString(" and ") { it.title }} itself", colors.foreground)
-        }
-        if (fixed) {
-            LegendLine(if (state.creating) "Only you can switch these on" else "These are chosen when an agent is made", colors.foreground)
+private fun AbilitiesSection(abilities: List<AbilitySwitch>, creating: Boolean, called: String, onToggle: (String) -> Unit) {
+    CardSection(title = "What $called can do") {
+        for (ability in abilities) {
+            row {
+                SwitchRow(
+                    title = ability.title,
+                    detail = abilityDetail(ability, creating, called),
+                    isOn = ability.lit,
+                    onChange = { onToggle(ability.id) },
+                    enabled = ability.canSwitch(creating),
+                )
+            }
         }
     }
 }
 
-@Composable
-private fun LegendLine(text: String, dot: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Canvas(Modifier.size(14.dp)) { drawCircle(dot) }
-        Text(text, style = RenoaType.Caption, color = Renoa.colors.mutedForeground)
+private fun abilityDetail(ability: AbilitySwitch, creating: Boolean, called: String): String? =
+    when {
+        ability.addedByAgent -> "$called found and added ${ability.title} itself"
+        ability.kind == AbilityKind.Soon -> "Coming soon"
+        ability.kind == AbilityKind.Machine && creating -> "Only you can switch this on"
+        ability.kind == AbilityKind.Machine -> "Chosen when an agent is made"
+        else -> null
     }
-}

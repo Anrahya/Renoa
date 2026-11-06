@@ -1,8 +1,8 @@
 /*
  * Adapted from Codync's ConnectionRequestCard.kt and ServiceLogo (MarketRows.kt), commit
  * ed8daf11f89398e598ef1f791abc3014ded68496, Copyright 2026 Po Kai Lee, under the Apache License,
- * Version 2.0 (see clients/android/licenses/Apache-2.0-Codync.txt). Changed: Renoa's theme, a
- * setup link instead of a chat entry, and a service mark instead of a fetched favicon.
+ * Version 2.0 (see clients/android/licenses/Apache-2.0-Codync.txt). Changed: a setup link instead
+ * of a chat entry, and a service mark instead of a fetched favicon.
  */
 package live.renoa.app.connect
 
@@ -16,22 +16,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import live.renoa.app.ui.ButtonKind
-import live.renoa.app.ui.ButtonSize
-import live.renoa.app.ui.PathIcon
-import live.renoa.app.ui.RenoaButton
-import live.renoa.app.theme.Renoa
-import live.renoa.app.theme.RenoaType
+import com.kyant.shapes.RoundedRectangle
+import live.renoa.design.Palette
+import live.renoa.design.PrimaryButton
+import live.renoa.design.SecondaryButton
+import live.renoa.design.Type
+import live.renoa.design.semibold
 import live.renoa.rcp.SetupLink
 import live.renoa.rcp.SetupLinkKind
 
@@ -41,32 +41,32 @@ import live.renoa.rcp.SetupLinkKind
  */
 @Composable
 fun ConnectCard(link: SetupLink, onConnect: () -> Unit, onNotNow: () -> Unit, modifier: Modifier = Modifier, problem: String? = null) {
-    val colors = Renoa.colors
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedRectangle(20.dp)
     // A card, not a banner: full width on a phone, capped on wider screens.
     Column(
         modifier
             .widthIn(max = 400.dp)
             .fillMaxWidth()
-            .background(colors.card, shape)
-            .border(1.dp, colors.border, shape)
+            .clip(shape)
+            .background(Palette.surface)
+            .border(1.dp, Palette.border, shape)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             ServiceLogo(link.url, link.label)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(link.label, style = RenoaType.Label, color = colors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(link.kind.words, style = RenoaType.Caption, color = colors.mutedForeground, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(link.label, style = Type.body.semibold, color = Palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(link.kind.words, style = Type.subheadline, color = Palette.secondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 // Where Connect goes, since the label is the link maker's word for it.
-                linkHost(link.url)?.let { Text("Opens $it", style = RenoaType.Caption, color = colors.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                linkHost(link.url)?.let { Text("Opens $it", style = Type.caption, color = Palette.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-            RenoaButton("Not now", onNotNow, kind = ButtonKind.Secondary, size = ButtonSize.Sm)
-            RenoaButton("Connect", onConnect, size = ButtonSize.Sm)
+            SecondaryButton("Not now", action = onNotNow)
+            PrimaryButton("Connect", action = onConnect)
         }
-        problem?.let { Text(it, style = RenoaType.Caption, color = colors.stateFailed) }
+        problem?.let { Text(it, style = Type.footnote, color = Palette.danger) }
     }
 }
 
@@ -81,16 +81,23 @@ private val SetupLinkKind.words: String
 /** The mark of the service at [url] on a tile, or the first letter of [label], what it connects. */
 @Composable
 internal fun ServiceLogo(url: String, label: String, size: Dp = 46.dp) {
-    val colors = Renoa.colors
     val mark = serviceMark(url)
     Box(
-        Modifier.size(size).clip(RoundedCornerShape(size * 12 / 46)).background(colors.secondary).clearAndSetSemantics {},
+        Modifier
+            .size(size)
+            .clip(RoundedRectangle(size * 12 / 46))
+            .background(Palette.bubbleAgent)
+            .clearAndSetSemantics {},
         contentAlignment = Alignment.Center,
     ) {
         if (mark != null) {
-            PathIcon(mark.path, colors.foreground, size = size * 26 / 46)
+            ServiceGlyph(mark.path, Palette.text, size = size * 26 / 46)
         } else {
-            Text(label.firstOrNull()?.uppercase() ?: "?", style = RenoaType.Heading, color = colors.foreground)
+            Text(
+                label.firstOrNull()?.uppercase() ?: "?",
+                style = Type.system(size.value * 0.4f, FontWeight.SemiBold),
+                color = Palette.text,
+            )
         }
     }
 }

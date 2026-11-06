@@ -1,3 +1,6 @@
+// Portions copyright 2026 Po Kai Lee and the Codync contributors.
+// Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0-Codync.txt.
+// Step chrome, springs and controls adapted from Codync apps/android `PairingView.kt` at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app.signup
 
 import androidx.activity.compose.BackHandler
@@ -7,9 +10,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,18 +20,14 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -40,46 +39,71 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyant.shapes.Capsule
+import com.kyant.shapes.RoundedRectangle
 import live.renoa.app.agents.AgentState
 import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.LocalReducedMotion
-import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaEasing
-import live.renoa.app.theme.RenoaType
-import live.renoa.app.ui.ButtonKind
-import live.renoa.app.ui.ButtonSize
-import live.renoa.app.ui.RenoaButton
+import live.renoa.design.BackButton
+import live.renoa.design.FieldBox
+import live.renoa.design.Motion
+import live.renoa.design.Palette
+import live.renoa.design.PlainTextField
+import live.renoa.design.PrimaryButton
+import live.renoa.design.ScreenHeader
+import live.renoa.design.SecondaryButton
+import live.renoa.design.ThinkingOrb
+import live.renoa.design.ThinkingOrbState
+import live.renoa.design.Type
+import live.renoa.design.WideButton
 
 /** Sign-up's three screens, after which [onDone] opens Home on Renoa. */
 @Composable
 fun SignUpScreen(viewModel: SignUpViewModel, onDone: () -> Unit) {
     val state by viewModel.state.collectAsState()
-    val colors = Renoa.colors
     LaunchedEffect(state.done) { if (state.done) onDone() }
-    BackHandler(enabled = state.step == SignUpStep.Day) { viewModel.back() }
-    AnimatedContent(
-        targetState = state.step,
-        modifier = Modifier.fillMaxSize().background(colors.background).safeDrawingPadding().imePadding(),
-        transitionSpec = { (slideInHorizontally(tween(300)) { it / 8 } + fadeIn(tween(300))) togetherWith fadeOut(tween(150)) },
-        label = "sign-up step",
-    ) { step ->
-        Column(Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, top = 28.dp, bottom = 16.dp)) {
+    BackHandler(enabled = state.step == SignUpStep.Day && !state.busy) { viewModel.back() }
+    val stepIndex =
+        when (state.step) {
+            SignUpStep.Checking -> 0
+            SignUpStep.Name -> 1
+            SignUpStep.Day -> 2
+            SignUpStep.Meet -> 3
+        }
+    Column(Modifier.fillMaxSize().background(Palette.background).safeDrawingPadding().imePadding()) {
+        if (stepIndex > 0) {
+            ScreenHeader(
+                leading = { if (state.step == SignUpStep.Day && !state.busy) BackButton(viewModel::back) },
+                title = { StepPills(stepIndex) },
+            )
+        }
+        AnimatedContent(
+            targetState = state.step,
+            modifier = Modifier.weight(1f),
+            transitionSpec = {
+                val forward = targetState.ordinal >= initialState.ordinal
+                (slideInHorizontally(Motion.spring(0.45f)) { if (forward) it else -it } + fadeIn(Motion.spring(0.45f))) togetherWith
+                    (slideOutHorizontally(Motion.spring(0.45f)) { if (forward) -it else it } + fadeOut(Motion.spring(0.45f)))
+            },
+            label = "Sign-up step",
+        ) { step ->
             when (step) {
-                SignUpStep.Checking -> Checking(state, viewModel)
+                SignUpStep.Checking -> CheckingStep(state, viewModel)
                 SignUpStep.Name -> NameStep(state, viewModel)
                 SignUpStep.Day -> DayStep(state, viewModel)
                 SignUpStep.Meet ->
@@ -93,162 +117,186 @@ fun SignUpScreen(viewModel: SignUpViewModel, onDone: () -> Unit) {
 }
 
 @Composable
-private fun ColumnScope.Checking(state: SignUpUiState, viewModel: SignUpViewModel) {
-    Spacer(Modifier.weight(1f))
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Tile(96) }
-    Spacer(Modifier.weight(1f))
-    state.notice?.let {
-        Notice(it)
-        Footer { RenoaButton("Try again", viewModel::resume, Modifier.weight(1f)) }
+private fun StepPills(step: Int) {
+    Row(
+        Modifier.semantics(mergeDescendants = true) { contentDescription = "Step $step of 3" },
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (i in 1..3) {
+            Box(Modifier.size(18.dp, 4.dp).clip(Capsule()).background(if (i <= step) Palette.text else Palette.accentDim))
+        }
     }
 }
 
 @Composable
-private fun ColumnScope.NameStep(state: SignUpUiState, viewModel: SignUpViewModel) {
-    val colors = Renoa.colors
+private fun CheckingStep(state: SignUpUiState, viewModel: SignUpViewModel) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp).padding(bottom = 12.dp)) {
+        Spacer(Modifier.weight(1f))
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Tile(96)
+            if (state.busy) ThinkingOrb(state = ThinkingOrbState.Connecting, size = 22.dp, color = Palette.secondary)
+        }
+        Spacer(Modifier.weight(1f))
+        state.notice?.let {
+            Notice(it)
+            WideButton("Try again", action = viewModel::resume)
+        }
+    }
+}
+
+@Composable
+private fun NameStep(state: SignUpUiState, viewModel: SignUpViewModel) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
-    Scrolling {
-        Tile(60)
-        Step(1)
+    StepBody(
+        footer = {
+            state.notice?.let { Notice(it) }
+            WideButton("Continue", enabled = state.canName, busy = state.busy, action = viewModel::saveName)
+        },
+    ) {
+        Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) { Tile(64) }
         Heading("Hi. What should I call you?")
         Box(
             Modifier
-                .padding(top = 8.dp)
                 .fillMaxWidth()
-                .drawBehind { drawLine(colors.input, Offset(0f, size.height), Offset(size.width, size.height), 1.5.dp.toPx()) }
-                .padding(bottom = 8.dp),
+                .clip(RoundedRectangle(12.dp))
+                .background(Palette.surface)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            val style = RenoaType.Title.copy(fontSize = 24.sp, lineHeight = 30.sp, fontWeight = RenoaType.Body.fontWeight)
-            if (state.name.isEmpty()) Text("Your name", style = style, color = colors.mutedForeground)
-            BasicTextField(
-                value = state.name,
-                onValueChange = viewModel::setName,
-                singleLine = true,
-                enabled = !state.busy,
-                textStyle = style.copy(color = colors.foreground),
-                cursorBrush = SolidColor(colors.ring),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
-                keyboardActions = KeyboardActions(onNext = { viewModel.saveName() }),
+            PlainTextField(
+                text = state.name,
+                onChange = viewModel::setName,
                 modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = "Your name" },
+                prompt = "Your name",
+                singleLine = true,
+                style = Type.title3,
+                enabled = !state.busy,
+                keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+                actions = KeyboardActions(onNext = { viewModel.saveName() }),
             )
         }
     }
-    state.notice?.let { Notice(it) }
-    Footer { RenoaButton("Next", viewModel::saveName, Modifier.weight(1f), enabled = state.canName) }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ColumnScope.DayStep(state: SignUpUiState, viewModel: SignUpViewModel) {
-    val colors = Renoa.colors
-    val shape = RoundedCornerShape(18.dp)
-    Scrolling {
-        Tile(60)
-        Step(2)
-        Heading("How does a usual day go for you, ${state.name}?")
-        Text("A sentence or two is plenty. I'll learn the rest as we talk.", style = RenoaType.Body, color = colors.mutedForeground)
-        Box(
-            Modifier
-                .padding(top = 4.dp)
-                .fillMaxWidth()
-                .heightIn(min = 108.dp)
-                .background(colors.card, shape)
-                .border(1.dp, colors.border, shape)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-        ) {
-            if (state.day.isEmpty()) {
-                Text("Up around 7, out till 6. I cook most nights and I'm trying to eat more protein.", style = RenoaType.Body, color = colors.mutedForeground)
+private fun DayStep(state: SignUpUiState, viewModel: SignUpViewModel) {
+    StepBody(
+        footer = {
+            state.notice?.let { Notice(it) }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                WideButton("Continue", enabled = !state.busy, busy = state.busy) { viewModel.saveDay() }
+                WideButton("Skip", primary = false, enabled = !state.busy) { viewModel.saveDay(skip = true) }
             }
-            BasicTextField(
-                value = state.day,
-                onValueChange = viewModel::setDay,
-                enabled = !state.busy,
-                textStyle = RenoaType.Body.copy(color = colors.foreground),
-                cursorBrush = SolidColor(colors.ring),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Your usual day" },
-            )
+        },
+    ) {
+        Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) { Tile(64) }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Heading("How does a usual day go for you, ${state.name}?")
+            Text("A sentence or two is plenty. I'll learn the rest as we talk.", style = Type.body, color = Palette.secondary)
         }
-        // A small button keeps room above and below for its tap area, so wrapped rows need no gap of their own.
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FieldBox(
+            text = state.day,
+            onChange = viewModel::setDay,
+            prompt = "Up around 7, out till 6. I cook most nights and I'm trying to eat more protein.",
+            fieldModifier = Modifier.semantics { contentDescription = "Your usual day" },
+            minLines = 4,
+            maxLines = 6,
+            fill = Palette.surface,
+            enabled = !state.busy,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val picked = state.phrases
-            DAY_PHRASES.forEach { phrase ->
-                RenoaButton(phrase, { viewModel.togglePhrase(phrase) }, kind = if (phrase in picked) ButtonKind.Primary else ButtonKind.Secondary, size = ButtonSize.Sm, enabled = !state.busy)
+            for (phrase in DAY_PHRASES) {
+                if (phrase in picked) {
+                    PrimaryButton(phrase, enabled = !state.busy) { viewModel.togglePhrase(phrase) }
+                } else {
+                    SecondaryButton(phrase, enabled = !state.busy) { viewModel.togglePhrase(phrase) }
+                }
             }
         }
-    }
-    state.notice?.let { Notice(it) }
-    Footer {
-        RenoaButton("Skip", { viewModel.saveDay(skip = true) }, Modifier.weight(1f), kind = ButtonKind.Secondary, enabled = !state.busy)
-        RenoaButton("Next", { viewModel.saveDay() }, Modifier.weight(1f), enabled = !state.busy)
     }
 }
 
 @Composable
-private fun ColumnScope.MeetStep(state: SignUpUiState, viewModel: SignUpViewModel, onDone: () -> Unit) {
-    val colors = Renoa.colors
+private fun MeetStep(state: SignUpUiState, viewModel: SignUpViewModel, onDone: () -> Unit) {
     val reduced = LocalReducedMotion.current
-    // She arrives once: dropping in from a little above, as tiles assemble on Home.
     val arrival = remember { Animatable(if (reduced) 1f else 0f) }
     LaunchedEffect(Unit) { arrival.animateTo(1f, tween(800, easing = RenoaEasing.Ease)) }
-    Scrolling(Alignment.CenterHorizontally, Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
+    StepBody(
+        align = Alignment.CenterHorizontally,
+        arrange = Arrangement.spacedBy(18.dp, Alignment.CenterVertically),
+        footer = {
+            when {
+                state.notice != null -> {
+                    Notice(state.notice)
+                    WideButton("Try again", action = viewModel::meet)
+                }
+                else -> {
+                    if (state.busy) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ThinkingOrb(state = ThinkingOrbState.Shaping, size = 18.dp, color = Palette.secondary)
+                            Text("Getting Renoa ready…", style = Type.footnote, color = Palette.secondary)
+                        }
+                    }
+                    WideButton("Go to Home", enabled = state.ready, busy = state.busy, action = onDone)
+                }
+            }
+        },
+    ) {
         Badge(
             RENOA,
             AgentState.Resting,
-            200.dp,
+            112.dp,
             primary = true,
             hue = AgentHue.Ink,
             modifier =
-                Modifier
-                    .padding(bottom = 12.dp)
-                    .graphicsLayer {
-                        alpha = arrival.value
-                        translationY = (1f - arrival.value) * -36.dp.toPx()
-                    },
+                Modifier.graphicsLayer {
+                    alpha = arrival.value
+                    translationY = (1f - arrival.value) * -28.dp.toPx()
+                },
         )
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Step(3)
-            Heading("I'm Renoa.")
-            Text("I keep track of things, remind you and find things out. Whenever you want to talk, tap me on Home.", style = RenoaType.Body, color = colors.mutedForeground)
-        }
-    }
-    when {
-        state.notice != null -> {
-            Notice(state.notice)
-            Footer { RenoaButton("Try again", viewModel::meet, Modifier.weight(1f)) }
-        }
-        else -> {
-            if (state.busy) Text("Getting Renoa ready…", Modifier.padding(bottom = 10.dp), style = RenoaType.Caption, color = colors.mutedForeground)
-            Footer { RenoaButton("Go to Home", onDone, Modifier.weight(1f), enabled = state.ready) }
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("I'm Renoa.", Modifier.semantics { heading() }, style = PAGE_TITLE, color = Palette.text, textAlign = TextAlign.Center)
+            Text(
+                "I keep track of things, remind you and find things out. Whenever you want to talk, tap me on Home.",
+                style = Type.body,
+                color = Palette.secondary,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
 
-/** The screen's words, scrolling on a short screen so the buttons below stay in reach. */
 @Composable
-private fun ColumnScope.Scrolling(
+private fun StepBody(
     align: Alignment.Horizontal = Alignment.Start,
-    arrange: Arrangement.Vertical = Arrangement.spacedBy(14.dp),
+    arrange: Arrangement.Vertical = Arrangement.spacedBy(20.dp),
+    footer: @Composable ColumnScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = arrange, horizontalAlignment = align, content = content)
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 16.dp),
+            verticalArrangement = arrange,
+            horizontalAlignment = align,
+            content = content,
+        )
+        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 12.dp), content = footer)
+    }
 }
 
-/** Renoa's own tile, as Home shows her. */
 @Composable
 private fun Tile(size: Int) = Badge(RENOA, AgentState.Resting, size.dp, primary = true, hue = AgentHue.Ink, label = "")
 
 @Composable
-private fun Step(n: Int) = Text("$n OF 3", Modifier.padding(top = 6.dp), style = RenoaType.Eyebrow, color = Renoa.colors.mutedForeground)
+private fun Heading(text: String) = Text(text, Modifier.semantics { heading() }, style = PAGE_TITLE, color = Palette.text)
 
 @Composable
-private fun Heading(text: String) = Text(text, Modifier.semantics { heading() }, style = RenoaType.Title, color = Renoa.colors.foreground)
+private fun Notice(text: String) = Text(text, Modifier.padding(bottom = 10.dp), style = Type.footnote, color = Palette.danger)
 
-@Composable
-private fun Notice(text: String) = Text(text, Modifier.padding(bottom = 10.dp), style = RenoaType.Caption, color = Renoa.colors.stateFailed)
-
-@Composable
-private fun Footer(buttons: @Composable RowScope.() -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), content = buttons)
-}
+private val PAGE_TITLE = Type.system(30f, FontWeight.SemiBold).copy(letterSpacing = (-0.5).sp)

@@ -1,13 +1,9 @@
+// Portions copyright 2026 Po Kai Lee and the Codync contributors.
+// Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0-Codync.txt.
+// Push stack and modal sheet presentation adapted from Codync apps/android at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app
 
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -19,8 +15,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -32,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.Link
 import live.renoa.app.chat.ChatScreen
@@ -55,10 +54,12 @@ import live.renoa.app.signin.SignInViewModel
 import live.renoa.app.signup.SavedSignUp
 import live.renoa.app.signup.SignUpScreen
 import live.renoa.app.signup.SignUpViewModel
+import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaTheme
 import live.renoa.app.theme.SystemBars
-import live.renoa.app.theme.Renoa
-import live.renoa.app.theme.ThemeName
+import live.renoa.app.theme.rememberAppearance
+import live.renoa.design.DesignSheet
+import live.renoa.design.NavStack
 
 /** What sign-in says after Renoa stopped accepting this phone. */
 internal const val SIGNED_OUT = "This phone was signed out. Sign in again to carry on."
@@ -85,12 +86,13 @@ internal fun RenoaApp(
     openChat: String? = null,
     chatOpened: () -> Unit = {},
     setupLinks: (() -> HeldSetupLinks)? = null,
+    retryNow: () -> Unit = {},
 ) {
-    // The phone's light or dark setting decides, until the owner taps their capsule on Home to pick the other theme.
-    var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
-    val theme = picked ?: if (isSystemInDarkTheme()) ThemeName.Graphite else ThemeName.Paper
+    val (appearance, setAppearance) = rememberAppearance()
+    val theme = appearance.resolve(isSystemInDarkTheme())
     val navigator = rememberNavigator(if (signedIn) Route.Home else Route.SignIn)
     val stores: EntryStores = viewModel()
+    val scope = rememberCoroutineScope()
     // Starting over drops every screen below the top at once; the top one lets go of its own as it leaves.
     val startOver = { route: Route ->
         val below = navigator.entries.dropLast(1)
@@ -112,28 +114,31 @@ internal fun RenoaApp(
         }
     }
 
+    val stackEntries = navigator.entries.filterNot { it.route.isModal }
+    val sheetEntry = navigator.entries.lastOrNull()?.takeIf { it.route.isModal }
+
     RenoaTheme(theme) {
         SystemBars(theme)
-        BackHandler(enabled = navigator.stack.size > 1) { navigator.pop() }
         Box(Modifier.fillMaxSize().background(Renoa.colors.background)) {
-            AnimatedContent(
-                targetState = navigator.topEntry,
+            NavStack(
+                stack = stackEntries,
+                key = { it.id },
+                pop = { navigator.pop() },
                 // A tablet keeps a phone's column, centred, so lines stay readable and share one left edge.
                 modifier = Modifier.align(Alignment.TopCenter).widthIn(max = MAX_CONTENT_WIDTH).fillMaxHeight(),
-                transitionSpec = {
-                    (slideInHorizontally(tween(300)) { it / 8 } + fadeIn(tween(300))) togetherWith fadeOut(tween(150))
-                },
-                label = "screen",
             ) { entry ->
-                // A screen keeps its view models only while its entry is on the stack. A rotation
-                // disposes this too, but the entry is still on the stack then, so nothing is lost.
-                val owner = remember { stores.ownerFor(entry.id) }
-                DisposableEffect(Unit) { onDispose { if (navigator.entries.none { it.id == entry.id }) stores.release(entry.id) } }
+                val owner = remember(entry.id) { stores.ownerFor(entry.id) }
+                DisposableEffect(entry.id) { onDispose { if (navigator.entries.none { it.id == entry.id }) stores.release(entry.id) } }
                 when (val route = entry.route) {
                     Route.SignIn -> {
                         val model: SignInViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { SignInViewModel(signingIn, if (wasSignedOut) SignInState.Failed(SIGNED_OUT) else SignInState.Ready) } })
                         val activity = checkNotNull(LocalActivity.current) { "sign-in needs its activity" }
-                        LaunchedEffect(model.state) { if (model.state == SignInState.SignedIn) startOver(Route.Home) }
+                        LaunchedEffect(model.state) {
+                            if (model.state == SignInState.SignedIn) {
+                                wasSignedOut = false
+                                startOver(Route.Home)
+                            }
+                        }
                         SignInScreen(model.state, model.code, { model.code = it }) { model.submit(Passkeys.of(activity)) }
                     }
                     Route.SignUp -> {
@@ -147,28 +152,49 @@ internal fun RenoaApp(
                             model,
                             onOpenChat = { navigator.push(Route.Chat(it)) },
                             onNewAgent = { navigator.push(Route.Create) },
-                            onChangeColours = { picked = theme.next() },
+                            appearance = appearance,
+                            onAppearance = setAppearance,
                             onSignUp = { startOver(Route.SignUp) },
+                            onSignOut = {
+                                scope.launch {
+                                    signedOut()
+                                    wasSignedOut = false
+                                    startOver(Route.SignIn)
+                                }
+                            },
+                            onEditAgent = { navigator.push(Route.Edit(it)) },
+                            onRefresh = retryNow,
+                            onNotificationsChanged = notificationsAnswered,
                         )
                     }
                     is Route.Chat -> {
                         val model: ChatViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { ChatViewModel(repository(), route.agentId) } })
-                        ChatScreen(model, onBack = { navigator.pop() }, onOpenProfile = { navigator.push(Route.Edit(it)) })
+                        ChatScreen(model, onBack = { navigator.pop() }, onOpenProfile = { navigator.push(Route.Edit(it)) }, onRefresh = retryNow)
                         LifecycleStartEffect(route.agentId) {
                             chatShown(route.agentId, true)
                             onStopOrDispose { chatShown(route.agentId, false) }
                         }
                         AskToNotify(model.state.collectAsState().value.sending, notificationsAnswered)
                     }
-                    is Route.Edit -> {
-                        val model: AgentEditorViewModel =
-                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Editing(route.agentId)) } })
-                        AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.pop() })
-                    }
-                    Route.Create -> {
-                        val model: AgentEditorViewModel =
-                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Creating) } })
-                        AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.replaceTop(Route.Chat(it)) })
+                    is Route.Edit, Route.Create -> Unit
+                }
+            }
+            DesignSheet(sheetEntry, onDismiss = { navigator.pop() }) { entry ->
+                key(entry.id) {
+                    val owner = remember(entry.id) { stores.ownerFor(entry.id) }
+                    DisposableEffect(entry.id) { onDispose { if (navigator.entries.none { it.id == entry.id }) stores.release(entry.id) } }
+                    when (val route = entry.route) {
+                        is Route.Edit -> {
+                            val model: AgentEditorViewModel =
+                                viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Editing(route.agentId)) } })
+                            AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.pop() })
+                        }
+                        Route.Create -> {
+                            val model: AgentEditorViewModel =
+                                viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Creating) } })
+                            AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.replaceTop(Route.Chat(it)) })
+                        }
+                        else -> Unit
                     }
                 }
             }

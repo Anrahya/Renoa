@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 
 /**
  * Sheets, menus and dialogs draw in the app's own window, above everything, so their glass can
@@ -34,8 +35,14 @@ private val LocalOverlayHost = staticCompositionLocalOf<OverlayHost?> { null }
     val host = remember { OverlayHost() }
     CompositionLocalProvider(LocalOverlayHost provides host) {
         Box(Modifier.fillMaxSize()) {
-            content()
-            for (entry in host.entries) key(entry) { entry.content() }
+            Box(if (host.entries.isNotEmpty()) Modifier.clearAndSetSemantics {} else Modifier) {
+                content()
+            }
+            for ((index, entry) in host.entries.withIndex()) key(entry) {
+                Box(if (index < host.entries.lastIndex) Modifier.clearAndSetSemantics {} else Modifier) {
+                    entry.content()
+                }
+            }
         }
     }
 }

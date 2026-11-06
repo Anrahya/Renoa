@@ -38,7 +38,7 @@ internal val AgentApp.label: String
 internal fun AppsPage(state: HomeUiState, onSwitch: (String, Boolean) -> Unit, onAsk: (String) -> Unit, onRetry: () -> Unit) {
     val main = state.main
     if (HomePage.Apps in state.unread) return Unread("The apps could not be read.", onRetry)
-    val apps = state.apps ?: return Empty("Checking which apps are connected…")
+    val apps = state.apps ?: return LoadingPage("Checking which apps are connected…")
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (apps.isEmpty()) {
             Empty("No apps are connected yet.")

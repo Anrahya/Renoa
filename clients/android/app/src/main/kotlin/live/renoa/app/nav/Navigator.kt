@@ -21,6 +21,9 @@ sealed interface Route {
 
     data object Create : Route
 
+    /** Whether this screen rises as a modal sheet over the push stack rather than pushing onto it. */
+    val isModal: Boolean get() = this is Create || this is Edit
+
     /** A string that [parse] turns back into this route, so the stack survives the process being recreated. */
     fun encode(): String =
         when (this) {
@@ -79,8 +82,9 @@ class Navigator private constructor(entries: List<Entry>, private var nextId: In
      * there. One already on top stays as it is; before Home is reached, as on sign-in, nothing opens.
      */
     fun openChat(agentId: String) {
-        if (entries.none { it.route == Route.Home } || top == Route.Chat(agentId)) return
-        push(Route.Chat(agentId))
+        if (entries.none { it.route == Route.Home }) return
+        if (top == Route.Chat(agentId)) return
+        entries = entries + Entry(nextId++, Route.Chat(agentId))
     }
 
     /** Goes back one screen. Returns false at the bottom, where the system should take over. */

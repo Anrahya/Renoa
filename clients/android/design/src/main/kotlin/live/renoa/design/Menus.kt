@@ -118,7 +118,8 @@ class ContextDrag(val start: () -> Unit, val move: (Float) -> Unit, val end: () 
  * With `reorder`, moving the finger after the long press closes the menu and drags the content instead.
  */
 @Composable fun Modifier.contextActions(reactions: ReactionPick? = null, enabled: Boolean = true, onClick: (() -> Unit)? = null,
-    preview: (@Composable () -> Unit)? = null, reorder: ContextDrag? = null, items: () -> List<MenuItem>): Modifier {
+    clickLabel: String? = null, preview: (@Composable () -> Unit)? = null, reorder: ContextDrag? = null,
+    mergeSemantics: Boolean = reorder == null, items: () -> List<MenuItem>): Modifier {
     var anchor by remember { mutableStateOf(Rect.Zero) }
     var open by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
@@ -132,8 +133,8 @@ class ContextDrag(val start: () -> Unit, val move: (Float) -> Unit, val end: () 
     val longPress = LocalViewConfiguration.current.longPressTimeoutMillis
     // One gesture for tap, hold and drag: a click detector would swallow the move after the hold.
     // A message reads as one node with its actions, as a clickable would merge it; a row that reorders keeps its own.
-    val gestures = Modifier.semantics(mergeDescendants = reorder == null) {
-        if (enabled) { onClick { tap?.invoke(); true }; onLongClick("Actions") { hold(); true } }
+    val gestures = Modifier.semantics(mergeDescendants = mergeSemantics) {
+        if (enabled) { onClick(clickLabel) { tap?.invoke(); true }; onLongClick("Actions") { hold(); true } }
     }.pointerInput(reorder, enabled) {
         if (!enabled) return@pointerInput
         awaitEachGesture {

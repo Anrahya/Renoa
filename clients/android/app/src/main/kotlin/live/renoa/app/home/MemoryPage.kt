@@ -18,7 +18,7 @@ import java.time.format.DateTimeFormatter
 @Composable
 internal fun MemoryPage(state: HomeUiState, onRetry: () -> Unit) {
     if (HomePage.Memory in state.unread) return Unread("What your agents remember could not be read.", onRetry)
-    val memory = state.memory ?: return Empty("Reading what your agents remember…")
+    val memory = state.memory ?: return LoadingPage("Reading what your agents remember…")
     val about = memory.profile.lines().map { it.trim() }.filter { it.isNotEmpty() }
     val notes = memory.notes.notes
     if (about.isEmpty() && notes.isEmpty()) return Empty("Nothing yet. Tell an agent about yourself, and what it keeps shows here.")

@@ -2,7 +2,6 @@ package live.renoa.app.theme
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import live.renoa.app.badge.AgentHue
 import live.renoa.design.Tones
 import java.io.File
 import kotlin.reflect.full.memberProperties
@@ -67,17 +66,6 @@ class ThemeTest {
     }
 
     @Test
-    fun anAgentsNameReadsOnTheGround() {
-        for (theme in ThemeName.entries) {
-            val c = theme.colors
-            for (hue in AgentHue.entries.filter { it != AgentHue.Ink }) {
-                val ratio = contrast(hue.name(c)!!, c.background)
-                assertTrue(ratio >= 4.5f, "${theme.name}: ${hue.name}'s name is only %.2f to 1 on the ground".format(ratio))
-            }
-        }
-    }
-
-    @Test
     fun aControlEdgeHoldsThreeToOneOnTheGround() {
         for (theme in ThemeName.entries) {
             val ratio = contrast(theme.colors.input, theme.colors.background)
@@ -86,15 +74,13 @@ class ThemeTest {
     }
 
     @Test
-    fun nextCyclesThroughEveryThemeAndComesBack() {
-        var theme = ThemeName.Graphite
-        val seen = mutableListOf<ThemeName>()
-        repeat(ThemeName.entries.size) {
-            seen += theme
-            theme = theme.next()
-        }
-        assertEquals(ThemeName.entries.toList(), seen)
-        assertEquals(ThemeName.Graphite, theme)
+    fun appearanceResolvesSystemLightAndDarkAndKeepsExplicitThemes() {
+        assertEquals(ThemeName.Paper, Appearance.System.resolve(systemDark = false))
+        assertEquals(ThemeName.Graphite, Appearance.System.resolve(systemDark = true))
+        assertEquals(ThemeName.Paper, Appearance.Paper.resolve(systemDark = false))
+        assertEquals(ThemeName.Paper, Appearance.Paper.resolve(systemDark = true))
+        assertEquals(ThemeName.Graphite, Appearance.Graphite.resolve(systemDark = false))
+        assertEquals(ThemeName.Graphite, Appearance.Graphite.resolve(systemDark = true))
     }
 
     /** The `--name: #RRGGBB` declarations of the block [selector] opens in `design/system/tokens.css`. */

@@ -1,6 +1,7 @@
 package live.renoa.app.theme
 
 import android.content.ContentResolver
+import android.content.Context
 import android.database.ContentObserver
 import android.graphics.Color.TRANSPARENT
 import android.os.Handler
@@ -17,17 +18,18 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.core.graphics.drawable.toDrawable
 import live.renoa.design.DesignTheme
 import live.renoa.design.OverlayRoot
@@ -79,11 +81,9 @@ object RenoaType {
 
 val LocalRenoaColors = staticCompositionLocalOf { ThemeName.Graphite.colors }
 
-/** True when the person turned animations off in system settings; looping motion must stop. */
-val LocalReducedMotion = compositionLocalOf { false }
-
-/** One clock, in seconds, shared by every badge on screen so a screenful of them costs one frame loop. */
-val LocalMotionClock = staticCompositionLocalOf<State<Float>> { mutableFloatStateOf(0f) }
+/** Shared with `:design` so badges, orbs and spinners obey one animation setting and clock. */
+val LocalReducedMotion = live.renoa.design.LocalReducedMotion
+val LocalMotionClock = live.renoa.design.LocalMotionClock
 
 object Renoa {
     val colors: RenoaColors
@@ -111,6 +111,21 @@ fun RenoaTheme(
             // Menus and sheets draw above every screen, in the app's own window.
             OverlayRoot(content)
         }
+    }
+}
+
+/** Keeps the owner's [Appearance] choice on this device, defaulting to [Appearance.System]. */
+@Composable
+fun rememberAppearance(): Pair<Appearance, (Appearance) -> Unit> {
+    val context = LocalContext.current.applicationContext
+    val prefs = remember(context) { context.getSharedPreferences("appearance", Context.MODE_PRIVATE) }
+    var current by rememberSaveable {
+        val saved = prefs.getString("mode", null)
+        mutableStateOf(Appearance.entries.firstOrNull { it.name == saved } ?: Appearance.System)
+    }
+    return current to { next ->
+        current = next
+        prefs.edit { putString("mode", next.name) }
     }
 }
 

@@ -9,6 +9,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.CompositionLocalProvider
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import live.renoa.app.chat.ChatViewModel
+import live.renoa.app.editor.AgentEditorScreen
+import live.renoa.app.editor.AgentEditorViewModel
+import live.renoa.app.editor.EditorMode
+import live.renoa.app.home.HomeScreen
+import live.renoa.app.home.HomeViewModel
+import live.renoa.app.signin.SignInScreen
+import live.renoa.app.signup.SignUpMemory
+import live.renoa.app.signup.SignUpScreen
+import live.renoa.app.signup.SignUpViewModel
+import live.renoa.app.signin.SignInState
+import live.renoa.app.theme.Appearance
+import live.renoa.app.theme.Renoa
+import live.renoa.app.theme.ThemeName
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -83,26 +99,11 @@ import live.renoa.app.badge.HALF
 import live.renoa.app.badge.PAPER_SKIN
 import live.renoa.app.chat.ArrivingReply
 import live.renoa.app.chat.ChatScreen
-import live.renoa.app.chat.ChatViewModel
 import live.renoa.app.chat.Reply
-import live.renoa.app.editor.AgentEditorScreen
-import live.renoa.app.editor.AgentEditorViewModel
-import live.renoa.app.editor.EditorMode
 import live.renoa.app.home.CHECKING_IN
-import live.renoa.app.home.HomeScreen
-import live.renoa.app.home.HomeViewModel
-import live.renoa.app.signin.SignInScreen
-import live.renoa.app.signin.SignInState
-import live.renoa.app.signup.SignUpMemory
-import live.renoa.app.signup.SignUpScreen
-import live.renoa.app.signup.SignUpViewModel
-import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaType
-import live.renoa.app.theme.ThemeName
 import org.junit.After
 import org.junit.Test
-import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import kotlin.math.roundToInt
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -190,9 +191,18 @@ class ScreensTest : ScreenTest() {
     @Test
     fun theFiveBadgeStatesSideBySideInPaper() = badgesIn(ThemeName.Paper)
 
-    private fun home(theme: ThemeName = ThemeName.Graphite, seconds: Float = 0f, onOpenChat: (String) -> Unit = {}, onNewAgent: () -> Unit = {}, onChangeColours: () -> Unit = {}) {
+    private fun home(
+        theme: ThemeName = ThemeName.Graphite,
+        seconds: Float = 0f,
+        onOpenChat: (String) -> Unit = {},
+        onNewAgent: () -> Unit = {},
+        appearance: Appearance = Appearance.System,
+        onAppearance: (Appearance) -> Unit = {},
+    ) {
         val model = HomeViewModel(repository)
-        show(theme, seconds) { HomeScreen(model, onOpenChat, onNewAgent, onChangeColours, now = { EVENING }) }
+        show(theme, seconds) {
+            HomeScreen(model, onOpenChat, onNewAgent, appearance = appearance, onAppearance = onAppearance, now = { EVENING })
+        }
         compose.waitForIdle()
     }
 
@@ -202,18 +212,24 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
     }
 
-    /** Scrolls Home's list to [matcher]. */
+    /** Scrolls Home's list to [matcher], clearing the floating tab bar when a row sits behind it. */
     private fun onList(matcher: SemanticsMatcher): SemanticsNodeInteraction {
-        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(matcher)
-        return compose.onNode(matcher)
+        val list = compose.onAllNodes(hasScrollToNodeAction()).onFirst()
+        list.performScrollToNode(matcher)
+        val node = compose.onNode(matcher)
+        val barTop = list.fetchSemanticsNode().boundsInRoot.bottom - with(compose.density) { 90.dp.toPx() }
+        val overlap = node.fetchSemanticsNode().boundsInRoot.bottom - barTop
+        if (overlap > 0f) {
+            list.performTouchInput { swipe(center, center.copy(y = center.y - overlap - 24f)) }
+            compose.waitForIdle()
+        }
+        return node
     }
 
     @Test
-    fun homeShowsTheDayRenoaOnTopAndWhoeverHasSomethingToSay() {
+    fun homeShowsRenoaOnTopAndWhoeverHasSomethingToSay() {
         home(seconds = 3.97f)
-        compose.onNode(hasContentDescription("Today. Morning brief ran at 7:30 AM. GitHub check ran at 6:30 PM. Optimus: Three projects", substring = true)).assertIsDisplayed()
-        compose.onNode(hasContentDescription("Prices and groceries failed at 7:15 PM. Tifa asks: What's the plan for dinner? You were light on fibre at lunch. Posts worth a reply at 8 PM. Evening check-in at 9 PM.", substring = true)).assertExists()
-        compose.onNodeWithText("Next: Posts worth a reply at 8 PM \u00b7 2 ran \u00b7 1 didn\u2019t finish").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Account").assertIsDisplayed()
         compose.onNodeWithContentDescription("Renoa, working, your main agent").assertIsDisplayed()
         compose.onNodeWithText("Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").assertIsDisplayed()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
@@ -262,7 +278,7 @@ class ScreensTest : ScreenTest() {
         val note = Note("gift", "renoa", NoteKind.Update, "Wants you to know", "The scarf is \u20b91,200 off tonight.", EVENING.toInstant())
         val repo = FakeAgentRepository(scope, now = { EVENING }, feed = Feed("1 thing needs you.", listOf(note, failed)))
         val model = HomeViewModel(repo)
-        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, now = { EVENING }) }
         compose.waitForIdle()
         compose.onNodeWithText("The scarf is \u20b91,200 off tonight.").assertIsDisplayed()
         compose.onNodeWithText("\u201cMorning brief\u201d didn\u2019t finish").assertIsDisplayed()
@@ -317,21 +333,30 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun theStripsLineOpensRoutinesAndTheAgentsTabComesBack() {
-        home()
-        compose.onNodeWithText("Next: Posts worth a reply at 8 PM \u00b7 2 ran \u00b7 1 didn\u2019t finish").performClick()
+    fun theAccountButtonOpensTheAccountSheetAndSettingsPicksTheTheme() {
+        val picked = mutableListOf<Appearance>()
+        home(onAppearance = { picked += it })
+        compose.onNodeWithContentDescription("Account").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertIsDisplayed()
-        compose.onNode(hasText("Agents") and isSelectable()).performClick()
+        compose.onNodeWithText("Connected to Renoa").assertIsDisplayed()
+        compose.onNodeWithText("Sign out").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Tifa \u00b7 Every day at 1 PM").assertDoesNotExist()
-        compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
+
+        compose.onNode(hasText("Settings") and isSelectable()).performClick()
+        compose.waitForIdle()
+        snapshot("home-settings")
+        compose.onNodeWithContentDescription("Theme: System").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Paper").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(Appearance.Paper), picked)
     }
 
     @Test
     fun anEmptyRoutinesPageSaysHowToMakeOne() {
         val model = HomeViewModel(FakeAgentRepository(scope, now = { EVENING }, routineSeeds = emptyList()))
-        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, now = { EVENING }) }
         compose.waitForIdle()
         openPages()
         compose.onNodeWithText("No routines yet", substring = true).assertIsDisplayed()
@@ -357,10 +382,9 @@ class ScreensTest : ScreenTest() {
                 override suspend fun hasAgents(): Boolean = awaitCancellation()
             }
         val model = HomeViewModel(waiting)
-        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}, now = { EVENING }) }
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, now = { EVENING }) }
         compose.waitForIdle()
         compose.onNodeWithText(CHECKING_IN).assertIsDisplayed()
-        compose.onNodeWithContentDescription("Today.").assertIsDisplayed()
         compose.onNodeWithText("Make your first agent").assertDoesNotExist()
         compose.onNodeWithText("Nobody is here yet").assertDoesNotExist()
         compose.onNodeWithText("Routines").assertDoesNotExist()
@@ -371,14 +395,6 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
         compose.onNodeWithText("Make your first agent").assertIsDisplayed()
         compose.onNodeWithText(CHECKING_IN).assertDoesNotExist()
-    }
-
-    @Test
-    fun theColourChangeLivesOnTheMark() {
-        var changed = 0
-        home(onChangeColours = { changed++ })
-        compose.onNodeWithContentDescription("Change colours").performClick()
-        assertEquals(1, changed)
     }
 
     @Test
@@ -766,9 +782,11 @@ class ScreensTest : ScreenTest() {
         var state: SignInState by mutableStateOf(SignInState.Ready)
         var code by mutableStateOf("")
         show { SignInScreen(state, code, { code = it }) { submitted++ } }
-        compose.mainClock.advanceTimeBy(3_000)
+        compose.mainClock.advanceTimeBy(3_500)
         compose.waitForIdle()
-        compose.onNodeWithText("Your agents, in your pocket.").assertIsDisplayed()
+        compose.onNodeWithText("Your agents,\nin your pocket.").assertIsDisplayed()
+        compose.onNodeWithText("Get started").performClick()
+        compose.waitForIdle()
         compose.onNodeWithText("Continue with passkey").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Sign-in code").performTextInput("ab12cd")
         compose.onNodeWithText("Continue with passkey").performClick()
@@ -777,20 +795,23 @@ class ScreensTest : ScreenTest() {
         snapshot("sign-in")
 
         state = SignInState.Working
-        compose.onNodeWithText("Waiting for your passkey…").assertIsNotEnabled()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Loading").assertIsDisplayed()
         snapshot("sign-in-linking")
         state = SignInState.Failed("That code didn't work. A setup code works once, for 30 minutes.")
+        compose.waitForIdle()
         compose.onNodeWithText("That code didn't work. A setup code works once, for 30 minutes.").assertIsDisplayed()
         snapshot("sign-in-failed")
     }
 
     @Test
-    fun signInDrawsTheAgentAndItsAppsInPaper() {
+    fun signInShowsTheWelcomePitchInPaper() {
         show(ThemeName.Paper, seconds = 2f) { SignInScreen(SignInState.Ready, "", {}) {} }
-        // The tiles drop in one after another; let the last one land before the picture.
-        compose.mainClock.advanceTimeBy(3_000)
+        compose.mainClock.advanceTimeBy(3_500)
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("An agent on the Renoa board, linked to Discord, Telegram and the web. This phone joins it once you sign in.").assertIsDisplayed()
+        compose.onNodeWithText("Your agents,\nin your pocket.").assertIsDisplayed()
+        compose.onNodeWithText("Dal with brown rice, and a quick salad on the side.").assertIsDisplayed()
+        compose.onNodeWithText("Get started").assertIsDisplayed()
         snapshot("sign-in-paper")
     }
 }

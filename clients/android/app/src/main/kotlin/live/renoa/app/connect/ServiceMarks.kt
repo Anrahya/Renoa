@@ -1,5 +1,16 @@
 package live.renoa.app.connect
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import java.net.URI
 
 /**
@@ -7,6 +18,16 @@ import java.net.URI
  * and the service's name as people write it.
  */
 internal class ServiceMark(val name: String, val title: String, val hosts: List<String>, val path: String)
+
+/** Draws a Phosphor path on its 256 by 256 grid, tinted with [tint]. */
+@Composable
+internal fun ServiceGlyph(data: String, tint: Color, modifier: Modifier = Modifier, size: Dp = 20.dp) {
+    val path = remember(data) { PathParser().parsePathString(data).toPath() }
+    Canvas(modifier.size(size)) {
+        val s = this.size.minDimension / 256f
+        withTransform({ scale(s, s, Offset.Zero) }) { drawPath(path, tint) }
+    }
+}
 
 /**
  * Marks of services a setup link may connect, from Phosphor (MIT; see clients/android/licenses), regular
@@ -47,4 +68,3 @@ internal fun serviceMark(url: String): ServiceMark? {
 
 /** The host a link goes to, lowercase. */
 internal fun linkHost(url: String): String? = runCatching { URI(url).host?.lowercase() }.getOrNull()
-

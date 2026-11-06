@@ -1,13 +1,14 @@
 // Portions copyright 2026 Po Kai Lee and the Codync contributors.
 // Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0-Codync.txt.
-// The header, bubbles and composer are adapted from Codync apps/android `ChatScreen.kt`, `ChatRows.kt`
-// and `MessageComposer.kt` at ed8daf11f89398e598ef1f791abc3014ded68496.
+// The header, conversation list, jump button and composer are adapted from Codync
+// apps/android `ChatScreen.kt`, `ConversationList.kt` and `MessageComposer.kt`
+// at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app.chat
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -15,6 +16,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,19 +27,19 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -52,12 +54,16 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -67,12 +73,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.shapes.Capsule
 import com.kyant.shapes.RoundedRectangle
+import kotlinx.coroutines.launch
 import live.renoa.app.agents.ChatMessage
+import live.renoa.app.agents.Link
 import live.renoa.app.agents.Speaker
 import live.renoa.app.badge.Badge
 import live.renoa.app.badge.describe
@@ -82,13 +90,19 @@ import live.renoa.app.ui.AskCard
 import live.renoa.app.ui.LinkLine
 import live.renoa.design.Edge
 import live.renoa.design.GlassStage
+import live.renoa.design.IconButton
+import live.renoa.design.LocalDark
 import live.renoa.design.Motion
 import live.renoa.design.Palette
+import live.renoa.design.PullToRefresh
 import live.renoa.design.ScrollEdge
+import live.renoa.design.Spinner
 import live.renoa.design.Symbol
+import live.renoa.design.ThinkingOrb
+import live.renoa.design.ThinkingOrbState
 import live.renoa.design.Type
-import live.renoa.design.bold
 import live.renoa.design.glass
+import live.renoa.design.medium
 import live.renoa.design.plainButton
 import live.renoa.design.pressScale
 import live.renoa.design.rememberPress
@@ -96,7 +110,12 @@ import live.renoa.design.semibold
 import live.renoa.rcp.Attachment
 
 @Composable
-fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (String) -> Unit) {
+fun ChatScreen(
+    viewModel: ChatViewModel,
+    onBack: () -> Unit,
+    onOpenProfile: (String) -> Unit,
+    onRefresh: () -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
     val agent = state.agent
     val list = rememberLazyListState()
@@ -140,20 +159,39 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
         val padding = PaddingValues(top = top + 60.dp, bottom = under + 8.dp)
         // Unseen until the composer is measured, so the conversation never shows a frame too low.
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (composerHeight > 0) 1f else 0f }) {
-        when {
-            !state.loaded ->
-                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { Text(OPENING, style = Type.footnote, color = Palette.secondary) }
-            state.empty ->
-                Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding), contentAlignment = Alignment.Center) {
-                    ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
-                }
-            else -> Messages(state, list, old, risen, parses, onRetry = viewModel::retry, onDiscard = viewModel::discard, padding)
-        }
+            when {
+                !state.loaded ->
+                    Row(
+                        Modifier.fillMaxSize().padding(padding),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ThinkingOrb(state = ThinkingOrbState.Connecting, size = 18.dp, color = Palette.secondary)
+                        Text(OPENING, style = Type.subheadline, color = Palette.secondary)
+                    }
+                state.empty ->
+                    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding), contentAlignment = Alignment.Center) {
+                        ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
+                    }
+                else ->
+                    Messages(
+                        state = state,
+                        list = list,
+                        old = old,
+                        risen = risen,
+                        parses = parses,
+                        onRetry = viewModel::retry,
+                        onDiscard = viewModel::discard,
+                        onRefresh = onRefresh,
+                        indicatorTop = top + 50.dp,
+                        padding = padding,
+                    )
+            }
         }
     }
 }
 
-/** The glass back button, and the agent with its state under its name, which opens its profile. */
+/** The glass back button, the centered agent title (which opens its profile), and the state or link under it. */
 @Composable
 private fun Header(state: ChatUiState, onBack: () -> Unit, onOpenProfile: (String) -> Unit) {
     val agent = state.agent
@@ -175,12 +213,37 @@ private fun Header(state: ChatUiState, onBack: () -> Unit, onOpenProfile: (Strin
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Badge(agent.name, agent.state, 26.dp, primary = state.main, arriveAfterMillis = 0, hue = state.hue)
-                    Text(agent.name, style = Type.body.semibold, color = Palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Badge(agent.name, agent.state, 22.dp, primary = state.main, arriveAfterMillis = 0, hue = state.hue, label = "")
+                    Text(agent.name, style = Type.system(13f).semibold, color = Palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Text(if (state.working) "Working" else agent.state.describe().replaceFirstChar { it.uppercase() }, style = Type.caption, color = Palette.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                HeaderSubtitle(state)
             }
         }
+    }
+}
+
+@Composable
+private fun HeaderSubtitle(state: ChatUiState) {
+    val agent = state.agent ?: return
+    when (state.link) {
+        Link.Connecting ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Box(Modifier.width(10.dp), contentAlignment = Alignment.Center) { Spinner(size = 8.dp) }
+                Text("Connecting", style = Type.system(10f).medium, color = Palette.secondary, maxLines = 1)
+            }
+        Link.Lost ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Symbol("wifi.slash", size = 11.dp, tint = Palette.secondary)
+                Text("Reconnecting", style = Type.system(10f).medium, color = Palette.secondary, maxLines = 1)
+            }
+        Link.Connected, Link.SignedOut ->
+            Text(
+                if (state.working) "Working" else agent.state.describe().replaceFirstChar { it.uppercase() },
+                style = Type.system(10f).medium,
+                color = Palette.secondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
     }
 }
 
@@ -190,9 +253,13 @@ private suspend fun LazyListState.toNewest(reduced: Boolean) = if (reduced) scro
 /** What the chat says until it has been read, as while Renoa cannot be reached. */
 internal const val OPENING = "Connecting to Renoa…"
 
+/** The key of the line that says the agent is working, the list's newest item while it shows. */
+private const val WORKING = "working"
+
 /**
  * The conversation, newest at the bottom. What the owner just said is brought into view, and so is
- * whatever arrives while they are at the bottom; while they have scrolled up to read, it waits below.
+ * whatever arrives while they are at the bottom; while they have scrolled up to read, it waits below
+ * under a round jump button.
  */
 @Composable
 private fun Messages(
@@ -203,10 +270,14 @@ private fun Messages(
     parses: ParsedReplies,
     onRetry: (String) -> Unit,
     onDiscard: (String) -> Unit,
+    onRefresh: () -> Unit,
+    indicatorTop: Dp,
     padding: PaddingValues,
 ) {
     val agent = state.agent
     val reduced = LocalReducedMotion.current
+    val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
     val showsWorking = agent != null && state.working && state.streaming == null
     // A reply still arriving is the same item as the message it becomes, so nothing jumps when it is whole.
     // Once that message is here, it alone shows, even before the reply in progress is cleared.
@@ -218,91 +289,53 @@ private fun Messages(
     val follow = atBottom || shown.lastOrNull()?.let { it.speaker == Speaker.Owner && it.id !in old } == true
     // Keyed on the last message too: what the owner says while the agent works sits under the working line.
     LaunchedEffect(newest, shown.lastOrNull()?.id) { if (follow) list.toNewest(reduced) }
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        state = list,
-        // Under the header and over the composer, which float over the conversation.
-        contentPadding = padding,
-        reverseLayout = true,
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Top),
+    Box(
+        Modifier.fillMaxSize().pointerInput(focus) {
+            detectTapGestures { focus.clearFocus() }
+        },
     ) {
-        // Reversed layout: the first item sits at the bottom, nearest the composer.
-        if (showsWorking) {
-            item(key = WORKING) {
-                Row(
-                    Modifier.padding(start = 16.dp, end = 56.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleAgent).padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Badge(agent.name, agent.state, 30.dp, primary = state.main, hue = state.hue)
-                    WorkingLine(Palette.text, agent.glance.doing, Palette.secondary)
+        PullToRefresh({ onRefresh() }, Modifier.fillMaxSize(), indicatorTop) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = list,
+                // Under the header and over the composer, which float over the conversation.
+                contentPadding = padding,
+                reverseLayout = true,
+                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Top),
+            ) {
+                // Reversed layout: the first item sits at the bottom, nearest the composer.
+                if (showsWorking) {
+                    item(key = WORKING) {
+                        WorkingIndicator(agent.glance.doing)
+                    }
+                }
+                items(shown.asReversed(), key = { it.id }) { message ->
+                    val fresh = message.id !in old && message.id !in risen
+                    SideEffect { risen += message.id }
+                    Rise(fresh) { MessageRow(message, streaming = message.id == arriving?.id, parses, onRetry, onDiscard) }
                 }
             }
         }
-        items(shown.asReversed(), key = { it.id }) { message ->
-            val fresh = message.id !in old && message.id !in risen
-            SideEffect { risen += message.id }
-            Rise(fresh) { MessageRow(message, streaming = message.id == arriving?.id, parses, onRetry, onDiscard) }
+        JumpToLatest(
+            visible = !atBottom && shown.isNotEmpty(),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = padding.calculateBottomPadding() + 2.dp),
+        ) {
+            scope.launch { list.toNewest(reduced) }
         }
     }
 }
 
 @Composable
-private fun Rise(animate: Boolean, content: @Composable () -> Unit) {
-    val reduced = LocalReducedMotion.current
-    val progress = remember { Animatable(if (animate && !reduced) 0f else 1f) }
-    LaunchedEffect(Unit) { if (progress.value < 1f) progress.animateTo(1f, Motion.conversation()) }
-    Box(Modifier.graphicsLayer { alpha = progress.value; translationY = (1f - progress.value) * 14.dp.toPx() }) { content() }
-}
-
-/** The key of the line that says the agent is working, the list's newest item while it shows. */
-private const val WORKING = "working"
-
-@Composable
-private fun MessageRow(message: ChatMessage, streaming: Boolean, parses: ParsedReplies, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
-    when (message.speaker) {
-        Speaker.Owner ->
-            Column(Modifier.fillMaxWidth().padding(start = 56.dp, end = 16.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                // A message that did not go is the retry button, with its line under it.
-                Column(
-                    if (message.notSent) Modifier.clickable(role = Role.Button, onClickLabel = "Retry") { onRetry(message.id) } else Modifier,
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    if (message.attachments.isNotEmpty()) SentFiles(message.attachments)
-                    if (message.text.isNotBlank()) {
-                        Text(
-                            message.text,
-                            Modifier.widthIn(max = 300.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleUser).padding(horizontal = 16.dp, vertical = 10.dp),
-                            style = Type.body,
-                            color = Palette.text,
-                        )
-                    }
-                    if (message.notSent) Text("Didn't send · Tap to retry", style = Type.caption2.bold, color = Palette.danger)
-                }
-                if (message.notSent) {
-                    Box(
-                        Modifier.heightIn(min = 48.dp).clickable(role = Role.Button) { onDiscard(message.id) }.padding(horizontal = 4.dp),
-                        contentAlignment = Alignment.Center,
-                    ) { Text("Delete", style = Type.footnote, color = Palette.secondary) }
-                }
-            }
-        Speaker.Event ->
-            Text(
-                message.text,
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp),
-                style = Type.footnote,
-                color = Palette.tertiary,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        // The owner's own words stay plain; an agent's reply is markdown, in its bubble.
-        Speaker.Agent -> {
-            val modifier = Modifier.padding(start = 16.dp, end = 40.dp).clip(RoundedRectangle(RenoaShapes.Bubble)).background(Palette.bubbleAgent).padding(horizontal = 16.dp, vertical = 10.dp)
-            // One for both, so a diagram drawn while the reply arrives stays drawn once the reply is whole.
-            val diagrams = remember { ReplyDiagrams() }
-            if (streaming) ArrivingReply(message.text, modifier, diagrams) else Reply(message.text, parses.of(message.id, message.text), modifier, diagrams)
+private fun JumpToLatest(visible: Boolean, modifier: Modifier, action: () -> Unit) {
+    AnimatedVisibility(
+        visible,
+        modifier,
+        enter = fadeIn(Motion.layout()) + scaleIn(Motion.layout(), initialScale = 0.8f),
+        exit = fadeOut(Motion.layout()) + scaleOut(Motion.layout(), targetScale = 0.8f),
+    ) {
+        val frosted = Color(if (LocalDark.current) 0xFF232323 else 0xFFF4F4F4).copy(alpha = 0.97f)
+        Box(Modifier.shadow(8.dp, CircleShape).background(frosted, CircleShape)) {
+            IconButton("Jump to latest", "arrow.down", action = action)
         }
     }
 }

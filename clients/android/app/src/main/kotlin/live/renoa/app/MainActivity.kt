@@ -256,6 +256,7 @@ class MainActivity : ComponentActivity() {
                 application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
                 chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
                 openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
+                retryNow = application::retryNow,
             )
         }
     }

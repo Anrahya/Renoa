@@ -12,11 +12,13 @@ The Kotlin app shell. Three modules:
   against a fake coordinator that speaks the raw wire. Tests cross-check the pinned version and
   every frame shape against the worked examples in that document.
 - `:design` is the look, adapted from Codync (`licenses/README.md`): the palette, Inter type,
-  motion springs, glass bars drawn with kyant's `backdrop`, screen chrome and controls. Glass
-  refracts on Android 13 and later, blurs on 12, and falls back to a tinted surface below.
-- `:app` is the screens: theme (Graphite and Paper, on the design module's palette), the agent
-  badge and its five state motions, Home with its Agents and Renoa tabs, Chat, create/edit
-  agent, and sign-in. Sign-in is real: a setup code (or the ID of a passkey the person already
+  motion springs, thinking orbs, glass bars drawn with kyant's `backdrop`, sheets, menus, dialogs,
+  screen chrome and controls. Glass refracts on Android 13 and later, blurs on 12, and falls back
+  to a tinted surface below.
+- `:app` is the screens: theme (`System`, `Paper` and `Graphite`, on the design module's palette),
+  the hexagonal agent badge and its five state motions, Home with its Agents, Renoa and Settings
+  tabs plus the Account sheet, Chat, modal create/edit agent sheets, and onboarding/sign-in.
+  Sign-in is real: a setup code (or the ID of a passkey the person already
   has), a passkey through Credential Manager, and a P-256 device key in the Android Keystore;
   the device credential is kept encrypted with a Keystore key. The app signs in to
   `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for this package and signing

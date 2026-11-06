@@ -19,12 +19,6 @@ enum class AbilityIcon(val path: String) {
     More("M12 6v12M6 12h12"),
 }
 
-/** Marks drawn on a tile corner. */
-object AbilityMarks {
-    const val SPARK = "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"
-    const val LOCK = "M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"
-}
-
 /** Who may switch an ability, and when. */
 enum class AbilityKind {
     /** Switchable whenever the owner likes. */
