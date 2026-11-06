@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The folders the app lends files from: the camera app writes a photo into camera/, and the
+     installer reads a downloaded update from update/. -->
+<paths>
+    <cache-path name="camera" path="camera/" />
+    <cache-path name="update" path="update/" />
+</paths>

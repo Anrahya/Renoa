@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -19,6 +20,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.update.AppUpdates
+import live.renoa.app.update.LocalAppUpdates
 import live.renoa.app.agents.Link
 import live.renoa.app.connect.HeldSetupLinks
 import live.renoa.app.connect.turnsEnded
@@ -152,6 +155,9 @@ class RenoaApplication : Application() {
         chatToOpen = agentId
     }
 
+    /** Where Settings checks renoa.live for a newer app, and keeps its download: one for the process, so a rotation cannot start a second. */
+    val updates by lazy { AppUpdates(File(cacheDir, "update")) }
+
     /** Takes the chat a tapped notice asked for, once. */
     @Synchronized
     fun takeChatToOpen(): String? = chatToOpen.also { chatToOpen = null }
@@ -269,12 +275,14 @@ class MainActivity : ComponentActivity() {
         val signedIn = store.load()?.origin == RENOA_ORIGIN
         opening = application.takeChatToOpen()
         setContent {
-            RenoaApp(
-                application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
-                revoke = application::revokeThisPhone, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
-                openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
-                retryNow = application::retryNow,
-            )
+            CompositionLocalProvider(LocalAppUpdates provides application.updates) {
+                RenoaApp(
+                    application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
+                    revoke = application::revokeThisPhone, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
+                    openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
+                    retryNow = application::retryNow,
+                )
+            }
         }
     }
 

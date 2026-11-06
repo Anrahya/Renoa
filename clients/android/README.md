@@ -19,6 +19,9 @@ The Kotlin app shell. Three modules:
 - `:app` is the screens: theme (`System`, `Paper` and `Graphite`, on the design module's palette),
   the hexagonal agent badge and its five state motions, Home with its Agents, Renoa and Settings
   tabs plus the Account sheet, Chat, modal create/edit agent sheets, and onboarding/sign-in.
+  Settings checks `https://renoa.live/app/android.json` for a newer app, downloads it, checks its
+  size and SHA-256, and hands it to the phone's installer; a release ships the app with
+  `scripts/publish-android-app` (`deploy/README.md`).
   Sign-in is real: a setup code (or the ID of a passkey the person already
   has), a passkey through Credential Manager, and a P-256 device key in the Android Keystore;
   the device credential is kept encrypted with a Keystore key. The app signs in to
