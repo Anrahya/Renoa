@@ -132,6 +132,13 @@ sealed interface ClientMessage {
     @SerialName("clear_push_token")
     data class ClearPushToken(@SerialName("request_id") val requestId: Long) : ClientMessage
 
+    @Serializable
+    @SerialName("revoke_device")
+    data class RevokeDevice(
+        @SerialName("request_id") val requestId: Long,
+        @SerialName("device_id") val deviceId: Uuid,
+    ) : ClientMessage
+
     /** Registers the key this device's setup notices are sealed to: a 65-byte uncompressed P-256 point, base64url without padding. */
     @Serializable
     @SerialName("set_notice_key")
@@ -155,6 +162,11 @@ sealed interface ClientMessage {
 /** Frames a surface can receive. Frames only a node receives are deliberately absent. */
 @Serializable
 sealed interface ServerMessage {
+    /** The answer to one request, which completes the request with the same [requestId]. */
+    sealed interface Answer : ServerMessage {
+        val requestId: Long
+    }
+
     @Serializable
     @SerialName("authenticated")
     data class Authenticated(val version: Int) : ServerMessage
@@ -167,46 +179,46 @@ sealed interface ServerMessage {
     @Serializable
     @SerialName("task_list")
     data class TaskList(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         val tasks: List<TaskSummary>,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("target_list")
     data class TargetList(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         val targets: List<TargetSummary>,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("task_opened")
     data class TaskOpened(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         @SerialName("task_id") val taskId: Uuid,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("attached")
     data class Attached(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         @SerialName("task_id") val taskId: Uuid,
         @SerialName("through_sequence") val throughSequence: Long?,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("command_accepted")
     data class CommandAccepted(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         @SerialName("command_id") val commandId: Uuid,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("stop_accepted")
     data class StopAccepted(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         @SerialName("command_id") val commandId: Uuid,
         val outcome: StopOutcome,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     /** Advisory text of a running turn. It has no sequence in the task and is never replayed. */
     @Serializable
@@ -220,40 +232,47 @@ sealed interface ServerMessage {
     @Serializable
     @SerialName("task_deleted")
     data class TaskDeleted(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         @SerialName("task_id") val taskId: Uuid,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("host_answer")
     data class HostAnswer(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         val status: Int,
         val body: String,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("push_token_set")
-    data class PushTokenSet(@SerialName("request_id") val requestId: Long) : ServerMessage
+    data class PushTokenSet(@SerialName("request_id") override val requestId: Long) : ServerMessage.Answer
 
     @Serializable
     @SerialName("push_token_cleared")
-    data class PushTokenCleared(@SerialName("request_id") val requestId: Long) : ServerMessage
+    data class PushTokenCleared(@SerialName("request_id") override val requestId: Long) : ServerMessage.Answer
+
+    @Serializable
+    @SerialName("device_revoked")
+    data class DeviceRevoked(
+        @SerialName("request_id") override val requestId: Long,
+        @SerialName("device_id") val deviceId: Uuid,
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("notice_key_set")
-    data class NoticeKeySet(@SerialName("request_id") val requestId: Long) : ServerMessage
+    data class NoticeKeySet(@SerialName("request_id") override val requestId: Long) : ServerMessage.Answer
 
     @Serializable
     @SerialName("notice_list")
     data class NoticeList(
-        @SerialName("request_id") val requestId: Long,
+        @SerialName("request_id") override val requestId: Long,
         val notices: List<HeldNotice>,
-    ) : ServerMessage
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("notice_acknowledged")
-    data class NoticeAcknowledged(@SerialName("request_id") val requestId: Long) : ServerMessage
+    data class NoticeAcknowledged(@SerialName("request_id") override val requestId: Long) : ServerMessage.Answer
 
     @Serializable
     @SerialName("task_event")

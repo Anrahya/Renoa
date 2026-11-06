@@ -86,6 +86,6 @@ class DialogAction(val title: String, val destructive: Boolean = false, val acti
     Box(Modifier.fillMaxWidth().pressScale(pressed).graphicsLayer { alpha = if (pressed) 0.85f else 1f }.clip(Capsule())
         .background(if (destructive) Palette.danger else if (prominent) Palette.accentFill else Palette.bubbleUser)
         .clickable(source, null, role = Role.Button, onClick = action).padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-        Text(title, style = Type.body.medium, color = if (destructive) Color.White else if (prominent) Palette.onAccent else Palette.text)
+        Text(title, style = Type.body.medium, color = if (destructive || prominent) Palette.onAccent else Palette.text)
     }
 }

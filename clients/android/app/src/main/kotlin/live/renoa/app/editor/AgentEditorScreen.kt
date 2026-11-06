@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -175,7 +174,6 @@ private fun EditAgentSheet(state: EditorUiState, called: String, viewModel: Agen
                                 prompt = "Name",
                                 fieldModifier = Modifier.semantics { contentDescription = "Name" },
                                 imeAction = ImeAction.Next,
-                                actions = KeyboardActions(onDone = { if (state.canSave) viewModel.save() }),
                             )
                         }
                         if (state.name.isNotEmpty() && state.nameProblem != null) {

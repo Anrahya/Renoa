@@ -181,7 +181,7 @@ private fun SignOutDialog(open: Boolean, onDismiss: () -> Unit, onConfirm: () ->
         "Sign out of Renoa?",
         open,
         onDismiss,
-        "This phone stops getting notifications from your agents. Your agents and chats stay where they are; sign in again with a new code to return.",
+        "This phone stops getting notifications from your agents, and messages that didn't send are dropped. Your agents and chats stay where they are; sign in again with a new code to return.",
     ) {
         listOf(DialogAction("Sign out", destructive = true, action = onConfirm))
     }

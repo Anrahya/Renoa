@@ -177,6 +177,9 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
             }
     }
 
+    /** Says the phone is still signed in because Renoa could not be told it signed out. */
+    fun couldNotSignOut() = local.update { it.copy(notice = "Renoa couldn't be reached, so this phone is still signed in. Try again when you're online.") }
+
     /** Goes back to the agents. A notice shown on the Renoa tab goes with it. */
     fun close() = local.update { it.copy(page = null, notice = null) }
 

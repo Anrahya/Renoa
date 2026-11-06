@@ -10,10 +10,16 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.click
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.dp
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.RenoaTheme
 import live.renoa.app.theme.ThemeName
 import live.renoa.design.PrimaryButton
+import live.renoa.design.SecondaryButton
 import live.renoa.design.WideButton
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -21,6 +27,24 @@ import kotlin.test.assertTrue
 
 /** What every screen stands on: controls, the animation setting and the bundled licences. */
 class FoundationsTest : ScreenTest() {
+    @Test
+    fun aSmallButtonTakesATapAcrossFortyEight() {
+        var tapped = 0
+        var next = 0
+        show {
+            Column {
+                SecondaryButton("OK") { tapped++ }
+                SecondaryButton("Next") { next++ }
+            }
+        }
+        // Drawn about 44 tall, it keeps 48 to itself, so a tap just under its edge is still its own.
+        val ok = compose.onNodeWithText("OK").getUnclippedBoundsInRoot()
+        val below = compose.onNodeWithText("Next").getUnclippedBoundsInRoot()
+        assertTrue(below.top - ok.top >= 48.dp, "the next button starts 48 below, not ${below.top - ok.top}")
+        compose.onNodeWithText("OK").performTouchInput { click(Offset(centerX, height + 1.dp.toPx())) }
+        assertEquals(1 to 0, tapped to next)
+    }
+
     @Test
     fun buttonsTakeTapsWhenReadyAndShowASpinnerWithoutTakingTapsWhileBusy() {
         var tapped = 0

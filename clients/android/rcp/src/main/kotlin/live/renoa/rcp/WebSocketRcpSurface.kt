@@ -205,6 +205,10 @@ class WebSocketRcpSurface(
         request(ServerMessage.PushTokenCleared::class, { ClientMessage.ClearPushToken(it) })
     }
 
+    override suspend fun revokeDevice(deviceId: Uuid) {
+        request(ServerMessage.DeviceRevoked::class, { ClientMessage.RevokeDevice(it, deviceId) })
+    }
+
     override suspend fun setNoticeKey(publicKey: ByteArray) {
         require(publicKey.size == 65 && publicKey[0] == 0x04.toByte()) { "a notice key is a 65-byte uncompressed P-256 point" }
         request(ServerMessage.NoticeKeySet::class, { ClientMessage.SetNoticeKey(it, base64Url(publicKey)) })
@@ -397,19 +401,7 @@ class WebSocketRcpSurface(
                     connection.pending.remove(id) ?: throw ProtocolViolation("error references unknown request $id")
                 pending.response.completeExceptionally(failure)
             }
-            is ServerMessage.TaskList -> complete(connection, message.requestId, message)
-            is ServerMessage.TargetList -> complete(connection, message.requestId, message)
-            is ServerMessage.TaskOpened -> complete(connection, message.requestId, message)
-            is ServerMessage.Attached -> complete(connection, message.requestId, message)
-            is ServerMessage.CommandAccepted -> complete(connection, message.requestId, message)
-            is ServerMessage.StopAccepted -> complete(connection, message.requestId, message)
-            is ServerMessage.TaskDeleted -> complete(connection, message.requestId, message)
-            is ServerMessage.HostAnswer -> complete(connection, message.requestId, message)
-            is ServerMessage.PushTokenSet -> complete(connection, message.requestId, message)
-            is ServerMessage.PushTokenCleared -> complete(connection, message.requestId, message)
-            is ServerMessage.NoticeKeySet -> complete(connection, message.requestId, message)
-            is ServerMessage.NoticeList -> complete(connection, message.requestId, message)
-            is ServerMessage.NoticeAcknowledged -> complete(connection, message.requestId, message)
+            is ServerMessage.Answer -> complete(connection, message.requestId, message)
         }
     }
 

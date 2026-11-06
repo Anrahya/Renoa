@@ -29,6 +29,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import live.renoa.app.agents.AgentRepository
@@ -70,6 +71,8 @@ internal val MAX_CONTENT_WIDTH = 600.dp
 /**
  * The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then.
  * When Renoa refuses this phone's sign-in, [signedOut] forgets it and the app goes back to sign-in.
+ * When the owner signs out, [signOut] tells Renoa and forgets the phone; if Renoa cannot be told, it
+ * throws, the phone stays signed in, and Home says so.
  * [chatShown] hears each chat come on screen and leave it; [notificationsAnswered], the owner's
  * answer when asked to allow notifications. [openChat] is a chat a tapped notice asks for, opened
  * as [Navigator.openChat][live.renoa.app.nav.Navigator.openChat] says; [chatOpened] then clears it.
@@ -81,6 +84,7 @@ internal fun RenoaApp(
     signedIn: Boolean,
     signingIn: suspend (SignInCode, Passkeys) -> Unit,
     signedOut: suspend () -> Unit = {},
+    signOut: suspend () -> Unit = signedOut,
     chatShown: (agentId: String, shown: Boolean) -> Unit = { _, _ -> },
     notificationsAnswered: () -> Unit = {},
     openChat: String? = null,
@@ -157,7 +161,14 @@ internal fun RenoaApp(
                             onSignUp = { startOver(Route.SignUp) },
                             onSignOut = {
                                 scope.launch {
-                                    signedOut()
+                                    try {
+                                        signOut()
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (_: Exception) {
+                                        model.couldNotSignOut()
+                                        return@launch
+                                    }
                                     wasSignedOut = false
                                     startOver(Route.SignIn)
                                 }
@@ -179,7 +190,7 @@ internal fun RenoaApp(
                     is Route.Edit, Route.Create -> Unit
                 }
             }
-            DesignSheet(sheetEntry, onDismiss = { navigator.pop() }) { entry ->
+            DesignSheet(sheetEntry, onDismiss = { sheetEntry?.let(navigator::close) }) { entry ->
                 key(entry.id) {
                     val owner = remember(entry.id) { stores.ownerFor(entry.id) }
                     DisposableEffect(entry.id) { onDispose { if (navigator.entries.none { it.id == entry.id }) stores.release(entry.id) } }
@@ -187,12 +198,12 @@ internal fun RenoaApp(
                         is Route.Edit -> {
                             val model: AgentEditorViewModel =
                                 viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Editing(route.agentId)) } })
-                            AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.pop() })
+                            AgentEditorScreen(model, onClose = { navigator.close(entry) }, onFinished = { navigator.close(entry) })
                         }
                         Route.Create -> {
                             val model: AgentEditorViewModel =
                                 viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Creating) } })
-                            AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.replaceTop(Route.Chat(it)) })
+                            AgentEditorScreen(model, onClose = { navigator.close(entry) }, onFinished = { navigator.replace(entry, Route.Chat(it)) })
                         }
                         else -> Unit
                     }

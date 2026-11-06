@@ -211,6 +211,17 @@ class RenoaApplication : Application() {
         (told ?: WakeCursors(wakeFile(), owner = "")).forget()
     }
 
+    /**
+     * The owner signs this phone out: Renoa revokes its key and stops its notices, then [signOut]
+     * forgets it here. Throws, still signed in, when Renoa cannot be reached to be told.
+     */
+    suspend fun signOutOfRenoa() {
+        val device = signedIn()?.credentials?.deviceId ?: return signOut()
+        repository()
+        checkNotNull(synchronized(this) { surface }) { "not connected" }.revokeDevice(device)
+        signOut()
+    }
+
     private fun signedIn(): SavedSignIn? = SignInStore(this).load()?.takeIf { it.origin == RENOA_ORIGIN }
 
     /** Kept per sign-in: a device id belongs to one principal, so another owner's Home never shows. */
@@ -254,7 +265,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             RenoaApp(
                 application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
-                chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
+                signOut = application::signOutOfRenoa, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
                 openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
                 retryNow = application::retryNow,
             )

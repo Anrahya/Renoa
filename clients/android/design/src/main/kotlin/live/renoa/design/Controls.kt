@@ -56,6 +56,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
@@ -143,9 +144,11 @@ import com.kyant.shapes.RoundedRectangle
 
 @Composable private fun StyledButton(fill: Color, ink: Color, modifier: Modifier, enabled: Boolean, action: () -> Unit, label: @Composable () -> Unit) {
     val (source, pressed) = rememberPress()
-    Box(modifier.pressScale(pressed).graphicsLayer { alpha = if (enabled) (if (pressed) 0.85f else 1f) else 0.4f }
-        .clip(Capsule()).background(fill)
+    // Drawn about 44 tall, it keeps 48 to itself, so a tap just past its edge is still its own.
+    Box(modifier.minimumInteractiveComponentSize()
         .clickable(source, null, enabled = enabled, role = Role.Button, onClick = action)
+        .pressScale(pressed).graphicsLayer { alpha = if (enabled) (if (pressed) 0.85f else 1f) else 0.4f }
+        .clip(Capsule()).background(fill)
         .padding(horizontal = 18.dp, vertical = 11.dp), contentAlignment = Alignment.Center) {
         CompositionLocalProvider(LocalTextStyle provides Type.body.medium, LocalContentColor provides ink) { label() }
     }

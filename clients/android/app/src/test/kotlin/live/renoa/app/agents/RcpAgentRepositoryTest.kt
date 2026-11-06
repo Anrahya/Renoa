@@ -474,6 +474,8 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     override suspend fun clearPushToken() = error("unused")
 
+    override suspend fun revokeDevice(deviceId: Uuid) = error("unused")
+
     override suspend fun setNoticeKey(publicKey: ByteArray) = error("unused")
 
     override suspend fun listNotices(): List<live.renoa.rcp.HeldNotice> = error("unused")
