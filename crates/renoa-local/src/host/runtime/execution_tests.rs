@@ -131,7 +131,9 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             "follow_up",
             "ask_owner",
             "notify_owner",
-            "set_today"
+            "set_today",
+            "share_file",
+            "stop_sharing"
         ]
     );
     let browse = value(
@@ -229,8 +231,8 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         )
         .unwrap()
         .len(),
-        7,
-        "the three plugin tools, the three resident owner tools and follow_up"
+        9,
+        "the three plugin tools, the five resident owner tools and follow_up"
     );
     assert!(
         invoke(

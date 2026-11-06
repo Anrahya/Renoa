@@ -211,6 +211,8 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
                 "ask_owner",
                 "notify_owner",
                 "set_today",
+                "share_file",
+                "stop_sharing",
             ]
         );
         let encoded_tools = serde_json::to_string(tools).expect("encode model-visible tools");

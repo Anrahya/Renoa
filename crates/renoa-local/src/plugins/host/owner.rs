@@ -2,12 +2,14 @@
 //! one question and ends the turn, and the owner's next message answers it;
 //! `notify_owner` tells them one thing and the turn goes on. Its heartbeat
 //! (see `heartbeat`) checks in every few hours, and only there may the agent
-//! `set_today`, the line above the owner's feed.
+//! `set_today`, the line above the owner's feed. `share_file` hands them a
+//! file from the agent's workspace as a link, and `stop_sharing` takes it back
+//! (see `share`).
 //!
-//! Each call writes one feed item and nothing else, so the item is the call's
-//! whole effect: it is durable before the call succeeds, and a replay of the
-//! same call converges on the same item. How loudly the owner's phone is told
-//! is the item's urgency, which the agent must choose.
+//! Each ask or notify call writes one feed item and nothing else, so the item
+//! is the call's whole effect: it is durable before the call succeeds, and a
+//! replay of the same call converges on the same item. How loudly the owner's
+//! phone is told is the item's urgency, which the agent must choose.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -26,6 +28,7 @@ use crate::host::{
 
 pub(crate) mod heartbeat;
 mod input;
+pub(crate) mod share;
 #[cfg(test)]
 mod tests;
 mod today;
@@ -33,7 +36,7 @@ mod today;
 use input::{Input, Kind};
 
 pub(crate) const PLUGIN_ID: &str = "renoa.owner";
-pub(crate) const DESCRIPTION: &str = "Ask the owner a question or tell them something on their phone. When the owner asks you to check in on them, turn on your heartbeat, a check-in of your own every few hours, with configure_plugin settings {\"heartbeat_hours\": n}, 1 to 24 hours apart; 0 or settings {} turns it off.";
+pub(crate) const DESCRIPTION: &str = "Ask the owner a question, tell them something on their phone, or share a file from your workspace with them as a link. When the owner asks you to check in on them, turn on your heartbeat, a check-in of your own every few hours, with configure_plugin settings {\"heartbeat_hours\": n}, 1 to 24 hours apart; 0 or settings {} turns it off.";
 pub(crate) const ASK: &str = "ask_owner";
 pub(crate) const NOTIFY: &str = "notify_owner";
 pub(crate) const TODAY: &str = "set_today";
@@ -49,19 +52,30 @@ pub(crate) struct OwnerTurn {
     pub(crate) agent: AgentId,
     pub(crate) session: SessionId,
     pub(crate) command: Option<CommandId>,
+    /// The workspace this turn's files live in, which `share_file` shares from.
+    pub(crate) workspace: PathBuf,
+    /// The person this turn talks to; a share is theirs alone. None for a
+    /// turn with no person, whose shares are the Host owner's.
+    pub(crate) principal: Option<uuid::Uuid>,
 }
 
 /// What a resident owner tool says when the owner turned `renoa.owner` off
 /// for this agent.
 pub(crate) fn turned_off(tool: &str) -> String {
+    if tool == share::SHARE || tool == share::STOP {
+        return format!(
+            "{tool} is turned off for this agent, so nothing changed. Tell the person in your reply that you cannot share files right now."
+        );
+    }
     format!(
         "{tool} is turned off for this agent, so nothing was sent. Say it in your reply instead."
     )
 }
 
-/// `ask_owner`, `notify_owner` and `set_today` for one turn. A replay
-/// rewrites the same item or line, so each is safe to replay.
-pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 3] {
+/// `ask_owner`, `notify_owner`, `set_today`, `share_file` and `stop_sharing`
+/// for one turn. A replay rewrites the same item, line or share, so each is
+/// safe to replay.
+pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 5] {
     let turn = Arc::new(turn);
     let [ask, notify] = [Kind::Ask, Kind::Notify].map(|kind| {
         AgentToolBinding::new(
@@ -77,12 +91,23 @@ pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 3] {
     let today = AgentToolBinding::new(
         BINDING_REVISION,
         Arc::new(today::TodayTool {
-            turn,
+            turn: Arc::clone(&turn),
             spec: today::spec(),
         }),
         EffectRecovery::SafeToReplay,
     );
-    [ask, notify, today]
+    let [share, stop] = [share::Kind::Share, share::Kind::Stop].map(|kind| {
+        AgentToolBinding::new(
+            BINDING_REVISION,
+            Arc::new(share::ShareTool {
+                kind,
+                turn: Arc::clone(&turn),
+                spec: share::spec(kind),
+            }),
+            EffectRecovery::SafeToReplay,
+        )
+    });
+    [ask, notify, today, share, stop]
 }
 
 fn spec(kind: Kind) -> ToolSpec {

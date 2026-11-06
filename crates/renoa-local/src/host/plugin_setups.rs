@@ -47,6 +47,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
 /// Turns a schema 52 catalog back into schema 51's tables.
 #[cfg(test)]
 pub(crate) fn restore_schema_51(connection: &rusqlite::Connection) {
+    crate::shares::restore_schema_52(connection);
     connection
         .execute_batch("DROP TABLE host_plugin_setups;")
         .expect("restore schema 51");

@@ -192,6 +192,8 @@ pub(crate) fn protocol_bindings(
             agent,
             session: session_id,
             command: command_id,
+            workspace: workspace.to_path_buf(),
+            principal: definition.principal(),
         },
     ));
     controls.extend(crate::plugins::host::memory::bindings(
@@ -340,6 +342,8 @@ mod tests {
             "ask_owner",
             "notify_owner",
             "set_today",
+            "share_file",
+            "stop_sharing",
         ];
         assert_eq!(
             offer(&resolved)

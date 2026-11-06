@@ -336,6 +336,8 @@ async fn a_replay_keeps_one_item_and_an_unsaved_ask_lets_the_turn_go_on() {
             agent,
             session: renoa_kernel::SessionId::from_uuid(session.id()),
             command: Some(renoa_kernel::CommandId::new()),
+            workspace: root.to_path_buf(),
+            principal: None,
         })
     };
     let ask = |binding: &renoa_agent_loop::AgentToolBinding| {
