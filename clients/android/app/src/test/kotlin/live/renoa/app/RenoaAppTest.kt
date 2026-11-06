@@ -93,6 +93,38 @@ class RenoaAppTest : ScreenTest() {
     }
 
     @Test
+    fun signingOutTellsRenoaFirstAndStaysSignedInWhenItCannot() {
+        var reachable = false
+        var revoked = 0
+        var forgotten = 0
+        Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        compose.setContent {
+            RenoaApp(
+                { repository }, signedIn = true, signingIn = { _, _ -> }, signedOut = { forgotten++ },
+                revoke = { check(reachable) { "offline" }; revoked++ },
+            )
+        }
+        compose.onNodeWithText("Settings").performClick()
+        compose.waitForIdle()
+        fun signOut() {
+            compose.onNodeWithText("Sign out").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Sign out").performClick()
+            compose.waitForIdle()
+        }
+
+        signOut()
+        assertEquals(0 to 0, revoked to forgotten, "nothing is forgotten while Renoa cannot be told")
+        compose.onNodeWithText("Renoa couldn't be reached, so this phone is still signed in. Try again when you're online.").assertIsDisplayed()
+
+        reachable = true
+        signOut()
+        assertEquals(1 to 1, revoked to forgotten, "Renoa is told, then the phone forgets")
+        compose.onAllNodesWithText(SIGNED_OUT).assertCountEquals(0)
+        assertEquals(1, ViewModelProvider(compose.activity)[EntryStores::class.java].held, "sign-in alone, so back leaves the app")
+    }
+
+    @Test
     fun aNewOwnerSignsUpMeetsRenoaAndLandsOnHomeWithHer() {
         val fresh = FakeAgentRepository(scope, seeds = emptyList())
         start(fresh)

@@ -14,9 +14,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.agents.Link
 import live.renoa.app.connect.HeldSetupLinks
 import live.renoa.app.connect.turnsEnded
 import live.renoa.app.agents.RcpAgentRepository
@@ -40,6 +43,7 @@ import live.renoa.app.signin.SignInStore
 import live.renoa.app.signin.SignInViewModel
 import live.renoa.app.signup.SavedSignUp
 import live.renoa.rcp.Authentication
+import live.renoa.rcp.RcpTimeouts
 import live.renoa.rcp.WebSocketRcpSurface
 
 /** Owns what outlives a screen. */
@@ -212,14 +216,16 @@ class RenoaApplication : Application() {
     }
 
     /**
-     * The owner signs this phone out: Renoa revokes its key and stops its notices, then [signOut]
-     * forgets it here. Throws, still signed in, when Renoa cannot be reached to be told.
+     * Tells Renoa the owner signs this phone out: it revokes the phone's key and stops its notices.
+     * Waits for a connection being made as long as signing in may take. Throws when Renoa cannot be
+     * reached; a phone Renoa already refuses has nothing left to revoke.
      */
-    suspend fun signOutOfRenoa() {
-        val device = signedIn()?.credentials?.deviceId ?: return signOut()
-        repository()
+    suspend fun revokeThisPhone() {
+        val device = signedIn()?.credentials?.deviceId ?: return
+        val link = withTimeoutOrNull(RcpTimeouts().connect) { repository().link.first { it == Link.Connected || it == Link.SignedOut } }
+        if (link == Link.SignedOut) return
+        checkNotNull(link) { "Renoa could not be reached" }
         checkNotNull(synchronized(this) { surface }) { "not connected" }.revokeDevice(device)
-        signOut()
     }
 
     private fun signedIn(): SavedSignIn? = SignInStore(this).load()?.takeIf { it.origin == RENOA_ORIGIN }
@@ -265,7 +271,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             RenoaApp(
                 application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
-                signOut = application::signOutOfRenoa, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
+                revoke = application::revokeThisPhone, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
                 openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
                 retryNow = application::retryNow,
             )

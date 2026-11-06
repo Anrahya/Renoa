@@ -7,8 +7,9 @@ The Kotlin app shell. Three modules:
   agent names, a task's journal with optional live text, submitting and stopping a command, and
   the device-key proof, and registering or clearing the device's push token; `PasskeySignIn`
   signs a device in over the coordinator's identity HTTP API (`docs/identity-v0.md`). The app
-  passes the signing function; the key itself stays in the platform keystore. Listing and
-  revoking signed-in devices are not offered yet. It has no Android dependency and is tested
+  passes the signing function; the key itself stays in the platform keystore. A device can
+  revoke itself, which is how signing out ends its sign-in on Renoa; listing signed-in devices
+  is not offered yet. It has no Android dependency and is tested
   against a fake coordinator that speaks the raw wire. Tests cross-check the pinned version and
   every frame shape against the worked examples in that document.
 - `:design` is the look, adapted from Codync (`licenses/README.md`): the palette, Inter type,

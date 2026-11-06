@@ -71,8 +71,8 @@ internal val MAX_CONTENT_WIDTH = 600.dp
 /**
  * The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then.
  * When Renoa refuses this phone's sign-in, [signedOut] forgets it and the app goes back to sign-in.
- * When the owner signs out, [signOut] tells Renoa and forgets the phone; if Renoa cannot be told, it
- * throws, the phone stays signed in, and Home says so.
+ * When the owner signs out, [revoke] tells Renoa first and [signedOut] then forgets the phone; if
+ * Renoa cannot be told, [revoke] throws, the phone stays signed in, and Home says so.
  * [chatShown] hears each chat come on screen and leave it; [notificationsAnswered], the owner's
  * answer when asked to allow notifications. [openChat] is a chat a tapped notice asks for, opened
  * as [Navigator.openChat][live.renoa.app.nav.Navigator.openChat] says; [chatOpened] then clears it.
@@ -84,7 +84,7 @@ internal fun RenoaApp(
     signedIn: Boolean,
     signingIn: suspend (SignInCode, Passkeys) -> Unit,
     signedOut: suspend () -> Unit = {},
-    signOut: suspend () -> Unit = signedOut,
+    revoke: suspend () -> Unit = {},
     chatShown: (agentId: String, shown: Boolean) -> Unit = { _, _ -> },
     notificationsAnswered: () -> Unit = {},
     openChat: String? = null,
@@ -97,6 +97,8 @@ internal fun RenoaApp(
     val navigator = rememberNavigator(if (signedIn) Route.Home else Route.SignIn)
     val stores: EntryStores = viewModel()
     val scope = rememberCoroutineScope()
+    // One sign-out at a time: the Settings row and the account sheet both offer it.
+    var signingOut by remember { mutableStateOf(false) }
     // Starting over drops every screen below the top at once; the top one lets go of its own as it leaves.
     val startOver = { route: Route ->
         val below = navigator.entries.dropLast(1)
@@ -160,17 +162,23 @@ internal fun RenoaApp(
                             onAppearance = setAppearance,
                             onSignUp = { startOver(Route.SignUp) },
                             onSignOut = {
-                                scope.launch {
-                                    try {
-                                        signOut()
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (_: Exception) {
-                                        model.couldNotSignOut()
-                                        return@launch
+                                if (!signingOut) {
+                                    signingOut = true
+                                    scope.launch {
+                                        try {
+                                            revoke()
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            model.couldNotSignOut()
+                                            return@launch
+                                        } finally {
+                                            signingOut = false
+                                        }
+                                        signedOut()
+                                        wasSignedOut = false
+                                        startOver(Route.SignIn)
                                     }
-                                    wasSignedOut = false
-                                    startOver(Route.SignIn)
                                 }
                             },
                             onEditAgent = { navigator.push(Route.Edit(it)) },
