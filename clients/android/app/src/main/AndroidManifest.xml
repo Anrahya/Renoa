@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Telling the owner an agent answered while the app was closed. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Handing a downloaded update to the phone's installer, which asks the owner first. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".RenoaApplication"
@@ -41,12 +43,12 @@
         <!-- Where the camera app saves a photo the owner takes to send an agent. -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.camera"
+            android:authorities="${applicationId}.files"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/camera_paths" />
+                android:resource="@xml/shared_paths" />
         </provider>
         <!-- Renoa's wake-ups and new push tokens, from Firebase Cloud Messaging. -->
         <service

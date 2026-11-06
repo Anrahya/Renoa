@@ -25,7 +25,9 @@ Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
 
 ## Releases and deployment
 
-CI builds every release; nothing deployed is built on a developer machine.
+CI builds every release. The one exception is the Android app, which is signed
+with a key that stays on the owner's machine, so it is built there and attached
+to the release afterwards (below).
 `.github/workflows/ci.yml` runs the `AGENTS.md` gates on every pull request.
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds one
 archive in a Debian 13 container (the VPS's own glibc) and publishes it as a
@@ -34,6 +36,18 @@ GitHub Release with `SHA256SUMS` and build provenance:
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+To ship the Android app with a release, check out the tag on the machine that
+holds the app's signing key, after the release workflow has published it:
+
+```sh
+scripts/publish-android-app v0.2.0
+```
+
+It builds the app with its version taken from the tag (`0.2.0` is version code
+2000: MAJOR * 1,000,000 + MINOR * 1,000 + PATCH), then adds
+`renoa-<tag>-android.apk` and `renoa-<tag>-android.json` (version, digest and
+size) to the release and to its `SHA256SUMS`.
 
 `deploy/release.json` is the single definition of a release: the binaries to
 build, the Node adapters to ship, and each service with the binaries it runs,
@@ -68,7 +82,13 @@ Before switching, it snapshots the Host, coordinator, node and Discord SQLite
 databases with SQLite's backup API, and copies `config/`, into the release
 being replaced. It then carries that release's own hashed Control Room assets
 forward, so a browser holding the previous page still loads, installs changed
-unit files, and switches.
+unit files, and switches. When `SHA256SUMS` lists the release's Android app,
+the deploy downloads it, checks it against `SHA256SUMS` and its own
+description, and places it in the Control Room's `app/` as
+`renoa-<version>.apk` with `android.json`; renoa.live then serves it to anyone,
+and the app's Settings offers it to an older app. A release without the app,
+or one installed with `--archive`, keeps serving the app the running release
+serves.
 
 `/opt/renoa/current` points at the running release and `/opt/renoa/previous`
 at the one backup: the release it replaced, with its snapshot. The binaries in

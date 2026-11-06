@@ -49,10 +49,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.kyant.shapes.Capsule
-import live.renoa.app.BuildConfig
 import live.renoa.app.agents.Link
 import live.renoa.app.push.Notices
 import live.renoa.app.theme.Appearance
+import live.renoa.app.update.AppVersionSection
 import live.renoa.design.CardForm
 import live.renoa.design.CardSection
 import live.renoa.design.ChoicePicker
@@ -94,9 +94,7 @@ internal fun SettingsPage(
             }
         }
         NotificationsSection(onNotificationsChanged)
-        CardSection {
-            row { ValueRow("App version", BuildConfig.VERSION_NAME) }
-        }
+        AppVersionSection()
         CardSection {
             row {
                 SignOutRow { confirmSignOut = true }

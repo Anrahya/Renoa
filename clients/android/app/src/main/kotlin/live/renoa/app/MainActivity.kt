@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -19,6 +20,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.update.AppUpdates
+import live.renoa.app.update.LocalAppUpdates
 import live.renoa.app.agents.Link
 import live.renoa.app.connect.HeldSetupLinks
 import live.renoa.app.connect.turnsEnded
@@ -268,13 +271,17 @@ class MainActivity : ComponentActivity() {
         // A credential from another Renoa, as after a build that signs in elsewhere, does not count.
         val signedIn = store.load()?.origin == RENOA_ORIGIN
         opening = application.takeChatToOpen()
+        // Settings checks renoa.live for a newer app and keeps its download here.
+        val updates = AppUpdates(File(cacheDir, "update"))
         setContent {
-            RenoaApp(
-                application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
-                revoke = application::revokeThisPhone, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
-                openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
-                retryNow = application::retryNow,
-            )
+            CompositionLocalProvider(LocalAppUpdates provides updates) {
+                RenoaApp(
+                    application::repository, signedIn, SignInViewModel.signingIn(applicationContext, store), application::signOut,
+                    revoke = application::revokeThisPhone, chatShown = application::chatShown, notificationsAnswered = application::notificationsChanged,
+                    openChat = opening, chatOpened = { opening = null }, setupLinks = application::setupLinks,
+                    retryNow = application::retryNow,
+                )
+            }
         }
     }
 

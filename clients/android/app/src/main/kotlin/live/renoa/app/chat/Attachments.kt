@@ -43,6 +43,7 @@ import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import live.renoa.app.SHARED_FILES
 import live.renoa.app.agents.HostUploads
 import live.renoa.app.agents.OutgoingFile
 import live.renoa.design.DropdownMenu
@@ -67,9 +68,6 @@ private const val LONG_EDGE = 1568
 /** How a shrunk photo is compressed: small enough to send quickly, sharp enough to read a label. */
 private const val JPEG_QUALITY = 85
 
-/** The suffix of the manifest's camera provider, after the app's package name. */
-private const val CAMERA_AUTHORITY = ".camera"
-
 /** The "+" that offers a photo from the gallery, a new one from the camera, or any file. */
 @Composable
 internal fun AttachButton(room: Int, onFiles: (List<OutgoingFile>) -> Unit, onProblem: (String) -> Unit) {
@@ -92,7 +90,7 @@ internal fun AttachButton(room: Int, onFiles: (List<OutgoingFile>) -> Unit, onPr
     val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(Attachment.MAX_PER_COMMAND)) { read(it) }
     val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { read(it) }
     // The camera app writes the photo here; the manifest's provider lends it this one file.
-    val shot = { FileProvider.getUriForFile(context, context.packageName + CAMERA_AUTHORITY, File(context.cacheDir, "camera/photo.jpg").also { it.parentFile?.mkdirs() }) }
+    val shot = { FileProvider.getUriForFile(context, context.packageName + SHARED_FILES, File(context.cacheDir, "camera/photo.jpg").also { it.parentFile?.mkdirs() }) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken -> if (taken) read(listOf(shot())) }
     DropdownMenu(
         items = {

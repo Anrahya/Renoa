@@ -2,7 +2,7 @@
 """Install a Renoa release built by CI on this host.
 
     renoa-deploy install <tag>            download, verify and install a GitHub release
-    renoa-deploy install --archive FILE   install a local release archive
+    renoa-deploy install --archive FILE   install a local release archive, keeping the served app
     renoa-deploy status                   show the installed and previous release
 
 /opt/renoa/releases/<tag>/ holds one release. /opt/renoa/current points at the
@@ -11,6 +11,12 @@ replaced, with SQLite snapshots and configuration taken just before the switch.
 The binaries in /usr/local/bin, /opt/renoa/adapters and /opt/renoa/control-room
 are symlinks through current, so switching releases is one rename. The first
 install adopts a hand-installed layout as releases/legacy.
+
+A release may also carry the Android app: renoa-<tag>-android.apk with
+renoa-<tag>-android.json, its version and digest, listed in SHA256SUMS. Both
+are verified and placed under the Control Room's app/, where renoa.live serves
+them to the app's update check. A release without them keeps the app the
+running release serves.
 
 Only services installed on this host are updated, and only those whose
 binaries, unit files, adapters or Control Room changed are restarted. A running
@@ -342,6 +348,43 @@ def carry_assets(old: Path, new: Path) -> None:
     (new / CARRIED).write_text("".join(f"{name}\n" for name in carried))
 
 
+# Where the Control Room serves the Android app, and the file naming its newest
+# release. The app reads it from https://renoa.live/app/android.json.
+APP = "app"
+APP_RELEASE = "android.json"
+
+
+def read_app(described: Path, apk: Path) -> dict:
+    """The app a release ships, as renoa.live describes it. Refuses one whose
+    description does not match the file or names no release version."""
+    info = json.loads(described.read_text())
+    version = info.get("version_name")
+    code = info.get("version_code")
+    if not (isinstance(version, str) and version.count(".") == 2 and all(part.isdigit() for part in version.split("."))):
+        raise DeployError(f"the app's version {version!r} is not MAJOR.MINOR.PATCH")
+    if not (isinstance(code, int) and not isinstance(code, bool) and code > 0):
+        raise DeployError(f"the app's version code {code!r} is not a positive integer")
+    if info.get("sha256") != sha256(apk) or info.get("size") != apk.stat().st_size:
+        raise DeployError("the app does not match its description")
+    return {"version_code": code, "version_name": version, "apk": f"renoa-{version}.apk", "sha256": info["sha256"], "size": info["size"]}
+
+
+def place_app(old: Path, new: Path, app: tuple[Path, Path] | None) -> None:
+    """Puts the app the new release ships, or else the one the running release
+    serves, under the new release's Control Room."""
+    target = new / "control-room" / APP
+    if app is None:
+        source = old / "control-room" / APP
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        return
+    described, apk = app
+    info = read_app(described, apk)
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(apk, target / info["apk"])
+    (target / APP_RELEASE).write_text(json.dumps(info, indent=2) + "\n")
+
+
 def install_units(host: Host, layout: Layout, services: list[dict], release: Path) -> None:
     changed = False
     for service in installed_services(layout, services):
@@ -398,7 +441,7 @@ def prune(layout: Layout, keep: list[Path]) -> None:
     shutil.rmtree(layout.old_backup, ignore_errors=True)
 
 
-def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> int:
+def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT, app: tuple[Path, Path] | None = None) -> int:
     layout = Layout(host)
     layout.releases.mkdir(parents=True, exist_ok=True)
     release = stage(host, layout, archive)
@@ -432,6 +475,7 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> 
                 refuse_unfinished_turns(host, bool(running))
             snapshot(layout, old)
             carry_assets(old, release)
+            place_app(old, release, app)
         except BaseException:
             # Nothing has switched yet: the running release stays as it was.
             shutil.rmtree(release)
@@ -475,16 +519,26 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> 
     return 0
 
 
-def fetch(host: Host, tag: str, directory: Path) -> Path:
-    name = f"renoa-{tag}-linux-x86_64.tar.gz"
+def fetch(host: Host, tag: str, directory: Path) -> tuple[Path, tuple[Path, Path] | None]:
+    """Downloads a release's archive and, when SHA256SUMS lists it, its app:
+    each checked against SHA256SUMS."""
     base = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
-    archive, sums = directory / name, directory / "SHA256SUMS"
-    host.download(f"{base}/{name}", archive)
+    sums = directory / "SHA256SUMS"
     host.download(f"{base}/SHA256SUMS", sums)
     expected = {line.split()[1]: line.split()[0] for line in sums.read_text().splitlines() if line.strip()}
-    if expected.get(name) != sha256(archive):
-        raise DeployError(f"{name} does not match the release's SHA256SUMS")
-    return archive
+
+    def verified(name: str) -> Path:
+        path = directory / name
+        host.download(f"{base}/{name}", path)
+        if expected.get(name) != sha256(path):
+            raise DeployError(f"{name} does not match the release's SHA256SUMS")
+        return path
+
+    archive = verified(f"renoa-{tag}-linux-x86_64.tar.gz")
+    described = f"renoa-{tag}-android.json"
+    if described not in expected:
+        return archive, None
+    return archive, (verified(described), verified(f"renoa-{tag}-android.apk"))
 
 
 def status(host: Host) -> int:
@@ -521,8 +575,8 @@ def main(argv: list[str], host: Host | None = None) -> int:
         shutil.rmtree(downloads, ignore_errors=True)
         downloads.mkdir()
         try:
-            archive = arguments.archive or fetch(host, arguments.tag, downloads)
-            return install(host, archive, arguments.drain_timeout)
+            archive, app = (arguments.archive, None) if arguments.archive else fetch(host, arguments.tag, downloads)
+            return install(host, archive, arguments.drain_timeout, app)
         finally:
             shutil.rmtree(downloads, ignore_errors=True)
 

@@ -360,6 +360,64 @@ class DeployTest(unittest.TestCase):
         assets = {path.name for path in (self.layout.control_room / "assets").iterdir()}
         self.assertEqual(assets, {"app-1.js", "app-2.js"})
 
+    def app(self, tag: str, version: str, apk: bytes = b"apk-bytes", **change) -> tuple[Path, Path]:
+        """The app files a release ships, as the publish script writes them."""
+        path = self.archives / f"renoa-{tag}-android.apk"
+        path.write_bytes(apk)
+        described = self.archives / f"renoa-{tag}-android.json"
+        info = {"version_code": int(version.replace(".", "")), "version_name": version, "sha256": sha(apk), "size": len(apk), **change}
+        described.write_text(json.dumps(info))
+        return described, path
+
+    def served_app(self) -> dict:
+        return json.loads((self.layout.control_room / "app/android.json").read_text())
+
+    def test_a_release_with_the_app_serves_it_and_one_without_keeps_serving_it(self):
+        self.assertEqual(self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}), app=self.app("v1", "0.1.0")), 0)
+        self.assertEqual(self.served_app()["apk"], "renoa-0.1.0.apk")
+        self.assertEqual((self.layout.control_room / "app/renoa-0.1.0.apk").read_bytes(), b"apk-bytes")
+
+        self.assertEqual(self.install(release_archive(self.archives, "v2", {"renoa-node": b"h2"})), 0)
+        self.assertEqual(self.served_app()["version_name"], "0.1.0", "the running app is kept")
+        self.assertEqual((self.layout.control_room / "app/renoa-0.1.0.apk").read_bytes(), b"apk-bytes")
+
+        self.assertEqual(self.install(release_archive(self.archives, "v3", {"renoa-node": b"h3"}), app=self.app("v3", "0.3.0", b"newer")), 0)
+        self.assertEqual(self.served_app(), {"version_code": 30, "version_name": "0.3.0", "apk": "renoa-0.3.0.apk", "sha256": sha(b"newer"), "size": 5})
+        self.assertEqual({path.name for path in (self.layout.control_room / "app").iterdir()}, {"android.json", "renoa-0.3.0.apk"})
+
+    def test_an_app_that_does_not_match_its_description_is_refused_before_anything_changes(self):
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}), app=self.app("v1", "0.1.0"))
+        for change in ({"sha256": "0" * 64}, {"size": 1}, {"version_name": "../0.2.0"}, {"version_code": 0}):
+            with self.subTest(change=change), self.assertRaises(deploy.DeployError):
+                self.install(release_archive(self.archives, "v2", {"renoa-node": b"h2"}), app=self.app("v2", "0.2.0", **change))
+            self.assertEqual(self.layout.current.resolve().name, "v1")
+            self.assertNotIn("v2", self.releases(), "a refused release leaves nothing behind")
+            self.assertEqual(self.served_app()["version_name"], "0.1.0")
+
+    def test_fetching_a_release_takes_its_app_only_when_its_sums_list_it(self):
+        archive = release_archive(self.archives, "v1", {"renoa-node": b"h1"})
+        described, apk = self.app("v1", "0.1.0")
+        assets = {archive.name.replace(".tar.gz", "-linux-x86_64.tar.gz"): archive.read_bytes()}
+
+        def published(files: dict[str, bytes]):
+            sums = "".join(f"{sha(data)}  {name}\n" for name, data in files.items())
+            return {**files, "SHA256SUMS": sums.encode()}
+
+        def download(url, destination):
+            destination.write_bytes(served[url.rsplit("/", 1)[1]])
+
+        downloads = Path(self.scratch.name) / "downloads"
+        downloads.mkdir()
+        with mock.patch.object(self.host, "download", side_effect=download):
+            served = published(assets)
+            self.assertIsNone(deploy.fetch(self.host, "v1", downloads)[1])
+            served = published({**assets, described.name: described.read_bytes(), apk.name: apk.read_bytes()})
+            fetched = deploy.fetch(self.host, "v1", downloads)[1]
+            self.assertEqual(fetched[1].read_bytes(), b"apk-bytes")
+            served[apk.name] = b"swapped"
+            with self.assertRaises(deploy.DeployError):
+                deploy.fetch(self.host, "v1", downloads)
+
     def test_services_not_installed_on_this_host_are_left_alone(self):
         self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1", "renoa-discord": b"d1"}))
 

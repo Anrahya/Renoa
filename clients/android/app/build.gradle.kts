@@ -17,6 +17,19 @@ if (googleServicesNamed != null && !googleServices.isFile) {
     logger.warn("Renoa: $googleServices, named for google-services.json, is not a file; building with push off.")
 }
 
+/**
+ * The release this build is, from the Gradle property `renoa.version` (`0.15.2`, a release tag without
+ * its `v`). Its version code orders releases, so the app knows a newer one: MAJOR * 1,000,000 +
+ * MINOR * 1,000 + PATCH. A build without it is a development build, version code 1.
+ */
+val renoaVersion: String? = providers.gradleProperty("renoa.version").orNull
+val renoaVersionCode: Int =
+    renoaVersion?.let { version ->
+        val parts = Regex("""(\d{1,3})\.(\d{1,3})\.(\d{1,3})""").matchEntire(version)?.groupValues?.drop(1)?.map(String::toInt)
+            ?: error("renoa.version is MAJOR.MINOR.PATCH, each below 1000, not $version")
+        parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2]
+    } ?: 1
+
 android {
     namespace = "live.renoa.app"
     compileSdk = 37
@@ -25,11 +38,13 @@ android {
         applicationId = "live.renoa.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = renoaVersionCode
+        versionName = renoaVersion ?: "0.0.0-dev"
         // The Renoa the app signs in to; its passkeys and assetlinks.json belong to this origin.
         buildConfigField("String", "RENOA_ORIGIN", "\"https://renoa.live\"")
         buildConfigField("String", "RENOA_CONNECT", "\"wss://renoa.live/connect\"")
+        // The newest app Renoa serves, as renoa-deploy places it; see scripts/publish-android-app.
+        buildConfigField("String", "RENOA_APP_RELEASE", "\"https://renoa.live/app/android.json\"")
         // Firebase reads these resources as the app starts, as it would those the google-services plugin writes.
         firebaseResources(googleServices, "live.renoa.app").forEach { (name, value) -> resValue("string", name, value) }
     }
@@ -100,6 +115,7 @@ dependencies {
     implementation(project(":rcp"))
     implementation(project(":design"))
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
     implementation(libs.androidx.credentials)
     // Credential Manager reaches passkeys through Play services on Android 13 and earlier.
     implementation(libs.androidx.credentials.play.services)
@@ -118,6 +134,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(testFixtures(project(":rcp")))
+    testImplementation(libs.okhttp.mockwebserver)
 }
 
 /**
