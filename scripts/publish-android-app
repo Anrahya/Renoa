@@ -44,7 +44,7 @@ info = {"version_code": element["versionCode"], "version_name": version, "sha256
 open(described, "w").write(json.dumps(info, indent=2) + "\n")
 PY
 
-grep -v -- "-android\." "$out/SHA256SUMS" > "$out/SHA256SUMS.new" || true
+grep -v -F -e "renoa-$tag-android.apk" -e "renoa-$tag-android.json" "$out/SHA256SUMS" > "$out/SHA256SUMS.new" || true
 (cd "$out" && shasum -a 256 "renoa-$tag-android.apk" "renoa-$tag-android.json") >> "$out/SHA256SUMS.new"
 mv "$out/SHA256SUMS.new" "$out/SHA256SUMS"
 gh release upload "$tag" "$apk" "$described" "$out/SHA256SUMS" --clobber
