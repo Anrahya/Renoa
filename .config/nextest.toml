@@ -1,0 +1,10 @@
+# nextest runs each test in its own process, so the `OnceLock` that builds a
+# Node adapter once per test binary no longer keeps two builds apart: each
+# build empties the adapter's dist/ while another test may be reading it.
+# The tests that build an adapter run one at a time.
+[test-groups]
+node-adapter-builds = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(renoa-local) & (test(/^model_adapter_process_tests::/) | test(=plugins::tests::api_key_plugin_connects_and_hot_loads_without_persisting_the_secret) | binary(mcp_host))'
+test-group = 'node-adapter-builds'
