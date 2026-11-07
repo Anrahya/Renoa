@@ -28,6 +28,7 @@ import live.renoa.app.agents.wordsOr
 import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.mainAgent
 import live.renoa.rcp.Attachment
+import kotlin.uuid.Uuid
 
 /** What the composer's round button does right now. */
 enum class ComposerAction {
@@ -190,6 +191,9 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
     fun discard(messageId: String) {
         viewModelScope.launch { runCatching { repository.discard(agentId, messageId) } }
     }
+
+    /** A one-time link to the file an agent shared as [share]; see [AgentRepository.shareLink]. */
+    suspend fun linkTo(share: Uuid): String = repository.shareLink(share)
 
     fun stop() {
         viewModelScope.launch {

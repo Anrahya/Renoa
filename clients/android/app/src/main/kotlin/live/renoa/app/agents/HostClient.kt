@@ -1,11 +1,9 @@
 package live.renoa.app.agents
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import live.renoa.rcp.HostAnswer
 import live.renoa.rcp.HostMethod
-import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpSurface
 
 private val hostJson = Json { ignoreUnknownKeys = true }
@@ -17,17 +15,7 @@ private val hostJson = Json { ignoreUnknownKeys = true }
 internal class HostClient(private val surface: RcpSurface) {
     suspend fun <T> call(method: HostMethod, path: String, body: String?, shape: KSerializer<T>): T = decode(send(method, path, body), shape, "$method $path")
 
-    private suspend fun send(method: HostMethod, path: String, body: String?): HostAnswer =
-        try {
-            surface.callHost(method, path, body)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (refused: RcpException) {
-            throw refused.asProblem()
-        } catch (lost: Exception) {
-            // Not connected, the connection lost, or a protocol failure that ended it.
-            throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
-        }
+    private suspend fun send(method: HostMethod, path: String, body: String?): HostAnswer = reaching { surface.callHost(method, path, body) }
 
     private fun <T> decode(answer: HostAnswer, shape: KSerializer<T>, call: String): T {
         val problem =

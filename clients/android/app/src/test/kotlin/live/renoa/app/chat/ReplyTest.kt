@@ -10,6 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
+import kotlin.uuid.Uuid
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -33,6 +34,21 @@ class ReplyTest {
             )
         tried.forEach(links::openUri)
         assertEquals(listOf("https://example.com/a", "http://example.com/b", "https://www.example.com", "https://WWW.example.com/c"), browser.opened)
+    }
+
+    @Test
+    fun aFileAnAgentSharedOpensInTheAppAndOnlyRenoasOwnFormOfLinkIsOne() {
+        val browser = Browser()
+        val files = mutableListOf<Uuid>()
+        val share = "0f0e0d0c-0b0a-4908-8706-050403020100"
+        val links = WebLinks(browser) { files += it }
+        val tried = listOf("/s/$share", "/s/${share.uppercase()}", "/s/${share.dropLast(1)}A", "/s/$share/x", "/s/$share?ticket=ab", "s/$share", "/s/0f0e0d0c0b0a490887060504030201000", "https://renoa.live/s/$share")
+        tried.forEach(links::openUri)
+        assertEquals(listOf(Uuid.parse(share)), files)
+        assertEquals(listOf("https://renoa.live/s/$share"), browser.opened, "a full address is the web's")
+
+        WebLinks(browser).openUri("/s/$share")
+        assertEquals(listOf("https://renoa.live/s/$share"), browser.opened, "a screen that cannot show one opens nothing")
     }
 
     @Test

@@ -5,6 +5,7 @@
 // at ed8daf11f89398e598ef1f791abc3014ded68496.
 package live.renoa.app.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -47,14 +48,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +73,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -78,6 +83,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.shapes.Capsule
 import com.kyant.shapes.RoundedRectangle
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.launch
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Link
@@ -137,56 +143,69 @@ fun ChatScreen(
     LaunchedEffect(state.messages.size) { viewModel.seen() }
     QuickWifi()
 
+    // The file an agent shared that is open over the chat, kept through a rotation.
+    var opened by rememberSaveable { mutableStateOf<String?>(null) }
+    val openFile = remember { { share: Uuid -> opened = share.toString() } }
+
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val density = LocalDensity.current
     var composerHeight by remember { mutableIntStateOf(0) }
     val under = with(density) { composerHeight.toDp() }
-    GlassStage(
-        Modifier.fillMaxSize().background(Palette.background),
-        chrome = {
-            ScrollEdge(Edge.Top, top + 84.dp)
-            ScrollEdge(Edge.Bottom, under + 4.dp, Modifier.align(Alignment.BottomCenter))
-            Header(state, onBack, onOpenProfile)
-            // Measured with the keyboard and navigation bar under it, so the last message clears them too.
-            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { composerHeight = it.height }.imePadding().navigationBarsPadding()) {
-                LinkLine(state.link, Modifier.padding(start = 24.dp, bottom = 6.dp))
-                state.notice?.let { Text(it, Modifier.padding(start = 24.dp, end = 24.dp, bottom = 6.dp), style = Type.footnote, color = Palette.danger) }
-                state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
-                Composer(state, agent?.name.orEmpty(), viewModel, send)
-            }
-        },
-    ) {
-        val padding = PaddingValues(top = top + 60.dp, bottom = under + 8.dp)
-        // Unseen until the composer is measured, so the conversation never shows a frame too low.
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (composerHeight > 0) 1f else 0f }) {
-            when {
-                !state.loaded ->
-                    Row(
-                        Modifier.fillMaxSize().padding(padding),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        ThinkingOrb(state = ThinkingOrbState.Connecting, size = 18.dp, color = Palette.secondary)
-                        Text(OPENING, style = Type.subheadline, color = Palette.secondary)
+    Box(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalSharedFiles provides openFile) {
+            GlassStage(
+                // Under an open file, the chat is out of reach of a screen reader too.
+                Modifier.fillMaxSize().background(Palette.background).then(if (opened != null) Modifier.clearAndSetSemantics {} else Modifier),
+                chrome = {
+                    ScrollEdge(Edge.Top, top + 84.dp)
+                    ScrollEdge(Edge.Bottom, under + 4.dp, Modifier.align(Alignment.BottomCenter))
+                    Header(state, onBack, onOpenProfile)
+                    // Measured with the keyboard and navigation bar under it, so the last message clears them too.
+                    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { composerHeight = it.height }.imePadding().navigationBarsPadding()) {
+                        LinkLine(state.link, Modifier.padding(start = 24.dp, bottom = 6.dp))
+                        state.notice?.let { Text(it, Modifier.padding(start = 24.dp, end = 24.dp, bottom = 6.dp), style = Type.footnote, color = Palette.danger) }
+                        state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
+                        Composer(state, agent?.name.orEmpty(), viewModel, send)
                     }
-                state.empty ->
-                    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding), contentAlignment = Alignment.Center) {
-                        ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
+                },
+            ) {
+                val padding = PaddingValues(top = top + 60.dp, bottom = under + 8.dp)
+                // Unseen until the composer is measured, so the conversation never shows a frame too low.
+                Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (composerHeight > 0) 1f else 0f }) {
+                    when {
+                        !state.loaded ->
+                            Row(
+                                Modifier.fillMaxSize().padding(padding),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                ThinkingOrb(state = ThinkingOrbState.Connecting, size = 18.dp, color = Palette.secondary)
+                                Text(OPENING, style = Type.subheadline, color = Palette.secondary)
+                            }
+                        state.empty ->
+                            Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding), contentAlignment = Alignment.Center) {
+                                ChatStart(state, onStarter = viewModel::onDraft, Modifier.padding(vertical = 24.dp))
+                            }
+                        else ->
+                            Messages(
+                                state = state,
+                                list = list,
+                                old = old,
+                                risen = risen,
+                                parses = parses,
+                                onRetry = viewModel::retry,
+                                onDiscard = viewModel::discard,
+                                onRefresh = onRefresh,
+                                indicatorTop = top + 50.dp,
+                                padding = padding,
+                            )
                     }
-                else ->
-                    Messages(
-                        state = state,
-                        list = list,
-                        old = old,
-                        risen = risen,
-                        parses = parses,
-                        onRetry = viewModel::retry,
-                        onDiscard = viewModel::discard,
-                        onRefresh = onRefresh,
-                        indicatorTop = top + 50.dp,
-                        padding = padding,
-                    )
+                }
             }
+        }
+        opened?.let { share ->
+            BackHandler { opened = null }
+            SharedFileView(Uuid.parse(share), from = agent?.name ?: "your agent", viewModel::linkTo, onClose = { opened = null })
         }
     }
 }

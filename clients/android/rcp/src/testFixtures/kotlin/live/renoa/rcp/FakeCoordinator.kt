@@ -119,6 +119,9 @@ class FakeCoordinator : AutoCloseable {
     /** The devices revoked, by id, in order. */
     val revokedDevices: MutableList<String> = CopyOnWriteArrayList()
 
+    /** The shares one-time links were issued for, in order. */
+    val sharedLinks: MutableList<String> = CopyOnWriteArrayList()
+
     /** The notice key the device registered, as sent, and the notices held for it. */
     @Volatile var noticeKey: String? = null
     val notices = CopyOnWriteArrayList<HeldNotice>()
@@ -272,6 +275,7 @@ class FakeCoordinator : AutoCloseable {
                 "submit" -> submit(requestId, frame)
                 "stop_command" -> stopCommand(requestId, frame)
                 "call_host" -> callHost(requestId, frame)
+                "share_link" -> shareLink(requestId, frame)
                 "set_push_token" -> setPushToken(requestId, frame)
                 "clear_push_token" -> clearPushToken(requestId)
                 "revoke_device" -> revokeDevice(requestId, frame)
@@ -445,6 +449,17 @@ class FakeCoordinator : AutoCloseable {
                 return
             }
             reply(requestId, "host_answer") { put("status", answer.first); put("body", answer.second) }
+        }
+
+        /** As the coordinator: only a device that proved its key gets a link, and each link is new. */
+        private fun shareLink(requestId: Long, frame: JsonObject) {
+            if (deviceKey == null) {
+                socket.send(error(requestId, "invalid_role", "Shared files open from a signed-in app here, or from a browser at its Host address."))
+                return
+            }
+            val share = frame.getValue("share_id").jsonPrimitive.content
+            sharedLinks += share
+            reply(requestId, "share_link_issued") { put("path", "/s/$share?ticket=${"%064x".format(sharedLinks.size)}") }
         }
 
         private fun setPushToken(requestId: Long, frame: JsonObject) {

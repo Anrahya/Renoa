@@ -302,6 +302,15 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         return CommandSubmission(command.commandId, accepted)
     }
 
+    /** When set, asking for a link to a shared file throws it. */
+    var shareLinkFailure: Exception? = null
+
+    override suspend fun shareLink(shareId: Uuid): String {
+        check(online) { "RCP client is not connected" }
+        shareLinkFailure?.let { throw it }
+        return "/s/$shareId?ticket=${"ab".repeat(32)}"
+    }
+
     override suspend fun stopCommand(taskId: Uuid, commandId: Uuid): StopOutcome {
         check(online)
         stopped += commandId
@@ -1176,6 +1185,18 @@ class RcpAgentRepositoryTest {
         surface.record(chat.ended(command))
         repo.stop(nagisa)
         assertEquals(listOf(command), surface.stopped)
+    }
+
+    @Test
+    fun aLinkToASharedFileComesFromRenoaAndAFailureIsAProblemTheScreenCanSay() = runTest {
+        val repo = started()
+        val share = Uuid.random()
+        assertEquals("/s/$share?ticket=${"ab".repeat(32)}", repo.shareLink(share))
+
+        surface.shareLinkFailure = RcpException(RcpErrorCode.NotFound, "no such share", 9)
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.shareLink(share) }.problem)
+        surface.shareLinkFailure = IllegalStateException("RCP client is not connected")
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.shareLink(share) }.problem)
     }
 
     @Test

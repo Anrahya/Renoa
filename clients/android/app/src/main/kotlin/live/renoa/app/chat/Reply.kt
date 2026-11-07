@@ -152,12 +152,14 @@ private fun ReplyStyle(links: ReferenceLinkHandler, diagrams: ReplyDiagrams, arr
             table = body,
             alertTitle = body.copy(color = colors.foreground, fontWeight = FontWeight.SemiBold),
         )
+    val shared = LocalSharedFiles.current
     val annotator =
-        remember(links, inlineCode, markdownColors) {
-            ReplyAnnotator(inlineCode.copy(background = colors.background).toSpanStyle(), SpanStyle(color = markdownColors.highlightText, background = markdownColors.highlightBackground), links).annotator
+        remember(links, inlineCode, markdownColors, shared != null) {
+            val highlight = SpanStyle(color = markdownColors.highlightText, background = markdownColors.highlightBackground)
+            ReplyAnnotator(inlineCode.copy(background = colors.background).toSpanStyle(), highlight, links, shares = shared != null).annotator
         }
     val platform = LocalUriHandler.current
-    val web = remember(platform) { WebLinks(platform) }
+    val web = remember(platform, shared) { WebLinks(platform, shared) }
     val padding = markdownPadding(block = 3.dp, list = 2.dp, listItemTop = 2.dp, listItemBottom = 2.dp, listIndent = 12.dp, codeBlock = PaddingValues(horizontal = 12.dp, vertical = 10.dp))
     val dimens = markdownDimens(codeBackgroundCornerSize = RenoaShapes.Control)
     val components = remember(diagrams, arriving) { replyComponents(diagrams, arriving) }

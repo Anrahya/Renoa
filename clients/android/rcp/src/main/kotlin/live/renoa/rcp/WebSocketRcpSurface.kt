@@ -197,6 +197,9 @@ class WebSocketRcpSurface(
         request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) }, timeouts.hostReply)
             .let { HostAnswer(it.status, it.body) }
 
+    override suspend fun shareLink(shareId: Uuid): String =
+        request(ServerMessage.ShareLinkIssued::class, { ClientMessage.ShareLink(it, shareId) }).path
+
     override suspend fun setPushToken(token: String) {
         request(ServerMessage.PushTokenSet::class, { ClientMessage.SetPushToken(it, "fcm", token) })
     }

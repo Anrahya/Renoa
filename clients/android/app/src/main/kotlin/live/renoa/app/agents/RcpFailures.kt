@@ -1,5 +1,6 @@
 package live.renoa.app.agents
 
+import kotlinx.coroutines.CancellationException
 import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
@@ -20,6 +21,21 @@ internal val RcpException.refusesTheRequest: Boolean
                 RcpErrorCode.ReplayRequired, RcpErrorCode.VersionMismatch,
                 -> false
             }
+
+/**
+ * Runs [call] over the connection. A refusal names what was wrong; anything else, as not being
+ * connected, a lost connection or a protocol failure that ended it, is [Problem.Unavailable].
+ */
+internal suspend fun <T> reaching(call: suspend () -> T): T =
+    try {
+        call()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (refused: RcpException) {
+        throw refused.asProblem()
+    } catch (lost: Exception) {
+        throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
+    }
 
 /** What a coordinator refusal means to the screens. */
 internal fun RcpException.asProblem(): RepositoryException {

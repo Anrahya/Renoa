@@ -1,6 +1,7 @@
 package live.renoa.app.chat
 
 import android.webkit.URLUtil
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -18,16 +19,30 @@ import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.findChildOfType
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import kotlin.uuid.Uuid
 
 /** A web address: http or https in any case, or a bare `www.` one, which opens over https. */
 internal fun isWebLink(uri: String): Boolean = URLUtil.isNetworkUrl(uri) || uri.startsWith("www.", ignoreCase = true)
 
 /**
- * Opens a reply's links in the phone's browser through [platform]. Only web addresses leave the
- * app; anything else does nothing, and so does a phone with no browser.
+ * The file an agent shared, for a link `/s/<id>` as its `share_file` gave it. Renoa names a share
+ * by its id in lowercase alone, so nothing else is one.
  */
-internal class WebLinks(private val platform: UriHandler) : UriHandler {
+internal fun sharedFile(uri: String): Uuid? = SHARED_FILE.matchEntire(uri)?.let { Uuid.parse(it.groupValues[1]) }
+
+private val SHARED_FILE = Regex("/s/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+/** Opens a file an agent shared, where a screen can show one; elsewhere a link to one is drawn as its words. */
+internal val LocalSharedFiles = staticCompositionLocalOf<((Uuid) -> Unit)?> { null }
+
+/**
+ * Opens a reply's links: a file an agent shared through [shared], and a web address in the phone's
+ * browser through [platform]. Anything else does nothing, and so does a phone with no browser.
+ */
+internal class WebLinks(private val platform: UriHandler, private val shared: ((Uuid) -> Unit)? = null) : UriHandler {
     override fun openUri(uri: String) {
+        val file = sharedFile(uri)
+        if (file != null) return shared?.invoke(file) ?: Unit
         if (!isWebLink(uri)) return
         val web = if (URLUtil.isNetworkUrl(uri)) uri else "https://$uri"
         // An intent's scheme matches case-sensitively, so HTTP:// would find no browser.
@@ -36,11 +51,12 @@ internal class WebLinks(private val platform: UriHandler) : UriHandler {
 }
 
 /**
- * How a reply's links and images become text. A link that is not a web address is drawn as its
- * words alone, so nothing looks tappable that is not; an image is drawn as its description, as a
- * reply loads nothing from the network. [links] resolves `[text][label]` references.
+ * How a reply's links and images become text. A link that is not a web address, or a file an agent
+ * shared where [shares] is false, is drawn as its words alone, so nothing looks tappable that is
+ * not; an image is drawn as its description, as a reply loads nothing from the network. [links]
+ * resolves `[text][label]` references.
  */
-internal class ReplyAnnotator(codeSpan: SpanStyle, highlight: SpanStyle, private val links: ReferenceLinkHandler) {
+internal class ReplyAnnotator(codeSpan: SpanStyle, highlight: SpanStyle, private val links: ReferenceLinkHandler, private val shares: Boolean = false) {
     val annotator: MarkdownAnnotator = markdownAnnotator { content, child -> annotate(content, child) }
 
     /** For a link's words drawn without the link: formatting kept, nothing tappable. */
@@ -80,7 +96,7 @@ internal class ReplyAnnotator(codeSpan: SpanStyle, highlight: SpanStyle, private
             else -> return false
         }
         // No destination: the library draws the words alone already.
-        if (destination == null || isWebLink(destination)) return false
+        if (destination == null || isWebLink(destination) || (shares && sharedFile(destination) != null)) return false
         buildMarkdownAnnotatedString(content, words, plain)
         return true
     }

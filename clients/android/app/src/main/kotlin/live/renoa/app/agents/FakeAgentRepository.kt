@@ -239,6 +239,9 @@ class FakeAgentRepository(
         }
     }
 
+    /** A link shaped like Renoa's, each one new; the fake holds no files, so it opens nothing. */
+    override suspend fun shareLink(shareId: Uuid): String = "/s/$shareId?ticket=${Uuid.random().toHexString()}${Uuid.random().toHexString()}"
+
     override suspend fun stop(agentId: String) {
         val room = room(agentId)
         val turn =

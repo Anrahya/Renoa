@@ -50,11 +50,12 @@
 - Treat newly reachable code as new code. When a change turns a failing,
   refused, or unreachable path into a working one, re-audit everything
   downstream of it in the same change.
-- Treat warnings as errors. Before handing off code, run:
-  `scripts/check-module-size.sh`,
-  `cargo fmt --all -- --check`,
-  `cargo clippy --workspace --all-targets -- -D warnings`, and
-  `cargo test --workspace`.
+- Treat warnings as errors. CI (`.github/workflows/ci.yml`) runs
+  `scripts/check-module-size.sh`, `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, the workspace
+  tests and the Android build, tests and lint on every pull request; merge
+  only when it is green. While iterating, run the checks for the crates and
+  modules you touched.
 - Record the source commit and license before adapting upstream code.
 - Do not add AI tools or models as commit co-authors or add generated-by
   footers to commits and pull requests. Preserve required upstream license
