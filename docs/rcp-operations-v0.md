@@ -27,7 +27,8 @@ that proved its key; devices are not tasks, and these operations grant no task
 authority. From a device that proved its key an owner may call their Host with
 `CallHost`, which the coordinator relays to the node that serves it; a Host
 call is not a task and enters no journal. The same device may ask with
-`ShareLink` for a one-time link to a file an agent shared with its principal. A device may register its push token
+`ShareLink` for a one-time link to a file an agent shared with its principal,
+and sign in a computer that shows a code with `ApproveDevice`. A device may register its push token
 with `SetPushToken` and remove it with `ClearPushToken`; registration is
 device state, not a task operation, and grants no task authority. A device
 registers the key its setup notices are sealed to with `SetNoticeKey`, lists
@@ -43,7 +44,7 @@ After authentication, the session identity fixes the peer's role:
 - a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`,
   `StopCommand`, and `DeleteTask`; a surface connected by a browser ticket or a
   proven device key may also `ListDevices` and `RevokeDevice`, one connected
-  by a proven device key may `CallHost`, `ShareLink`, `SetNoticeKey`,
+  by a proven device key may `CallHost`, `ShareLink`, `ApproveDevice`, `SetNoticeKey`,
   `ListNotices`, and `AcknowledgeNotice`, and one connected by any device credential may
   `SetPushToken` and `ClearPushToken`;
 - a node may `AdvertiseTargets`, `ListTargets`, `SendAgentMessage`,
@@ -351,6 +352,23 @@ read, so a Host that is away or a file that changed leaves the link working. It
 does not reach the Host when issued, so a share that is gone or not the
 principal's is refused when the link is opened. The same callers as `CallHost`
 are refused with `InvalidRole`.
+
+### `ApproveDevice`
+
+Inputs:
+
+- `code`: the code a computer waiting to sign in shows.
+
+The coordinator finds the waiting request by the code's digest and records the
+authenticated principal and the approving device on it, after the checks a
+sign-in runs; it returns `DeviceApproved` with the surface and name the
+computer asked for. The computer signs in when it next collects
+([identity](identity-v0.md#signing-in-a-computer-from-a-phone)). A code that
+matches nothing is `NotFound` and counts as a miss; after five misses in five
+minutes the principal's approvals are a `Conflict`. A request another principal
+approved, a key that sign-in would refuse, and an account at its device limit
+are a `Conflict`. The same callers as `CallHost` are refused with
+`InvalidRole`.
 
 ### `SetPushToken`
 
@@ -708,6 +726,7 @@ correlation value is a binding concern.
 | `WithdrawNotices` | node plus notice IDs | Returns `NoticesWithdrawn` whether or not the notices were held |
 | `CallHost` | The Host operation's own `operation_id`, for a change | The Host answers a repeated change from its receipt; the coordinator never retries |
 | `ShareLink` | None: each call issues a new ticket | A repeated call returns another link; an unused one expires in two minutes |
+| `ApproveDevice` | request plus principal | Returns `DeviceApproved` again and names the newer approving device |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |
 | `Stop` delivery | command ID | Node records one stop and cancels the command once |

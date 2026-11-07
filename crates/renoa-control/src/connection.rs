@@ -300,6 +300,10 @@ async fn write_frame(
     wire_sender.send(Message::Text(json.into())).await.is_ok()
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive table refuses every operation sent before authentication"
+)]
 async fn read_peer(
     state: &CoordinatorState,
     receiver: &mut futures_util::stream::SplitStream<axum::extract::ws::WebSocket>,
@@ -376,6 +380,7 @@ async fn read_peer(
         | ClientMessage::DeleteTask { .. }
         | ClientMessage::CallHost { .. }
         | ClientMessage::ShareLink { .. }
+        | ClientMessage::ApproveDevice { .. }
         | ClientMessage::SetPushToken { .. }
         | ClientMessage::ClearPushToken { .. }
         | ClientMessage::AcknowledgeExecution { .. }

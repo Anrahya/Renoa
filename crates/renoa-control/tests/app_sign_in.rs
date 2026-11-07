@@ -10,7 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use renoa_control::{AndroidApps, Coordinator, PeerIdentity};
 use renoa_protocol::{PrincipalId, SurfaceRef};
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredentials, DeviceId, DeviceSummary, ErrorCode, HostMethod,
+    ClientMessage, DeviceCode, DeviceCredentials, DeviceId, DeviceSummary, ErrorCode, HostMethod,
     JSON_WS_VERSION, ServerMessage,
 };
 use reqwest::{StatusCode, header};
@@ -1845,5 +1845,209 @@ async fn a_revoked_app_hears_nothing_more_from_its_host() {
         receive(&mut other).await,
         ServerMessage::HostAnswer { request_id: 3, .. }
     ));
+    server.stop().await;
+}
+
+/// A computer asks for a sign-in with a key it made and the id it chose.
+async fn ask_for_sign_in(
+    server: &Running,
+    key: &DeviceKey,
+    request_id: Uuid,
+    label: &str,
+) -> (StatusCode, Value) {
+    let (status, _, body) = server
+        .post(
+            "/v1/identity/device-requests",
+            &json!({
+                "requestId": request_id,
+                "surface": "mac",
+                "device": { "publicKey": key.public_key(), "label": label },
+                "deviceProof": key.sign(&format!("renoa device request v1\n{request_id}")),
+            }),
+        )
+        .await;
+    (status, body)
+}
+
+async fn collect(server: &Running, key: &DeviceKey, request_id: Uuid) -> (StatusCode, Value) {
+    let (status, _, body) = server
+        .post(
+            "/v1/identity/device-requests/collect",
+            &json!({
+                "requestId": request_id,
+                "deviceProof": key.sign(&format!("renoa device request v1\n{request_id}")),
+            }),
+        )
+        .await;
+    (status, body)
+}
+
+async fn approve(socket: &mut Socket, request_id: u64, code: &str) -> ServerMessage {
+    send(
+        socket,
+        &ClientMessage::ApproveDevice {
+            request_id,
+            code: DeviceCode::new(code),
+        },
+    )
+    .await;
+    receive(socket).await
+}
+
+#[tokio::test]
+async fn a_computer_signs_in_when_the_owners_phone_approves_its_code() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (_owner, phone, _tablet) = owner_with_two_apps(&server).await;
+    let mut phone_socket = phone.connect(&server).await;
+    let computer = DeviceKey::generate();
+    let request_id = Uuid::new_v4();
+
+    let (status, asked) = ask_for_sign_in(&server, &computer, request_id, "MacBook").await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    let code = asked["code"].as_str().expect("code").to_owned();
+    assert_eq!(code.len(), 8);
+    let (status, waiting) = collect(&server, &computer, request_id).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{waiting}");
+    assert_eq!(waiting["expiresAtMs"], asked["expiresAtMs"]);
+
+    let typed = format!("{}-{}", &code[..4], code[4..].to_lowercase());
+    let ServerMessage::DeviceApproved {
+        request_id: 1,
+        surface,
+        label,
+    } = approve(&mut phone_socket, 1, &typed).await
+    else {
+        panic!("the phone's approval is acknowledged");
+    };
+    assert_eq!((surface.as_str(), label.as_str()), ("mac", "MacBook"));
+
+    let (status, signed_in) = collect(&server, &computer, request_id).await;
+    let credentials = assert_signed_in(status, &header::HeaderMap::new(), &signed_in);
+    let mut computer_socket = connect_device(&server, &credentials, &computer).await;
+    let devices = list_devices(&mut computer_socket, 2).await;
+    let this = devices
+        .iter()
+        .find(|device| device.current)
+        .expect("the computer is listed");
+    assert_eq!(
+        (this.surface.as_str(), this.label.as_str()),
+        ("mac", "MacBook")
+    );
+    assert_eq!(devices.len(), 3, "the phone, the tablet and the computer");
+
+    // Collecting again replaces the credential and ends the connection that used the old one.
+    let (status, again) = collect(&server, &computer, request_id).await;
+    let replaced = assert_signed_in(status, &header::HeaderMap::new(), &again);
+    assert_eq!(replaced.device_id, credentials.device_id);
+    expect_closed(&mut computer_socket).await;
+    connect_device(&server, &replaced, &computer).await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn only_an_app_that_proved_its_key_may_approve_a_computer() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (mut owner, phone, _tablet) = owner_with_two_apps(&server).await;
+    let link = enroll_link(&server, 1, "discord").await;
+    let computer = DeviceKey::generate();
+    let request_id = Uuid::new_v4();
+    let (_, asked) = ask_for_sign_in(&server, &computer, request_id, "MacBook").await;
+    let code = asked["code"].as_str().expect("code").to_owned();
+
+    let mut link_socket = connect(&server).await;
+    authenticate(&mut link_socket, &link).await;
+    assert!(matches!(
+        receive(&mut link_socket).await,
+        ServerMessage::Authenticated { .. }
+    ));
+    let ServerMessage::Error { code: refused, .. } = approve(&mut link_socket, 1, &code).await
+    else {
+        panic!("a bearer-only link is refused");
+    };
+    assert_eq!(refused, ErrorCode::InvalidRole);
+
+    let ticket = owner.browser_ticket(&server).await;
+    let mut browser = connect(&server).await;
+    send(
+        &mut browser,
+        &serde_json::from_value(json!({
+            "type": "authenticate_ticket", "version": JSON_WS_VERSION, "ticket": ticket,
+        }))
+        .expect("ticket frame"),
+    )
+    .await;
+    assert!(matches!(
+        receive(&mut browser).await,
+        ServerMessage::Authenticated { .. }
+    ));
+    let ServerMessage::Error { code: refused, .. } = approve(&mut browser, 2, &code).await else {
+        panic!("a browser ticket is refused");
+    };
+    assert_eq!(refused, ErrorCode::InvalidRole);
+    assert_eq!(
+        collect(&server, &computer, request_id).await.0,
+        StatusCode::ACCEPTED,
+        "nothing was approved"
+    );
+
+    let mut phone_socket = phone.connect(&server).await;
+    let ServerMessage::Error { code: refused, .. } =
+        approve(&mut phone_socket, 3, "ZZZZZZZZ").await
+    else {
+        panic!("an unknown code is not found");
+    };
+    assert_eq!(refused, ErrorCode::NotFound);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_request_with_a_bad_key_proof_or_surface_leaves_no_residue() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let computer = DeviceKey::generate();
+    let other = DeviceKey::generate();
+    let request_id = Uuid::new_v4();
+    let valid = json!({
+        "requestId": request_id,
+        "surface": "mac",
+        "device": { "publicKey": computer.public_key(), "label": "MacBook" },
+        "deviceProof": computer.sign(&format!("renoa device request v1\n{request_id}")),
+    });
+    let mut cases = Vec::new();
+    let mut wrong_signer = valid.clone();
+    wrong_signer["deviceProof"] =
+        json!(other.sign(&format!("renoa device request v1\n{request_id}")));
+    cases.push(wrong_signer);
+    let mut wrong_message = valid.clone();
+    wrong_message["deviceProof"] =
+        json!(computer.sign(&format!("renoa device registration v1\n{request_id}")));
+    cases.push(wrong_message);
+    let mut bad_key = valid.clone();
+    bad_key["device"]["publicKey"] = json!("AAAA");
+    cases.push(bad_key);
+    let mut bad_label = valid.clone();
+    bad_label["device"]["label"] = json!("");
+    cases.push(bad_label);
+    let mut bad_surface = valid.clone();
+    bad_surface["surface"] = json!("mac os");
+    cases.push(bad_surface);
+    for body in cases {
+        let (status, _, answer) = server.post("/v1/identity/device-requests", &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body} -> {answer}");
+    }
+    assert_eq!(server.rows("SELECT COUNT(*) FROM device_requests"), 0);
+
+    let (status, _) = ask_for_sign_in(&server, &computer, request_id, "MacBook").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = collect(&server, &other, request_id).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "only the key's holder collects"
+    );
+    let (status, _) = collect(&server, &computer, Uuid::new_v4()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     server.stop().await;
 }

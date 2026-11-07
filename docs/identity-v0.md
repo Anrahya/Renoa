@@ -17,6 +17,10 @@ generated on the device, whose private half never leaves it, proves the
 installation on every connection. A copied bearer credential alone is not a
 device.
 
+A computer without the passkey may be signed in by such an app instead: the
+owner types the code the computer shows into the app, and the computer's own
+key proves it from then on.
+
 A valid identity still cannot access a task owned by another principal. Device
 authentication, person authentication, and task authorization are separate
 checks.
@@ -41,6 +45,8 @@ checks.
   only as a secure HTTP-only same-site cookie after admission.
 - A **ceremony** is one WebAuthn registration or authentication attempt whose
   challenge state exists only on the server.
+- A **device request** is a computer's five-minute ask to be signed in by
+  one of its owner's apps, identified by a code the computer shows.
 - A **connection ticket** is a 60-second, one-use browser bearer secret bound to
   one surface peer identity.
 - A **share ticket** is a two-minute, one-use bearer secret that opens one file
@@ -255,6 +261,85 @@ cause then, and writes nothing, so the passkey keeps its counter and the app
 signs in again with a new key. A ceremony claimed and then refused is not
 replayed.
 
+### Signing in a computer from a phone
+
+A computer without the owner's passkey signs in through an app that already
+proved its key. The computer makes a device key as an app does and chooses a
+random request id. It sends
+
+```json
+{ "requestId": "...", "surface": "mac",
+  "device": { "publicKey": "<point>", "label": "MacBook" },
+  "deviceProof": "<signature>" }
+```
+
+to `POST /v1/identity/device-requests`, where `deviceProof` is the key's
+signature over
+
+```text
+renoa device request v1\n<requestId>
+```
+
+For the key
+`BCTt5QvEGs7ZC__8uHrpq0TMB1vN4N6Oj_uXPaVnRW2X9YNJbnBWYVPO8JdOMT0-GBJ_96iwoJe8_rAx6S-Fbx0`
+and request `00000000-0000-0000-0000-0000000000a1`, one such signature is
+`MEQCIGDfIpht28Svysr4vkpKODTzftc77LblqNZ-tPqZYCTCAiA_sM32e6lIMZEHAqB3H6drSMOfDWHDDDeRUKXD5rYBaA`
+(checked in `crates/renoa-control/src/device_requests/tests.rs`).
+
+Every check (surface, key, label, proof) runs before anything is stored. The
+answer is `{ "code", "expiresAtMs" }`: eight symbols of Crockford's base32
+(40 bits), which the computer shows, and when the request ends, five minutes
+after it was first made. The coordinator stores only the code's digest. Asking
+again with the same id, key, surface and label replaces the code and keeps the
+expiry, so a lost answer converges on one request; another key or name under
+that id is a `conflict`, as is asking again once the request was approved.
+
+The owner types the code into a signed-in app, which sends
+[`approve_device`](rcp-json-ws-v0.md#sign-in-a-computer). Only a connection
+that proved its key may: a browser ticket connection outlives the session that
+issued it. Approval names the app's principal and the approving device, and
+runs the checks a sign-in runs (a revoked key, a key of another sign-in, the
+device limit), refusing without approving, so a refused approval leaves the
+computer waiting. Another principal's approval of an approved request is a
+`conflict`; the same principal's is acknowledged again and names the newer
+approving device. Revoking the approving device withdraws every approval it
+gave that no computer has outlived: those requests wait again.
+
+A code that matches no waiting request counts against the principal that sent
+it. After five such misses within five minutes, every approval from that
+principal, the right code included, is a `conflict` until the oldest miss is
+five minutes old.
+
+The computer collects at `POST /v1/identity/device-requests/collect` with
+`{ "requestId", "deviceProof" }`, the same signature. A request no app has
+approved answers `202` with `{ "expiresAtMs" }`; an approved one answers `200`
+with `{ "credentials": { "deviceId", "credential" } }`, creating or adopting the
+device exactly as a sign-in does in one transaction. That transaction runs the
+sign-in checks again, so a key revoked or signed in elsewhere since the
+approval is a `conflict` and stores nothing. Each collection until the request
+expires issues a new credential for the same device and ends the connections
+that used the old one, so a lost answer is collected again. A proof the
+request's key did not make is `authentication_failed`; an expired or unknown
+request is `not_found`. The computer then connects as any key-bound device.
+
+At most 64 requests wait at once, the bound passkey ceremonies have; another is
+refused with `capacity_exceeded` until one expires. Only an app that proved its
+key may try a code, so with at most 64 live a guess finds one with a chance of
+2^-34, and a principal makes at most five wrong guesses in five minutes.
+
+What this does not stop:
+
+- An owner who types a code someone else's computer shows signs that computer
+  in as themselves. The app says to enter only a code from a computer in front
+  of the owner; nothing on the coordinator can tell the two apart.
+- The proof is the same for every collection of one request. Whoever learns it
+  can collect, but the credential they receive only works with the computer's
+  key, so a replay costs the computer its current credential and nothing more.
+- Opening a request checks the proof, not the sign-in rules: a revoked key may
+  wait for a code, and approval refuses it.
+- Anyone may hold the 64 waiting slots, which delays computer sign-in until the
+  requests expire. Passkey sign-in and connected devices are unaffected.
+
 ### Connecting
 
 `authenticate` for a key-bound device is answered with `device_challenge`
@@ -375,6 +460,11 @@ or SQLite details.
     bearer-only link may not.
 15. Auxiliary HTTP routes accept only node identities, which are never key-bound,
     so a key-bound device's bearer credential opens none of them.
+16. A computer is signed in by a code only for the principal of an app that
+    proved its key, under the rules of a sign-in checked at approval and again
+    at collection; only the holder of the request's key collects its
+    credential, and revoking the approving app withdraws approvals no
+    computer has collected.
 
 ## Remaining work
 
@@ -382,9 +472,10 @@ The browser Control Room implements pairing, passkey registration and
 authentication, and remembered logins. It requests a fresh ticket for every
 connection attempt and keeps that ticket in memory only. Signed-in apps have
 sender-constrained device credentials and owner-side device listing and
-revocation. Nodes and service links such as Discord remain bearer-only, with
-credentials in owner-only files. Trusted-device approval for headless
-enrollment, passkey administration, recovery, credential rotation other than
+revocation. A computer signs in by a code a signed-in app approves. Nodes and
+service links such as Discord remain bearer-only, with credentials in
+owner-only files. Approval for headless node enrollment, passkey
+administration, recovery, credential rotation other than
 a repeat sign-in, per-source throttling, monitoring, and backup restoration
 remain outside this foundation slice.
 

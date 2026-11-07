@@ -20,5 +20,6 @@ pub use records::{
     TaskStatus, TaskSummary, WakeUrgency,
 };
 pub use secrets::{
-    ConnectionTicket, DeviceCredential, DeviceCredentials, EnrollmentToken, PushToken, ShareLink,
+    ConnectionTicket, DeviceCode, DeviceCredential, DeviceCredentials, EnrollmentToken, PushToken,
+    ShareLink,
 };

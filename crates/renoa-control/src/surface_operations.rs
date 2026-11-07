@@ -51,6 +51,10 @@ pub(crate) async fn handle_surface_operation(
         SurfaceOperation::ShareLink { share_id } => {
             crate::share_links::issue(&state, outgoing, request_id, &session, share_id).await;
         }
+        SurfaceOperation::ApproveDevice { code } => {
+            crate::device_admin::approve_device(&state, outgoing, request_id, &session, &code)
+                .await;
+        }
         SurfaceOperation::Push(operation) => {
             crate::push_tokens::handle(&state, outgoing, request_id, &session, operation).await;
         }

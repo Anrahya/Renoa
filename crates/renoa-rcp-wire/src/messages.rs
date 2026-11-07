@@ -2,15 +2,15 @@
 
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, LiveActivity, PrincipalId,
-    TargetCard, TargetRef,
+    SurfaceRef, TargetCard, TargetRef,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    ConnectionTicket, DeviceCredentials, DeviceId, DeviceNoticeKey, DeviceSummary, EnrollmentToken,
-    ErrorCode, HeldNotice, HostMethod, NodeId, NoticeKey, PushToken, SealedNotice, ShareLink,
-    StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary, WakeUrgency,
+    ConnectionTicket, DeviceCode, DeviceCredentials, DeviceId, DeviceNoticeKey, DeviceSummary,
+    EnrollmentToken, ErrorCode, HeldNotice, HostMethod, NodeId, NoticeKey, PushToken, SealedNotice,
+    ShareLink, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary, WakeUrgency,
 };
 
 pub const JSON_WS_VERSION: u32 = 18;
@@ -89,6 +89,11 @@ pub enum ClientMessage {
     ShareLink {
         request_id: u64,
         share_id: Uuid,
+    },
+    /// Signs in the computer showing `code` as this app's principal.
+    ApproveDevice {
+        request_id: u64,
+        code: DeviceCode,
     },
     /// The device's push token, from an app that signed in. `provider` stays
     /// text on the wire so an unsupported one is answered by name.
@@ -232,6 +237,12 @@ pub enum ServerMessage {
     ShareLinkIssued {
         request_id: u64,
         path: ShareLink,
+    },
+    /// The computer that showed the code may now collect its credential.
+    DeviceApproved {
+        request_id: u64,
+        surface: SurfaceRef,
+        label: String,
     },
     PushTokenSet {
         request_id: u64,

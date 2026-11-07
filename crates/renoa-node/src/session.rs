@@ -346,6 +346,7 @@ async fn handle_server_message(
         | ServerMessage::StopAccepted { .. }
         | ServerMessage::HostAnswer { .. }
         | ServerMessage::ShareLinkIssued { .. }
+        | ServerMessage::DeviceApproved { .. }
         | ServerMessage::PushTokenSet { .. }
         | ServerMessage::PushTokenCleared { .. }
         | ServerMessage::NoticeKeySet { .. }

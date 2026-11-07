@@ -59,6 +59,17 @@ enum Registration {
     New,
 }
 
+/// Refuses, without writing, a sign-in of `registration` that its
+/// transaction would refuse.
+pub(crate) fn check_sign_in(
+    connection: &Connection,
+    principal_id: PrincipalId,
+    surface: &SurfaceRef,
+    registration: &DeviceRegistration,
+) -> Result<(), ControlError> {
+    classify(connection, principal_id, surface, registration).map(|_| ())
+}
+
 /// Decides, without writing, what signing in `registration` would do. The
 /// key is the identity the app owns before it first sends, so a repeat of the
 /// same principal, surface and key adopts its device.
@@ -123,7 +134,7 @@ fn classify(
 
 /// Creates or adopts the device for a verified sign-in and issues its
 /// credential. Runs inside the sign-in's transaction.
-fn sign_in_device(
+pub(crate) fn sign_in_device(
     connection: &Connection,
     principal_id: PrincipalId,
     surface: &SurfaceRef,
@@ -255,7 +266,7 @@ impl ControlStore {
         let path = Arc::clone(&self.path);
         blocking(move || {
             let connection = open_connection(&path)?;
-            classify(&connection, principal_id, &surface, &registration).map(|_| ())
+            check_sign_in(&connection, principal_id, &surface, &registration)
         })
         .await
     }

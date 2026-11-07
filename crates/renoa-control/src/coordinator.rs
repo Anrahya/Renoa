@@ -343,6 +343,7 @@ impl Coordinator {
         if self.state.browser_identity.is_some() {
             app = app
                 .merge(browser_identity_http::routes())
+                .merge(crate::device_requests_http::routes())
                 .merge(crate::browser_sessions_http::routes())
                 .merge(oauth_relay_http::routes())
                 .merge(crate::credential_relay_http::routes())

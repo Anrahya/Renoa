@@ -133,5 +133,11 @@ pub(crate) fn registration_message(ceremony_id: Uuid) -> Vec<u8> {
     format!("renoa device registration v1\n{ceremony_id}").into_bytes()
 }
 
+/// The message a computer signs to ask, and then to collect, a sign-in by
+/// another of its owner's apps. The computer chose `request_id`.
+pub(crate) fn request_message(request_id: Uuid) -> Vec<u8> {
+    format!("renoa device request v1\n{request_id}").into_bytes()
+}
+
 #[cfg(test)]
 mod tests;

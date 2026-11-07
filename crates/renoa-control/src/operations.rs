@@ -56,6 +56,9 @@ pub(crate) enum SurfaceOperation {
     ShareLink {
         share_id: uuid::Uuid,
     },
+    ApproveDevice {
+        code: crate::DeviceCode,
+    },
     Push(PushOperation),
     Notice(crate::setup_notices::NoticeOperation),
 }

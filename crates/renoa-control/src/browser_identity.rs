@@ -256,7 +256,7 @@ impl BrowserIdentity {
     }
 }
 
-fn log_device_sign_in(principal_id: PrincipalId, signed_in: &SignedInDevice) {
+pub(crate) fn log_device_sign_in(principal_id: PrincipalId, signed_in: &SignedInDevice) {
     control_log::event(
         "info",
         "device_signed_in",

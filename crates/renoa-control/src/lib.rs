@@ -23,6 +23,8 @@ mod credential_relay_store;
 mod device_admin;
 mod device_handshake;
 mod device_key;
+mod device_requests;
+mod device_requests_http;
 mod device_store;
 mod dispatch_store;
 mod event_store;
@@ -67,7 +69,7 @@ pub use setup_notices::{MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES};
 // The binding's frames and records belong to `renoa-rcp-wire`; the crate root
 // names them so every module reaches them as `crate::…`.
 use renoa_rcp_wire::{
-    ClientMessage, ConnectionTicket, DeviceCredential, DeviceCredentials, DeviceId,
+    ClientMessage, ConnectionTicket, DeviceCode, DeviceCredential, DeviceCredentials, DeviceId,
     DeviceNoticeKey, DeviceSummary, EnrollmentToken, ErrorCode, HeldNotice, HostMethod,
     JSON_WS_VERSION, MAX_APPLICATION_MESSAGE_BYTES, NodeId, NoticeKey, PushToken, SealedNotice,
     ServerMessage, ShareLink, StopOutcome, TargetSummary, TaskEvent, TaskEventId, TaskEventKind,
