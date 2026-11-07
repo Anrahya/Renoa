@@ -149,6 +149,9 @@ pub(crate) enum SurfaceOperation {
         path: String,
         body: Option<String>,
     },
+    ShareLink {
+        share_id: uuid::Uuid,
+    },
     Push(PushOperation),
     Notice(crate::setup_notices::NoticeOperation),
 }

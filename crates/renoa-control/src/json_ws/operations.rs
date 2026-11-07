@@ -115,6 +115,7 @@ impl ClientMessage {
             | Self::StopCommand { .. }
             | Self::DeleteTask { .. }
             | Self::CallHost { .. }
+            | Self::ShareLink { .. }
             | Self::SetPushToken { .. }
             | Self::ClearPushToken { .. }
             | Self::SetNoticeKey { .. }
@@ -199,6 +200,10 @@ impl ClientMessage {
                 request_id,
                 SurfaceOperation::CallHost { method, path, body },
             ),
+            Self::ShareLink {
+                request_id,
+                share_id,
+            } => (request_id, SurfaceOperation::ShareLink { share_id }),
             Self::SetPushToken {
                 request_id,
                 provider,

@@ -1086,3 +1086,397 @@ async fn only_a_signed_in_app_calls_the_host_over_rcp_never_a_browser_ticket_or_
     assert_eq!(read.await.expect("read task").status, StatusCode::OK);
     f.stop().await;
 }
+
+impl Fixture {
+    /// The owner's phone, signed in with a device key as the app is.
+    async fn phone(&self) -> Socket {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        use ring::{
+            rand::SystemRandom,
+            signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair as _},
+        };
+
+        let token = self
+            .coordinator
+            .create_enrollment(
+                PeerIdentity::Surface {
+                    principal_id: self.owner,
+                    surface: SurfaceRef::new("android"),
+                },
+                SystemTime::now() + Duration::from_mins(1),
+            )
+            .await
+            .expect("app enrollment");
+        let (mut socket, _) = connect_async(&self.ws).await.expect("connect");
+        send(
+            &mut socket,
+            &ClientMessage::Enroll {
+                version: JSON_WS_VERSION,
+                token,
+            },
+        )
+        .await;
+        let ServerMessage::Enrolled { credentials, .. } = receive(&mut socket).await else {
+            panic!("the coordinator enrolls the app");
+        };
+        let rng = SystemRandom::new();
+        let pkcs8 =
+            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).expect("key");
+        let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref(), &rng)
+            .expect("load key");
+        rusqlite::Connection::open(self.files.path().join("control.sqlite"))
+            .expect("control database")
+            .execute(
+                "INSERT INTO device_keys (device_id, principal_id, public_key, label, created_at_ms)
+                 VALUES (?1, ?2, ?3, 'phone', 0)",
+                rusqlite::params![
+                    credentials.device_id.to_string(),
+                    self.owner.to_string(),
+                    key.public_key().as_ref(),
+                ],
+            )
+            .expect("bind the device key");
+        let (mut socket, _) = connect_async(&self.ws).await.expect("connect");
+        send(
+            &mut socket,
+            &ClientMessage::Authenticate {
+                version: JSON_WS_VERSION,
+                credentials: credentials.clone(),
+            },
+        )
+        .await;
+        let ServerMessage::DeviceChallenge { nonce } = receive(&mut socket).await else {
+            panic!("a key-bound device is challenged");
+        };
+        let proof = format!("renoa device proof v1\n{}\n{nonce}", credentials.device_id);
+        let signature = key.sign(&rng, proof.as_bytes()).expect("sign");
+        send(
+            &mut socket,
+            &ClientMessage::DeviceProof {
+                signature: URL_SAFE_NO_PAD.encode(signature.as_ref()),
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut socket).await,
+            ServerMessage::Authenticated { .. }
+        ));
+        socket
+    }
+}
+
+const PAGE: &[u8] = b"<p>hi</p>";
+
+/// The Host's description of `PAGE` shared as `page.html`, in parts of 4 bytes.
+fn page_description() -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, PAGE);
+    let sha256 = digest.as_ref().iter().fold(String::new(), |mut hex, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
+    json!({
+        "name": "my page.html", "media_type": "text/html", "size": PAGE.len(),
+        "sha256": sha256, "part_bytes": 4, "parts": 3
+    })
+    .to_string()
+}
+
+/// Answers the node's calls for share `share` as the Host does, with `parts`
+/// as the bytes of each part, and checks each call is the owner's.
+async fn serve_share(node: &mut Socket, owner: PrincipalId, share: Uuid, parts: &[&[u8]]) {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let (call_id, principal, method, path, _) = next_call(node).await;
+    assert_eq!(
+        (principal, method, path),
+        (owner, HostMethod::Get, format!("/v1/host/shares/{share}"))
+    );
+    send(node, &complete(call_id, 200, &page_description())).await;
+    for (index, part) in parts.iter().enumerate() {
+        let (call_id, _, _, path, _) = next_call(node).await;
+        assert_eq!(path, format!("/v1/host/shares/{share}/parts/{index}"));
+        send(
+            node,
+            &complete(
+                call_id,
+                200,
+                &json!({"data": STANDARD.encode(part)}).to_string(),
+            ),
+        )
+        .await;
+    }
+}
+
+async fn share_link(phone: &mut Socket, share: Uuid) -> String {
+    send(
+        phone,
+        &ClientMessage::ShareLink {
+            request_id: 7,
+            share_id: share,
+        },
+    )
+    .await;
+    match receive(phone).await {
+        ServerMessage::ShareLinkIssued {
+            request_id: 7,
+            path,
+        } => path.expose().to_owned(),
+        other => panic!("expected a share link, received {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_phones_share_link_opens_the_file_once_sandboxed() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let mut phone = f.phone().await;
+    let share = Uuid::new_v4();
+    let path = share_link(&mut phone, share).await;
+    assert!(path.starts_with(&format!("/s/{share}?ticket=")), "{path}");
+
+    let anonymous = f.caller.anonymous();
+    let opened = spawn_answer(anonymous.get(&path));
+    serve_share(&mut node, f.owner, share, &[b"<p>h", b"i</p", b">"]).await;
+    let opened = opened.await.expect("open task");
+    assert_eq!(opened.status, StatusCode::OK);
+    assert_eq!(opened.text.as_bytes(), PAGE);
+    let header = |name: &str| opened.headers[name].to_str().expect("header").to_owned();
+    assert_eq!(header("content-type"), "text/html; charset=utf-8");
+    assert_eq!(
+        header("content-disposition"),
+        "inline; filename*=UTF-8''my%20page.html"
+    );
+    // Scripts only, in an opaque origin: no same-origin, top navigation,
+    // escaping popups, forms or dialogs.
+    assert_eq!(
+        header("content-security-policy"),
+        "sandbox allow-scripts; frame-ancestors 'none'"
+    );
+    assert_eq!(header("cache-control"), "private, no-store, no-transform");
+    assert_eq!(header("x-content-type-options"), "nosniff");
+    assert_eq!(header("referrer-policy"), "no-referrer");
+    assert_eq!(header("cross-origin-resource-policy"), "same-origin");
+    assert!(!opened.headers.contains_key("set-cookie"));
+
+    let again = answer_of(anonymous.get(&path)).await;
+    assert_eq!(again.status, StatusCode::UNAUTHORIZED, "a link opens once");
+    assert!(again.text.contains("already opened"), "{}", again.text);
+    let other = share_link(&mut phone, share)
+        .await
+        .replace(&share.to_string(), &Uuid::new_v4().to_string());
+    assert_eq!(
+        answer_of(anonymous.get(&other)).await.status,
+        StatusCode::UNAUTHORIZED,
+        "a link is for its own share"
+    );
+    assert!(hears_nothing(&mut node).await);
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn a_signed_in_browser_opens_a_share_and_no_one_else_does() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let share = Uuid::new_v4();
+    let opened = spawn_answer(f.caller.get(&format!("/s/{share}")));
+    serve_share(&mut node, f.owner, share, &[b"<p>h", b"i</p", b">"]).await;
+    let opened = opened.await.expect("open task");
+    assert_eq!(
+        (opened.status, opened.text.as_bytes()),
+        (StatusCode::OK, PAGE)
+    );
+    assert!(
+        opened.headers.contains_key("set-cookie"),
+        "the session is refreshed"
+    );
+
+    let anonymous = f.caller.anonymous();
+    let signed_out = answer_of(anonymous.get(&format!("/s/{share}"))).await;
+    assert_eq!(signed_out.status, StatusCode::UNAUTHORIZED);
+    assert!(
+        signed_out.text.starts_with("Sign in"),
+        "{}",
+        signed_out.text
+    );
+    for path in [
+        format!("/s/{share}?ticket=nothex"),
+        format!("/s/{share}?ticket={}", "a".repeat(64)),
+    ] {
+        assert_eq!(
+            answer_of(f.caller.get(&path)).await.status,
+            StatusCode::UNAUTHORIZED,
+            "{path}"
+        );
+    }
+    let head = answer_of(f.caller.client.head(format!("{}/s/{share}", f.caller.http))).await;
+    assert_eq!(head.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        answer_of(f.caller.get(&format!("/s/{}", share.simple())))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(hears_nothing(&mut node).await);
+
+    // The Host's refusal is the page, in its words and status.
+    let gone = spawn_answer(f.caller.get(&format!("/s/{share}")));
+    let (call_id, ..) = next_call(&mut node).await;
+    send(
+        &mut node,
+        &complete(
+            call_id,
+            404,
+            r#"{"code":"share_not_found","message":"Nothing is shared at this address any more."}"#,
+        ),
+    )
+    .await;
+    let gone = gone.await.expect("gone task");
+    assert_eq!(
+        (gone.status, gone.text.as_str()),
+        (
+            StatusCode::NOT_FOUND,
+            "Nothing is shared at this address any more."
+        )
+    );
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn a_file_that_changes_while_it_is_read_is_cut_short() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let share = Uuid::new_v4();
+    for parts in [
+        &[b"<p>h" as &[u8], b"i</p", b"!"][..],
+        &[b"<p>h" as &[u8], b"i</p>x"][..],
+    ] {
+        let response = tokio::spawn(f.caller.get(&format!("/s/{share}")).send());
+        serve_share(&mut node, f.owner, share, parts).await;
+        let response = response.await.expect("task").expect("headers arrive");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.bytes().await.is_err(),
+            "a changed file never reads as whole"
+        );
+    }
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn only_a_signed_in_app_gets_a_share_link() {
+    let f = Fixture::start().await;
+    let mut browser = f.browser_connection(&f.caller).await;
+    let mut link = f.chat_link().await;
+    let mut node = f.serving_node().await;
+    send(
+        &mut node,
+        &ClientMessage::ShareLink {
+            request_id: 3,
+            share_id: Uuid::new_v4(),
+        },
+    )
+    .await;
+    assert_eq!(refusal(&mut node, 3).await.0, ErrorCode::InvalidRole);
+    for socket in [&mut browser, &mut link] {
+        send(
+            socket,
+            &ClientMessage::ShareLink {
+                request_id: 3,
+                share_id: Uuid::new_v4(),
+            },
+        )
+        .await;
+        let (code, message) = refusal(socket, 3).await;
+        assert_eq!(code, ErrorCode::InvalidRole);
+        assert!(message.contains("signed-in app"), "{message}");
+    }
+    f.stop().await;
+}
+
+/// A link is used up only once its file is known readable: a HEAD, a Host
+/// that is away and a file that changed while it opened all leave it working.
+#[tokio::test]
+async fn a_share_link_survives_what_the_reader_can_retry() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let mut phone = f.phone().await;
+    let share = Uuid::new_v4();
+    let path = share_link(&mut phone, share).await;
+    let anonymous = f.caller.anonymous();
+    let head = answer_of(anonymous.client.head(format!("{}{path}", anonymous.http))).await;
+    assert_eq!(head.status, StatusCode::METHOD_NOT_ALLOWED);
+
+    let away = spawn_answer(anonymous.get(&path));
+    let (call_id, ..) = next_call(&mut node).await;
+    send(&mut node, &complete(call_id, 503, r#"{"code":"host_unavailable","message":"The shared file could not be read. Try again in a moment."}"#)).await;
+    assert_eq!(
+        away.await.expect("away task").status,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    let changed = spawn_answer(anonymous.get(&path));
+    serve_share(&mut node, f.owner, share, &[b"<p>hi"]).await;
+    let changed = changed.await.expect("changed task");
+    assert_eq!(changed.status, StatusCode::CONFLICT, "{}", changed.text);
+
+    let opened = spawn_answer(anonymous.get(&path));
+    serve_share(&mut node, f.owner, share, &[b"<p>h", b"i</p", b">"]).await;
+    assert_eq!(opened.await.expect("open task").text.as_bytes(), PAGE);
+    f.stop().await;
+}
+
+/// Two opens of one link at once: both may read, but one alone is served.
+#[tokio::test]
+async fn a_share_link_opened_twice_at_once_serves_once() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let mut phone = f.phone().await;
+    let share = Uuid::new_v4();
+    let path = share_link(&mut phone, share).await;
+    let anonymous = f.caller.anonymous();
+    let first = spawn_answer(anonymous.get(&path));
+    let second = spawn_answer(anonymous.get(&path));
+    // Each open reads the description and its first part before using the link.
+    for _ in 0..4 {
+        let (call_id, _, _, path, _) = next_call(&mut node).await;
+        let body = if path.ends_with("/parts/0") {
+            json!({"data": "PHA+aA=="}).to_string()
+        } else {
+            page_description()
+        };
+        send(&mut node, &complete(call_id, 200, &body)).await;
+    }
+    // The one served goes on to its other parts.
+    for part in [b"i</p" as &[u8], b">"] {
+        let (call_id, ..) = next_call(&mut node).await;
+        send(
+            &mut node,
+            &complete(
+                call_id,
+                200,
+                &json!({"data": STANDARD.encode(part)}).to_string(),
+            ),
+        )
+        .await;
+    }
+    let mut statuses = [
+        first.await.expect("first").status,
+        second.await.expect("second").status,
+    ];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::UNAUTHORIZED]);
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn a_browser_link_with_another_query_still_opens_with_its_sign_in() {
+    let f = Fixture::start().await;
+    let mut node = f.serving_node().await;
+    let share = Uuid::new_v4();
+    let opened = spawn_answer(f.caller.get(&format!("/s/{share}?from=chat")));
+    serve_share(&mut node, f.owner, share, &[b"<p>h", b"i</p", b">"]).await;
+    assert_eq!(opened.await.expect("open task").status, StatusCode::OK);
+    f.stop().await;
+}

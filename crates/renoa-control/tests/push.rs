@@ -2290,7 +2290,7 @@ async fn a_schema_13_database_gains_the_push_tables_and_keeps_its_devices() {
         .database()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     let mut socket = f.connect(&phone).await;
     assert!(matches!(
         set_token(&mut socket, 1, "fcm:phone-token").await,
@@ -2557,7 +2557,7 @@ async fn a_schema_14_database_learns_rings_and_rings_none_of_its_wakes() {
     let version: i64 = database
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     let ring: i64 = database
         .query_row(
             "SELECT ring_generation FROM push_wakes WHERE principal_id = ?1",

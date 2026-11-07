@@ -343,6 +343,7 @@ async fn handle_server_message(
         | ServerMessage::Attached { .. }
         | ServerMessage::StopAccepted { .. }
         | ServerMessage::HostAnswer { .. }
+        | ServerMessage::ShareLinkIssued { .. }
         | ServerMessage::PushTokenSet { .. }
         | ServerMessage::PushTokenCleared { .. }
         | ServerMessage::NoticeKeySet { .. }

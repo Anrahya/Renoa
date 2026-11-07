@@ -44,6 +44,7 @@ secret_type!(PasskeyBootstrapToken, b"renoa passkey bootstrap v1\0");
 secret_type!(ConnectionTicket, b"renoa browser connection ticket v1\0");
 secret_type!(BrowserSessionToken, b"renoa browser session v1\0");
 secret_type!(BrowserPairingToken, b"renoa browser pairing v1\0");
+secret_type!(ShareTicket, b"renoa share ticket v1\0");
 
 impl BrowserPairingToken {
     // A retry from the same browser recreates its cookie without storing plaintext.
@@ -61,6 +62,12 @@ impl BrowserPairingToken {
 impl BrowserSessionToken {
     pub(crate) fn from_encoded(value: &str) -> Option<Self> {
         secret_digest(b"renoa browser session v1\0", value).map(|_| Self(value.to_owned()))
+    }
+}
+
+impl ShareTicket {
+    pub(crate) fn from_encoded(value: &str) -> Option<Self> {
+        secret_digest(b"renoa share ticket v1\0", value).map(|_| Self(value.to_owned()))
     }
 }
 

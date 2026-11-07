@@ -476,7 +476,7 @@ It runs as the existing Host OS user, `renoa`; use the actual Host owner
 on another machine.
 
 The tunnel needs no panel routes: the coordinator catch-all serves `/`,
-`/index.html`, `/assets/*`, `/v1/host*`, `/v1/identity/*`, `/connect`,
+`/index.html`, `/assets/*`, `/v1/host*`, `/v1/identity/*`, `/connect`, `/s/*`,
 credential intake and OAuth callbacks. Remove the four path rules the retired
 panel service needed (`^/v1/host(/.*)?$`, `^/$`, `^/index\\.html$` and
 `^/assets/.*$`, all to `http://127.0.0.1:7819`) so nothing routes to a port
@@ -898,6 +898,14 @@ RCP binding version 18 adds text input's `attachments`, so the coordinator, node
 Pi node, Android app and every surface must again be upgraded together; a peer
 still on version 17 is refused at authentication. The node keeps uploads under
 `state/uploads` in the Renoa home; nothing removes them yet.
+
+Coordinator schema 17 adds `share_tickets`, which holds only the digests of
+one-time links to shared files, until each is used or, once expired, the next
+is issued; opening a schema 16
+database creates it, and a pre-upgrade binary cannot open schema 17. Its
+`share_link` request is a compatible addition to RCP binding 18, so an app that
+does not send it needs no upgrade. `/s/{share}` serves a shared file to a browser
+signed in to the Host.
 
 Without a service account push is off: apps still register tokens, owed wakes
 are dropped, and the coordinator logs `push_disabled` once. Turning it on later

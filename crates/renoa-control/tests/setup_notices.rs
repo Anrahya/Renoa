@@ -571,7 +571,7 @@ async fn a_schema_15_database_gains_the_notice_tables() {
     let version: i64 = database
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     for table in ["notice_keys", "setup_notices"] {
         let present: bool = database
             .query_row(

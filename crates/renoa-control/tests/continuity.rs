@@ -2376,7 +2376,7 @@ mod status {
             })
             .await;
 
-        assert_eq!(stop_schema(&system), (2, 16));
+        assert_eq!(stop_schema(&system), (2, 17));
         assert_eq!(row_counts(&system), before, "opening keeps every row");
 
         let mut node = system.connect(&node_device).await;

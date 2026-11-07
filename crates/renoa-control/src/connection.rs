@@ -376,6 +376,7 @@ async fn read_peer(
         | ClientMessage::StopCommand { .. }
         | ClientMessage::DeleteTask { .. }
         | ClientMessage::CallHost { .. }
+        | ClientMessage::ShareLink { .. }
         | ClientMessage::SetPushToken { .. }
         | ClientMessage::ClearPushToken { .. }
         | ClientMessage::AcknowledgeExecution { .. }

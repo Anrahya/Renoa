@@ -43,6 +43,8 @@ checks.
   challenge state exists only on the server.
 - A **connection ticket** is a 60-second, one-use browser bearer secret bound to
   one surface peer identity.
+- A **share ticket** is a two-minute, one-use bearer secret that opens one file
+  an agent shared, as one principal, once.
 - A **session** is one temporary authenticated WebSocket connection.
 
 ## Native device flow
@@ -281,6 +283,17 @@ over RCP (`call_host`). That is how an app controls the Host: its credential
 opens no `/v1/host` route, which takes only a browser's session cookie. A
 browser's ticket connection may not, because it outlives the session that
 issued it; revoking a device ends its connections.
+
+The same connection, and no other, may ask for a share ticket (`share_link`),
+because a ticket reads the Host as its principal. The coordinator stores its
+digest with the principal and the share for two minutes. A `GET /s/{share}`
+with it reads the file's description and first part as that principal, and
+only then deletes the row, so one request alone is served; a ticket for another
+share is not used up, and an expired row is dropped when the next ticket is
+issued. The ticket travels in the link's query, so it is
+single-use and short-lived instead of secret for long. Revoking the device does
+not withdraw a ticket it already holds: that ticket still opens its one file
+until it is used or expires.
 
 ### Android apps
 
