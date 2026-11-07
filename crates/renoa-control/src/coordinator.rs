@@ -346,7 +346,8 @@ impl Coordinator {
                 .merge(crate::browser_sessions_http::routes())
                 .merge(oauth_relay_http::routes())
                 .merge(crate::credential_relay_http::routes())
-                .merge(crate::host_control_http::routes());
+                .merge(crate::host_control_http::routes())
+                .merge(crate::share_page_http::routes());
         }
         if let Some(directory) = self.control_room {
             app = app.fallback_service(crate::control_room::service(directory));

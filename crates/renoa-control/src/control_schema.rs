@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 16;
+const SCHEMA_VERSION: i64 = 17;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -47,6 +47,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     create_push_schema(connection)?;
     add_push_rings(connection)?;
     crate::setup_notices::create_schema(connection)?;
+    crate::share_links::create_schema(connection)?;
     connection
         .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
         .map_err(sqlite_error)

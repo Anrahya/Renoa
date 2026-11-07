@@ -48,6 +48,9 @@ pub(crate) async fn handle_surface_operation(
             )
             .await;
         }
+        SurfaceOperation::ShareLink { share_id } => {
+            crate::share_links::issue(&state, outgoing, request_id, &session, share_id).await;
+        }
         SurfaceOperation::Push(operation) => {
             crate::push_tokens::handle(&state, outgoing, request_id, &session, operation).await;
         }

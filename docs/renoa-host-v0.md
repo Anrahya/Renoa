@@ -458,7 +458,9 @@ table): the agent, the person, the canonical workspace and the file's path in
 it, never its bytes. Sharing the same file again returns the same share, so the
 tool is safe to replay. Its result gives the link the model puts in its reply,
 `[name](/s/{share})`, relative so each surface opens it against the Renoa it
-signed in to. `stop_sharing` takes the same `path`, also for a file already
+signed in to: the coordinator serves `/s/{share}` to a browser signed in to the
+Host, and an app opens it with a one-time link from `share_link`
+(`rcp-json-ws-v0.md`, "Shared files"). `stop_sharing` takes the same `path`, also for a file already
 gone, and removes the row; a later share of that file gets a new link.
 
 An agent's heartbeat is `renoa.owner`'s trigger: a check-in of its own at

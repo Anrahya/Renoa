@@ -63,7 +63,11 @@ to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
 Version `18` supersedes version `17` by adding text input's `attachments`. A
-version `17` peer is rejected at authentication.
+version `17` peer is rejected at authentication. A signed-in app's
+[`share_link`](#open-a-shared-file), answered by `share_link_issued`, is a
+compatible addition to version `18`: a peer that never sends it sees no
+change, and a coordinator that predates it answers it with `invalid_message`
+on an authenticated connection rather than refusing the app at sign-in.
 
 Version `17` superseded version `16` by adding sealed setup notices: a signed-in
 app's `set_notice_key`, `list_notices` and `acknowledge_notice` (answered by
@@ -446,6 +450,39 @@ not answer within sixty seconds, the call receives `node_offline`: whether a
 change took effect is then unknown, so the caller repeats the same request under
 the same `operation_id`. An answer the coordinator cannot relay receives
 `internal`; that outcome is unknown too.
+
+### Open a shared file
+
+A device that proved its key asks for a one-time link to a file an agent shared
+with its principal (the `/s/{share}` link in the agent's reply):
+
+```json
+{
+  "type": "share_link",
+  "request_id": 47,
+  "share_id": "00000000-0000-0000-0000-000000000092"
+}
+```
+
+```json
+{
+  "type": "share_link_issued",
+  "request_id": 47,
+  "path": "/s/00000000-0000-0000-0000-000000000092?ticket=4f0c…"
+}
+```
+
+`path` is on the coordinator's own origin, and `ticket` is 64 lowercase hex
+digits. The coordinator stores only the ticket's digest, with the principal and
+the share, for two minutes. Within that time, the first `GET` of the link that
+reads the file's first part uses the ticket up and serves the file as a browser
+signed in to the Host is served `/s/{share}` ([Shared files](#shared-files));
+any later one, one after it expires, and one for another share are refused with
+`401`. Asking does not
+reach the Host, so a share that does not exist, or is not the principal's, is
+refused when the link is opened. Like [`call_host`](#call-the-host), a browser
+ticket connection, a service link such as Discord, and a node receive
+`invalid_role`.
 
 ### Register a push token
 
@@ -1176,6 +1213,39 @@ answer when its connection ends or after sixty seconds. The coordinator never
 retries a call and writes neither the request body nor the answer to its files.
 A change survives a lost answer because the caller repeats the same request
 under the same `operation_id` and the Host answers from the receipt it recorded.
+
+### Shared files
+
+`GET /s/{share}` serves a file an agent shared with the reader, read as either
+the principal of a one-time link's `ticket` ([`share_link`](#open-a-shared-file))
+or, with no `ticket` in the query, the browser's Host session; any other query
+parameter is ignored. The share is the lowercase, hyphenated UUID; any other
+spelling is `404`. A `HEAD` is refused with `405`, so it cannot use up a link.
+With no session the answer is `401` and asks the reader to sign in; the session
+cookie is `SameSite=Strict`, so a link followed from another site opens signed
+out.
+
+The coordinator relays the Host's `GET /v1/host/shares/{share}` and then each
+`GET /v1/host/shares/{share}/parts/{index}` as Host control calls of the
+reader's principal. It reads the description and the first part before it
+answers, and only then uses up a link's ticket, so a reader who meets a Host
+refusal, an unreachable Host (`503`) or a file that changed while it opened
+(`409`) opens the same link again. A Host refusal, such as `404` for a share
+that is gone, is the page, in the Host's words and with its status. It then
+passes each part on as it arrives, keeping none of it. The answer carries the
+Host's `media_type`, with `; charset=utf-8` for a `text/` type, or
+`application/octet-stream` for one that is not a plain `type/subtype`; the
+file's size as its `Content-Length`; the file's name in
+`Content-Disposition: inline`; and `Cache-Control: private, no-store,
+no-transform`. Every file but a PDF carries `Content-Security-Policy: sandbox
+allow-scripts; frame-ancestors 'none'`: a shared page runs its scripts in an
+opaque origin, reaches neither the session cookie nor `/v1/host`, and has no
+forms, popups or dialogs with which to pass for a page of Renoa's own. It still
+appears under the coordinator's address. A PDF carries `frame-ancestors 'none'`
+alone, because the browser's PDF viewer refuses a sandboxed document. A later
+part of the wrong size, or a last part that leaves a file whose SHA-256 is not
+the one described, ends the body before that part, short of its
+`Content-Length`: the reader opens the file again.
 
 ## Errors
 

@@ -26,7 +26,8 @@ signed-in apps with `ListDevices` and `RevokeDevice`, from a browser or a device
 that proved its key; devices are not tasks, and these operations grant no task
 authority. From a device that proved its key an owner may call their Host with
 `CallHost`, which the coordinator relays to the node that serves it; a Host
-call is not a task and enters no journal. A device may register its push token
+call is not a task and enters no journal. The same device may ask with
+`ShareLink` for a one-time link to a file an agent shared with its principal. A device may register its push token
 with `SetPushToken` and remove it with `ClearPushToken`; registration is
 device state, not a task operation, and grants no task authority. A device
 registers the key its setup notices are sealed to with `SetNoticeKey`, lists
@@ -42,8 +43,8 @@ After authentication, the session identity fixes the peer's role:
 - a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`,
   `StopCommand`, and `DeleteTask`; a surface connected by a browser ticket or a
   proven device key may also `ListDevices` and `RevokeDevice`, one connected
-  by a proven device key may `CallHost`, `SetNoticeKey`, `ListNotices`, and
-  `AcknowledgeNotice`, and one connected by any device credential may
+  by a proven device key may `CallHost`, `ShareLink`, `SetNoticeKey`,
+  `ListNotices`, and `AcknowledgeNotice`, and one connected by any device credential may
   `SetPushToken` and `ClearPushToken`;
 - a node may `AdvertiseTargets`, `ListTargets`, `SendAgentMessage`,
   `RequestWake`, `ListNoticeKeys`, `PutNotice`, `WithdrawNotices`,
@@ -335,6 +336,21 @@ answer. A browser ticket connection, a surface that authenticated with a bearer
 credential alone, and a principal that owns no node are refused with
 `InvalidRole`. When no node or two nodes serve the Host, or the node does not
 answer, the call returns `NodeOffline` and its outcome is unknown.
+
+### `ShareLink`
+
+Inputs:
+
+- `share_id`: the share an agent's `/s/{share}` link names.
+
+The coordinator stores a new ticket's digest with the authenticated principal
+and the share for two minutes, and returns `ShareLinkIssued`: a path on its own
+origin, `/s/{share}?ticket=…`. Opening the link reads the file through the Host
+as that principal; the ticket is used up once the file's first part has been
+read, so a Host that is away or a file that changed leaves the link working. It
+does not reach the Host when issued, so a share that is gone or not the
+principal's is refused when the link is opened. The same callers as `CallHost`
+are refused with `InvalidRole`.
 
 ### `SetPushToken`
 
@@ -691,6 +707,7 @@ correlation value is a binding concern.
 | `PutNotice` | notice ID plus device and node | Returns `NoticePut` without another notice or wake |
 | `WithdrawNotices` | node plus notice IDs | Returns `NoticesWithdrawn` whether or not the notices were held |
 | `CallHost` | The Host operation's own `operation_id`, for a change | The Host answers a repeated change from its receipt; the coordinator never retries |
+| `ShareLink` | None: each call issues a new ticket | A repeated call returns another link; an unused one expires in two minutes |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |
 | `Stop` delivery | command ID | Node records one stop and cancels the command once |

@@ -48,6 +48,8 @@ mod push_tokens;
 mod push_wake;
 mod session_registry;
 mod setup_notices;
+mod share_links;
+mod share_page_http;
 mod store;
 mod surface_operations;
 mod task_deletion;
@@ -75,3 +77,4 @@ pub use setup_notices::{
     DeviceNoticeKey, HeldNotice, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, NoticeKey,
     SealedNotice,
 };
+pub use share_links::ShareLink;

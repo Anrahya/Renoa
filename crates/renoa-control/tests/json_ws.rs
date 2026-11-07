@@ -1078,3 +1078,37 @@ fn the_binding_document_states_the_notice_bounds() {
     assert!(document.contains(&sealed), "missing: {sealed}");
     assert!(document.contains(&listed), "missing: {listed}");
 }
+
+/// `share_link` and its answer, as `rcp-json-ws-v0.md` shows them.
+#[test]
+fn json_websocket_v18_encodes_share_links() {
+    let share_id = Uuid::from_u128(0x92);
+    let ask = ClientMessage::ShareLink {
+        request_id: 47,
+        share_id,
+    };
+    let ask_json = json!({
+        "type": "share_link",
+        "request_id": 47,
+        "share_id": "00000000-0000-0000-0000-000000000092"
+    });
+    assert_eq!(serde_json::to_value(&ask).expect("serialize"), ask_json);
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(ask_json).expect("deserialize"),
+        ask
+    );
+    let path = format!(
+        "/s/00000000-0000-0000-0000-000000000092?ticket={}",
+        "4f".repeat(32)
+    );
+    let issued_json = json!({ "type": "share_link_issued", "request_id": 47, "path": path });
+    let issued: ServerMessage = serde_json::from_value(issued_json.clone()).expect("deserialize");
+    assert_eq!(
+        serde_json::to_value(&issued).expect("serialize"),
+        issued_json
+    );
+    assert!(
+        !format!("{issued:?}").contains("4f4f"),
+        "a link's ticket is never printed"
+    );
+}

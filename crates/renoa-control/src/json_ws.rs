@@ -82,6 +82,11 @@ pub enum ClientMessage {
         path: String,
         body: Option<String>,
     },
+    /// A one-time link to a file an agent shared, from a signed-in app.
+    ShareLink {
+        request_id: u64,
+        share_id: Uuid,
+    },
     /// The device's push token, from an app that signed in. `provider` stays
     /// text on the wire so an unsupported one is answered by name.
     SetPushToken {
@@ -218,6 +223,12 @@ pub enum ServerMessage {
         request_id: u64,
         status: u16,
         body: String,
+    },
+    /// A one-time link to the share: a path on the coordinator's own origin,
+    /// usable once within two minutes.
+    ShareLinkIssued {
+        request_id: u64,
+        path: crate::ShareLink,
     },
     PushTokenSet {
         request_id: u64,

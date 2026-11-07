@@ -134,7 +134,10 @@ These decisions define RCP and are not ordinary implementation details:
     its Host through the coordinator, which authenticates the owner and relays
     each call over the node's existing link to the node that serves the Host;
     the coordinator interprets no Host operation and writes no call's body or
-    answer to its files, and the Host keeps the records and receipts.
+    answer to its files, and the Host keeps the records and receipts. One
+    exception, amended on 2026-11-07: to serve `/s/{share}`, a file an agent
+    shared, the coordinator reads the Host's share description and its parts
+    and passes the bytes on as they arrive, keeping none of them.
 22. A new command or task opening whose node is offline is rejected before
     admission and leaves no record. An offline node is usually a sleeping or
     unplugged device, so the sender learns immediately and resends later; the
@@ -176,7 +179,9 @@ These decisions define RCP and are not ordinary implementation details:
     device and replaces its credential instead of creating a second device. This
     constrains apps only: nodes and service links stay bearer-only. Auxiliary
     HTTP routes accept only node identities, which are never key-bound, so an
-    app's credential opens none of them. The mechanism is generic. It names no
+    app's credential opens none of them. A share ticket a key-proven app asks
+    for over RCP is not its credential: it opens one shared file once, within
+    two minutes (decision 21). The mechanism is generic. It names no
     operating system, and an Android origin is only an additional allowed
     passkey origin in deployment configuration.
 27. An agent may message another agent of the same owner through RCP. The
@@ -1204,7 +1209,9 @@ coordinator checks the browser's remembered session cookie and, for a change,
 exactly one `Origin` equal to its configured origin, then sends the call to the
 owner's one connected node that serves Host control. An app's call takes the
 same relay over its key-proven RCP connection (`call_host`), so locked decision
-26 stands: no auxiliary HTTP route accepts an app's credential. Two such nodes of one owner
+26 stands: no auxiliary HTTP route accepts an app's credential. The one HTTP
+route an app reaches, `/s/{share}`, takes a one-time share ticket it asked for
+with `share_link`, never its credential. Two such nodes of one owner
 are refused as ambiguous; none online is unavailable. Remembered browser
 sessions can mint fresh one-use transport tickets without another passkey
 ceremony; the remembered cookie is not an RCP wire credential. This follows

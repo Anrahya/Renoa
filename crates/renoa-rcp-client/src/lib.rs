@@ -372,6 +372,7 @@ async fn dispatch(
         | ServerMessage::CommandAccepted { request_id, .. }
         | ServerMessage::StopAccepted { request_id, .. }
         | ServerMessage::HostAnswer { request_id, .. }
+        | ServerMessage::ShareLinkIssued { request_id, .. }
         | ServerMessage::PushTokenSet { request_id }
         | ServerMessage::PushTokenCleared { request_id }
         | ServerMessage::NoticeKeySet { request_id }

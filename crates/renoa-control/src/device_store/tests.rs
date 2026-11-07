@@ -342,7 +342,7 @@ async fn a_schema_12_database_upgrades_in_place_and_keeps_its_devices() {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     let device = upgraded
         .authenticate_device(credentials)
         .await
