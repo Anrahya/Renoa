@@ -117,6 +117,14 @@ sealed interface ClientMessage {
         val body: String?,
     ) : ClientMessage
 
+    /** Asks for a one-time link to share [shareId], a file an agent shared. */
+    @Serializable
+    @SerialName("share_link")
+    data class ShareLink(
+        @SerialName("request_id") val requestId: Long,
+        @SerialName("share_id") val shareId: Uuid,
+    ) : ClientMessage
+
     /** Registers this device's push token. [provider] is `fcm`; the token is opaque and secret. */
     @Serializable
     @SerialName("set_push_token")
@@ -243,6 +251,16 @@ sealed interface ServerMessage {
         val status: Int,
         val body: String,
     ) : ServerMessage.Answer
+
+    /** A one-time link: a path on Renoa's own address whose query holds a ticket, so it is never printed. */
+    @Serializable
+    @SerialName("share_link_issued")
+    data class ShareLinkIssued(
+        @SerialName("request_id") override val requestId: Long,
+        val path: String,
+    ) : ServerMessage.Answer {
+        override fun toString(): String = "ShareLinkIssued(requestId=$requestId, path=<secret>)"
+    }
 
     @Serializable
     @SerialName("push_token_set")

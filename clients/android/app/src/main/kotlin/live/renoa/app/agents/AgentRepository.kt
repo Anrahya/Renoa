@@ -2,6 +2,7 @@ package live.renoa.app.agents
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.uuid.Uuid
 
 /** An agent with everything the edit screen shows. */
 data class AgentProfile(
@@ -124,6 +125,12 @@ interface AgentRepository {
 
     /** Stops what the agent is doing now. It stays stopped. */
     suspend fun stop(agentId: String)
+
+    /**
+     * A one-time path, on Renoa's own address, that opens the file an agent shared as [shareId];
+     * it works once, within two minutes. Ask again to open the file again.
+     */
+    suspend fun shareLink(shareId: Uuid): String
 
     suspend fun profile(agentId: String): AgentProfile
 

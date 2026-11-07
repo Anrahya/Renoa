@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The folders the app lends files from: the camera app writes a photo into camera/, and the
-     installer reads a downloaded update from update/. -->
+<!-- The folders the app lends files from: the camera app writes a photo into camera/, the
+     installer reads a downloaded update from update/, and an app the owner picks opens a file an
+     agent shared from shared/. -->
 <paths>
     <cache-path name="camera" path="camera/" />
     <cache-path name="update" path="update/" />
+    <cache-path name="shared" path="shared/" />
 </paths>

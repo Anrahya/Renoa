@@ -107,6 +107,13 @@ interface RcpSurface {
     suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer
 
     /**
+     * A one-time link to [shareId], a file an agent shared with the owner: a path on Renoa's own
+     * address that opens the file once, within two minutes. Asking again gives another link. Only a
+     * device that proved its key may ask.
+     */
+    suspend fun shareLink(shareId: Uuid): String
+
+    /**
      * Registers [token], issued by Firebase Cloud Messaging, as this device's push token, so Renoa can
      * wake the app while it holds no connection. A new token replaces the old one, and repeating it is
      * safe. A connection opened with a ticket is refused with `invalid_role`.

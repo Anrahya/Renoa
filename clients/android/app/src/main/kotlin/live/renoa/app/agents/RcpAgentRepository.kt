@@ -419,16 +419,10 @@ class RcpAgentRepository(
     override suspend fun stop(agentId: String) {
         val room = room(agentId)
         val running = synchronized(lock) { room.journal.running } ?: return
-        try {
-            surface.stopCommand(room.taskId, running)
-        } catch (refused: RcpException) {
-            throw refused.asProblem()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (lost: Exception) {
-            throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
-        }
+        reaching { surface.stopCommand(room.taskId, running) }
     }
+
+    override suspend fun shareLink(shareId: Uuid): String = reaching { surface.shareLink(shareId) }
 
     override suspend fun profile(agentId: String): AgentProfile {
         return host.definition(onHost(agentId)).profile(agentId)
@@ -449,15 +443,8 @@ class RcpAgentRepository(
         readObservation()
         val target = "$AGENT_TARGET${record.id}"
         val joined =
-            try {
-                withTimeoutOrNull(JOIN_WITHIN) { advertised(target) }?.also { follow(listOf(it)) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (refused: RcpException) {
-                throw refused.asProblem()
-            } catch (lost: Exception) {
-                throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
-            } ?: throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but no node has offered it yet")
+            reaching { withTimeoutOrNull(JOIN_WITHIN) { advertised(target) }?.also { follow(listOf(it)) } }
+                ?: throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but no node has offered it yet")
         // follow passes over a chat it could not open, as when the node dropped after advertising it.
         if (synchronized(lock) { rooms[agentId(joined)]?.attached } != true) {
             throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but its chat could not be opened")

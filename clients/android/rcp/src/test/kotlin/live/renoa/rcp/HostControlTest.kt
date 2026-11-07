@@ -13,6 +13,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /** A signed-in app calls its owner's Host over its connection. */
 class HostControlTest : CoordinatorTest() {
@@ -77,5 +78,26 @@ class HostControlTest : CoordinatorTest() {
         coordinator.deviceKey = null
         val bearer = client().also { it.connect() }
         assertEquals(RcpErrorCode.InvalidRole, assertFailsWith<RcpException> { bearer.callHost(HostMethod.Get, "/v1/host", null) }.code)
+    }
+
+    @Test
+    fun aSignedInAppGetsAFreshLinkToEachShareAndNoOtherConnectionDoes() = eventually {
+        val share = Uuid.parse("0f0e0d0c-0b0a-4908-8706-050403020100")
+        val app = keyedClient()
+        val first = app.shareLink(share)
+        val second = app.shareLink(share)
+        assertTrue(first.startsWith("/s/$share?ticket="), "the link names the share: $first")
+        assertTrue(first != second, "each link is new")
+        assertEquals(listOf(share.toString(), share.toString()), coordinator.sharedLinks)
+
+        coordinator.deviceKey = null
+        val bearer = client().also { it.connect() }
+        assertEquals(RcpErrorCode.InvalidRole, assertFailsWith<RcpException> { bearer.shareLink(share) }.code)
+    }
+
+    @Test
+    fun aShareLinkNeverReachesALog() {
+        val frame = ServerMessage.ShareLinkIssued(7, "/s/x?ticket=${"ab".repeat(32)}")
+        assertTrue("ab".repeat(32) !in frame.toString(), frame.toString())
     }
 }

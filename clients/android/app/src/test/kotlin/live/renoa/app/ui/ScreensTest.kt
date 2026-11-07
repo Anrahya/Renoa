@@ -2,6 +2,9 @@ package live.renoa.app.ui
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +12,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onRoot
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import live.renoa.app.chat.ChatViewModel
@@ -109,6 +114,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -472,6 +478,58 @@ class ScreensTest : ScreenTest() {
         assertEquals(emptyList(), other.getLinkAnnotations(0, other.length))
         assertTrue(other.spanStyles.none { it.item.textDecoration == TextDecoration.Underline }, "no link styling")
         snapshot("chat-markdown")
+    }
+
+    @Test
+    fun aFileAnAgentSharedOpensOverTheChatWithAFreshLinkAndClosesBackToIt() {
+        val opened = mutableListOf<String>()
+        val browser = object : UriHandler { override fun openUri(uri: String) { opened += uri } }
+        val share = Uuid.parse("0f0e0d0c-0b0a-4908-8706-050403020100")
+        val asked = mutableListOf<Uuid>()
+        val reply = "Here it is: [the plan](/s/$share). Not this: [old](/s/${share.toString().uppercase()}).\n\n[Site](https://example.com/site)"
+        val talk = MutableStateFlow(Conversation(listOf(ChatMessage("a", Speaker.Agent, reply))))
+        val repo =
+            object : AgentRepository by chatWith(talk) {
+                override suspend fun shareLink(shareId: Uuid): String {
+                    asked += shareId
+                    if (asked.size > 2) throw RepositoryException(Problem.NotFound, "gone")
+                    return "/s/$shareId?ticket=${asked.size - 1}"
+                }
+            }
+        val model = ChatViewModel(repo, "optimus")
+        show { CompositionLocalProvider(LocalUriHandler provides browser) { ChatScreen(model, onBack = {}, onOpenProfile = {}) } }
+        compose.waitForIdle()
+
+        val line = compose.onNode(hasText("Here it is:", substring = true))
+        val site = compose.onNode(hasText("Site")).fetchSemanticsNode().boundsInRoot
+        assertEquals(listOf("/s/$share"), textOf(line).getLinkAnnotations(0, textOf(line).length).map { (it.item as LinkAnnotation.Url).url }, "only Renoa's own form is a link")
+        line.performFirstLinkClick()
+        compose.waitForIdle()
+        assertEquals(listOf(share), asked)
+        assertEquals(emptyList(), opened, "the file opens in the app, not the browser")
+        fun View.all(): List<View> = listOf(this) + ((this as? ViewGroup)?.let { group -> (0 until group.childCount).flatMap { group.getChildAt(it).all() } } ?: emptyList())
+        val view = compose.activity.window.decorView.all().filterIsInstance<WebView>().single()
+        assertEquals("https://renoa.live/s/$share?ticket=0", shadowOf(view).lastLoadedUrl)
+        compose.onNodeWithText("From Optimus").assertIsDisplayed()
+        compose.onAllNodes(hasText("Here it is:", substring = true)).assertCountEquals(0)
+        compose.onNodeWithContentDescription("Close").performClick()
+        compose.waitForIdle()
+        compose.onAllNodesWithContentDescription("Close").assertCountEquals(0)
+
+        line.performFirstLinkClick()
+        compose.waitForIdle()
+        assertEquals(listOf(share, share), asked, "each opening asks for its own link")
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        compose.onAllNodesWithContentDescription("Close").assertCountEquals(0)
+        compose.onNode(hasText("Here it is:", substring = true)).assertIsDisplayed()
+
+        // A file that cannot be opened says so, over a chat nothing reaches.
+        line.performFirstLinkClick()
+        compose.onNodeWithText("This file could not be opened. Try again.").assertIsDisplayed()
+        compose.onRoot().performTouchInput { click(Offset(site.left + 4f, site.center.y)) }
+        compose.waitForIdle()
+        assertEquals(emptyList(), opened, "a tap where the chat's web link lies lands on the file")
     }
 
     @Test

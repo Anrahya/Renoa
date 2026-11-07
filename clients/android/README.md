@@ -100,8 +100,15 @@ targets 36, and some pinned AndroidX and OkHttp versions trail the newest releas
 has the three "newer version available" checks switched off in `app/build.gradle.kts`.
 
 Agent replies render as markdown through `multiplatform-markdown-renderer` (core and Material 3
-modules only). An image shows as its description, and only web links are links; they open in the
-phone's browser. The Compose BOM is kept on the Compose release that library is built against, so
+modules only). An image shows as its description, and only web links are links, plus, in the chat,
+the `/s/<share>` links an agent's `share_file` gives. A web link opens in the phone's browser. A
+shared file opens over the chat, under a line naming the agent: the app asks the coordinator for a
+one-time link (`share_link`) each time it opens one and loads it once in a web view that lends the
+page no file, app content or new window. A web link the owner taps in the page opens in the
+browser; the page never navigates on its own, and other links go nowhere. A file the web view
+cannot show, as a PDF, is fetched with a second link into the cache's `shared/` folder, replacing
+the one fetched before, checked against its stated length, and handed to an app that opens it,
+typed by its extension when Renoa only knows it as bytes. The Compose BOM is kept on the Compose release that library is built against, so
 the app carries one Compose version.
 
 A fenced code block in the `mermaid` language draws as a diagram. Pele (`assets/diagram/`,
