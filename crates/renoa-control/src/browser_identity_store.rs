@@ -10,6 +10,7 @@ use crate::{
     control_schema::open_connection,
     device_key::DeviceRegistration,
     device_store::{save_sign_in, take_sign_in},
+    identity::Secret as _,
     identity_store::timestamp_millis,
     store::{ControlStore, blocking, id_error, json_error, sqlite_error},
 };

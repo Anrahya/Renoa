@@ -105,10 +105,10 @@ fn long_progress_keeps_the_latest_steps_within_one_discord_message() {
 
 #[test]
 fn a_tool_record_is_named_by_the_plugin_tool_it_runs() {
-    use renoa_control::TaskEventKind;
     use renoa_protocol::{
         CommandId, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
     };
+    use renoa_rcp_wire::TaskEventKind;
 
     let kind = TaskEventKind::ExecutionEvent {
         command_id: CommandId::new(),

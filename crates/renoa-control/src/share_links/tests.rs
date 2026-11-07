@@ -7,7 +7,11 @@ use renoa_protocol::PrincipalId;
 use uuid::Uuid;
 
 use super::SHARE_TICKET_LIFETIME;
-use crate::{control_schema::open_connection, identity::ShareTicket, store::ControlStore};
+use crate::{
+    control_schema::open_connection,
+    identity::{Secret as _, ShareTicket},
+    store::ControlStore,
+};
 
 fn store() -> (tempfile::TempDir, ControlStore) {
     let directory = tempfile::tempdir().expect("directory");

@@ -11,8 +11,8 @@ use std::{
     sync::{Mutex, PoisonError},
 };
 
-use renoa_control::TaskId;
 use renoa_protocol::CommandId;
+use renoa_rcp_wire::TaskId;
 use tokio_util::sync::CancellationToken;
 
 use crate::{

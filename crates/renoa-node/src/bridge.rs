@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_local::{HostFeed, LocalHost};
 use renoa_protocol::{TargetCard, TargetRef};
+use renoa_rcp_wire::{DeviceCredentials, ErrorCode, TaskId};
 use thiserror::Error;
 use tokio::{
     sync::{broadcast, watch},

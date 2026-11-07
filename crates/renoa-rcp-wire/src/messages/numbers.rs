@@ -13,7 +13,8 @@ impl ClientMessage {
     /// The `request_id` of a frame that is not a valid client message, when
     /// it is an object carrying one as an interoperable integer, so the
     /// refusal names the request the surface sent.
-    pub(crate) fn refused_request_id(json: &str) -> Option<u64> {
+    #[must_use]
+    pub fn refused_request_id(json: &str) -> Option<u64> {
         #[derive(serde::Deserialize)]
         struct Envelope {
             request_id: u64,
@@ -28,7 +29,10 @@ impl ClientMessage {
             .filter(|request_id| interoperable(*request_id))
     }
 
-    pub(crate) fn has_interoperable_numbers(&self) -> bool {
+    /// Whether every number in the frame is one every JSON implementation
+    /// reads exactly.
+    #[must_use]
+    pub fn has_interoperable_numbers(&self) -> bool {
         match self {
             Self::Enroll { .. }
             | Self::Authenticate { .. }
@@ -77,7 +81,10 @@ impl ClientMessage {
 }
 
 impl ServerMessage {
-    pub(crate) fn has_interoperable_numbers(&self) -> bool {
+    /// Whether every number in the frame is one every JSON implementation
+    /// reads exactly.
+    #[must_use]
+    pub fn has_interoperable_numbers(&self) -> bool {
         match self {
             Self::Enrolled { .. }
             | Self::Authenticated { .. }

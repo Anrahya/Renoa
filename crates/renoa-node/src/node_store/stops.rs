@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use renoa_control::TaskId;
 use renoa_protocol::CommandId;
+use renoa_rcp_wire::TaskId;
 use rusqlite::TransactionBehavior;
 
 use super::{NodeStore, NodeStoreError, blocking, records::load_record, schema::open_connection};

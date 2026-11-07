@@ -15,15 +15,12 @@
 
 mod store;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    ControlError, DeviceId, ErrorCode, NodeId, ServerMessage,
-    connection::MAX_APPLICATION_MESSAGE_BYTES,
-    control_log,
+    ControlError, ErrorCode, MAX_APPLICATION_MESSAGE_BYTES, NodeId, NoticeKey, SealedNotice,
+    ServerMessage, control_log,
     coordinator::CoordinatorState,
     device_admin::{Authority, SurfaceSession},
     wire::{send_control_error, send_error},
@@ -45,61 +42,6 @@ pub const MAX_SEALED_NOTICE_BYTES: usize = 44_250;
 /// acknowledged the ones before them.
 pub const MAX_LISTED_NOTICES: usize =
     (MAX_APPLICATION_MESSAGE_BYTES - 65) / (MAX_SEALED_NOTICE_BYTES + 98);
-/// An uncompressed SEC1 P-256 point: the tag 0x04 and two 32-byte coordinates.
-const PUBLIC_KEY_BYTES: usize = 65;
-
-/// A device's key for opening the notices sealed to it: an uncompressed SEC1
-/// P-256 public key, base64url without padding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct NoticeKey(String);
-
-impl NoticeKey {
-    #[must_use]
-    pub fn new(encoded: impl Into<String>) -> Self {
-        Self(encoded.into())
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// The key's point, when it is one: 65 bytes starting 0x04. Whether the
-    /// point is on the curve is learned when a node agrees with it.
-    #[must_use]
-    pub fn point(&self) -> Option<[u8; PUBLIC_KEY_BYTES]> {
-        let bytes = URL_SAFE_NO_PAD.decode(&self.0).ok()?;
-        let point: [u8; PUBLIC_KEY_BYTES] = bytes.try_into().ok()?;
-        (point[0] == 0x04).then_some(point)
-    }
-}
-
-/// A device a node may seal a notice to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeviceNoticeKey {
-    pub device_id: DeviceId,
-    pub public_key: NoticeKey,
-}
-
-/// A notice a node puts for one device.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SealedNotice {
-    pub notice_id: Uuid,
-    pub device_id: DeviceId,
-    /// The sealed envelope, base64url without padding.
-    pub sealed: String,
-    pub expires_at_ms: i64,
-}
-
-/// A notice as its device lists it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HeldNotice {
-    pub notice_id: Uuid,
-    pub sealed: String,
-    pub expires_at_ms: i64,
-}
-
 /// A device's notice operations, from a signed-in app.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum NoticeOperation {

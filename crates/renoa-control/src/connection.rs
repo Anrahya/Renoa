@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    ClientMessage, EnrollmentToken, ErrorCode, JSON_WS_VERSION, PeerIdentity, ServerMessage,
+    ClientMessage, EnrollmentToken, ErrorCode, JSON_WS_VERSION, MAX_APPLICATION_MESSAGE_BYTES,
+    PeerIdentity, ServerMessage,
     coordinator::CoordinatorState,
     device_admin::{Authority, SurfaceSession},
     device_handshake::prove_possession,
@@ -35,8 +36,6 @@ const OUTBOUND_CAPACITY: usize = 128;
 const CLOSE_FLUSH_DEADLINE: Duration = Duration::from_secs(2);
 const AUTHENTICATION_DEADLINE: Duration = Duration::from_secs(10);
 const TRANSPORT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-/// The binding's largest reassembled application message.
-pub(crate) const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 
 struct AuthenticatedPeer {
     authority: Authority,
@@ -158,7 +157,7 @@ async fn serve_messages(
             },
             Some(Err(_)) | None => break,
         };
-        let Some(operation) = message.into_operation() else {
+        let Some(operation) = crate::json_ws::into_operation(message) else {
             send_error(
                 outgoing,
                 None,

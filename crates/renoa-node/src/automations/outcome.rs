@@ -1,8 +1,8 @@
 //! How a delivered run's ending becomes the outcome the Host records.
 
-use renoa_control::TaskId;
 use renoa_local::{AutomationRun, RunLanding, RunOutcome, ScheduledRun};
 use renoa_protocol::ExecutionTerminal;
+use renoa_rcp_wire::TaskId;
 
 use crate::{node_log, node_store::CommandOutcome};
 

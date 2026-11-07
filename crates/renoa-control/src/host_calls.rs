@@ -20,8 +20,8 @@ use tokio::{sync::oneshot, time::timeout};
 use uuid::Uuid;
 
 use crate::{
-    ControlError, HostMethod, NodeId, ServerMessage, connection::MAX_APPLICATION_MESSAGE_BYTES,
-    control_log, coordinator::CoordinatorState,
+    ControlError, HostMethod, MAX_APPLICATION_MESSAGE_BYTES, NodeId, ServerMessage, control_log,
+    coordinator::CoordinatorState,
 };
 
 pub(crate) const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);

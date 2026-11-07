@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use renoa_control::HostMethod::{self, Get, Post, Put};
+use renoa_rcp_wire::HostMethod::{self, Get, Post, Put};
 
 use super::{Operation, resolve};
 

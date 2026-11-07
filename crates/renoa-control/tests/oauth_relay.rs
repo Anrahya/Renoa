@@ -4,10 +4,7 @@ use std::{
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, JSON_WS_VERSION, NodeId, PeerIdentity,
-    ServerMessage,
-};
+use renoa_control::{Coordinator, PeerIdentity};
 use renoa_credential_relay_protocol::{
     AcknowledgeCredentialRelayRequest, CREDENTIAL_RELAY_VERSION, CreateCredentialRelayRequest,
     CredentialRelayForm, CredentialRelayId, CredentialRelayKind, CredentialRelayStatus,
@@ -18,6 +15,7 @@ use renoa_oauth_relay_protocol::{
     DEVICE_ID_HEADER, OAUTH_RELAY_VERSION, OAuthRelayId, OAuthRelayStatus,
 };
 use renoa_protocol::{PrincipalId, SurfaceRef};
+use renoa_rcp_wire::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, NodeId, ServerMessage};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -405,7 +403,7 @@ impl TestServer {
     }
 }
 
-async fn enroll(endpoint: &str, token: renoa_control::EnrollmentToken) -> DeviceCredentials {
+async fn enroll(endpoint: &str, token: renoa_rcp_wire::EnrollmentToken) -> DeviceCredentials {
     let (mut socket, _) = connect_async(endpoint).await.expect("connect enrollment");
     socket
         .send(Message::Text(

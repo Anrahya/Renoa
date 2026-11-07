@@ -15,6 +15,7 @@ use crate::{
     ConnectionTicket, ControlError, PasskeyBootstrapToken, control_log,
     device_key::{DeviceRegistration, check_registration_proof},
     device_store::SignedInDevice,
+    identity::Secret as _,
     store::ControlStore,
 };
 use crate::{browser_sessions::SESSION_LIFETIME, identity::BrowserSessionToken};

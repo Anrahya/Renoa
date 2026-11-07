@@ -20,6 +20,7 @@ use url::Url;
 use crate::{
     DeviceCredential, DeviceCredentials, DeviceId, PeerIdentity,
     coordinator::{ControlErrorKind, CoordinatorState},
+    identity::Secret as _,
     oauth_relay_store::{OAuthCallbackAdmission, OAuthCallbackResult},
 };
 
@@ -268,7 +269,7 @@ pub(crate) async fn authenticate_node(
     };
     let Some(credential) = exact_header(headers, header::AUTHORIZATION.as_str())
         .and_then(parse_bearer)
-        .and_then(|value| DeviceCredential::from_encoded(value.to_owned()))
+        .and_then(DeviceCredential::from_encoded)
     else {
         return Err(Box::new(authentication_failed()));
     };

@@ -8,12 +8,11 @@
 
 use std::sync::Arc;
 
-use renoa_control::{ClientMessage, HostMethod};
 use renoa_protocol::PrincipalId;
+use renoa_rcp_wire::{ClientMessage, HostMethod, MAX_APPLICATION_MESSAGE_BYTES};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use super::MAX_APPLICATION_MESSAGE_BYTES;
 use crate::{bridge::NodeRuntime, host_control::Reply, node_log};
 
 pub(super) struct IncomingCall {

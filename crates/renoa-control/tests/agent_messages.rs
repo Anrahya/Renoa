@@ -4,14 +4,15 @@
 use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
-    PeerIdentity, ServerMessage, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSpec,
-};
+use renoa_control::{Coordinator, PeerIdentity, TaskSpec};
 use renoa_protocol::{
     AgentMessageKind, CommandId, CommandInput, ExecutionEvent, ExecutionEventId,
     ExecutionEventKind, ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetCard,
     TargetRef,
+};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
+    TargetSummary, TaskEvent, TaskEventKind, TaskId,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -108,7 +109,7 @@ impl System {
         self.claim(token).await
     }
 
-    async fn claim(&self, token: renoa_control::EnrollmentToken) -> DeviceCredentials {
+    async fn claim(&self, token: renoa_rcp_wire::EnrollmentToken) -> DeviceCredentials {
         let (mut socket, _) = connect_async(&self.url).await.expect("connect");
         send(
             &mut socket,

@@ -1,8 +1,8 @@
 //! Task records become Discord replies: one per finished command, applied
 //! exactly once under the task's cursor.
 
-use renoa_control::{TaskEvent, TaskEventKind};
 use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
+use renoa_rcp_wire::{TaskEvent, TaskEventKind};
 use rusqlite::{OptionalExtension as _, params};
 
 use super::{SurfaceStore, schema, turns::insert_pages};

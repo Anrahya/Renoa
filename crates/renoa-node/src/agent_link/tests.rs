@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use renoa_control::{ClientMessage, ErrorCode, NodeId, TargetSummary, WakeUrgency};
 use renoa_kernel::AgentId;
 use renoa_local::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 use renoa_protocol::TargetRef;
+use renoa_rcp_wire::{ClientMessage, ErrorCode, NodeId, TargetSummary, WakeUrgency};
 use uuid::Uuid;
 
 use super::{AgentLink, Answer, Peers, WakeFailure};

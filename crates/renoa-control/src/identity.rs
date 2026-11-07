@@ -1,13 +1,58 @@
+//! The coordinator's secrets: how each is generated and digested. Only a
+//! digest is ever stored, under a domain that names the secret's kind, so a
+//! digest of one kind never matches another.
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{ControlError, DeviceId};
+use crate::{ConnectionTicket, ControlError, DeviceCredential, EnrollmentToken};
 
 const SECRET_BYTES: usize = 32;
 const SECRET_HEX_LENGTH: usize = SECRET_BYTES * 2;
 const HEX: &[u8; 16] = b"0123456789abcdef";
+
+/// A 256-bit random secret, carried as lowercase hex.
+pub(crate) trait Secret: Sized {
+    /// The digest's domain separator, unique to this kind of secret.
+    const DOMAIN: &'static [u8];
+
+    fn wrap(encoded: String) -> Self;
+
+    fn encoded(&self) -> &str;
+
+    fn generate() -> Result<Self, ControlError> {
+        random_secret().map(Self::wrap)
+    }
+
+    /// The stored form of the secret, or `None` when it is not 64 hex
+    /// characters and so was never issued.
+    fn digest(&self) -> Option<[u8; 32]> {
+        secret_digest(Self::DOMAIN, self.encoded())
+    }
+
+    /// A secret read from a request, when it is well formed.
+    fn from_encoded(value: &str) -> Option<Self> {
+        secret_digest(Self::DOMAIN, value).map(|_| Self::wrap(value.to_owned()))
+    }
+}
+
+macro_rules! wire_secret {
+    ($name:ident, $domain:literal) => {
+        impl Secret for $name {
+            const DOMAIN: &'static [u8] = $domain;
+
+            fn wrap(encoded: String) -> Self {
+                Self::new(encoded)
+            }
+
+            fn encoded(&self) -> &str {
+                self.expose()
+            }
+        }
+    };
+}
 
 macro_rules! secret_type {
     ($name:ident, $domain:literal) => {
@@ -16,16 +61,20 @@ macro_rules! secret_type {
         pub struct $name(String);
 
         impl $name {
-            pub(crate) fn generate() -> Result<Self, ControlError> {
-                random_secret().map(Self)
-            }
-
-            pub(crate) fn digest(&self) -> Option<[u8; 32]> {
-                secret_digest($domain, &self.0)
-            }
-
             #[must_use]
             pub fn expose(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl Secret for $name {
+            const DOMAIN: &'static [u8] = $domain;
+
+            fn wrap(encoded: String) -> Self {
+                Self(encoded)
+            }
+
+            fn encoded(&self) -> &str {
                 &self.0
             }
         }
@@ -38,10 +87,10 @@ macro_rules! secret_type {
     };
 }
 
-secret_type!(EnrollmentToken, b"renoa enrollment v1\0");
-secret_type!(DeviceCredential, b"renoa device credential v1\0");
+wire_secret!(EnrollmentToken, b"renoa enrollment v1\0");
+wire_secret!(DeviceCredential, b"renoa device credential v1\0");
+wire_secret!(ConnectionTicket, b"renoa browser connection ticket v1\0");
 secret_type!(PasskeyBootstrapToken, b"renoa passkey bootstrap v1\0");
-secret_type!(ConnectionTicket, b"renoa browser connection ticket v1\0");
 secret_type!(BrowserSessionToken, b"renoa browser session v1\0");
 secret_type!(BrowserPairingToken, b"renoa browser pairing v1\0");
 secret_type!(ShareTicket, b"renoa share ticket v1\0");
@@ -57,31 +106,6 @@ impl BrowserPairingToken {
         let tag = ring::hmac::sign(&key, proof.as_bytes());
         Some(BrowserSessionToken(encode_secret(tag.as_ref())))
     }
-}
-
-impl BrowserSessionToken {
-    pub(crate) fn from_encoded(value: &str) -> Option<Self> {
-        secret_digest(b"renoa browser session v1\0", value).map(|_| Self(value.to_owned()))
-    }
-}
-
-impl ShareTicket {
-    pub(crate) fn from_encoded(value: &str) -> Option<Self> {
-        secret_digest(b"renoa share ticket v1\0", value).map(|_| Self(value.to_owned()))
-    }
-}
-
-impl DeviceCredential {
-    pub(crate) fn from_encoded(value: String) -> Option<Self> {
-        secret_digest(b"renoa device credential v1\0", &value).map(|_| Self(value))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceCredentials {
-    pub device_id: DeviceId,
-    pub credential: DeviceCredential,
 }
 
 /// A fresh 256-bit challenge as lowercase hex. The peer it is sent to may read

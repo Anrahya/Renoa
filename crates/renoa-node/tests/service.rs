@@ -11,8 +11,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use renoa_control::{DeviceCredentials, NodeId, PeerIdentity};
+use renoa_control::PeerIdentity;
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal};
+use renoa_rcp_wire::{DeviceCredentials, NodeId};
 use serde_json::json;
 use tokio::time::timeout;
 
@@ -131,13 +132,13 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
         let events = collect_through_terminal(&mut surface).await;
         assert!(events.iter().any(|event| matches!(
             &event.kind,
-            renoa_control::TaskEventKind::ExecutionEvent { event, .. }
+            renoa_rcp_wire::TaskEventKind::ExecutionEvent { event, .. }
                 if matches!(&event.kind, ExecutionEventKind::AssistantMessage { text }
                     if text == "The durable proof was read.")
         )));
         assert!(matches!(
             events.last().map(|event| &event.kind),
-            Some(renoa_control::TaskEventKind::ExecutionEvent { event, .. })
+            Some(renoa_rcp_wire::TaskEventKind::ExecutionEvent { event, .. })
                 if matches!(event.kind, ExecutionEventKind::ExecutionTerminated {
                     terminal: ExecutionTerminal::Completed
                 })

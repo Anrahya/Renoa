@@ -6,12 +6,12 @@ mod support;
 
 use std::time::Duration;
 
-use renoa_control::{TargetSummary, TaskEventKind};
 use renoa_kernel::AgentId;
 use renoa_node::RenoaNode;
 use renoa_protocol::{
     Author, CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, SurfaceRef,
 };
+use renoa_rcp_wire::{TargetSummary, TaskEventKind};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
@@ -477,7 +477,7 @@ async fn tool_calls_and_intermediate_messages_reach_surfaces_while_the_turn_runs
 }
 
 fn execution_kinds(
-    events: &[renoa_control::TaskEvent],
+    events: &[renoa_rcp_wire::TaskEvent],
     command_id: CommandId,
 ) -> Vec<ExecutionEventKind> {
     events
@@ -811,7 +811,7 @@ async fn independently_enrolled_surfaces_continue_one_host_session() {
 }
 
 fn assert_execution_event(
-    events: &[renoa_control::TaskEvent],
+    events: &[renoa_rcp_wire::TaskEvent],
     command_id: CommandId,
     predicate: impl Fn(&ExecutionEventKind) -> bool,
 ) {

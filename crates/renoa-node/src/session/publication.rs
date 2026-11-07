@@ -4,11 +4,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use renoa_control::{ClientMessage, TaskId};
 use renoa_protocol::{CommandId, ExecutionEvent};
+use renoa_rcp_wire::{ClientMessage, MAX_APPLICATION_MESSAGE_BYTES, TaskId};
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
-use super::{MAX_APPLICATION_MESSAGE_BYTES, Socket, send_client};
+use super::{Socket, send_client};
 use crate::{
     bridge::{LIVE_FRAME_CAPACITY, NodeError, NodeRuntime},
     live::LiveFrame,

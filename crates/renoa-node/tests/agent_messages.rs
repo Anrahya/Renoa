@@ -11,9 +11,9 @@ mod support;
 
 use std::time::Duration;
 
-use renoa_control::{TaskEvent, TaskEventKind};
 use renoa_node::RenoaNode;
 use renoa_protocol::{AgentMessageKind, CommandEnvelope, CommandId, ExecutionEventKind};
+use renoa_rcp_wire::{TaskEvent, TaskEventKind};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 

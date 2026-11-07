@@ -30,10 +30,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_local::{AutomationScheduler, RunOutcome, RunStatus, ScheduledRun, TurnObservation};
 use renoa_protocol::{CommandId, CommandInput};
 use renoa_rcp_client::{ClientError, Connection};
+use renoa_rcp_wire::{DeviceCredentials, ErrorCode, TaskId};
 use tokio_util::sync::CancellationToken;
 
 mod failures;

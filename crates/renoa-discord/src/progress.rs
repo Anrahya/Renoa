@@ -19,8 +19,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use renoa_control::TaskEventKind;
 use renoa_protocol::ExecutionEventKind;
+use renoa_rcp_wire::TaskEventKind;
 use tokio::{
     sync::mpsc,
     time::{Interval, MissedTickBehavior},

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use renoa_control::TaskId;
+use renoa_rcp_wire::TaskId;
 use rusqlite::{OptionalExtension as _, TransactionBehavior};
 use uuid::Uuid;
 

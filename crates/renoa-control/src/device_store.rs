@@ -13,6 +13,7 @@ use crate::{
     browser_ticket_store::{advance_passkey, insert_passkey},
     control_schema::open_connection,
     device_key::{DevicePublicKey, DeviceRegistration},
+    identity::Secret as _,
     identity_store::timestamp_millis,
     store::{ControlStore, blocking, id_error, json_error, sqlite_error},
 };

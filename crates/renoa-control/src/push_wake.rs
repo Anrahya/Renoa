@@ -20,12 +20,11 @@ use std::{sync::Arc, time::SystemTime};
 
 use renoa_protocol::{CommandEnvelope, ExecutionEventKind, ExecutionTerminal, PrincipalId};
 use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    ControlError, NodeId, ServerMessage, TaskEventKind, control_log,
+    ControlError, NodeId, ServerMessage, TaskEventKind, WakeUrgency, control_log,
     control_schema::open_connection,
     coordinator::CoordinatorState,
     identity_store::timestamp_millis,
@@ -34,23 +33,11 @@ use crate::{
     wire::send_control_error,
 };
 
-/// How loudly a node asks to wake its owner. There is no quiet value: what
-/// can wait until the owner opens the app asks for no wake.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WakeUrgency {
-    /// A wake like a reply's.
-    Soon,
-    /// A wake that rings.
-    Now,
-}
-
-impl WakeUrgency {
-    const fn reason(self) -> &'static str {
-        match self {
-            Self::Soon => "requested_soon",
-            Self::Now => "requested_now",
-        }
+/// The reason a requested wake is recorded under.
+const fn requested_reason(urgency: WakeUrgency) -> &'static str {
+    match urgency {
+        WakeUrgency::Soon => "requested_soon",
+        WakeUrgency::Now => "requested_now",
     }
 }
 
@@ -165,7 +152,7 @@ pub(crate) async fn request(
                         "principal_id": principal_id,
                         "node_id": node_id,
                         "wake_id": wake_id,
-                        "reason": urgency.reason(),
+                        "reason": requested_reason(urgency),
                     }),
                 );
                 state.push_wakes.notify_one();

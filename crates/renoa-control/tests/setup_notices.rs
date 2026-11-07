@@ -6,11 +6,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt as _, StreamExt as _};
 use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, DeviceNoticeKey, ErrorCode, HeldNotice,
-    JSON_WS_VERSION, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, NodeId, NoticeKey, PeerIdentity,
-    SealedNotice, ServerMessage, TaskId, TaskSpec,
+    Coordinator, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, PeerIdentity, TaskSpec,
 };
 use renoa_protocol::{PrincipalId, SurfaceRef, TargetRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, DeviceNoticeKey, ErrorCode, HeldNotice, JSON_WS_VERSION,
+    NodeId, NoticeKey, SealedNotice, ServerMessage, TaskId,
+};
 use ring::{
     rand::SystemRandom,
     signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair as _},
@@ -99,7 +101,7 @@ impl Fixture {
         self.claim(token).await
     }
 
-    async fn claim(&self, token: renoa_control::EnrollmentToken) -> DeviceCredentials {
+    async fn claim(&self, token: renoa_rcp_wire::EnrollmentToken) -> DeviceCredentials {
         let (mut socket, _) = connect_async(&self.ws).await.expect("connect to enroll");
         send(
             &mut socket,

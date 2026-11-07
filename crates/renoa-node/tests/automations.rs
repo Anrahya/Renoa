@@ -7,7 +7,6 @@ mod support;
 
 use std::{sync::Arc, time::Duration};
 
-use renoa_control::{TaskEvent, TaskEventKind, TaskId};
 use renoa_kernel::AgentId;
 use renoa_local::{
     AutomationMutation, AutomationRecord, AutomationSchedule, AutomationSpec, FeedKind, HostFeed,
@@ -15,6 +14,7 @@ use renoa_local::{
 };
 use renoa_node::RenoaNode;
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef};
+use renoa_rcp_wire::{TaskEvent, TaskEventKind, TaskId};
 use rusqlite::OptionalExtension as _;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;

@@ -4,13 +4,13 @@
 use std::{collections::HashSet, path::Path, sync::Arc};
 
 use renoa_agent::ContentBlock;
-use renoa_control::TaskId;
 use renoa_kernel::AgentId;
 use renoa_local::{
     AgentSession, LocalHost, LocalHostError, LocalTurnOutcome, TurnObservation, UploadError,
     Uploads,
 };
 use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEventKind, ExecutionTerminal};
+use renoa_rcp_wire::TaskId;
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
 

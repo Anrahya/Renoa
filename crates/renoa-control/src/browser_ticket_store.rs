@@ -7,6 +7,7 @@ use webauthn_rs::prelude::{AuthenticationResult, Passkey};
 use crate::{
     ConnectionTicket, ControlError, PeerIdentity,
     control_schema::open_connection,
+    identity::Secret as _,
     identity_store::timestamp_millis,
     store::{ControlStore, blocking, id_error, json_error, sqlite_error},
 };

@@ -14,6 +14,7 @@ getrandom.workspace = true
 renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol", version = "0.1.0" }
 renoa-oauth-relay-protocol = { path = "../renoa-oauth-relay-protocol", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
+renoa-rcp-wire = { path = "../renoa-rcp-wire", version = "0.1.0" }
 renoa-telemetry = { path = "../renoa-telemetry", version = "0.1.0" }
 reqwest.workspace = true
 ring.workspace = true

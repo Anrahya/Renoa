@@ -7,11 +7,11 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    BrowserSessions, ClientMessage, Coordinator, DeviceCredentials, ErrorCode, HostMethod,
-    JSON_WS_VERSION, NodeId, PeerIdentity, ServerMessage,
-};
+use renoa_control::{BrowserSessions, Coordinator, PeerIdentity};
 use renoa_protocol::{PrincipalId, SurfaceRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, ErrorCode, HostMethod, JSON_WS_VERSION, NodeId, ServerMessage,
+};
 use reqwest::{Client, Method, RequestBuilder, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle, time::timeout};

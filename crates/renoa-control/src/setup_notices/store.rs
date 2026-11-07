@@ -7,12 +7,10 @@ use renoa_protocol::PrincipalId;
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use uuid::Uuid;
 
-use super::{
-    DeviceNoticeKey, HeldNotice, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, NoticeKey,
-    SealedNotice,
-};
+use super::{MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES};
 use crate::{
-    ControlError, DeviceId, NodeId, PeerIdentity,
+    ControlError, DeviceId, DeviceNoticeKey, HeldNotice, NodeId, NoticeKey, PeerIdentity,
+    SealedNotice,
     control_schema::open_connection,
     identity_store::timestamp_millis,
     node_ownership::node_owner,
@@ -213,7 +211,7 @@ impl ControlStore {
                 let (device_id, public_key) = row.map_err(sqlite_error)?;
                 keys.push(DeviceNoticeKey {
                     device_id: DeviceId::from_uuid(device_id.parse().map_err(id_error)?),
-                    public_key: NoticeKey(public_key),
+                    public_key: NoticeKey::new(public_key),
                 });
             }
             Ok(keys)

@@ -769,10 +769,10 @@ async fn upload(f: &Fixture, bytes: &[u8]) -> Uuid {
 /// through the command's end.
 async fn send_attached(
     surface: &mut support::Socket,
-    task: renoa_control::TaskId,
+    task: renoa_rcp_wire::TaskId,
     text: &str,
     attachment: renoa_protocol::Attachment,
-) -> Vec<renoa_control::TaskEvent> {
+) -> Vec<renoa_rcp_wire::TaskEvent> {
     use renoa_protocol::{Author, CommandId, CommandInput};
 
     support::submit_input_when_node_is_online(
@@ -813,8 +813,8 @@ fn last_user_content(f: &Fixture) -> Vec<Value> {
 #[tokio::test]
 async fn a_photo_uploaded_through_the_relay_reaches_the_agent_and_its_workspace() {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use renoa_control::TaskEventKind;
     use renoa_protocol::{Attachment, ExecutionEventKind};
+    use renoa_rcp_wire::TaskEventKind;
 
     within(Box::pin(async {
         let f = Fixture::serving().await;

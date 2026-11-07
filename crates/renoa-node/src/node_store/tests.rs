@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use renoa_control::TaskId;
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
 };
+use renoa_rcp_wire::TaskId;
 use uuid::Uuid;
 
 use super::{NodeStore, StopRecord, TargetBinding};

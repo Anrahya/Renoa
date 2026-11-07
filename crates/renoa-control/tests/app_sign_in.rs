@@ -7,11 +7,12 @@ use std::{path::Path, time::Duration};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    AndroidApps, ClientMessage, Coordinator, DeviceCredentials, DeviceId, DeviceSummary, ErrorCode,
-    HostMethod, JSON_WS_VERSION, PeerIdentity, ServerMessage,
-};
+use renoa_control::{AndroidApps, Coordinator, PeerIdentity};
 use renoa_protocol::{PrincipalId, SurfaceRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, DeviceId, DeviceSummary, ErrorCode, HostMethod,
+    JSON_WS_VERSION, ServerMessage,
+};
 use reqwest::{StatusCode, header};
 use ring::{
     rand::SystemRandom,
@@ -1496,7 +1497,7 @@ async fn serving_node(server: &Running, owner: PrincipalId) -> Socket {
     let token = server
         .coordinator
         .create_node_enrollment(
-            renoa_control::NodeId::new(),
+            renoa_rcp_wire::NodeId::new(),
             owner,
             std::time::SystemTime::now() + WAIT,
         )

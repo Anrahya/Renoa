@@ -18,10 +18,10 @@ use std::{
 };
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture};
-use renoa_control::{DeviceNoticeKey, SealedNotice};
 use renoa_discord::{OperatorChannel, SetupDelivery};
 use renoa_kernel::{CommandId, SessionId};
 use renoa_local::{LocalHost, RenoaHome, SetupLink};
+use renoa_rcp_wire::{DeviceNoticeKey, SealedNotice};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 

@@ -3,8 +3,8 @@ use std::{
     sync::Arc,
 };
 
-use renoa_control::TaskId;
 use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent, ExecutionEventKind, ExecutionId};
+use renoa_rcp_wire::TaskId;
 use rusqlite::{TransactionBehavior, params};
 use thiserror::Error;
 use uuid::Uuid;

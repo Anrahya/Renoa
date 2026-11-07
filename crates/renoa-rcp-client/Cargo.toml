@@ -7,8 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 futures-util.workspace = true
-renoa-control = { path = "../renoa-control", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
+renoa-rcp-wire = { path = "../renoa-rcp-wire", version = "0.1.0" }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -16,6 +16,7 @@ tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
+renoa-control = { path = "../renoa-control", version = "0.1.0" }
 tempfile.workspace = true
 
 [lints]

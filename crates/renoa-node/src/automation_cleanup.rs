@@ -6,10 +6,10 @@
 //! pass. An automation that answered in a conversation it was created in never
 //! had a task of its own; deleting its absent task succeeds and the mark goes.
 
-use renoa_control::TaskId;
 use renoa_kernel::AgentId;
 use renoa_local::AutomationScheduler;
 use renoa_rcp_client::{ClientError, Connection};
+use renoa_rcp_wire::TaskId;
 use uuid::Uuid;
 
 use crate::{

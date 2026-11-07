@@ -1,14 +1,15 @@
-use renoa_control::{
-    ClientMessage, ConnectionTicket, DeviceId, DeviceNoticeKey, DeviceSummary, ErrorCode,
-    HeldNotice, HostMethod, JSON_WS_VERSION, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, NodeId,
-    NoticeKey, PushToken, SealedNotice, ServerMessage, StopOutcome, TargetSummary, TaskEvent,
-    TaskEventId, TaskEventKind, TaskId, TaskStatus, TaskSummary, WakeUrgency,
-};
+use renoa_control::{MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES};
 use renoa_protocol::{
     AgentMessageKind, AgentOrigin, CommandEnvelope, CommandId, CommandInput, LiveActivity,
     PrincipalId, SurfaceRef, TargetCard, TargetRef,
 };
 use renoa_protocol::{ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId};
+use renoa_rcp_wire::{
+    ClientMessage, ConnectionTicket, DeviceId, DeviceNoticeKey, DeviceSummary, ErrorCode,
+    HeldNotice, HostMethod, JSON_WS_VERSION, NodeId, NoticeKey, PushToken, SealedNotice,
+    ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId,
+    TaskStatus, TaskSummary, WakeUrgency,
+};
 use serde_json::json;
 use uuid::Uuid;
 

@@ -6,7 +6,7 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use crate::{
     BrowserPairingToken, ControlError,
     browser_sessions::{SESSION_LIFETIME, existing_connection},
-    identity::BrowserSessionToken,
+    identity::{BrowserSessionToken, Secret as _},
     identity_store::timestamp_millis,
     store::{blocking, id_error, sqlite_error},
 };

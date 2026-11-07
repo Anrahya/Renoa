@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_control::{ClientMessage, EnrollmentToken, JSON_WS_VERSION, ServerMessage};
+use renoa_rcp_wire::{ClientMessage, EnrollmentToken, JSON_WS_VERSION, ServerMessage};
 use serde::Deserialize;
 use tokio_tungstenite::{
     connect_async_with_config,

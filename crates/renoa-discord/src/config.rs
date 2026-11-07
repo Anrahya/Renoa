@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use renoa_control::DeviceCredentials;
+use renoa_rcp_wire::DeviceCredentials;
 use serde::Deserialize;
 
 use crate::{DiscordError, connection::Connection};

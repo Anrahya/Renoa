@@ -14,7 +14,7 @@ use crate::{
     BrowserPairingToken, ConnectionTicket, ControlError,
     browser_identity::TicketGrant,
     browser_ticket_store::insert_ticket,
-    identity::BrowserSessionToken,
+    identity::{BrowserSessionToken, Secret as _},
     identity_store::timestamp_millis,
     store::{blocking, id_error, sqlite_error},
 };

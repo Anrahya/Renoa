@@ -5,15 +5,14 @@
 //! token is opaque to RCP: it is stored to be sent to the push provider and is
 //! never logged or echoed in an error.
 
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 use renoa_protocol::PrincipalId;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::{
-    ControlError, DeviceId, ErrorCode, PeerIdentity, ServerMessage, control_log,
+    ControlError, DeviceId, ErrorCode, PeerIdentity, PushToken, ServerMessage, control_log,
     control_schema::open_connection,
     coordinator::CoordinatorState,
     device_admin::SurfaceSession,
@@ -23,29 +22,6 @@ use crate::{
 };
 
 const MAX_TOKEN_BYTES: usize = 4096;
-
-/// A device's push token as the push provider issued it.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PushToken(String);
-
-impl PushToken {
-    #[must_use]
-    pub fn new(token: impl Into<String>) -> Self {
-        Self(token.into())
-    }
-
-    #[must_use]
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for PushToken {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("PushToken([REDACTED])")
-    }
-}
 
 /// The push services a token may belong to. Only FCM exists; another
 /// platform adds a variant, or never registers and keeps a socket.
@@ -76,8 +52,9 @@ fn validate(provider: &str, token: &PushToken) -> Result<PushProvider, ControlEr
             "{named} is not supported; expected \"fcm\""
         )));
     }
-    let length = token.0.len();
-    if length == 0 || length > MAX_TOKEN_BYTES || !token.0.bytes().all(|b| b.is_ascii_graphic()) {
+    let token = token.expose();
+    let length = token.len();
+    if length == 0 || length > MAX_TOKEN_BYTES || !token.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(ControlError::invalid(format!(
             "token must be 1 to {MAX_TOKEN_BYTES} bytes of printable ASCII without spaces; \
              received {length} bytes"
@@ -201,7 +178,7 @@ impl ControlStore {
                 let (device_id, token) = row.map_err(sqlite_error)?;
                 targets.push(PushTarget {
                     device_id: DeviceId::from_uuid(device_id.parse().map_err(id_error)?),
-                    token: PushToken(token),
+                    token: PushToken::new(token),
                 });
             }
             Ok(targets)
