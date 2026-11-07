@@ -1,14 +1,15 @@
 use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
-    NodeId, PeerIdentity, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind,
-    TaskId, TaskSpec, TaskStatus, TaskSummary,
-};
+use renoa_control::{Coordinator, PeerIdentity, TaskSpec};
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
     ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetCard, TargetRef,
+};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION, NodeId,
+    ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskStatus,
+    TaskSummary,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;

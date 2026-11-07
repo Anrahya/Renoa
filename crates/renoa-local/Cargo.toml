@@ -44,6 +44,7 @@ uuid.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 renoa-control = { path = "../renoa-control", version = "0.1.0" }
+renoa-rcp-wire = { path = "../renoa-rcp-wire", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 renoa-registry = { path = "../renoa-registry", version = "0.1.0" }
 tokio-tungstenite.workspace = true

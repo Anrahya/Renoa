@@ -9,10 +9,10 @@ use std::{
 };
 
 use renoa_control::{
-    AndroidApps, Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity,
-    PushSettings, TaskId, TaskSpec,
+    AndroidApps, Coordinator, PasskeyBootstrapToken, PeerIdentity, PushSettings, TaskSpec,
 };
 use renoa_protocol::{PrincipalId, SurfaceRef, TargetRef};
+use renoa_rcp_wire::{EnrollmentToken, NodeId, TaskId};
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;

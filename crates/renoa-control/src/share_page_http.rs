@@ -27,7 +27,7 @@ use crate::{
     HostMethod, control_log,
     coordinator::CoordinatorState,
     host_calls::{HostReply, HostRequest, call},
-    identity::ShareTicket,
+    identity::{Secret as _, ShareTicket},
 };
 
 /// How a shared file may run: scripts only, in an opaque origin, never the

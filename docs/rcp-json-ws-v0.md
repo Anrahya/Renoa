@@ -7,7 +7,9 @@ first implemented transport binding. The current binding version is `18`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
-browser surfaces, and a TypeScript Pi node. Cross-language tests cover both authenticated roles,
+browser surfaces, and a TypeScript Pi node. The Rust frames and the records they carry are
+defined once, in `renoa-rcp-wire`, which the coordinator and every Rust client
+share. Cross-language tests cover both authenticated roles,
 discovery and authorization, replay, live reattachment, offline-node rejection,
 lost acknowledgements, `replay_required`, JavaScript's exact integer limit, and
 a real Pi OpenAI-compatible turn.

@@ -12,8 +12,8 @@ use std::{
 };
 
 use renoa_agent::{AgentEvent, AgentEventSink, AssistantContent, BoxFuture};
-use renoa_control::TaskId;
 use renoa_protocol::{CommandId, ExecutionEventKind, LiveActivity};
+use renoa_rcp_wire::TaskId;
 
 use crate::{
     bridge::NodeRuntime,

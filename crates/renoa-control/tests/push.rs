@@ -17,13 +17,14 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    BrowserSessions, ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION,
-    NodeId, PeerIdentity, PushSettings, PushToken, ServerMessage, TaskId, TaskSpec, WakeUrgency,
-};
+use renoa_control::{BrowserSessions, Coordinator, PeerIdentity, PushSettings, TaskSpec};
 use renoa_protocol::{
     Author, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
     ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
+};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId, PushToken, ServerMessage,
+    TaskId, WakeUrgency,
 };
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -596,7 +597,7 @@ impl Fixture {
         self.claim(token).await
     }
 
-    async fn claim(&self, token: renoa_control::EnrollmentToken) -> DeviceCredentials {
+    async fn claim(&self, token: renoa_rcp_wire::EnrollmentToken) -> DeviceCredentials {
         let (mut socket, _) = connect_async(&self.ws).await.expect("connect to enroll");
         send(
             &mut socket,

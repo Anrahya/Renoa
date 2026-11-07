@@ -10,6 +10,7 @@ use crate::{
     control_schema::open_connection,
     coordinator::ControlErrorKind,
     device_key::{DevicePublicKey, DeviceRegistration},
+    identity::Secret as _,
     store::ControlStore,
 };
 

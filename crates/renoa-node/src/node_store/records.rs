@@ -3,10 +3,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use renoa_control::TaskId;
 use renoa_protocol::{
     CommandId, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
 };
+use renoa_rcp_wire::TaskId;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{ExecutionRecord, NodeStoreError, TargetBinding, parse_uuid, to_i64};

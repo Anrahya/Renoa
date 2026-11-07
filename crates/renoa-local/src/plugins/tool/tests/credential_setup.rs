@@ -6,11 +6,9 @@ use std::{
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock, ToolCall, invoke_tool};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, JSON_WS_VERSION, NodeId, PeerIdentity,
-    ServerMessage,
-};
+use renoa_control::{Coordinator, PeerIdentity};
 use renoa_kernel::{CommandId, SessionId};
+use renoa_rcp_wire::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, NodeId, ServerMessage};
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use serde_json::{Value, json};
 use tempfile::tempdir;
@@ -503,7 +501,7 @@ async fn submit_encrypted(http: &reqwest::Client, update: &Value) {
     assert!(response.status().is_success());
 }
 
-async fn enroll(endpoint: &str, token: renoa_control::EnrollmentToken) -> DeviceCredentials {
+async fn enroll(endpoint: &str, token: renoa_rcp_wire::EnrollmentToken) -> DeviceCredentials {
     let (mut socket, _) = connect_async(endpoint).await.expect("connect enrollment");
     socket
         .send(Message::Text(

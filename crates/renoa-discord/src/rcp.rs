@@ -7,9 +7,9 @@
 
 use std::{sync::Arc, time::Duration};
 
-use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_protocol::{CommandId, CommandInput, TargetRef};
 use renoa_rcp_client::{ClientError, Connection, Events};
+use renoa_rcp_wire::{DeviceCredentials, ErrorCode, TaskId};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 

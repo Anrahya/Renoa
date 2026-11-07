@@ -13,13 +13,11 @@ use crate::{
     store::{id_error, json_error, sqlite_error},
 };
 
-impl TaskStatus {
-    /// The status once a command's execution has ended in `terminal`.
-    pub(crate) const fn after(terminal: &ExecutionTerminal) -> Self {
-        match terminal {
-            ExecutionTerminal::Completed | ExecutionTerminal::Cancelled { .. } => Self::Idle,
-            ExecutionTerminal::Failed { .. } => Self::Failed,
-        }
+/// The status once a command's execution has ended in `terminal`.
+pub(crate) const fn after(terminal: &ExecutionTerminal) -> TaskStatus {
+    match terminal {
+        ExecutionTerminal::Completed | ExecutionTerminal::Cancelled { .. } => TaskStatus::Idle,
+        ExecutionTerminal::Failed { .. } => TaskStatus::Failed,
     }
 }
 
@@ -42,9 +40,7 @@ pub(crate) fn derive(connection: &Connection, task_id: TaskId) -> Result<TaskSta
         return Ok(TaskStatus::Working);
     }
     let command_id = CommandId::from_uuid(command_id.parse().map_err(id_error)?);
-    Ok(TaskStatus::after(&terminal_of(
-        connection, task_id, command_id,
-    )?))
+    Ok(after(&terminal_of(connection, task_id, command_id)?))
 }
 
 /// The terminal record of a settled command. It follows the command's other

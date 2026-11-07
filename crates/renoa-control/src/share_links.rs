@@ -5,7 +5,6 @@
 //! expired, until the next link is issued.
 
 use std::{
-    fmt,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -16,11 +15,11 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    ControlError, ErrorCode, ServerMessage,
+    ControlError, ErrorCode, ServerMessage, ShareLink,
     control_schema::open_connection,
     coordinator::CoordinatorState,
     device_admin::SurfaceSession,
-    identity::ShareTicket,
+    identity::{Secret as _, ShareTicket},
     identity_store::timestamp_millis,
     store::{ControlStore, blocking, id_error, sqlite_error},
     wire::{send_control_error, send_error},
@@ -29,25 +28,6 @@ use crate::{
 /// How long a link works once issued: the app opens it as soon as it has it,
 /// and a slow phone connection still reaches it in time.
 pub(crate) const SHARE_TICKET_LIFETIME: Duration = Duration::from_secs(120);
-
-/// A one-time link: a path on the coordinator's origin whose query holds a
-/// ticket, so it is never printed.
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub struct ShareLink(String);
-
-impl ShareLink {
-    #[must_use]
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for ShareLink {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ShareLink([REDACTED])")
-    }
-}
 
 /// Unused tickets, by digest, each for one share and the principal it reads as.
 pub(crate) fn create_schema(connection: &Connection) -> Result<(), ControlError> {
@@ -89,7 +69,7 @@ pub(crate) async fn issue(
         .await;
     match issued {
         Ok(ticket) => {
-            let path = ShareLink(format!("/s/{share_id}?ticket={}", ticket.expose()));
+            let path = ShareLink::new(format!("/s/{share_id}?ticket={}", ticket.expose()));
             let _ = outgoing
                 .send(ServerMessage::ShareLinkIssued { request_id, path })
                 .await;

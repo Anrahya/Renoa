@@ -1,310 +1,270 @@
-use renoa_protocol::{
-    CommandEnvelope, CommandId, CommandInput, ExecutionEvent, LiveActivity, TargetCard, TargetRef,
-};
-use serde::{Deserialize, Serialize};
-
-use renoa_protocol::PrincipalId;
-use uuid::Uuid;
+//! What each client message asks the coordinator to do, and which role may
+//! ask it.
 
 use crate::{
-    ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
-    HostMethod, NodeId, PushToken, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary,
-    WakeUrgency,
-    setup_notices::{DeviceNoticeKey, HeldNotice, NoticeKey, SealedNotice},
+    ClientMessage,
+    agent_messages::OutgoingMessage,
+    operations::{NodeOperation, PushOperation, SurfaceOperation},
+    setup_notices::{NodeNoticeOperation, NoticeOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 18;
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive table maps every client message to its role"
+)]
+pub(crate) fn into_operation(message: ClientMessage) -> Option<JsonOperation> {
+    let operation = match message {
+        ClientMessage::AdvertiseTargets { targets } => NodeOperation::AdvertiseTargets { targets },
+        ClientMessage::AcknowledgeExecution {
+            task_id,
+            command_id,
+        } => NodeOperation::AcknowledgeExecution {
+            task_id,
+            command_id,
+        },
+        ClientMessage::PublishExecutionEvents {
+            task_id,
+            command_id,
+            events,
+        } => NodeOperation::PublishExecutionEvents {
+            task_id,
+            command_id,
+            events,
+        },
+        ClientMessage::AcknowledgeStop {
+            task_id,
+            command_id,
+        } => NodeOperation::AcknowledgeStop {
+            task_id,
+            command_id,
+        },
+        ClientMessage::PublishLiveActivity {
+            task_id,
+            command_id,
+            activity,
+        } => NodeOperation::PublishLiveActivity {
+            task_id,
+            command_id,
+            activity,
+        },
+        ClientMessage::SendAgentMessage {
+            request_id,
+            from_command,
+            message_id,
+            node_id,
+            target,
+            text,
+        } => NodeOperation::SendAgentMessage {
+            request_id,
+            message: OutgoingMessage {
+                from_command,
+                message_id,
+                to_node: node_id,
+                to_target: target,
+                text,
+            },
+        },
+        ClientMessage::RequestWake {
+            request_id,
+            wake_id,
+            urgency,
+        } => NodeOperation::RequestWake {
+            request_id,
+            wake_id,
+            urgency,
+        },
+        ClientMessage::ListNoticeKeys { request_id } => NodeOperation::Notice {
+            request_id,
+            operation: NodeNoticeOperation::ListKeys,
+        },
+        ClientMessage::PutNotice { request_id, notice } => NodeOperation::Notice {
+            request_id,
+            operation: NodeNoticeOperation::Put(notice),
+        },
+        ClientMessage::WithdrawNotices {
+            request_id,
+            notice_ids,
+        } => NodeOperation::Notice {
+            request_id,
+            operation: NodeNoticeOperation::Withdraw(notice_ids),
+        },
+        ClientMessage::ServeHostControl => NodeOperation::ServeHostControl,
+        ClientMessage::CompleteHostCall {
+            call_id,
+            status,
+            body,
+        } => NodeOperation::CompleteHostCall {
+            call_id,
+            status,
+            body,
+        },
+        ClientMessage::Enroll { .. }
+        | ClientMessage::Authenticate { .. }
+        | ClientMessage::AuthenticateTicket { .. }
+        | ClientMessage::DeviceProof { .. } => return None,
+        ClientMessage::ListTargets { request_id } => {
+            return Some(JsonOperation::ListTargets { request_id });
+        }
+        ClientMessage::ListTasks { .. }
+        | ClientMessage::ListDevices { .. }
+        | ClientMessage::RevokeDevice { .. }
+        | ClientMessage::OpenTask { .. }
+        | ClientMessage::Attach { .. }
+        | ClientMessage::Submit { .. }
+        | ClientMessage::StopCommand { .. }
+        | ClientMessage::DeleteTask { .. }
+        | ClientMessage::CallHost { .. }
+        | ClientMessage::ShareLink { .. }
+        | ClientMessage::SetPushToken { .. }
+        | ClientMessage::ClearPushToken { .. }
+        | ClientMessage::SetNoticeKey { .. }
+        | ClientMessage::ListNotices { .. }
+        | ClientMessage::AcknowledgeNotice { .. } => return into_surface_operation(message),
+    };
+    Some(JsonOperation::Node(operation))
+}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ClientMessage {
-    Enroll {
-        version: u32,
-        token: EnrollmentToken,
-    },
-    Authenticate {
-        version: u32,
-        credentials: DeviceCredentials,
-    },
-    AuthenticateTicket {
-        version: u32,
-        ticket: ConnectionTicket,
-    },
-    /// The signature a key-bound device answers its `device_challenge` with.
-    DeviceProof {
-        signature: String,
-    },
-    ListTasks {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive table maps every surface message to its operation"
+)]
+fn into_surface_operation(message: ClientMessage) -> Option<JsonOperation> {
+    let (request_id, operation) = match message {
+        ClientMessage::ListTasks { request_id } => (request_id, SurfaceOperation::ListTasks),
+        ClientMessage::OpenTask {
+            request_id,
+            task_id,
+            node_id,
+            target,
+        } => (
+            request_id,
+            SurfaceOperation::OpenTask {
+                task_id,
+                node_id,
+                target,
+            },
+        ),
+        ClientMessage::Attach {
+            request_id,
+            task_id,
+            after_sequence,
+            live,
+        } => (
+            request_id,
+            SurfaceOperation::Attach {
+                task_id,
+                after_sequence,
+                live,
+            },
+        ),
+        ClientMessage::Submit {
+            request_id,
+            task_id,
+            command_id,
+            input,
+        } => (
+            request_id,
+            SurfaceOperation::Submit {
+                task_id,
+                command_id,
+                input,
+            },
+        ),
+        ClientMessage::StopCommand {
+            request_id,
+            task_id,
+            command_id,
+        } => (
+            request_id,
+            SurfaceOperation::StopCommand {
+                task_id,
+                command_id,
+            },
+        ),
+        ClientMessage::DeleteTask {
+            request_id,
+            task_id,
+        } => (request_id, SurfaceOperation::DeleteTask { task_id }),
+        ClientMessage::ListDevices { request_id } => (request_id, SurfaceOperation::ListDevices),
+        ClientMessage::RevokeDevice {
+            request_id,
+            device_id,
+        } => (request_id, SurfaceOperation::RevokeDevice { device_id }),
+        ClientMessage::CallHost {
+            request_id,
+            method,
+            path,
+            body,
+        } => (
+            request_id,
+            SurfaceOperation::CallHost { method, path, body },
+        ),
+        ClientMessage::ShareLink {
+            request_id,
+            share_id,
+        } => (request_id, SurfaceOperation::ShareLink { share_id }),
+        ClientMessage::SetPushToken {
+            request_id,
+            provider,
+            token,
+        } => (
+            request_id,
+            SurfaceOperation::Push(PushOperation::Set { provider, token }),
+        ),
+        ClientMessage::ClearPushToken { request_id } => {
+            (request_id, SurfaceOperation::Push(PushOperation::Clear))
+        }
+        ClientMessage::SetNoticeKey {
+            request_id,
+            public_key,
+        } => (
+            request_id,
+            SurfaceOperation::Notice(NoticeOperation::SetKey(public_key)),
+        ),
+        ClientMessage::ListNotices { request_id } => {
+            (request_id, SurfaceOperation::Notice(NoticeOperation::List))
+        }
+        ClientMessage::AcknowledgeNotice {
+            request_id,
+            notice_id,
+        } => (
+            request_id,
+            SurfaceOperation::Notice(NoticeOperation::Acknowledge(notice_id)),
+        ),
+        ClientMessage::Enroll { .. }
+        | ClientMessage::ListTargets { .. }
+        | ClientMessage::Authenticate { .. }
+        | ClientMessage::AuthenticateTicket { .. }
+        | ClientMessage::DeviceProof { .. }
+        | ClientMessage::AdvertiseTargets { .. }
+        | ClientMessage::AcknowledgeExecution { .. }
+        | ClientMessage::PublishExecutionEvents { .. }
+        | ClientMessage::AcknowledgeStop { .. }
+        | ClientMessage::PublishLiveActivity { .. }
+        | ClientMessage::ServeHostControl
+        | ClientMessage::CompleteHostCall { .. }
+        | ClientMessage::SendAgentMessage { .. }
+        | ClientMessage::RequestWake { .. }
+        | ClientMessage::ListNoticeKeys { .. }
+        | ClientMessage::PutNotice { .. }
+        | ClientMessage::WithdrawNotices { .. } => return None,
+    };
+    Some(JsonOperation::Surface {
+        request_id,
+        operation,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum JsonOperation {
+    Surface {
         request_id: u64,
+        operation: SurfaceOperation,
     },
+    Node(NodeOperation),
+    /// Open to both roles: a surface lists its principal's targets, a node
+    /// those of its owner.
     ListTargets {
         request_id: u64,
     },
-    ListDevices {
-        request_id: u64,
-    },
-    RevokeDevice {
-        request_id: u64,
-        device_id: DeviceId,
-    },
-    OpenTask {
-        request_id: u64,
-        task_id: TaskId,
-        node_id: NodeId,
-        target: TargetRef,
-    },
-    Attach {
-        request_id: u64,
-        task_id: TaskId,
-        after_sequence: Option<u64>,
-        /// Whether the surface also wants the task's ephemeral live activity.
-        live: bool,
-    },
-    Submit {
-        request_id: u64,
-        task_id: TaskId,
-        command_id: CommandId,
-        input: CommandInput,
-    },
-    StopCommand {
-        request_id: u64,
-        task_id: TaskId,
-        command_id: CommandId,
-    },
-    DeleteTask {
-        request_id: u64,
-        task_id: TaskId,
-    },
-    /// The owner's Host control call, from a signed-in app or browser.
-    CallHost {
-        request_id: u64,
-        method: HostMethod,
-        path: String,
-        body: Option<String>,
-    },
-    /// A one-time link to a file an agent shared, from a signed-in app.
-    ShareLink {
-        request_id: u64,
-        share_id: Uuid,
-    },
-    /// The device's push token, from an app that signed in. `provider` stays
-    /// text on the wire so an unsupported one is answered by name.
-    SetPushToken {
-        request_id: u64,
-        provider: String,
-        token: PushToken,
-    },
-    ClearPushToken {
-        request_id: u64,
-    },
-    /// The key a signed-in app opens its setup notices with.
-    SetNoticeKey {
-        request_id: u64,
-        public_key: NoticeKey,
-    },
-    ListNotices {
-        request_id: u64,
-    },
-    AcknowledgeNotice {
-        request_id: u64,
-        notice_id: Uuid,
-    },
-    AdvertiseTargets {
-        targets: Vec<TargetCard>,
-    },
-    PublishExecutionEvents {
-        task_id: TaskId,
-        command_id: CommandId,
-        events: Vec<ExecutionEvent>,
-    },
-    AcknowledgeExecution {
-        task_id: TaskId,
-        command_id: CommandId,
-    },
-    AcknowledgeStop {
-        task_id: TaskId,
-        command_id: CommandId,
-    },
-    PublishLiveActivity {
-        task_id: TaskId,
-        command_id: CommandId,
-        activity: LiveActivity,
-    },
-    /// The node answers Host control calls for the owner who enrolled it.
-    ServeHostControl,
-    CompleteHostCall {
-        call_id: Uuid,
-        status: u16,
-        body: String,
-    },
-    SendAgentMessage {
-        request_id: u64,
-        from_command: CommandId,
-        message_id: CommandId,
-        node_id: NodeId,
-        target: TargetRef,
-        text: String,
-    },
-    /// The node asks to wake its owner's phone for `wake_id`, something it has
-    /// for them that no journal record carries.
-    RequestWake {
-        request_id: u64,
-        wake_id: Uuid,
-        urgency: WakeUrgency,
-    },
-    /// The node asks for its owner's devices it may seal a setup notice to.
-    ListNoticeKeys {
-        request_id: u64,
-    },
-    PutNotice {
-        request_id: u64,
-        notice: SealedNotice,
-    },
-    WithdrawNotices {
-        request_id: u64,
-        notice_ids: Vec<Uuid>,
-    },
 }
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ServerMessage {
-    Enrolled {
-        version: u32,
-        credentials: DeviceCredentials,
-    },
-    Authenticated {
-        version: u32,
-    },
-    /// Sent instead of `authenticated` to a device that registered a key.
-    DeviceChallenge {
-        nonce: String,
-    },
-    TaskList {
-        request_id: u64,
-        tasks: Vec<TaskSummary>,
-    },
-    TargetList {
-        request_id: u64,
-        targets: Vec<TargetSummary>,
-    },
-    DeviceList {
-        request_id: u64,
-        devices: Vec<DeviceSummary>,
-    },
-    DeviceRevoked {
-        request_id: u64,
-        device_id: DeviceId,
-    },
-    TaskOpened {
-        request_id: u64,
-        task_id: TaskId,
-    },
-    Attached {
-        request_id: u64,
-        task_id: TaskId,
-        through_sequence: Option<u64>,
-    },
-    CommandAccepted {
-        request_id: u64,
-        command_id: CommandId,
-    },
-    StopAccepted {
-        request_id: u64,
-        command_id: CommandId,
-        outcome: StopOutcome,
-    },
-    TaskDeleted {
-        request_id: u64,
-        task_id: TaskId,
-    },
-    /// The Host's answer to a `call_host`, as its HTTP status and JSON body.
-    HostAnswer {
-        request_id: u64,
-        status: u16,
-        body: String,
-    },
-    /// A one-time link to the share: a path on the coordinator's own origin,
-    /// usable once within two minutes.
-    ShareLinkIssued {
-        request_id: u64,
-        path: crate::ShareLink,
-    },
-    PushTokenSet {
-        request_id: u64,
-    },
-    PushTokenCleared {
-        request_id: u64,
-    },
-    /// The wake a node asked for is durably recorded, or was already.
-    WakeRequested {
-        request_id: u64,
-    },
-    NoticeKeySet {
-        request_id: u64,
-    },
-    /// The device's unexpired setup notices.
-    NoticeList {
-        request_id: u64,
-        notices: Vec<HeldNotice>,
-    },
-    NoticeAcknowledged {
-        request_id: u64,
-    },
-    /// The node owner's active devices with a notice key.
-    NoticeKeys {
-        request_id: u64,
-        keys: Vec<DeviceNoticeKey>,
-    },
-    /// The notice is stored, or its id was stored already.
-    NoticePut {
-        request_id: u64,
-    },
-    NoticesWithdrawn {
-        request_id: u64,
-    },
-    ExecutionEventsAccepted {
-        command_id: CommandId,
-        through_execution_sequence: u64,
-    },
-    ExecutionAcknowledged {
-        command_id: CommandId,
-    },
-    Execute {
-        task_id: TaskId,
-        command: CommandEnvelope,
-    },
-    Stop {
-        task_id: TaskId,
-        command_id: CommandId,
-    },
-    /// One owner call under `/v1/host`, for the node that serves the Host.
-    HostCall {
-        call_id: Uuid,
-        principal_id: PrincipalId,
-        method: HostMethod,
-        path: String,
-        body: Option<String>,
-    },
-    TaskEvent {
-        event: TaskEvent,
-    },
-    LiveActivity {
-        task_id: TaskId,
-        command_id: CommandId,
-        activity: LiveActivity,
-    },
-    Error {
-        request_id: Option<u64>,
-        code: ErrorCode,
-        message: String,
-    },
-}
-
-mod numbers;
-mod operations;
-
-pub(crate) use operations::JsonOperation;
-
-#[cfg(test)]
-mod tests;

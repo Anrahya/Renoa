@@ -14,11 +14,11 @@ use std::{
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_control::{
-    ClientMessage, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION, NodeId,
-    ServerMessage, TargetSummary, TaskEvent, TaskId,
-};
 use renoa_protocol::{CommandId, CommandInput, TargetRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
+    MAX_APPLICATION_MESSAGE_BYTES, NodeId, ServerMessage, TargetSummary, TaskEvent, TaskId,
+};
 use thiserror::Error;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_tungstenite::{
@@ -30,7 +30,6 @@ use tokio_util::sync::CancellationToken;
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 type Waiters = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<ServerMessage, ClientError>>>>>;
 
-const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 const OUTBOUND_CAPACITY: usize = 64;
 const EVENT_CAPACITY: usize = 256;
 

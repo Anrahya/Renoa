@@ -9,11 +9,11 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
-    PeerIdentity, ServerMessage, TaskId, TaskSpec,
-};
+use renoa_control::{Coordinator, PeerIdentity, TaskSpec};
 use renoa_protocol::{CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage, TaskId,
+};
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{

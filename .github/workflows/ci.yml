@@ -31,6 +31,13 @@ jobs:
       - run: scripts/check-module-size.sh
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: The Rust RCP client builds without the coordinator
+        run: |
+          tree=$(cargo tree --locked --target all -e normal --prefix none -p renoa-rcp-client -p renoa-rcp-wire)
+          if grep -E '^(renoa-control|axum|rusqlite|libsqlite3-sys|openssl|openssl-sys|webauthn-rs) ' <<<"$tree"; then
+            echo "renoa-rcp-client and renoa-rcp-wire must not depend on the coordinator or its server stack" >&2
+            exit 1
+          fi
 
   rust-test:
     name: Rust tests

@@ -1,11 +1,11 @@
 use std::{path::Path, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, ConnectionTicket, Coordinator, JSON_WS_VERSION, NodeId, ServerMessage, TaskId,
-    TaskSpec,
-};
+use renoa_control::{Coordinator, TaskSpec};
 use renoa_protocol::{PrincipalId, TargetRef};
+use renoa_rcp_wire::{
+    ClientMessage, ConnectionTicket, JSON_WS_VERSION, NodeId, ServerMessage, TaskId,
+};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -480,7 +480,7 @@ async fn authenticate_ticket_and_list(endpoint: &str, ticket: ConnectionTicket) 
             true
         }
         ServerMessage::Error { code, .. } => {
-            assert_eq!(code, renoa_control::ErrorCode::AuthenticationFailed);
+            assert_eq!(code, renoa_rcp_wire::ErrorCode::AuthenticationFailed);
             false
         }
         message => panic!("unexpected ticket authentication response: {message:?}"),

@@ -3,11 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use renoa_control::{DeviceCredential, DeviceCredentials, DeviceId};
 use renoa_local::{
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
     validate_code_mode_worker,
 };
+use renoa_rcp_wire::{DeviceCredential, DeviceCredentials, DeviceId};
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 

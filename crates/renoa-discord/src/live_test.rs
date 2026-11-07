@@ -7,14 +7,12 @@ use std::{
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, JSON_WS_VERSION, NodeId, PeerIdentity,
-    ServerMessage,
-};
+use renoa_control::{Coordinator, PeerIdentity};
 use renoa_protocol::{
     ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId, ExecutionTerminal,
     PrincipalId, SurfaceRef, TargetRef,
 };
+use renoa_rcp_wire::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, NodeId, ServerMessage};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;

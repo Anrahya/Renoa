@@ -6,11 +6,7 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
-    NodeId, PeerIdentity, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind,
-    TaskId, TaskSpec, TaskSummary,
-};
+use renoa_control::{Coordinator, PeerIdentity, TaskSpec};
 use renoa_kernel::{AgentId, EventCursor, Kernel, OperationStatus, SessionId};
 use renoa_local::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
@@ -19,6 +15,10 @@ use renoa_local::{
 use renoa_protocol::{
     Author, CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, LiveActivity, PrincipalId,
     SurfaceRef, TargetRef,
+};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION, NodeId,
+    ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
 };
 use tempfile::TempDir;
 use tokio::{

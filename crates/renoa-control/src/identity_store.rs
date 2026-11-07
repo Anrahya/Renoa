@@ -5,6 +5,7 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use crate::{
     ControlError, DeviceCredential, DeviceCredentials, DeviceId, EnrollmentToken, PeerIdentity,
     device_key::DevicePublicKey,
+    identity::Secret as _,
     store::{ControlStore, blocking, json_error, sqlite_error},
 };
 

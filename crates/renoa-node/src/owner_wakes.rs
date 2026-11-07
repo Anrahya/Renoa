@@ -12,8 +12,8 @@
 
 use std::{sync::Arc, time::Duration};
 
-use renoa_control::WakeUrgency;
 use renoa_local::{FeedWake, HostFeed, TurnObservation};
+use renoa_rcp_wire::WakeUrgency;
 use tokio_util::sync::CancellationToken;
 
 use crate::{

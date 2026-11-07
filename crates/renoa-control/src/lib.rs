@@ -33,7 +33,6 @@ mod host_control_http;
 mod host_control_rcp;
 mod identity;
 mod identity_store;
-mod ids;
 mod json_ws;
 mod live_activity;
 mod node_messages;
@@ -61,20 +60,16 @@ pub use android_apps::AndroidApps;
 pub use browser_sessions::{BrowserSession, BrowserSessions};
 pub use coordinator::{ControlError, Coordinator, TaskSpec};
 pub use fcm::PushSettings;
-pub use identity::{
-    BrowserPairingToken, ConnectionTicket, DeviceCredential, DeviceCredentials, EnrollmentToken,
-    PasskeyBootstrapToken,
+pub use identity::{BrowserPairingToken, PasskeyBootstrapToken};
+pub use operations::PeerIdentity;
+pub use setup_notices::{MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES};
+
+// The binding's frames and records belong to `renoa-rcp-wire`; the crate root
+// names them so every module reaches them as `crate::…`.
+use renoa_rcp_wire::{
+    ClientMessage, ConnectionTicket, DeviceCredential, DeviceCredentials, DeviceId,
+    DeviceNoticeKey, DeviceSummary, EnrollmentToken, ErrorCode, HeldNotice, HostMethod,
+    JSON_WS_VERSION, MAX_APPLICATION_MESSAGE_BYTES, NodeId, NoticeKey, PushToken, SealedNotice,
+    ServerMessage, ShareLink, StopOutcome, TargetSummary, TaskEvent, TaskEventId, TaskEventKind,
+    TaskId, TaskStatus, TaskSummary, WakeUrgency,
 };
-pub use ids::{DeviceId, NodeId, TaskEventId, TaskId};
-pub use json_ws::{ClientMessage, JSON_WS_VERSION, ServerMessage};
-pub use operations::{
-    DeviceSummary, ErrorCode, HostMethod, PeerIdentity, StopOutcome, TargetSummary, TaskEvent,
-    TaskEventKind, TaskStatus, TaskSummary,
-};
-pub use push_tokens::PushToken;
-pub use push_wake::WakeUrgency;
-pub use setup_notices::{
-    DeviceNoticeKey, HeldNotice, MAX_LISTED_NOTICES, MAX_SEALED_NOTICE_BYTES, NoticeKey,
-    SealedNotice,
-};
-pub use share_links::ShareLink;

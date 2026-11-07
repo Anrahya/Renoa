@@ -4,11 +4,11 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
-    PeerIdentity, ServerMessage, TaskId, TaskSpec,
-};
+use renoa_control::{Coordinator, PeerIdentity, TaskSpec};
 use renoa_protocol::{CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage, TaskId,
+};
 use rusqlite::Connection;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -1171,7 +1171,7 @@ impl TestServer {
     }
 }
 
-async fn claim_enrollment(url: &str, token: renoa_control::EnrollmentToken) -> ServerMessage {
+async fn claim_enrollment(url: &str, token: renoa_rcp_wire::EnrollmentToken) -> ServerMessage {
     let (mut socket, _) = connect_async(url).await.expect("connect for enrollment");
     send(
         &mut socket,

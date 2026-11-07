@@ -6,10 +6,10 @@ mod support;
 
 use std::time::Duration;
 
-use renoa_control::{StopOutcome, TaskEvent, TaskEventKind};
 use renoa_kernel::OperationStatus;
 use renoa_node::RenoaNode;
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, LiveActivity};
+use renoa_rcp_wire::{StopOutcome, TaskEvent, TaskEventKind};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 

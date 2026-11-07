@@ -6,8 +6,11 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
 use renoa_protocol::{CommandEnvelope, CommandId, TargetCard};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, JSON_WS_VERSION, MAX_APPLICATION_MESSAGE_BYTES,
+    ServerMessage, TaskId,
+};
 use tokio::{
     sync::{broadcast, broadcast::error::RecvError, watch},
     task::JoinSet,
@@ -31,7 +34,6 @@ mod host_calls;
 use host_calls::{HostCalls, IncomingCall};
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
-const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 pub(crate) enum SessionEnd {

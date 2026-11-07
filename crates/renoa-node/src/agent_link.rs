@@ -16,12 +16,12 @@ use std::{
 };
 
 use renoa_agent::BoxFuture;
-use renoa_control::{
-    ClientMessage, DeviceNoticeKey, ErrorCode, NodeId, SealedNotice, TargetSummary, WakeUrgency,
-};
 use renoa_kernel::AgentId;
 use renoa_local::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 use renoa_protocol::{CommandId, TargetRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceNoticeKey, ErrorCode, NodeId, SealedNotice, TargetSummary, WakeUrgency,
+};
 use tokio::{
     sync::{mpsc, oneshot},
     time::timeout,

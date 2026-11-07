@@ -6,11 +6,9 @@ use std::{
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, JSON_WS_VERSION, NodeId, PeerIdentity,
-    ServerMessage,
-};
+use renoa_control::{Coordinator, PeerIdentity};
 use renoa_oauth_relay_protocol::{DEVICE_ID_HEADER, OAuthRelayId, OAuthRelayStatus};
+use renoa_rcp_wire::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, NodeId, ServerMessage};
 use tempfile::{TempDir, tempdir};
 use tokio::net::TcpListener;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -360,7 +358,7 @@ async fn load_relay_id(resolver: &McpAuthorizationResolver, connection_id: &str)
     relay_id
 }
 
-async fn enroll(endpoint: &str, token: renoa_control::EnrollmentToken) -> DeviceCredentials {
+async fn enroll(endpoint: &str, token: renoa_rcp_wire::EnrollmentToken) -> DeviceCredentials {
     let (mut socket, _) = connect_async(endpoint).await.expect("connect enrollment");
     socket
         .send(Message::Text(

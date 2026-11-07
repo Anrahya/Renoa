@@ -1,8 +1,8 @@
-use renoa_control::{TaskEvent, TaskEventId, TaskEventKind, TaskId};
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
     ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
 };
+use renoa_rcp_wire::{TaskEvent, TaskEventId, TaskEventKind, TaskId};
 use uuid::Uuid;
 
 use super::{Applied, Enqueue, SurfaceStore};

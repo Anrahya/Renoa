@@ -2367,6 +2367,7 @@ dependencies = [
  "renoa-home",
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
+ "renoa-rcp-wire",
  "renoa-telemetry",
  "reqwest",
  "ring",
@@ -2420,6 +2421,7 @@ dependencies = [
  "renoa-local",
  "renoa-protocol",
  "renoa-rcp-client",
+ "renoa-rcp-wire",
  "renoa-telemetry",
  "reqwest",
  "rusqlite",
@@ -2481,6 +2483,7 @@ dependencies = [
  "renoa-kernel",
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
+ "renoa-rcp-wire",
  "renoa-registry",
  "renoa-registry-protocol",
  "renoa-telemetry",
@@ -2519,6 +2522,7 @@ dependencies = [
  "renoa-local",
  "renoa-protocol",
  "renoa-rcp-client",
+ "renoa-rcp-wire",
  "renoa-telemetry",
  "reqwest",
  "ring",
@@ -2557,12 +2561,24 @@ dependencies = [
  "futures-util",
  "renoa-control",
  "renoa-protocol",
+ "renoa-rcp-wire",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
+]
+
+[[package]]
+name = "renoa-rcp-wire"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "renoa-protocol",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

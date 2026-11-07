@@ -21,10 +21,10 @@ mod uploads;
 
 use std::sync::Arc;
 
-use renoa_control::HostMethod;
 use renoa_discord::DiscordControl;
 use renoa_local::{HostObserver, LocalHost, Shares, Uploads};
 use renoa_protocol::PrincipalId;
+use renoa_rcp_wire::HostMethod;
 
 use crate::{bridge::NodeError, node_store::NodeStore};
 use reply::{METHOD_NOT_ALLOWED, NOT_FOUND, UNAVAILABLE, decode, log};

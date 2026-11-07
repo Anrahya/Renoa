@@ -2,11 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use renoa_agent::{AgentEvent, AgentEventSink as _, ContentBlock, ToolCall, ToolOutput};
-use renoa_control::{
-    ClientMessage, DeviceId, DeviceNoticeKey, ErrorCode, MAX_SEALED_NOTICE_BYTES, NoticeKey,
-    SealedNotice,
-};
+use renoa_control::MAX_SEALED_NOTICE_BYTES;
 use renoa_local::{RenoaHome, SetupLink};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceId, DeviceNoticeKey, ErrorCode, NoticeKey, SealedNotice,
+};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;

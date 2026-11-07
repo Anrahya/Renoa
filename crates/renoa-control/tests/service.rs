@@ -9,12 +9,13 @@ use std::{
 use std::{process::ExitStatus, thread, time::Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION,
-    PasskeyBootstrapToken, ServerMessage, TaskId, TaskStatus, TaskSummary,
-};
+use renoa_control::{Coordinator, PasskeyBootstrapToken};
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
+};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION, ServerMessage, TaskId,
+    TaskStatus, TaskSummary,
 };
 use serde::Deserialize;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};

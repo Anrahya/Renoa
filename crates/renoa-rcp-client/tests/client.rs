@@ -1,15 +1,16 @@
 use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, DeviceId, ErrorCode, JSON_WS_VERSION, NodeId,
-    PeerIdentity, ServerMessage, TaskEvent, TaskEventKind, TaskId,
-};
+use renoa_control::{Coordinator, PeerIdentity};
 use renoa_protocol::{
     CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
     ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
 };
 use renoa_rcp_client::{ClientError, Connection, Events};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, DeviceId, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
+    TaskEvent, TaskEventKind, TaskId,
+};
 use tempfile::TempDir;
 use tokio::{net::TcpListener, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};

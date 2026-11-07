@@ -13,11 +13,11 @@ mod support;
 
 use std::time::Duration;
 
-use renoa_control::{DeviceCredentials, ServerMessage, TaskEvent, TaskEventKind, TaskId};
 use renoa_node::{NodeError, RenoaNode};
 use renoa_protocol::{
     Author, CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, LiveActivity,
 };
+use renoa_rcp_wire::{DeviceCredentials, ServerMessage, TaskEvent, TaskEventKind, TaskId};
 use tokio::{task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 

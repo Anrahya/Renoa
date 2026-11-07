@@ -1,11 +1,11 @@
 use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION, PeerIdentity,
-    ServerMessage,
-};
+use renoa_control::{Coordinator, PeerIdentity};
 use renoa_protocol::{PrincipalId, SurfaceRef};
+use renoa_rcp_wire::{
+    ClientMessage, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION, ServerMessage,
+};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{
