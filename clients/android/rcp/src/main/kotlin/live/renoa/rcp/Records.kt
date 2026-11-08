@@ -65,6 +65,9 @@ enum class HostMethod {
 /** The Host's answer to a call: its HTTP status and JSON text, a result or its own refusal. */
 data class HostAnswer(val status: Int, val body: String)
 
+/** A computer this device signed in: the kind it is, such as `mac`, and the name it gave. */
+data class ApprovedDevice(val surface: String, val label: String)
+
 /** A setup notice the coordinator holds for this device: ciphertext only, which [NoticeKey.open] reads. */
 @Serializable
 data class HeldNotice(

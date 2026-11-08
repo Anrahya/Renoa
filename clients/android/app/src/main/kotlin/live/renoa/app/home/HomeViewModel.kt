@@ -183,6 +183,9 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
     /** Goes back to the agents. A notice shown on the Renoa tab goes with it. */
     fun close() = local.update { it.copy(page = null, notice = null) }
 
+    /** Signs in the computer showing [code] as the owner and returns the name it gave; a refusal throws [RepositoryException]. */
+    suspend fun approveComputer(code: String): String = repository.approveComputer(code)
+
     /**
      * Puts away the note the owner opened, as the row it sat on opens its chat. One that cannot be
      * put away shows again, which says so.

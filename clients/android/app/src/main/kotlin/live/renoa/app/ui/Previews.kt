@@ -102,6 +102,7 @@ internal fun SettingsPaperPreview() {
             onAppearance = {},
             onSignOut = {},
             onNotificationsChanged = {},
+            approveComputer = { "MacBook" },
             bottomInset = 24.dp,
         )
     }

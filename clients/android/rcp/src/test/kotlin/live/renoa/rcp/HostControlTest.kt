@@ -96,6 +96,26 @@ class HostControlTest : CoordinatorTest() {
     }
 
     @Test
+    fun aSignedInAppApprovesTheComputerShowingACodeAndNoOtherConnectionDoes() = eventually {
+        coordinator.waitingComputers["7K3MQX9D"] = "MacBook"
+        val app = keyedClient()
+        assertEquals(ApprovedDevice("mac", "MacBook"), app.approveDevice("7K3m-qx9D"))
+        assertEquals(listOf("7K3m-qx9D"), coordinator.approvedCodes, "the code is sent as typed")
+        assertEquals(RcpErrorCode.NotFound, assertFailsWith<RcpException> { app.approveDevice("ZZZZZZZZ") }.code)
+
+        coordinator.deviceKey = null
+        val bearer = client().also { it.connect() }
+        assertEquals(RcpErrorCode.InvalidRole, assertFailsWith<RcpException> { bearer.approveDevice("7K3MQX9D") }.code)
+        assertEquals(1, coordinator.approvedCodes.size)
+    }
+
+    @Test
+    fun aComputerCodeNeverReachesALog() {
+        val frame = ClientMessage.ApproveDevice(7, "7K3MQX9D")
+        assertTrue("7K3MQX9D" !in frame.toString(), frame.toString())
+    }
+
+    @Test
     fun aShareLinkNeverReachesALog() {
         val frame = ServerMessage.ShareLinkIssued(7, "/s/x?ticket=${"ab".repeat(32)}")
         assertTrue("ab".repeat(32) !in frame.toString(), frame.toString())

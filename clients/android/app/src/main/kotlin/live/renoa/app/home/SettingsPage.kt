@@ -71,16 +71,21 @@ import live.renoa.design.semibold
 private const val PUSH_PREFS = "push"
 private const val ASKED_TO_NOTIFY = "asked-to-notify"
 
-/** The Settings tab: appearance on this phone, notification permission, app version, and signing out. */
+/**
+ * The Settings tab: appearance on this phone, notification permission, signing in a computer, app version, and
+ * signing out. [approveComputer] signs in the computer showing a code and returns its name.
+ */
 @Composable
 internal fun SettingsPage(
     appearance: Appearance,
     onAppearance: (Appearance) -> Unit,
     onSignOut: () -> Unit,
     onNotificationsChanged: () -> Unit,
+    approveComputer: suspend (String) -> String,
     bottomInset: Dp,
 ) {
     var confirmSignOut by remember { mutableStateOf(false) }
+    var computerOpen by remember { mutableStateOf(false) }
     CardForm(
         Modifier.background(Palette.background).statusBarsPadding(),
         PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = bottomInset),
@@ -94,6 +99,9 @@ internal fun SettingsPage(
             }
         }
         NotificationsSection(onNotificationsChanged)
+        CardSection(footer = "Use Renoa on your computer as you.") {
+            row { ComputerRow { computerOpen = true } }
+        }
         AppVersionSection()
         CardSection {
             row {
@@ -102,6 +110,7 @@ internal fun SettingsPage(
         }
     }
     SignOutDialog(confirmSignOut, { confirmSignOut = false }, onSignOut)
+    ComputerSheet(computerOpen, { computerOpen = false }, approveComputer)
 }
 
 /** The Account sheet opened from the roster's top-left capsule. */
@@ -158,6 +167,19 @@ internal fun AccountSheet(open: Boolean, onDismiss: () -> Unit, state: HomeUiSta
     SignOutDialog(confirmSignOut, { confirmSignOut = false }) {
         onDismiss()
         onSignOut()
+    }
+}
+
+@Composable
+private fun ComputerRow(onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().plainButton(action = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Symbol("laptopcomputer", size = 20.dp, tint = Palette.text)
+        Text("Sign in a computer", Modifier.weight(1f), style = Type.body, color = Palette.text)
+        Symbol("chevron.right", size = 13.dp, tint = Palette.secondary)
     }
 }
 

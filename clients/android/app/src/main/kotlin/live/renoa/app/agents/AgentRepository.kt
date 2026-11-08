@@ -132,6 +132,13 @@ interface AgentRepository {
      */
     suspend fun shareLink(shareId: Uuid): String
 
+    /**
+     * Signs in the computer showing [code] as the owner, and returns the name it gave. A code no
+     * computer shows is [Problem.NotFound]; one that cannot be a code is [Problem.Invalid]; a computer
+     * the owner's sign-in rules refuse, such as one that was signed out, is [Problem.Conflict].
+     */
+    suspend fun approveComputer(code: String): String
+
     suspend fun profile(agentId: String): AgentProfile
 
     /** The abilities a new agent starts with, so the create screen can show them before the agent exists. */

@@ -200,6 +200,9 @@ class WebSocketRcpSurface(
     override suspend fun shareLink(shareId: Uuid): String =
         request(ServerMessage.ShareLinkIssued::class, { ClientMessage.ShareLink(it, shareId) }).path
 
+    override suspend fun approveDevice(code: String): ApprovedDevice =
+        request(ServerMessage.DeviceApproved::class, { ClientMessage.ApproveDevice(it, code) }).let { ApprovedDevice(it.surface, it.label) }
+
     override suspend fun setPushToken(token: String) {
         request(ServerMessage.PushTokenSet::class, { ClientMessage.SetPushToken(it, "fcm", token) })
     }

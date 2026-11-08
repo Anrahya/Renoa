@@ -242,6 +242,12 @@ class FakeAgentRepository(
     /** A link shaped like Renoa's, each one new; the fake holds no files, so it opens nothing. */
     override suspend fun shareLink(shareId: Uuid): String = "/s/$shareId?ticket=${Uuid.random().toHexString()}${Uuid.random().toHexString()}"
 
+    /** Any eight letters and digits sign in a computer named "MacBook"; the fake has no computers waiting. */
+    override suspend fun approveComputer(code: String): String {
+        if (code.count { it.isLetterOrDigit() } != 8) throw RepositoryException(Problem.NotFound, "no computer shows that code")
+        return "MacBook"
+    }
+
     override suspend fun stop(agentId: String) {
         val room = room(agentId)
         val turn =

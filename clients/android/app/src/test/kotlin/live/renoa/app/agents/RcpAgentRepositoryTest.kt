@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import live.renoa.app.badge.mainAgent
+import live.renoa.rcp.ApprovedDevice
 import live.renoa.rcp.Attachment
 import live.renoa.rcp.DeviceKeyRequired
 import live.renoa.rcp.ApplyLiveActivity
@@ -304,6 +305,17 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     /** When set, asking for a link to a shared file throws it. */
     var shareLinkFailure: Exception? = null
+
+    /** The codes approved, and when set, what approving one throws. */
+    val approved = mutableListOf<String>()
+    var approveFailure: Exception? = null
+
+    override suspend fun approveDevice(code: String): ApprovedDevice {
+        check(online) { "RCP client is not connected" }
+        approveFailure?.let { throw it }
+        approved += code
+        return ApprovedDevice("mac", "MacBook")
+    }
 
     override suspend fun shareLink(shareId: Uuid): String {
         check(online) { "RCP client is not connected" }
@@ -1185,6 +1197,24 @@ class RcpAgentRepositoryTest {
         surface.record(chat.ended(command))
         repo.stop(nagisa)
         assertEquals(listOf(command), surface.stopped)
+    }
+
+    @Test
+    fun approvingAComputerSendsItsCodeAndARefusalIsAProblemTheScreenCanSay() = runTest {
+        val repo = started()
+        assertEquals("MacBook", repo.approveComputer("7k3m-qx9d"))
+        assertEquals(listOf("7k3m-qx9d"), surface.approved)
+
+        for ((code, problem) in listOf(
+            RcpErrorCode.NotFound to Problem.NotFound,
+            RcpErrorCode.Conflict to Problem.Conflict,
+            RcpErrorCode.InvalidMessage to Problem.Invalid,
+        )) {
+            surface.approveFailure = RcpException(code, "refused", 4)
+            assertEquals(problem, assertFailsWith<RepositoryException> { repo.approveComputer("7K3MQX9D") }.problem)
+        }
+        surface.approveFailure = IllegalStateException("RCP client is not connected")
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.approveComputer("7K3MQX9D") }.problem)
     }
 
     @Test
