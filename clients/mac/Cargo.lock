@@ -6003,6 +6003,7 @@ dependencies = [
  "renoa-rcp-wire",
  "ring",
  "security-framework",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite",

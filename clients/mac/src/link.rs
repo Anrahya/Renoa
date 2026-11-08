@@ -15,7 +15,12 @@ use renoa_rcp_client::{
 use renoa_rcp_wire::{
     DeviceCode, DeviceCredentials, ErrorCode, NodeId, TargetSummary, TaskEvent, TaskId,
 };
-use tokio::{runtime::Runtime, sync::mpsc, time::sleep};
+use tokio::{
+    runtime::Runtime,
+    sync::mpsc,
+    task::JoinHandle,
+    time::{MissedTickBehavior, sleep},
+};
 use uuid::Uuid;
 
 use crate::key::MacKey;
@@ -24,10 +29,6 @@ const DEFAULT_ORIGIN: &str = "https://renoa.live";
 /// How long a call may wait for Renoa before the link counts as lost, as the
 /// Android app waits (`Timeouts.reply`).
 const REPLY_WITHIN: Duration = Duration::from_secs(30);
-/// How often the agent list is read again, to show agents that came online
-/// and to retry chats and messages a refusal held back. A connection that
-/// died without closing fails this read within [`REPLY_WITHIN`].
-const AGENTS_EVERY: Duration = Duration::from_secs(30);
 
 pub fn runtime() -> &'static Runtime {
     static RUNTIME: LazyLock<Runtime> =
@@ -67,18 +68,23 @@ impl Endpoints {
     }
 }
 
-/// How often signing in collects, and how long the link waits before trying
-/// Renoa again after a failure.
+/// How often signing in collects, how long the link waits before trying
+/// Renoa again after a failure, and how often it reads the agent list again.
 #[derive(Debug, Clone, Copy)]
 pub struct Pace {
     pub collect_every: Duration,
     pub retry_after: Duration,
+    /// Each read shows agents that came online and retries the chats,
+    /// messages and purposes a refusal held back. A connection that died
+    /// without closing fails it within [`REPLY_WITHIN`].
+    pub agents_every: Duration,
 }
 
 impl Pace {
     pub const APP: Self = Self {
         collect_every: Duration::from_secs(2),
         retry_after: Duration::from_secs(5),
+        agents_every: Duration::from_secs(30),
     };
 }
 
@@ -168,6 +174,12 @@ pub async fn sign_in(
 pub enum Update {
     Linked(bool),
     Agents(Vec<TargetSummary>),
+    /// What the agent `target` on `node_id` is for, as its owner wrote it.
+    Purpose {
+        node_id: NodeId,
+        target: String,
+        purpose: String,
+    },
     Event(Box<TaskEvent>),
     /// Renoa refused a message to this chat; it was not sent.
     NotSent {
@@ -217,6 +229,7 @@ struct Kept {
     through: Through,
     followed: HashMap<TaskId, Followed>,
     outbox: VecDeque<Outgoing>,
+    purposes: Arc<Mutex<purposes::Read>>,
 }
 
 /// Keeps one connection up for as long as the views hold the command
@@ -257,7 +270,14 @@ pub async fn session(
         // holds up a reply.
         let forwarder = tokio::spawn(forward(events, Arc::clone(&kept.through), updates.clone()));
         let _ = updates.send(Update::Linked(true));
-        let ended = linked(&connection, &mut commands, &updates, &mut kept).await;
+        let ended = linked(
+            &connection,
+            pace.agents_every,
+            &mut commands,
+            &updates,
+            &mut kept,
+        )
+        .await;
         forwarder.abort();
         drop(connection);
         if ended == Ended::ViewsGone {
@@ -277,6 +297,7 @@ enum Ended {
 /// Serves the views over one connection until it is lost or they are gone.
 async fn linked(
     connection: &Connection,
+    agents_every: Duration,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     updates: &mpsc::UnboundedSender<Update>,
     kept: &mut Kept,
@@ -285,7 +306,10 @@ async fn linked(
         chat.attached = false;
     }
     // The first tick is at once: it lists the agents and catches up.
-    let mut agents = tokio::time::interval(AGENTS_EVERY);
+    let mut agents = tokio::time::interval(agents_every);
+    agents.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    // Purposes are read beside the loop: a slow Host holds up no message.
+    let mut reading: Option<Aborting> = None;
     loop {
         let served = tokio::select! {
             command = commands.recv() => match command {
@@ -306,6 +330,14 @@ async fn linked(
             },
             _ = agents.tick() => match within(connection.list_targets()).await {
                 Ok(listed) => {
+                    if reading.as_ref().is_none_or(Aborting::finished) {
+                        reading = Some(Aborting(tokio::spawn(purposes::read(
+                            connection.clone(),
+                            listed.clone(),
+                            Arc::clone(&kept.purposes),
+                            updates.clone(),
+                        ))));
+                    }
                     let _ = updates.send(Update::Agents(listed));
                     catch_up(connection, updates, kept).await
                 }
@@ -316,6 +348,21 @@ async fn linked(
         if served.is_err() {
             return Ended::LinkLost;
         }
+    }
+}
+
+/// A task that ends when the link it works for does.
+struct Aborting(JoinHandle<()>);
+
+impl Aborting {
+    fn finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
+impl Drop for Aborting {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
@@ -421,6 +468,7 @@ async fn within<T>(call: impl Future<Output = Result<T, ClientError>>) -> Result
         .unwrap_or_else(|_| Err(ClientError::Transport("Renoa did not answer".to_owned())))
 }
 
+mod purposes;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]

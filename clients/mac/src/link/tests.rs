@@ -19,6 +19,7 @@ use crate::key::MacKey;
 const QUICK: Pace = Pace {
     collect_every: Duration::from_millis(5),
     retry_after: Duration::from_millis(5),
+    agents_every: Duration::from_millis(20),
 };
 
 /// What the fake Renoa was asked: each call's path and request id.

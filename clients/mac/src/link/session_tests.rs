@@ -1,15 +1,18 @@
 //! The session against a fake coordinator that answers as a test scripts it.
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use renoa_protocol::{CommandInput, TargetRef};
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, JSON_WS_VERSION,
-    NodeId, ServerMessage, TaskId,
+    ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HostMethod,
+    JSON_WS_VERSION, NodeId, ServerMessage, TargetSummary, TaskId,
 };
 use tokio::{net::TcpListener, sync::mpsc, time::timeout};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -20,6 +23,7 @@ use crate::{key::MacKey, test_events::said};
 const QUICK: Pace = Pace {
     collect_every: Duration::from_millis(5),
     retry_after: Duration::from_millis(5),
+    agents_every: Duration::from_millis(20),
 };
 
 /// What the fake coordinator sends back for one frame: text frames.
@@ -354,4 +358,151 @@ async fn a_long_replay_does_not_hold_up_the_reply_it_came_with() {
     })
     .await
     .expect("every replayed event reaches the views");
+}
+
+#[tokio::test]
+async fn each_agents_purpose_is_read_once_and_a_host_that_did_not_answer_is_asked_again() {
+    const PLANS: &str = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+    const GONE: &str = "6fa459ea-ee8a-3ca4-894e-db77e160355e";
+    const LATE: &str = "886313e1-3b8a-5372-9b90-0c9aee199e5d";
+    let late_asked = Arc::new(AtomicUsize::new(0));
+    let asked = Arc::clone(&late_asked);
+    let node_id = NodeId::new();
+    let (endpoints, heard) = coordinator(Arc::new(move |_, frame: &ClientMessage| match frame {
+        ClientMessage::ListTargets { request_id } => vec![reply(&ServerMessage::TargetList {
+            request_id: *request_id,
+            targets: [PLANS, GONE, LATE]
+                .map(|id| format!("agent:{id}"))
+                .into_iter()
+                .chain(["renoa".to_owned()])
+                .map(|target| TargetSummary {
+                    node_id,
+                    target: TargetRef::new(target),
+                    name: "Agent".to_owned(),
+                })
+                .collect(),
+        })],
+        ClientMessage::CallHost {
+            request_id, path, ..
+        } => {
+            let definition = |purpose: &str| ServerMessage::HostAnswer {
+                request_id: *request_id,
+                status: 200,
+                body: format!(r#"{{"id":"x","operational":{{"purpose":"{purpose}"}}}}"#),
+            };
+            vec![reply(&match path.rsplit('/').next() {
+                Some(PLANS) => definition("Plans dinners"),
+                Some(GONE) => ServerMessage::HostAnswer {
+                    request_id: *request_id,
+                    status: 404,
+                    body: "{}".to_owned(),
+                },
+                Some(LATE) if asked.fetch_add(1, Ordering::SeqCst) == 0 => ServerMessage::Error {
+                    request_id: Some(*request_id),
+                    code: ErrorCode::NodeOffline,
+                    message: "Your Host could not be reached.".to_owned(),
+                },
+                Some(LATE) => definition(r"  Books trips\n"),
+                other => panic!("asked for {other:?}"),
+            })]
+        }
+        other => chat_replies(other).expect("a chat frame"),
+    }))
+    .await;
+    let mut running = start(endpoints);
+
+    let mut purposes = Vec::new();
+    timeout(Duration::from_secs(10), async {
+        while purposes.len() < 2 {
+            if let Some(Update::Purpose {
+                node_id: of,
+                target,
+                purpose,
+            }) = running.updates.recv().await
+            {
+                assert_eq!(of, node_id);
+                purposes.push((target, purpose));
+            }
+        }
+    })
+    .await
+    .expect("both purposes arrive");
+    assert_eq!(
+        purposes,
+        [
+            (format!("agent:{PLANS}"), "Plans dinners".to_owned()),
+            (format!("agent:{LATE}"), "Books trips".to_owned()),
+        ]
+    );
+
+    // Several more agent lists later, nothing read is asked for again.
+    hear(&heard, 6, |frame| {
+        matches!(frame, ClientMessage::ListTargets { .. })
+    })
+    .await;
+    let calls: Vec<_> = heard
+        .lock()
+        .expect("heard")
+        .iter()
+        .filter_map(|(_, frame)| match frame {
+            ClientMessage::CallHost {
+                method, path, body, ..
+            } => Some((*method, path.clone(), body.clone())),
+            _ => None,
+        })
+        .collect();
+    let path = |id: &str| (HostMethod::Get, format!("/v1/host/agents/{id}"), None);
+    assert_eq!(calls, [path(PLANS), path(GONE), path(LATE), path(LATE)]);
+    let connections = heard.lock().expect("heard").iter().map(|(n, _)| *n).max();
+    assert_eq!(
+        connections,
+        Some(0),
+        "a Host's refusal is not a lost connection"
+    );
+}
+
+#[tokio::test]
+async fn a_host_that_never_answers_holds_up_no_message() {
+    let (endpoints, heard) = coordinator(Arc::new(|_, frame: &ClientMessage| match frame {
+        ClientMessage::ListTargets { request_id } => vec![reply(&ServerMessage::TargetList {
+            request_id: *request_id,
+            targets: vec![TargetSummary {
+                node_id: NodeId::new(),
+                target: TargetRef::new("agent:1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
+                name: "Chef".to_owned(),
+            }],
+        })],
+        ClientMessage::CallHost { .. } => Vec::new(),
+        ClientMessage::Submit { .. } => accepted(frame),
+        other => chat_replies(other).expect("a chat frame"),
+    }))
+    .await;
+    let mut running = start(endpoints);
+    hear(&heard, 1, |frame| {
+        matches!(frame, ClientMessage::CallHost { .. })
+    })
+    .await;
+    running
+        .commands
+        .send(Command::Send {
+            task_id: running.task_id,
+            text: "Still there?".to_owned(),
+        })
+        .expect("send");
+    hear(&heard, 1, is_submit).await;
+    hear(&heard, 4, |frame| {
+        matches!(frame, ClientMessage::ListTargets { .. })
+    })
+    .await;
+    let calls = hear(&heard, 1, |frame| {
+        matches!(frame, ClientMessage::CallHost { .. })
+    })
+    .await;
+    assert_eq!(calls.len(), 1, "one unanswered call at a time");
+    while let Ok(update) = running.updates.try_recv() {
+        assert!(
+            !matches!(update, Update::Linked(false)),
+            "the link stays up"
+        );
+    }
 }
