@@ -256,3 +256,38 @@ fn what_the_owner_types_waits_while_renoa_is_away(cx: &mut TestAppContext) {
         "the text waits in the composer"
     );
 }
+
+#[gpui_kit::test]
+fn a_chat_shows_what_its_agent_is_for_until_something_is_said(cx: &mut TestAppContext) {
+    let (_window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    let task_id = chat_task_id(node_id, "ada");
+    updates
+        .send(Update::Agents(vec![agent(node_id, "Ada")]))
+        .unwrap();
+    updates
+        .send(Update::Purpose {
+            node_id,
+            target: "ada".to_owned(),
+            purpose: "Plans dinners".to_owned(),
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        chats.read_with(cx, |chats, _| chats.preview(task_id)),
+        "Plans dinners"
+    );
+
+    updates
+        .send(Update::Event(Box::new(said(
+            task_id,
+            0,
+            CommandInput::from_text("Tacos tonight?"),
+        ))))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        chats.read_with(cx, |chats, _| chats.preview(task_id)),
+        "Tacos tonight?"
+    );
+}

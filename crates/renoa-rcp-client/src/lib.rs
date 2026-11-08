@@ -23,7 +23,7 @@ use std::{
 use futures_util::{SinkExt as _, StreamExt as _};
 use renoa_protocol::{CommandId, CommandInput, TargetRef};
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredentials, ErrorCode, MAX_APPLICATION_MESSAGE_BYTES, NodeId,
+    ClientMessage, DeviceCredentials, ErrorCode, HostMethod, MAX_APPLICATION_MESSAGE_BYTES, NodeId,
     ServerMessage, TargetSummary, TaskEvent, TaskId,
 };
 use thiserror::Error;
@@ -78,6 +78,14 @@ pub struct Connection {
     waiters: Waiters,
     next_request: Arc<AtomicU64>,
     closed: CancellationToken,
+}
+
+/// The Host's answer to [`Connection::call_host`]: its HTTP status, a
+/// success or the Host's own refusal, and its JSON body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAnswer {
+    pub status: u16,
+    pub body: String,
 }
 
 /// Task events in coordinator order. The stream ends, after reporting the
@@ -271,6 +279,34 @@ impl Connection {
                 ..
             } if accepted == command_id => Ok(()),
             other => Err(unexpected("command_accepted", &other)),
+        }
+    }
+
+    /// Calls the owner's Host at `path` under `/v1/host`, as a browser does
+    /// there. Only a connection that proved its device key may.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport failure or the coordinator's refusal: `NodeOffline`
+    /// when the Host could not be reached or did not answer, in which case a
+    /// change may or may not have taken effect.
+    pub async fn call_host(
+        &self,
+        method: HostMethod,
+        path: &str,
+        body: Option<String>,
+    ) -> Result<HostAnswer, ClientError> {
+        match self
+            .request(|request_id| ClientMessage::CallHost {
+                request_id,
+                method,
+                path: path.to_owned(),
+                body,
+            })
+            .await?
+        {
+            ServerMessage::HostAnswer { status, body, .. } => Ok(HostAnswer { status, body }),
+            other => Err(unexpected("host_answer", &other)),
         }
     }
 

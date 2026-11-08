@@ -38,6 +38,8 @@ pub struct Chats {
     agents: Vec<TargetSummary>,
     chosen: Option<Chosen>,
     transcripts: HashMap<TaskId, Transcript>,
+    /// What each chat's agent is for, as its owner wrote it.
+    purposes: HashMap<TaskId, SharedString>,
     /// What the owner typed in each chat they are not looking at.
     drafts: HashMap<TaskId, String>,
     /// The chats where Renoa refused the owner's last message.
@@ -85,6 +87,7 @@ impl Chats {
             agents: Vec::new(),
             chosen: None,
             transcripts: HashMap::new(),
+            purposes: HashMap::new(),
             drafts: HashMap::new(),
             unsent: HashSet::new(),
             composer,
@@ -110,6 +113,14 @@ impl Chats {
                     }
                     None => self.select(0, window, cx),
                 }
+            }
+            Update::Purpose {
+                node_id,
+                target,
+                purpose,
+            } => {
+                self.purposes
+                    .insert(chat_task_id(node_id, &target), purpose.into());
             }
             Update::Event(event) => {
                 self.transcripts
@@ -185,6 +196,17 @@ impl Chats {
         cx.notify();
     }
 
+    /// What a chat's row says under its name: the last thing said, or
+    /// before anything is, what the agent is for.
+    fn preview(&self, task_id: TaskId) -> SharedString {
+        self.transcripts
+            .get(&task_id)
+            .and_then(|transcript| transcript.lines().last())
+            .map(|line| line.text.clone().into())
+            .or_else(|| self.purposes.get(&task_id).cloned())
+            .unwrap_or_default()
+    }
+
     /// The rows the conversation shows: its lines, then a working row while
     /// the agent answers.
     fn rows(&self) -> usize {
@@ -251,11 +273,7 @@ impl Chats {
     fn sidebar(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.agents.iter().enumerate().map(|(index, agent)| {
             let task_id = chat_task_id(agent.node_id, agent.target.as_str());
-            let preview: SharedString = self
-                .transcripts
-                .get(&task_id)
-                .and_then(|transcript| transcript.lines().last())
-                .map_or_else(SharedString::default, |line| line.text.clone().into());
+            let preview = self.preview(task_id);
             div()
                 .id(("agent", index))
                 .flex()

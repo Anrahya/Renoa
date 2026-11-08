@@ -16,6 +16,7 @@ renoa-rcp-client = { path = "../../crates/renoa-rcp-client" }
 renoa-rcp-wire = { path = "../../crates/renoa-rcp-wire" }
 ring = "0.17.14"
 security-framework = "3"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }

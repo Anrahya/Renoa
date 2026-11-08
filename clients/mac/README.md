@@ -31,6 +31,12 @@ code.
 ## What it does
 
 - Agents are the targets the owner's online nodes advertise.
+- Under each agent's name the sidebar shows the last thing said, or, before
+  anything is, the purpose its owner gave it, read once from the Host
+  (`GET /v1/host/agents/<id>` over `call_host`) for every `agent:<id>` target.
+  The reads run beside the chats, so a slow Host holds up no message; any
+  answer but a purpose or "no such agent" is asked again with the next agent
+  list, every 30 seconds.
 - Each agent's chat is the task every app derives from the agent's node and
   target, so the phone and the Mac share one conversation (`src/chat.rs`).
 - A lost connection is retried every five seconds; each chat is attached again
