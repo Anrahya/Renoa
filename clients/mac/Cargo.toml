@@ -1,0 +1,34 @@
+[package]
+name = "renoa-mac"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# Its own workspace: the Linux build and CI never compile GPUI.
+[workspace]
+
+[dependencies]
+gpui-kit = "0.9.0"
+md-5 = "0.10"
+renoa-protocol = { path = "../../crates/renoa-protocol" }
+renoa-rcp-client = { path = "../../crates/renoa-rcp-client" }
+renoa-rcp-wire = { path = "../../crates/renoa-rcp-wire" }
+ring = "0.17.14"
+security-framework = "3"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+gpui-kit = { version = "0.9.0", features = ["test-support"] }
+tokio = { version = "1", features = ["io-util", "net"] }
+futures-util = "0.3.33"
+tokio-tungstenite = "0.29.0"
+
+# As the root workspace: line tables for our code, none for dependencies.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
