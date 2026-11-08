@@ -22,6 +22,7 @@ import live.renoa.app.editor.AgentEditorViewModel
 import live.renoa.app.editor.EditorMode
 import live.renoa.app.home.HomeScreen
 import live.renoa.app.home.HomeViewModel
+import live.renoa.app.home.computerProblem
 import live.renoa.app.signin.SignInScreen
 import live.renoa.app.signup.SignUpMemory
 import live.renoa.app.signup.SignUpScreen
@@ -71,6 +72,7 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
@@ -375,6 +377,53 @@ class ScreensTest : ScreenTest() {
         snapshot("home-paper")
         openPages()
         snapshot("home-routines-paper")
+    }
+
+    @Test
+    fun settingsSignsInTheComputerShowingACodeAndSaysWhenNoneIs() {
+        val sent = mutableListOf<String>()
+        val approving =
+            object : AgentRepository by FakeAgentRepository(scope, now = { EVENING }) {
+                override suspend fun approveComputer(code: String): String {
+                    sent += code
+                    if (code != "7k3m-qx9d") throw RepositoryException(Problem.NotFound, "no computer shows that code")
+                    return "MacBook"
+                }
+            }
+        val model = HomeViewModel(approving)
+        show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, now = { EVENING }) }
+        compose.waitForIdle()
+        compose.onNode(hasText("Settings") and isSelectable()).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Sign in a computer").performScrollTo().performClick()
+        compose.waitForIdle()
+
+        val field = compose.onNodeWithContentDescription("Computer code")
+        compose.onNodeWithText("Sign in").assertIsNotEnabled()
+        field.performTextInput("ZZZZ ZZZ")
+        compose.onNodeWithText("Sign in").assertIsNotEnabled()
+        field.performTextInput("Z")
+        compose.onNodeWithText("Sign in").assertIsEnabled().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText(computerProblem(Problem.NotFound)).assertIsDisplayed()
+
+        field.performTextReplacement("7k3m-qx9d")
+        compose.waitForIdle()
+        compose.onNodeWithText(computerProblem(Problem.NotFound)).assertDoesNotExist()
+        compose.onNodeWithText("Sign in").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("MacBook can sign in").assertIsDisplayed()
+        snapshot("home-computer-signed-in")
+        assertEquals(listOf("ZZZZ ZZZZ", "7k3m-qx9d"), sent)
+        compose.onNodeWithText("Done").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("MacBook can sign in").assertDoesNotExist()
+
+        // Opening it again starts afresh.
+        compose.onNodeWithText("Sign in a computer").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Sign in").assertIsNotEnabled()
+        compose.onNodeWithText("MacBook can sign in").assertDoesNotExist()
     }
 
     @Test

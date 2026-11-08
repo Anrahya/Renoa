@@ -35,7 +35,7 @@ class WireTest {
         )
 
     /** Surface frames this client does not offer yet: the app has no page that lists signed-in devices. */
-    private val surfaceFramesNotOffered = setOf("list_devices", "device_list", "approve_device", "device_approved")
+    private val surfaceFramesNotOffered = setOf("list_devices", "device_list")
 
     private fun documentFrames(): List<JsonObject> =
         Regex("```json\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL)

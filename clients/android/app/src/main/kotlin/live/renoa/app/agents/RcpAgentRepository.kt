@@ -424,6 +424,8 @@ class RcpAgentRepository(
 
     override suspend fun shareLink(shareId: Uuid): String = reaching { surface.shareLink(shareId) }
 
+    override suspend fun approveComputer(code: String): String = reaching { surface.approveDevice(code) }.label
+
     override suspend fun profile(agentId: String): AgentProfile {
         return host.definition(onHost(agentId)).profile(agentId)
     }

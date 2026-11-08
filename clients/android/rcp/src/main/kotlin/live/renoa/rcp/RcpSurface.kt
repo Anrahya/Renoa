@@ -114,6 +114,15 @@ interface RcpSurface {
     suspend fun shareLink(shareId: Uuid): String
 
     /**
+     * Signs in the computer showing [code] as the owner: it collects its own credential next. The code
+     * is the eight letters and digits it shows, in any case, with spaces or dashes. A code no computer
+     * shows is refused with `not_found`, one that cannot be a code with `invalid_message`, and one the
+     * owner's sign-in rules refuse, such as a computer that was signed out, with `conflict`. Repeating
+     * it succeeds again. Only a device that proved its key may approve.
+     */
+    suspend fun approveDevice(code: String): ApprovedDevice
+
+    /**
      * Registers [token], issued by Firebase Cloud Messaging, as this device's push token, so Renoa can
      * wake the app while it holds no connection. A new token replaces the old one, and repeating it is
      * safe. A connection opened with a ticket is refused with `invalid_role`.

@@ -122,6 +122,12 @@ class FakeCoordinator : AutoCloseable {
     /** The shares one-time links were issued for, in order. */
     val sharedLinks: MutableList<String> = CopyOnWriteArrayList()
 
+    /** The computers waiting to sign in, by the code each shows, with the name it gave. */
+    val waitingComputers: MutableMap<String, String> = ConcurrentHashMap()
+
+    /** The codes approved, as typed, in order. */
+    val approvedCodes: MutableList<String> = CopyOnWriteArrayList()
+
     /** The notice key the device registered, as sent, and the notices held for it. */
     @Volatile var noticeKey: String? = null
     val notices = CopyOnWriteArrayList<HeldNotice>()
@@ -276,6 +282,7 @@ class FakeCoordinator : AutoCloseable {
                 "stop_command" -> stopCommand(requestId, frame)
                 "call_host" -> callHost(requestId, frame)
                 "share_link" -> shareLink(requestId, frame)
+                "approve_device" -> approveDevice(requestId, frame)
                 "set_push_token" -> setPushToken(requestId, frame)
                 "clear_push_token" -> clearPushToken(requestId)
                 "revoke_device" -> revokeDevice(requestId, frame)
@@ -460,6 +467,26 @@ class FakeCoordinator : AutoCloseable {
             val share = frame.getValue("share_id").jsonPrimitive.content
             sharedLinks += share
             reply(requestId, "share_link_issued") { put("path", "/s/$share?ticket=${"%064x".format(sharedLinks.size)}") }
+        }
+
+        /** As the coordinator: only a device that proved its key approves, and only a code a computer shows. */
+        private fun approveDevice(requestId: Long, frame: JsonObject) {
+            if (deviceKey == null) {
+                socket.send(error(requestId, "invalid_role", "A computer is signed in from a signed-in app on your phone."))
+                return
+            }
+            val typed = frame.getValue("code").jsonPrimitive.content
+            val code = typed.filter { it != ' ' && it != '-' }.uppercase()
+            val label = waitingComputers[code]
+            if (label == null) {
+                socket.send(error(requestId, "not_found", "no computer is waiting with this code; check it, or start again on the computer"))
+                return
+            }
+            approvedCodes += typed
+            reply(requestId, "device_approved") {
+                put("surface", "mac")
+                put("label", label)
+            }
         }
 
         private fun setPushToken(requestId: Long, frame: JsonObject) {

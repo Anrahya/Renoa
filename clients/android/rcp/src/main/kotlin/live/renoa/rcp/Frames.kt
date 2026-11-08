@@ -125,6 +125,16 @@ sealed interface ClientMessage {
         @SerialName("share_id") val shareId: Uuid,
     ) : ClientMessage
 
+    /** Signs in the computer showing [code] as this device's owner. The code lets a computer in, so it is never printed. */
+    @Serializable
+    @SerialName("approve_device")
+    data class ApproveDevice(
+        @SerialName("request_id") val requestId: Long,
+        val code: String,
+    ) : ClientMessage {
+        override fun toString(): String = "ApproveDevice(requestId=$requestId, code=<secret>)"
+    }
+
     /** Registers this device's push token. [provider] is `fcm`; the token is opaque and secret. */
     @Serializable
     @SerialName("set_push_token")
@@ -261,6 +271,15 @@ sealed interface ServerMessage {
     ) : ServerMessage.Answer {
         override fun toString(): String = "ShareLinkIssued(requestId=$requestId, path=<secret>)"
     }
+
+    /** The computer that showed the code signs in next time it asks, under the name it gave. */
+    @Serializable
+    @SerialName("device_approved")
+    data class DeviceApproved(
+        @SerialName("request_id") override val requestId: Long,
+        val surface: String,
+        val label: String,
+    ) : ServerMessage.Answer
 
     @Serializable
     @SerialName("push_token_set")

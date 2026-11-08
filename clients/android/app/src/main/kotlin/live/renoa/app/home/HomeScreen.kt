@@ -179,7 +179,7 @@ fun HomeScreen(
             RenoaTab(state, time, state.page ?: HomePage.Routines, renoa, barSpace)
         }
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Settings)) {
-            SettingsPage(appearance, onAppearance, onSignOut, onNotificationsChanged, barSpace)
+            SettingsPage(appearance, onAppearance, onSignOut, onNotificationsChanged, viewModel::approveComputer, barSpace)
         }
     }
     AccountSheet(accountOpen, { accountOpen = false }, state, onSignOut)

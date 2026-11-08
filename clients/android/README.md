@@ -22,6 +22,8 @@ The Kotlin app shell. Three modules:
   Settings checks `https://renoa.live/app/android.json` for a newer app, downloads it, checks its
   size and SHA-256, and hands it to the phone's installer; a release ships the app with
   `scripts/publish-android-app` (`deploy/README.md`).
+  Settings also signs in a computer: the owner types the code it shows and the app sends
+  `approve_device` (`docs/identity-v0.md`).
   Sign-in is real: a setup code (or the ID of a passkey the person already
   has), a passkey through Credential Manager, and a P-256 device key in the Android Keystore;
   the device credential is kept encrypted with a Keystore key. The app signs in to
