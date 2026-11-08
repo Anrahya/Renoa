@@ -55,6 +55,10 @@ redacted!(
     /// ticket.
     ShareLink
 );
+redacted!(
+    /// The code a computer waiting to sign in shows, as its owner typed it.
+    DeviceCode
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +80,7 @@ mod tests {
             format!("{:?}", ConnectionTicket::new(VALUE)),
             format!("{:?}", PushToken::new(VALUE)),
             format!("{:?}", ShareLink::new(VALUE)),
+            format!("{:?}", DeviceCode::new(VALUE)),
             format!(
                 "{:?}",
                 DeviceCredentials {

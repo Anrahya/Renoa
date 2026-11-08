@@ -70,6 +70,8 @@ version `17` peer is rejected at authentication. A signed-in app's
 compatible addition to version `18`: a peer that never sends it sees no
 change, and a coordinator that predates it answers it with `invalid_message`
 on an authenticated connection rather than refusing the app at sign-in.
+[`approve_device`](#sign-in-a-computer), answered by `device_approved`, is a
+compatible addition to version `18` in the same way.
 
 Version `17` superseded version `16` by adding sealed setup notices: a signed-in
 app's `set_notice_key`, `list_notices` and `acknowledge_notice` (answered by
@@ -485,6 +487,40 @@ reach the Host, so a share that does not exist, or is not the principal's, is
 refused when the link is opened. Like [`call_host`](#call-the-host), a browser
 ticket connection, a service link such as Discord, and a node receive
 `invalid_role`.
+
+### Sign in a computer
+
+A device that proved its key signs in a computer that is showing a code
+([identity](identity-v0.md#signing-in-a-computer-from-a-phone)), as its own
+principal:
+
+```json
+{
+  "type": "approve_device",
+  "request_id": 48,
+  "code": "7K3M-QX9D"
+}
+```
+
+```json
+{
+  "type": "device_approved",
+  "request_id": 48,
+  "surface": "mac",
+  "label": "MacBook"
+}
+```
+
+`code` is the eight symbols the computer shows, in either case, with spaces or
+dashes. `surface` and `label` are what the computer asked to be named; the
+computer signs in when it next collects. Approving the same code again for the
+same principal is acknowledged again. A code that no computer is waiting with,
+or one that expired, receives `not_found`. A malformed code receives
+`invalid_message` and is not counted. A computer another principal approved, a
+key that was signed out, a key registered to another sign-in, an account at its
+device limit, and a principal that sent five codes matching no computer in the
+last five minutes receive `conflict`, and the computer keeps waiting. A browser ticket
+connection, a service link such as Discord, and a node receive `invalid_role`.
 
 ### Register a push token
 

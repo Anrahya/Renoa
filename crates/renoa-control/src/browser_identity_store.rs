@@ -15,7 +15,7 @@ use crate::{
     store::{ControlStore, blocking, id_error, json_error, sqlite_error},
 };
 
-const MAX_ACTIVE_CEREMONIES: i64 = 64;
+pub(crate) const MAX_ACTIVE_CEREMONIES: i64 = 64;
 
 pub(crate) struct RegistrationBootstrap {
     pub(crate) principal_id: PrincipalId,

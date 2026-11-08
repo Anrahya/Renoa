@@ -143,5 +143,5 @@ fn a_schema_16_database_gains_an_empty_ticket_table() {
         .expect("connection")
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 17);
+    assert_eq!(version, 18);
 }

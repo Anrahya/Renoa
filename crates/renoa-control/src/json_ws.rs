@@ -115,6 +115,7 @@ pub(crate) fn into_operation(message: ClientMessage) -> Option<JsonOperation> {
         | ClientMessage::DeleteTask { .. }
         | ClientMessage::CallHost { .. }
         | ClientMessage::ShareLink { .. }
+        | ClientMessage::ApproveDevice { .. }
         | ClientMessage::SetPushToken { .. }
         | ClientMessage::ClearPushToken { .. }
         | ClientMessage::SetNoticeKey { .. }
@@ -203,6 +204,9 @@ fn into_surface_operation(message: ClientMessage) -> Option<JsonOperation> {
             request_id,
             share_id,
         } => (request_id, SurfaceOperation::ShareLink { share_id }),
+        ClientMessage::ApproveDevice { request_id, code } => {
+            (request_id, SurfaceOperation::ApproveDevice { code })
+        }
         ClientMessage::SetPushToken {
             request_id,
             provider,

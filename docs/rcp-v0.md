@@ -1067,9 +1067,9 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    is relayed only as ephemeral live activity: there is no live reasoning or
    tool-argument stream and no general streaming UI protocol, and the Pi node
    publishes no live activity.
-5. Trusted-device approval for remote native enrollment, recovery, passkey
-   administration, and credential rotation are designed boundaries but are not
-   implemented. First-device passkey bootstrap is local and explicit. Listing
+5. A signed-in app approves a computer's sign-in by the code it shows.
+   Approval for headless node enrollment, recovery, passkey administration,
+   and credential rotation are designed boundaries but are not implemented. First-device passkey bootstrap is local and explicit. Listing
    and revocation by the owner cover signed-in apps only; the operator still
    revokes every other device. The Rust and TypeScript clients do not yet sign
    the device challenge, so only an app that implements the proof can connect
@@ -1089,10 +1089,10 @@ multi-task, or public-network consumer.
 
 Work proceeds in this order unless evidence changes the dependency:
 
-1. Add passkey administration, trusted-device approval for headless
-   enrollment, per-source throttling, health monitoring, and a
-   tested backup-and-restore procedure. Owner listing and revocation of
-   signed-in apps are done.
+1. Add passkey administration, approval for headless node enrollment,
+   per-source throttling, health monitoring, and a tested backup-and-restore
+   procedure. Owner listing and revocation of signed-in apps and app-approved
+   computer sign-in are done.
 2. Add a durable harness-initiated interaction flow when a real approval
    consumer exists; RCP transports the interaction while the harness retains
    permission policy. An agent's question to its owner needs none: `ask_owner`
@@ -1238,7 +1238,7 @@ assumption after context compaction:
 - HTTP/SSE and webhook transport bindings
 - Sender-constrained authentication for nodes and service links, and key
   purposes beyond signing
-- Trusted-device enrollment approval, identity recovery, passkey revocation,
+- Approval for headless node enrollment, identity recovery, passkey revocation,
   and active browser-session termination
 - End-to-end encryption and key distribution
 - Stable-origin discovery and automated TLS for a self-hosted installation

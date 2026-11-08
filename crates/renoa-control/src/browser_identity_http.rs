@@ -20,7 +20,7 @@ use crate::{
     identity_store::timestamp_millis,
 };
 
-const MAX_IDENTITY_BODY_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_IDENTITY_BODY_BYTES: usize = 64 * 1024;
 
 pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
     Router::new()
@@ -232,7 +232,7 @@ pub(crate) fn same_origin(state: &CoordinatorState, headers: &HeaderMap) -> bool
         .is_some_and(|identity| origin == identity.origin())
 }
 
-async fn json_request<T: DeserializeOwned>(
+pub(crate) async fn json_request<T: DeserializeOwned>(
     request: Request,
     state: &Arc<CoordinatorState>,
 ) -> Result<T, Box<Response>> {
@@ -338,7 +338,7 @@ pub(crate) fn error_response(error: &ControlError) -> Response {
         ControlErrorKind::Capacity => (
             StatusCode::TOO_MANY_REQUESTS,
             "capacity_exceeded",
-            "too many passkey ceremonies are active".to_owned(),
+            error.to_string(),
         ),
         ControlErrorKind::Conflict => (StatusCode::CONFLICT, "conflict", error.to_string()),
         ControlErrorKind::Invalid => (

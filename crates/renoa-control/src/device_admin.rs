@@ -1,13 +1,14 @@
-//! What a connection may do to its principal's signed-in apps, and ending a
-//! device's sessions once it is revoked.
+//! What a connection may do to its principal's signed-in apps: list and
+//! revoke them, approve a computer's sign-in, and end a device's sessions once
+//! it is revoked.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use renoa_protocol::{PrincipalId, SurfaceRef};
 use tokio::sync::{Semaphore, mpsc};
 
 use crate::{
-    DeviceId, ErrorCode, ServerMessage, control_log,
+    DeviceCode, DeviceId, ErrorCode, ServerMessage, control_log,
     coordinator::CoordinatorState,
     wire::{send_control_error, send_error, send_reply},
 };
@@ -50,6 +51,17 @@ impl Authority {
     /// so logging out would not end it; a browser calls `/v1/host`, which
     /// checks its session on every call.
     pub(crate) const fn may_call_host(self) -> bool {
+        match self {
+            Self::KeyedDevice(_) => true,
+            Self::Ticket | Self::BearerDevice(_) => false,
+        }
+    }
+
+    /// Whether this connection may sign another computer in as its
+    /// principal. Only an app that proved its key may: a browser's ticket
+    /// connection outlives the session that issued it, so logging out would
+    /// not stop it adding computers.
+    pub(crate) const fn may_approve_devices(self) -> bool {
         match self {
             Self::KeyedDevice(_) => true,
             Self::Ticket | Self::BearerDevice(_) => false,
@@ -122,6 +134,55 @@ pub(crate) async fn revoke_device(
                 })
                 .await;
             end_device_sessions(state, device_id).await;
+        }
+        Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
+    }
+}
+
+/// Answers `approve_device`: the waiting computer that shows `code` signs in
+/// as this connection's principal once it collects.
+pub(crate) async fn approve_device(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    request_id: u64,
+    session: &SurfaceSession,
+    code: &DeviceCode,
+) {
+    let approver = match session.authority.device_id() {
+        Some(device_id) if session.authority.may_approve_devices() => device_id,
+        _ => {
+            send_error(
+                outgoing,
+                Some(request_id),
+                ErrorCode::InvalidRole,
+                "A computer is signed in from a signed-in app on your phone.",
+            )
+            .await;
+            return;
+        }
+    };
+    match state
+        .store
+        .approve_device_request(session.principal_id, approver, code, SystemTime::now())
+        .await
+    {
+        Ok((surface, label)) => {
+            control_log::event(
+                "info",
+                "device_request_approved",
+                &serde_json::json!({
+                    "principal_id": session.principal_id,
+                    "by_device_id": approver,
+                    "surface": surface,
+                }),
+            );
+            let _ = outgoing
+                .send(ServerMessage::DeviceApproved {
+                    request_id,
+                    surface,
+                    label,
+                })
+                .await;
         }
         Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
     }

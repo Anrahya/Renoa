@@ -53,6 +53,7 @@ impl ClientMessage {
             | Self::DeleteTask { request_id, .. }
             | Self::CallHost { request_id, .. }
             | Self::ShareLink { request_id, .. }
+            | Self::ApproveDevice { request_id, .. }
             | Self::SetPushToken { request_id, .. }
             | Self::ClearPushToken { request_id }
             | Self::SendAgentMessage { request_id, .. }
@@ -107,6 +108,7 @@ impl ServerMessage {
             | Self::TaskDeleted { request_id, .. }
             | Self::HostAnswer { request_id, .. }
             | Self::ShareLinkIssued { request_id, .. }
+            | Self::DeviceApproved { request_id, .. }
             | Self::PushTokenSet { request_id }
             | Self::PushTokenCleared { request_id }
             | Self::WakeRequested { request_id }
