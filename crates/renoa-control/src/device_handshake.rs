@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     ClientMessage, DeviceId, ErrorCode, ServerMessage, control_log,
-    device_key::{DevicePublicKey, DeviceSignature, proof_message},
+    device_key::{DevicePublicKey, DeviceSignature},
     identity::random_nonce,
     wire::{next_application_message, send_control_error, send_error},
 };
@@ -41,8 +41,14 @@ pub(crate) async fn prove_possession(
         return false;
     };
     let verified = match message {
-        ClientMessage::DeviceProof { signature } => DeviceSignature::parse(&signature)
-            .is_some_and(|signature| key.verify(&proof_message(device_id, &nonce), &signature)),
+        ClientMessage::DeviceProof { signature } => {
+            DeviceSignature::parse(&signature).is_some_and(|signature| {
+                key.verify(
+                    &renoa_rcp_wire::device_proof_message(device_id, &nonce),
+                    &signature,
+                )
+            })
+        }
         _ => false,
     };
     if !verified {

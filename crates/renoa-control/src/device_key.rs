@@ -5,7 +5,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
 use uuid::Uuid;
 
-use crate::{ControlError, DeviceId};
+use crate::ControlError;
 
 const POINT_BYTES: usize = 65;
 const UNCOMPRESSED_POINT_TAG: u8 = 0x04;
@@ -122,21 +122,9 @@ pub(crate) fn check_registration_proof(
     }
 }
 
-/// The message a connection signs to prove it holds the device key. The nonce
-/// is the coordinator's per-connection challenge.
-pub(crate) fn proof_message(device_id: DeviceId, nonce: &str) -> Vec<u8> {
-    format!("renoa device proof v1\n{device_id}\n{nonce}").into_bytes()
-}
-
 /// The message a sign-in signs to prove it holds the key being registered.
 pub(crate) fn registration_message(ceremony_id: Uuid) -> Vec<u8> {
     format!("renoa device registration v1\n{ceremony_id}").into_bytes()
-}
-
-/// The message a computer signs to ask, and then to collect, a sign-in by
-/// another of its owner's apps. The computer chose `request_id`.
-pub(crate) fn request_message(request_id: Uuid) -> Vec<u8> {
-    format!("renoa device request v1\n{request_id}").into_bytes()
 }
 
 #[cfg(test)]

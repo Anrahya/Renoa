@@ -9,7 +9,8 @@ The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
 browser surfaces, and a TypeScript Pi node. The Rust frames and the records they carry are
 defined once, in `renoa-rcp-wire`, which the coordinator and every Rust client
-share. Cross-language tests cover both authenticated roles,
+share, with the messages a device key signs and the bodies of a computer's
+sign-in by a code. Cross-language tests cover both authenticated roles,
 discovery and authorization, replay, live reattachment, offline-node rejection,
 lost acknowledgements, `replay_required`, JavaScript's exact integer limit, and
 a real Pi OpenAI-compatible turn.

@@ -10,11 +10,12 @@ use axum::{
     response::Response,
     routing::post,
 };
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use renoa_rcp_wire::{
+    ApprovedCredentials, AwaitingApproval, CollectDeviceRequest, DEVICE_REQUEST_COLLECT_PATH,
+    DEVICE_REQUESTS_PATH, DeviceCode, DeviceRequest, DeviceRequestCode,
+};
 
 use crate::{
-    DeviceCredentials,
     browser_identity::parse_surface,
     browser_identity_http::{MAX_IDENTITY_BODY_BYTES, error_response, json_request, secure_json},
     coordinator::CoordinatorState,
@@ -24,63 +25,26 @@ use crate::{
 
 pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
     Router::new()
-        .route("/v1/identity/device-requests", post(open))
-        .route("/v1/identity/device-requests/collect", post(collect))
+        .route(DEVICE_REQUESTS_PATH, post(open))
+        .route(DEVICE_REQUEST_COLLECT_PATH, post(collect))
         .layer(DefaultBodyLimit::max(MAX_IDENTITY_BODY_BYTES))
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DeviceBody {
-    public_key: String,
-    label: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct OpenBody {
-    request_id: Uuid,
-    surface: String,
-    device: DeviceBody,
-    device_proof: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CollectBody {
-    request_id: Uuid,
-    device_proof: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodeResponse {
-    code: String,
-    expires_at_ms: i64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WaitingResponse {
-    expires_at_ms: i64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SignedInResponse {
-    credentials: DeviceCredentials,
 }
 
 /// Every check runs before the request is stored: a malformed surface, key
 /// or label, or a proof the key did not make, leaves nothing behind.
 async fn open(State(state): State<Arc<CoordinatorState>>, request: Request) -> Response {
-    let body = match json_request::<OpenBody>(request, &state).await {
+    let body = match json_request::<DeviceRequest>(request, &state).await {
         Ok(body) => body,
         Err(response) => return *response,
     };
     let parsed = parse_surface(body.surface).and_then(|surface| {
         let registration = DeviceRegistration::parse(&body.device.public_key, &body.device.label)?;
-        NewRequest::proven(body.request_id, surface, registration, &body.device_proof)
+        NewRequest::proven(
+            body.request_id,
+            surface,
+            registration,
+            body.device_proof.expose(),
+        )
     });
     let request = match parsed {
         Ok(request) => request,
@@ -93,8 +57,8 @@ async fn open(State(state): State<Arc<CoordinatorState>>, request: Request) -> R
     {
         Ok(opened) => secure_json(
             StatusCode::OK,
-            &CodeResponse {
-                code: opened.code,
+            &DeviceRequestCode {
+                code: DeviceCode::new(opened.code),
                 expires_at_ms: opened.expires_at_ms,
             },
         ),
@@ -106,17 +70,21 @@ async fn open(State(state): State<Arc<CoordinatorState>>, request: Request) -> R
 /// once one has. A device signed in again has its old credential replaced,
 /// so its live connections end before the new credential is returned.
 async fn collect(State(state): State<Arc<CoordinatorState>>, request: Request) -> Response {
-    let body = match json_request::<CollectBody>(request, &state).await {
+    let body = match json_request::<CollectDeviceRequest>(request, &state).await {
         Ok(body) => body,
         Err(response) => return *response,
     };
     match state
         .store
-        .collect_device_request(body.request_id, body.device_proof, SystemTime::now())
+        .collect_device_request(
+            body.request_id,
+            body.device_proof.expose().to_owned(),
+            SystemTime::now(),
+        )
         .await
     {
         Ok(Collected::Waiting { expires_at_ms }) => {
-            secure_json(StatusCode::ACCEPTED, &WaitingResponse { expires_at_ms })
+            secure_json(StatusCode::ACCEPTED, &AwaitingApproval { expires_at_ms })
         }
         Ok(Collected::SignedIn(principal_id, signed_in)) => {
             crate::browser_identity::log_device_sign_in(principal_id, &signed_in);
@@ -126,7 +94,7 @@ async fn collect(State(state): State<Arc<CoordinatorState>>, request: Request) -
             }
             secure_json(
                 StatusCode::OK,
-                &SignedInResponse {
+                &ApprovedCredentials {
                     credentials: signed_in.credentials,
                 },
             )

@@ -2051,3 +2051,148 @@ async fn a_request_with_a_bad_key_proof_or_surface_leaves_no_residue() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     server.stop().await;
 }
+
+/// A key as the Rust client sees it: something that signs and shows its point.
+struct ClientKey<'a>(&'a DeviceKey);
+
+impl renoa_rcp_client::DeviceKey for ClientKey<'_> {
+    fn public_key(&self) -> [u8; 65] {
+        self.0
+            .0
+            .public_key()
+            .as_ref()
+            .try_into()
+            .expect("uncompressed point")
+    }
+
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, renoa_rcp_client::ClientError> {
+        Ok(self
+            .0
+            .0
+            .sign(&SystemRandom::new(), message)
+            .expect("sign")
+            .as_ref()
+            .to_vec())
+    }
+}
+
+#[tokio::test]
+async fn the_rust_client_signs_a_computer_in_by_code_and_connects_only_with_its_key() {
+    use renoa_rcp_client::{ClientError, Collected, ask_to_sign_in, collect_sign_in};
+
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (_owner, phone, _tablet) = owner_with_two_apps(&server).await;
+    let mut phone_socket = phone.connect(&server).await;
+    let computer = DeviceKey::generate();
+    let key = ClientKey(&computer);
+    let request_id = Uuid::new_v4();
+
+    let asked = ask_to_sign_in(&server.http, request_id, "mac", "MacBook", &key)
+        .await
+        .expect("ask to sign in");
+    assert_eq!(
+        collect_sign_in(&server.http, request_id, &key).await,
+        Ok(Collected::Waiting {
+            expires_at_ms: asked.expires_at_ms
+        })
+    );
+    assert!(matches!(
+        approve(&mut phone_socket, 1, asked.code.expose()).await,
+        ServerMessage::DeviceApproved { .. }
+    ));
+    let Ok(Collected::SignedIn(credentials)) =
+        collect_sign_in(&server.http, request_id, &key).await
+    else {
+        panic!("the approved computer collects its credential");
+    };
+
+    assert!(matches!(
+        renoa_rcp_client::connect(&server.websocket, credentials.clone()).await,
+        Err(ClientError::Protocol(_))
+    ));
+    let stranger = DeviceKey::generate();
+    let refused = renoa_rcp_client::connect_with_key(
+        &server.websocket,
+        credentials.clone(),
+        &ClientKey(&stranger),
+    )
+    .await
+    .err()
+    .and_then(|error| error.code());
+    assert_eq!(refused, Some(ErrorCode::AuthenticationFailed));
+    let (connection, _events) =
+        renoa_rcp_client::connect_with_key(&server.websocket, credentials, &key)
+            .await
+            .expect("the computer connects with its key");
+    connection
+        .list_targets()
+        .await
+        .expect("the connection answers as the owner's");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn the_rust_client_reads_each_refusal_of_a_sign_in() {
+    use renoa_rcp_client::{ClientError, ask_to_sign_in, collect_sign_in};
+
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let computer = DeviceKey::generate();
+    let key = ClientKey(&computer);
+    let request_id = Uuid::new_v4();
+
+    assert_eq!(
+        refused_with(collect_sign_in(&server.http, request_id, &key).await),
+        Some(ErrorCode::NotFound)
+    );
+    ask_to_sign_in(&server.http, request_id, "mac", "MacBook", &key)
+        .await
+        .expect("ask");
+    let stranger = DeviceKey::generate();
+    assert_eq!(
+        refused_with(collect_sign_in(&server.http, request_id, &ClientKey(&stranger)).await),
+        Some(ErrorCode::AuthenticationFailed)
+    );
+    assert_eq!(
+        refused_with(ask_to_sign_in(&server.http, request_id, "mac", "Other name", &key).await),
+        Some(ErrorCode::Conflict)
+    );
+    assert_eq!(
+        refused_with(
+            ask_to_sign_in(
+                &server.http,
+                Uuid::new_v4(),
+                "not a surface!",
+                "MacBook",
+                &key
+            )
+            .await
+        ),
+        Some(ErrorCode::InvalidMessage)
+    );
+
+    // The coordinator holds 64 waiting requests, the bound its passkey
+    // ceremonies have: the first request above and 63 more fill it.
+    let keys: Vec<DeviceKey> = (1..64).map(|_| DeviceKey::generate()).collect();
+    for waiting in &keys {
+        ask_to_sign_in(
+            &server.http,
+            Uuid::new_v4(),
+            "mac",
+            "MacBook",
+            &ClientKey(waiting),
+        )
+        .await
+        .expect("a request fits");
+    }
+    assert!(matches!(
+        ask_to_sign_in(&server.http, Uuid::new_v4(), "mac", "MacBook", &key).await,
+        Err(ClientError::Busy(_))
+    ));
+    server.stop().await;
+}
+
+fn refused_with<T>(result: Result<T, renoa_rcp_client::ClientError>) -> Option<ErrorCode> {
+    result.err().and_then(|error| error.code())
+}

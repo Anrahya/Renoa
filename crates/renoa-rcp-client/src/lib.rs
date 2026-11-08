@@ -5,6 +5,13 @@
 //! such as task cursors and unsent commands, belongs to the surface, which
 //! reconnects and resumes from it.
 
+mod handshake;
+mod sign_in;
+
+pub use handshake::enroll;
+
+pub use sign_in::{Collected, DeviceKey, SignInRequest, ask_to_sign_in, collect_sign_in};
+
 use std::{
     collections::HashMap,
     sync::{
@@ -16,8 +23,8 @@ use std::{
 use futures_util::{SinkExt as _, StreamExt as _};
 use renoa_protocol::{CommandId, CommandInput, TargetRef};
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
-    MAX_APPLICATION_MESSAGE_BYTES, NodeId, ServerMessage, TargetSummary, TaskEvent, TaskId,
+    ClientMessage, DeviceCredentials, ErrorCode, MAX_APPLICATION_MESSAGE_BYTES, NodeId,
+    ServerMessage, TargetSummary, TaskEvent, TaskId,
 };
 use thiserror::Error;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -27,7 +34,7 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
-type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+pub(crate) type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 type Waiters = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<ServerMessage, ClientError>>>>>;
 
 const OUTBOUND_CAPACITY: usize = 64;
@@ -44,6 +51,13 @@ pub enum ClientError {
     /// The coordinator sent something this client cannot interpret.
     #[error("RCP protocol error: {0}")]
     Protocol(String),
+    /// The coordinator is holding as many sign-in requests as it takes; asking
+    /// again once one expires may succeed.
+    #[error("coordinator is busy: {0}")]
+    Busy(String),
+    /// The device key could not sign.
+    #[error("device key failed: {0}")]
+    Key(String),
 }
 
 impl ClientError {
@@ -52,38 +66,8 @@ impl ClientError {
     pub const fn code(&self) -> Option<ErrorCode> {
         match self {
             Self::Rejected { code, .. } => Some(*code),
-            Self::Transport(_) | Self::Protocol(_) => None,
+            Self::Transport(_) | Self::Protocol(_) | Self::Busy(_) | Self::Key(_) => None,
         }
-    }
-}
-
-/// Exchanges a single-use enrollment token for this surface's device credential.
-///
-/// # Errors
-///
-/// Returns a transport failure or the coordinator's refusal.
-pub async fn enroll(
-    endpoint: &str,
-    token: EnrollmentToken,
-) -> Result<DeviceCredentials, ClientError> {
-    let mut socket = open(endpoint).await?;
-    send(
-        &mut socket,
-        &ClientMessage::Enroll {
-            version: JSON_WS_VERSION,
-            token,
-        },
-    )
-    .await?;
-    match receive(&mut socket).await? {
-        ServerMessage::Enrolled {
-            version,
-            credentials,
-        } if version == JSON_WS_VERSION => Ok(credentials),
-        ServerMessage::Error { code, message, .. } => Err(ClientError::Rejected { code, message }),
-        _ => Err(ClientError::Protocol(
-            "coordinator did not return a device credential".to_owned(),
-        )),
     }
 }
 
@@ -107,35 +91,43 @@ impl Events {
     }
 }
 
-/// Authenticates with a device credential and starts the connection.
+/// Authenticates with a device credential that has no key and starts the
+/// connection.
 ///
 /// # Errors
 ///
-/// Returns a transport failure or the coordinator's refusal.
+/// Returns a transport failure or the coordinator's refusal, and a protocol
+/// error for a device that registered a key, which connects with
+/// [`connect_with_key`].
 pub async fn connect(
     endpoint: &str,
     credentials: DeviceCredentials,
 ) -> Result<(Connection, Events), ClientError> {
+    start(endpoint, credentials, None).await
+}
+
+/// Authenticates with a key-bound device's credential, answers the
+/// coordinator's challenge with `key`, and starts the connection.
+///
+/// # Errors
+///
+/// Returns a transport failure, the key's failure, or the coordinator's
+/// refusal.
+pub async fn connect_with_key(
+    endpoint: &str,
+    credentials: DeviceCredentials,
+    key: &dyn DeviceKey,
+) -> Result<(Connection, Events), ClientError> {
+    start(endpoint, credentials, Some(key)).await
+}
+
+async fn start(
+    endpoint: &str,
+    credentials: DeviceCredentials,
+    key: Option<&dyn DeviceKey>,
+) -> Result<(Connection, Events), ClientError> {
     let mut socket = open(endpoint).await?;
-    send(
-        &mut socket,
-        &ClientMessage::Authenticate {
-            version: JSON_WS_VERSION,
-            credentials,
-        },
-    )
-    .await?;
-    match receive(&mut socket).await? {
-        ServerMessage::Authenticated { version } if version == JSON_WS_VERSION => {}
-        ServerMessage::Error { code, message, .. } => {
-            return Err(ClientError::Rejected { code, message });
-        }
-        _ => {
-            return Err(ClientError::Protocol(
-                "coordinator did not authenticate the surface".to_owned(),
-            ));
-        }
-    }
+    handshake::authenticate(&mut socket, credentials, key).await?;
     let (outgoing, outbound) = mpsc::channel(OUTBOUND_CAPACITY);
     let (events, inbound) = mpsc::channel(EVENT_CAPACITY);
     let connection = Connection {
@@ -410,7 +402,7 @@ async fn dispatch(
     Ok(())
 }
 
-async fn open(endpoint: &str) -> Result<Socket, ClientError> {
+pub(crate) async fn open(endpoint: &str) -> Result<Socket, ClientError> {
     let websocket = WebSocketConfig::default()
         .max_message_size(Some(MAX_APPLICATION_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_APPLICATION_MESSAGE_BYTES));
@@ -420,7 +412,7 @@ async fn open(endpoint: &str) -> Result<Socket, ClientError> {
     Ok(socket)
 }
 
-async fn send(socket: &mut Socket, message: &ClientMessage) -> Result<(), ClientError> {
+pub(crate) async fn send(socket: &mut Socket, message: &ClientMessage) -> Result<(), ClientError> {
     let json =
         serde_json::to_string(message).map_err(|error| ClientError::Protocol(error.to_string()))?;
     socket
@@ -429,7 +421,7 @@ async fn send(socket: &mut Socket, message: &ClientMessage) -> Result<(), Client
         .map_err(|error| ClientError::Transport(error.to_string()))
 }
 
-async fn receive(socket: &mut Socket) -> Result<ServerMessage, ClientError> {
+pub(crate) async fn receive(socket: &mut Socket) -> Result<ServerMessage, ClientError> {
     loop {
         match socket.next().await {
             Some(Ok(Message::Text(json))) => {
