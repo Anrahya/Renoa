@@ -1,7 +1,9 @@
 use uuid::Uuid;
 
+use renoa_rcp_wire::device_proof_message;
+
 use super::{
-    DevicePublicKey, DeviceRegistration, DeviceSignature, check_registration_proof, proof_message,
+    DevicePublicKey, DeviceRegistration, DeviceSignature, check_registration_proof,
     registration_message,
 };
 use crate::DeviceId;
@@ -29,11 +31,11 @@ fn signature(encoded: &str) -> DeviceSignature {
 fn the_checked_in_vector_verifies_both_messages() {
     let device_id = DeviceId::from_uuid(Uuid::from_u128(VECTOR_DEVICE_ID));
     assert_eq!(
-        String::from_utf8(proof_message(device_id, VECTOR_NONCE)).expect("utf-8"),
+        String::from_utf8(device_proof_message(device_id, VECTOR_NONCE)).expect("utf-8"),
         format!("renoa device proof v1\n00000000-0000-0000-0000-0000000000d1\n{VECTOR_NONCE}")
     );
     assert!(vector_key().verify(
-        &proof_message(device_id, VECTOR_NONCE),
+        &device_proof_message(device_id, VECTOR_NONCE),
         &signature(VECTOR_PROOF)
     ));
 
@@ -53,14 +55,14 @@ fn a_signature_covers_exactly_its_message() {
     let device_id = DeviceId::from_uuid(Uuid::from_u128(VECTOR_DEVICE_ID));
     let proof = signature(VECTOR_PROOF);
     let other_nonce = VECTOR_NONCE.replace('0', "1");
-    assert!(!vector_key().verify(&proof_message(device_id, &other_nonce), &proof));
+    assert!(!vector_key().verify(&device_proof_message(device_id, &other_nonce), &proof));
     assert!(!vector_key().verify(
-        &proof_message(DeviceId::from_uuid(Uuid::from_u128(2)), VECTOR_NONCE),
+        &device_proof_message(DeviceId::from_uuid(Uuid::from_u128(2)), VECTOR_NONCE),
         &proof
     ));
     // A registration signature cannot stand in for a connection proof.
     assert!(!vector_key().verify(
-        &proof_message(device_id, VECTOR_NONCE),
+        &device_proof_message(device_id, VECTOR_NONCE),
         &signature(VECTOR_REGISTRATION_PROOF)
     ));
 }

@@ -1069,11 +1069,12 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    publishes no live activity.
 5. A signed-in app approves a computer's sign-in by the code it shows.
    Approval for headless node enrollment, recovery, passkey administration,
-   and credential rotation are designed boundaries but are not implemented. First-device passkey bootstrap is local and explicit. Listing
-   and revocation by the owner cover signed-in apps only; the operator still
-   revokes every other device. The Rust and TypeScript clients do not yet sign
-   the device challenge, so only an app that implements the proof can connect
-   with a key-bound device.
+   and credential rotation are designed boundaries but are not implemented.
+   First-device passkey bootstrap is local and explicit. Listing and
+   revocation by the owner cover signed-in apps only; the operator still
+   revokes every other device. The Rust client asks for and collects a
+   computer's sign-in and answers the device challenge with a key it is
+   handed; the TypeScript client does not yet sign the challenge.
 6. Public resource limits cover total connections, authentication time, and
    message size. Per-source throttling, health monitoring, backup restoration,
    and operational alerting remain deployment work.

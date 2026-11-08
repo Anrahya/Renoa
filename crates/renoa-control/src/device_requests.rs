@@ -14,6 +14,7 @@ use std::{
 };
 
 use renoa_protocol::{PrincipalId, SurfaceRef};
+use renoa_rcp_wire::device_request_message;
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
@@ -22,7 +23,7 @@ use crate::{
     ControlError, DeviceCode, DeviceId,
     browser_identity_store::MAX_ACTIVE_CEREMONIES,
     control_schema::open_connection,
-    device_key::{DevicePublicKey, DeviceRegistration, DeviceSignature, request_message},
+    device_key::{DevicePublicKey, DeviceRegistration, DeviceSignature},
     device_store::{SignedInDevice, check_sign_in, sign_in_device},
     identity_store::timestamp_millis,
     store::{ControlStore, blocking, id_error, sqlite_error},
@@ -164,7 +165,7 @@ fn code_digest(typed: &str) -> Option<[u8; 32]> {
 /// Whether `proof` is the request key's signature over the request.
 fn proves(key: &DevicePublicKey, request_id: Uuid, proof: &str) -> bool {
     DeviceSignature::parse(proof)
-        .is_some_and(|signature| key.verify(&request_message(request_id), &signature))
+        .is_some_and(|signature| key.verify(&device_request_message(request_id), &signature))
 }
 
 fn remove_expired(connection: &Connection, now_ms: i64) -> Result<(), ControlError> {

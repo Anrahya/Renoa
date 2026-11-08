@@ -476,6 +476,10 @@ impl From<ClientError> for NodeError {
             ClientError::Transport(reason) => Self::Transport(reason),
             ClientError::Rejected { code, message } => Self::Rejected { code, message },
             ClientError::Protocol(reason) => Self::Protocol(reason),
+            // The node neither signs in by a code nor holds a device key.
+            error @ (ClientError::Busy(_) | ClientError::Key(_)) => {
+                Self::Protocol(error.to_string())
+            }
         }
     }
 }

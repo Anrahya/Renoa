@@ -8,6 +8,7 @@ use axum::{
     routing::post,
 };
 use renoa_protocol::PrincipalId;
+use renoa_rcp_wire::IdentityRefusal;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
@@ -101,13 +102,6 @@ struct OptionsResponse<T> {
 struct TicketResponse {
     connection_ticket: ConnectionTicket,
     expires_at_ms: i64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ErrorResponse {
-    code: &'static str,
-    message: String,
 }
 
 async fn registration_options(
@@ -311,8 +305,8 @@ fn ticket_response(grant: TicketGrant) -> Response {
 fn invalid_request_response() -> Response {
     secure_json(
         StatusCode::BAD_REQUEST,
-        &ErrorResponse {
-            code: "invalid_request",
+        &IdentityRefusal {
+            code: "invalid_request".to_owned(),
             message: "request is not valid Renoa identity JSON".to_owned(),
         },
     )
@@ -321,8 +315,8 @@ fn invalid_request_response() -> Response {
 fn unavailable_response() -> Response {
     secure_json(
         StatusCode::NOT_FOUND,
-        &ErrorResponse {
-            code: "not_found",
+        &IdentityRefusal {
+            code: "not_found".to_owned(),
             message: "identity endpoint is not available".to_owned(),
         },
     )
@@ -353,7 +347,13 @@ pub(crate) fn error_response(error: &ControlError) -> Response {
             "identity service failed".to_owned(),
         ),
     };
-    secure_json(status, &ErrorResponse { code, message })
+    secure_json(
+        status,
+        &IdentityRefusal {
+            code: code.to_owned(),
+            message,
+        },
+    )
 }
 
 pub(crate) fn secure_json<T: Serialize>(status: StatusCode, value: &T) -> Response {

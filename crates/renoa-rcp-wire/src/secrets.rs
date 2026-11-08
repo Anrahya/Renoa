@@ -59,6 +59,11 @@ redacted!(
     /// The code a computer waiting to sign in shows, as its owner typed it.
     DeviceCode
 );
+redacted!(
+    /// A computer's signature over its sign-in request. It is the same for
+    /// every collection of that request, so whoever holds it may collect.
+    DeviceRequestProof
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +86,7 @@ mod tests {
             format!("{:?}", PushToken::new(VALUE)),
             format!("{:?}", ShareLink::new(VALUE)),
             format!("{:?}", DeviceCode::new(VALUE)),
+            format!("{:?}", DeviceRequestProof::new(VALUE)),
             format!(
                 "{:?}",
                 DeviceCredentials {

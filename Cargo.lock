@@ -2367,6 +2367,7 @@ dependencies = [
  "renoa-home",
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
+ "renoa-rcp-client",
  "renoa-rcp-wire",
  "renoa-telemetry",
  "reqwest",
@@ -2558,16 +2559,21 @@ dependencies = [
 name = "renoa-rcp-client"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "renoa-control",
  "renoa-protocol",
  "renoa-rcp-wire",
+ "reqwest",
+ "ring",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]

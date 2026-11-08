@@ -33,6 +33,8 @@ webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"
 [dev-dependencies]
 # Only the tests read JSON bodies with reqwest.
 reqwest = { workspace = true, features = ["json"] }
+# The Rust client signs a computer in against this coordinator.
+renoa-rcp-client = { path = "../renoa-rcp-client", version = "0.1.0" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
