@@ -9,12 +9,8 @@ use std::{
 };
 
 use renoa_protocol::{CommandId, CommandInput, TargetRef};
-use renoa_rcp_client::{
-    ClientError, Collected, Connection, Events, ask_to_sign_in, collect_sign_in, connect_with_key,
-};
-use renoa_rcp_wire::{
-    DeviceCode, DeviceCredentials, ErrorCode, NodeId, TargetSummary, TaskEvent, TaskId,
-};
+use renoa_rcp_client::{ClientError, Connection, Events, connect_with_key};
+use renoa_rcp_wire::{DeviceCredentials, ErrorCode, NodeId, TargetSummary, TaskEvent, TaskId};
 use tokio::{
     runtime::Runtime,
     sync::mpsc,
@@ -24,6 +20,8 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{face::Look, key::MacKey};
+use host::HostCall;
+pub use sign_in::{SignInStep, sign_in};
 
 const DEFAULT_ORIGIN: &str = "https://renoa.live";
 /// How long a call may wait for Renoa before the link counts as lost, as the
@@ -88,87 +86,6 @@ impl Pace {
     };
 }
 
-/// What signing in shows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SignInStep {
-    /// The code to type on the phone.
-    Showing(DeviceCode),
-    /// Whether Renoa answered the last call.
-    Reachable(bool),
-    /// The credential is kept; the Mac is signed in.
-    SignedIn(DeviceCredentials),
-    /// The approved credential could not be kept.
-    NotKept(String),
-}
-
-/// Asks for a sign-in and waits for the owner's phone to approve it. Only an
-/// expired request is replaced by a new one with a new code; any other
-/// failure asks again under the same id after a pause, which converges on
-/// one request. The credential is kept with `keep` before the views hear of
-/// it, so an approval is kept even when no view is left to show it. Stops
-/// once no view listens.
-pub async fn sign_in(
-    endpoints: Endpoints,
-    key: Arc<MacKey>,
-    label: String,
-    pace: Pace,
-    keep: impl Fn(&DeviceCredentials) -> Result<(), String>,
-    steps: mpsc::UnboundedSender<SignInStep>,
-) {
-    let mut reachable = true;
-    let mut heard = |error: Option<&ClientError>| {
-        let answered = !matches!(error, Some(ClientError::Transport(_)));
-        if answered != reachable {
-            reachable = answered;
-            let _ = steps.send(SignInStep::Reachable(answered));
-        }
-    };
-    loop {
-        let request_id = Uuid::new_v4();
-        let asked = loop {
-            let asked = ask_to_sign_in(&endpoints.origin, request_id, "mac", &label, key.as_ref());
-            match within(asked).await {
-                Ok(asked) => break asked,
-                Err(error) => heard(Some(&error)),
-            }
-            if steps.is_closed() {
-                return;
-            }
-            sleep(pace.retry_after).await;
-        };
-        heard(None);
-        if steps.send(SignInStep::Showing(asked.code)).is_err() {
-            return;
-        }
-        loop {
-            sleep(pace.collect_every).await;
-            match within(collect_sign_in(&endpoints.origin, request_id, key.as_ref())).await {
-                Ok(Collected::Waiting { .. }) => heard(None),
-                Ok(Collected::SignedIn(credentials)) => {
-                    let step = match keep(&credentials) {
-                        Ok(()) => SignInStep::SignedIn(credentials),
-                        Err(problem) => SignInStep::NotKept(problem),
-                    };
-                    let _ = steps.send(step);
-                    return;
-                }
-                // The request expired: show a new code.
-                Err(ClientError::Rejected {
-                    code: ErrorCode::NotFound,
-                    ..
-                }) => break,
-                Err(error) => {
-                    heard(Some(&error));
-                    sleep(pace.retry_after).await;
-                }
-            }
-            if steps.is_closed() {
-                return;
-            }
-        }
-    }
-}
-
 /// What the session tells the views.
 #[derive(Debug, Clone)]
 pub enum Update {
@@ -212,6 +129,8 @@ pub enum Command {
         task_id: TaskId,
         text: String,
     },
+    /// Calls the Host, beside the chats, and answers on the call.
+    Host(HostCall),
 }
 
 struct Followed {
@@ -238,6 +157,40 @@ struct Kept {
     followed: HashMap<TaskId, Followed>,
     outbox: VecDeque<Outgoing>,
     profiles: Arc<Mutex<profiles::Read>>,
+}
+
+impl Kept {
+    /// Keeps a chat to follow or a message to send for the next catch-up;
+    /// a Host call is the caller's to make.
+    fn hold(&mut self, command: Command) -> Option<HostCall> {
+        match command {
+            Command::Follow {
+                task_id,
+                node_id,
+                target,
+                after,
+            } => {
+                if let Some(after) = after {
+                    note(&self.through, task_id, after);
+                }
+                self.followed.entry(task_id).or_insert(Followed {
+                    node_id,
+                    target,
+                    attached: false,
+                });
+                None
+            }
+            Command::Send { task_id, text } => {
+                self.outbox.push_back(Outgoing {
+                    task_id,
+                    command_id: CommandId::new(),
+                    text,
+                });
+                None
+            }
+            Command::Host(call) => Some(call),
+        }
+    }
 }
 
 /// Keeps one connection up for as long as the views hold the command
@@ -270,7 +223,9 @@ pub async fn session(
             }
             Err(_) => {
                 let _ = updates.send(Update::Linked(false));
-                sleep(pace.retry_after).await;
+                if offline(pace.retry_after, &mut commands, &mut kept).await == Ended::ViewsGone {
+                    return;
+                }
                 continue;
             }
         };
@@ -292,7 +247,34 @@ pub async fn session(
             return;
         }
         let _ = updates.send(Update::Linked(false));
-        sleep(pace.retry_after).await;
+        if offline(pace.retry_after, &mut commands, &mut kept).await == Ended::ViewsGone {
+            return;
+        }
+    }
+}
+
+/// Waits `wait` before trying Renoa again, keeping what the views ask
+/// meanwhile for the next connection. A Host call is answered Lost at once:
+/// it is not made later, when the owner may have given up on it.
+async fn offline(
+    wait: Duration,
+    commands: &mut mpsc::UnboundedReceiver<Command>,
+    kept: &mut Kept,
+) -> Ended {
+    let waited = sleep(wait);
+    tokio::pin!(waited);
+    loop {
+        tokio::select! {
+            () = &mut waited => return Ended::LinkLost,
+            command = commands.recv() => match command {
+                None => return Ended::ViewsGone,
+                Some(command) => {
+                    if let Some(call) = kept.hold(command) {
+                        let _ = call.answered.send(host::Answer::Lost);
+                    }
+                }
+            },
+        }
     }
 }
 
@@ -318,23 +300,24 @@ async fn linked(
     agents.set_missed_tick_behavior(MissedTickBehavior::Delay);
     // Profiles are read beside the loop: a slow Host holds up no message.
     let mut reading: Option<Aborting> = None;
+    let mut calls: Vec<Aborting> = Vec::new();
     loop {
         let served = tokio::select! {
             command = commands.recv() => match command {
                 None => return Ended::ViewsGone,
-                Some(Command::Follow { task_id, node_id, target, after }) => {
-                    if let Some(after) = after {
-                        note(&kept.through, task_id, after);
+                Some(command) => match kept.hold(command) {
+                    None => catch_up(connection, updates, kept).await,
+                    Some(call) => {
+                        let connection = connection.clone();
+                        // A call the link outlives is answered Lost when it ends.
+                        calls.push(Aborting(tokio::spawn(async move {
+                            let answer = host::ask(&connection, call.method, &call.path, call.body).await;
+                            let _ = call.answered.send(answer);
+                        })));
+                        calls.retain(|call| !call.finished());
+                        Ok(())
                     }
-                    kept.followed
-                        .entry(task_id)
-                        .or_insert(Followed { node_id, target, attached: false });
-                    catch_up(connection, updates, kept).await
-                }
-                Some(Command::Send { task_id, text }) => {
-                    kept.outbox.push_back(Outgoing { task_id, command_id: CommandId::new(), text });
-                    flush(connection, &mut kept.outbox, updates).await
-                }
+                },
             },
             _ = agents.tick() => match within(connection.list_targets()).await {
                 Ok(listed) => {
@@ -476,7 +459,9 @@ async fn within<T>(call: impl Future<Output = Result<T, ClientError>>) -> Result
         .unwrap_or_else(|_| Err(ClientError::Transport("Renoa did not answer".to_owned())))
 }
 
+pub mod host;
 mod profiles;
+mod sign_in;
 
 pub use profiles::host_agent;
 #[cfg(test)]

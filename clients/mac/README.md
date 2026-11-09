@@ -67,5 +67,45 @@ code.
 - A message Renoa refuses returns to its chat's composer, ahead of anything
   typed since.
 
-Not yet: asks, shared files, notifications, signing out from the Mac, a signed
-`.app`, and CI on a macOS runner.
+## Sheets and keys
+
+Four sheets rise over the chats from the sidebar's foot, each read from the
+owner's Host through the session (`src/sheets/`):
+
+- **Routines** (⌘⇧R): what the agents do on their own, from `GET /v1/host`,
+  without the triggers a Host plugin owns, such as reminders. Each shows its
+  agent, its schedule in the phone's words, how its last run went and when it
+  runs next. A switch pauses or resumes it
+  (`POST /v1/host/automations/<id>/enabled`); a receipt or a read shows only
+  when it is newer than what is shown. Run now asks for one run
+  (`POST /v1/host/automations/<id>/run`) and asks again under the same
+  operation id until the Host confirms it. New routine opens the main
+  agent's chat.
+- **Memory** (⌘⇧M): the owner's profile (`GET /v1/host/profile`), the
+  reminders, and the newest notes with the face of the agent that wrote them
+  (`GET /v1/host/memory`). It only reads; Tell opens the main agent's chat.
+- **Apps** (⌘⇧A): every app any agent can use (`GET
+  /v1/host/agents/<id>/apps`), once each, with a chip per agent that turns it
+  on or off for that agent (`POST /v1/host/agents/<id>/apps/<connection>/enabled`).
+- **Settings** (⌘,): System, Light or Dark, kept for the next launch in
+  `~/Library/Application Support/live.renoa.mac/settings.json`; the keys;
+  and signing out, which forgets this Mac's credential in the Keychain and
+  shows a new code. Renoa itself is not told, so the Mac stays among the
+  owner's devices.
+
+A Host call made while Renoa is out of reach is answered at once as not
+reached; it is not made later, when the owner may have moved on.
+
+⌘K opens a box that jumps to an agent or a sheet by part of its name; ⌘1 to
+⌘9 open the first nine agents; Esc closes a sheet or the box. Settings lists
+the keys, and a test presses each one it lists (`src/chats/keys.rs`).
+
+To look at every screen without a display, in both looks, with made-up
+agents and Host answers (`src/chats/screens.rs`):
+
+```sh
+RENOA_SCREENS=/some/folder cargo test screens -- --ignored
+```
+
+Not yet: asks, shared files, notifications, a signed `.app`, and CI on a
+macOS runner.

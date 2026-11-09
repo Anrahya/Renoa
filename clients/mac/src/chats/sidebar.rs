@@ -5,13 +5,15 @@ use chrono::Local;
 use gpui_kit::{
     AnimationExt as _, Context, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, SpringAnimation, SpringConfig,
-    StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
+    prelude::FluentBuilder as _, px,
 };
 
-use super::{Chats, stamp};
+use super::Chats;
 use crate::{
     chat::{Transcript, chat_task_id},
     face::{Face, Mood},
+    stamp,
     theme::Palette,
 };
 
@@ -26,7 +28,11 @@ const ROW: f32 = 56.;
 const SPRING: SpringConfig = SpringConfig::new(320., 24., 1.);
 
 impl Chats {
-    pub(super) fn sidebar(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn sidebar(
+        &self,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let chosen = self.chosen_task();
         let open = self
             .agents
@@ -104,48 +110,56 @@ impl Chats {
                                 }),
                         ),
                 )
+                .test_support()
         });
+        let empty = self.agents.is_empty();
+        let list =
+            div()
+                .id("agents")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .px(px(8.))
+                .child(
+                    div()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .when_some(open, |list, index| list.child(highlight(index, palette)))
+                        .children(rows),
+                )
+                .when(empty, |list| {
+                    list.child(div().px(px(10.)).text_color(palette.secondary).child(
+                        if self.linked {
+                            "No agents yet. Make one in Renoa on your phone."
+                        } else {
+                            "Connecting to Renoa…"
+                        },
+                    ))
+                });
         div()
             .w(px(WIDTH))
             .h_full()
             .flex_none()
             .flex()
             .flex_col()
-            .px(px(8.))
             // Room for the window's traffic lights.
             .pt(px(44.))
             .bg(palette.sidebar)
             .border_r_1()
             .border_color(palette.outline)
+            .child(div().px(px(8.)).child(self.jump_button(palette, cx)))
             .child(
                 div()
-                    .px(px(10.))
+                    .px(px(18.))
                     .pb(px(6.))
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.secondary)
                     .child("Agents"),
             )
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .when_some(open, |list, index| list.child(highlight(index, palette)))
-                    .children(rows),
-            )
-            .when(self.agents.is_empty(), |side| {
-                side.child(
-                    div()
-                        .px(px(10.))
-                        .text_color(palette.secondary)
-                        .child(if self.linked {
-                            "No agents yet. Make one in Renoa on your phone."
-                        } else {
-                            "Connecting to Renoa…"
-                        }),
-                )
-            })
+            .child(list)
+            .child(self.sheet_buttons(palette, cx))
     }
 }
 

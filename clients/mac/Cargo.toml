@@ -13,6 +13,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 gpui-kit = "0.9.0"
 # GPUI strokes with lyon's options but does not re-export their caps and joins.
 lyon_tessellation = "1.0.23"
+# The Mac's timezone by name, to say when a routine runs on another clock.
+iana-time-zone = "0.1.65"
 md-5 = "0.10"
 renoa-protocol = { path = "../../crates/renoa-protocol" }
 renoa-rcp-client = { path = "../../crates/renoa-rcp-client" }
@@ -28,6 +30,8 @@ uuid = { version = "1", features = ["v4"] }
 gpui-kit = { version = "0.9.0", features = ["test-support"] }
 tokio = { version = "1", features = ["io-util", "net"] }
 futures-util = "0.3.33"
+# The text system the offscreen screens render with, off the main thread.
+gpui-pre-apple = { version = "0.3.11", features = ["font-kit"] }
 tokio-tungstenite = "0.29.0"
 
 # As the root workspace: line tables for our code, none for dependencies.
