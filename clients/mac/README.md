@@ -138,7 +138,19 @@ reached; it is not made later, when the owner may have moved on.
 name; ⌘0 goes Home; ⌘1 to ⌘9 open the first nine agents; ⌘I opens the
 page of the agent whose chat is open; Esc closes a
 sheet or the box. Settings lists the keys, and a test presses each one it
-lists (`src/chats/keys.rs`).
+lists in a window (`src/chats/keys.rs`).
+
+The menu bar (`src/menus.rs`) has four menus:
+
+- **Renoa**: Settings, Services, Hide, Hide Others, Show All, and Quit (⌘Q).
+- **Edit**: undo, redo and the clipboard, for the text fields.
+- **Go**: Home, Jump To, About This Agent, and the sheets.
+- **Window**: Minimize (⌘M) and Zoom.
+
+The keys the menus show are bound to the items' actions, so an item and its
+key do the same thing. Esc and ⌘1 to ⌘9 are read as they are pressed. A test
+checks that every item shows its keys, except Show All and Zoom, which have
+none on the Mac.
 
 To look at every screen without a display, in both looks, with made-up
 agents and Host answers (`src/chats/screens.rs`):

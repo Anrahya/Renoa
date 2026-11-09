@@ -24,6 +24,7 @@ type Opened = (
 
 fn open(cx: &mut TestAppContext) -> Opened {
     cx.update(gpui_kit::init);
+    cx.update(super::keys::bind);
     let (commands, asked) = mpsc::unbounded_channel();
     let (updates, received) = mpsc::unbounded_channel();
     let (window, chats) = cx.update(|cx| {
@@ -562,4 +563,84 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
             Some(task_id)
         );
     });
+}
+
+#[gpui_kit::test]
+fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
+    use crate::sheets::{Page, settings::SHORTCUTS};
+
+    let (window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    let chef = format!("agent:{}", Uuid::from_u128(0xc1));
+    updates
+        .send(Update::Agents(vec![
+            TargetSummary {
+                node_id,
+                target: TargetRef::new(chef.clone()),
+                name: "Chef".to_owned(),
+            },
+            agent(node_id, "Cook"),
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    let act = |act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App), cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    // Where the owner is: Home, the sheet or page that is up, the jump box,
+    // and the chat that is open.
+    let at = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| {
+            (
+                chats.on_home,
+                chats.sheet.as_ref().map(|shown| shown.up),
+                chats.jumping.is_some(),
+                chats.chosen.as_ref().map(|chosen| chosen.name.to_string()),
+            )
+        })
+    };
+    let chat = |name: &str| Some(name.to_owned());
+    let page = |page: Page| (false, Some(Up::Sheet(page)), false, chat("Cook"));
+    for (what, keys) in SHORTCUTS {
+        // From the second agent's chat, ready to type.
+        act(&|window, cx| window.click(("agent", 1usize), cx), cx);
+        let (pressed, expected) = match keys {
+            "⌘K" => ("cmd-k", (false, None, true, chat("Cook"))),
+            "⌘0" => ("cmd-0", (true, None, false, chat("Cook"))),
+            "⌘I" => {
+                act(&|window, cx| window.click(("agent", 0usize), cx), cx);
+                let task_id = chat_task_id(node_id, &chef);
+                (
+                    "cmd-i",
+                    (false, Some(Up::Profile(task_id)), false, chat("Chef")),
+                )
+            }
+            "⌘1 – ⌘9" => ("cmd-1", (false, None, false, chat("Chef"))),
+            "⌘⇧R" => ("cmd-shift-r", page(Page::Routines)),
+            "⌘⇧M" => ("cmd-shift-m", page(Page::Memory)),
+            "⌘⇧A" => ("cmd-shift-a", page(Page::Apps)),
+            "⌘," => ("cmd-,", page(Page::Settings)),
+            "Esc" => {
+                act(&|window, cx| window.press("cmd-k", cx), cx);
+                ("escape", (false, None, false, chat("Cook")))
+            }
+            other => panic!("Settings lists {other}, which this test does not press"),
+        };
+        act(&|window, cx| window.press(pressed, cx), cx);
+        assert_eq!(at(cx), expected, "{what}: {keys}");
+        act(&|window, cx| window.press("escape", cx), cx);
+    }
+    for page in Page::ALL {
+        assert!(
+            SHORTCUTS
+                .iter()
+                .any(|(what, keys)| *what == page.title() && *keys == page.keys()),
+            "{} shows its keys in Settings",
+            page.title()
+        );
+    }
 }

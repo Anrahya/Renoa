@@ -416,10 +416,8 @@ impl Render for Chats {
             self.conversation(palette, cx).into_any_element()
         };
         let overlay = self.overlay(palette, cx);
-        div()
-            .size_full()
-            .relative()
-            .flex()
+        let root = div().size_full().relative().flex();
+        self.answer_keys(root, cx)
             .capture_key_down(keys)
             .bg(palette.background)
             .text_color(palette.text)
@@ -441,7 +439,7 @@ fn joined(first: String, then: &str) -> String {
 
 mod home;
 mod jump;
-mod keys;
+pub(crate) mod keys;
 mod overlay;
 #[cfg(test)]
 mod screens;

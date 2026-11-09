@@ -252,9 +252,11 @@ impl Chats {
                 .update(cx, |jump, cx| jump.step(key == "down", cx));
             return true;
         }
-        let Some(moved) = keys::shortcut(&event.keystroke) else {
-            return false;
-        };
+        keys::shortcut(&event.keystroke).is_some_and(|moved| self.go(moved, window, cx))
+    }
+
+    /// Makes `moved`; says whether it could.
+    pub(super) fn go(&mut self, moved: Move, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match moved {
             Move::Close if self.sheet.is_none() && self.jumping.is_none() => return false,
             Move::Close => self.close(window, cx),

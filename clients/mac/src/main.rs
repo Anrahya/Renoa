@@ -8,6 +8,7 @@ mod home;
 mod icons;
 mod key;
 mod link;
+mod menus;
 mod sheets;
 mod stamp;
 #[cfg(test)]
@@ -22,6 +23,7 @@ use gpui_kit::{
 fn main() {
     gpui_kit::application().with_assets(icons::Icons).run(|cx| {
         gpui_kit::init(cx);
+        menus::install(cx);
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Some("Renoa".into()),
