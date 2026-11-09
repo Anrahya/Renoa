@@ -17,8 +17,8 @@ import live.renoa.app.agents.AgentRules
 import live.renoa.app.agents.CreateAgent
 import live.renoa.app.agents.EditProfile
 import live.renoa.app.agents.FieldProblem
+import live.renoa.app.agents.Look
 import live.renoa.app.agents.RepositoryException
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.mainAgent
 import java.util.UUID
 
@@ -38,8 +38,8 @@ data class EditorUiState(
     val notice: String? = null,
     /** Set when the agent was made or the edit was kept; the screen then leaves. */
     val finishedAgentId: String? = null,
-    /** The agent being edited wears its hue and its face, and Renoa's blush and star if it is the main agent, as on every other screen. */
-    val hue: AgentHue = AgentHue.Ink,
+    /** The agent being edited wears its own look, or Renoa's if it is the main agent, as on every other screen. */
+    val look: Look? = null,
     val main: Boolean = false,
 ) {
     val nameProblem: FieldProblem? get() = AgentRules.checkName(name)
@@ -67,7 +67,7 @@ class AgentEditorViewModel(
         viewModelScope.launch { load() }
         if (mode is EditorMode.Editing) {
             viewModelScope.launch {
-                repository.agents.collect { roster -> _state.update { it.copy(hue = AgentHue.of(mode.agentId, roster), main = mainAgent(roster)?.id == mode.agentId) } }
+                repository.agents.collect { roster -> _state.update { it.copy(look = roster.firstOrNull { a -> a.id == mode.agentId }?.look, main = mainAgent(roster)?.id == mode.agentId) } }
             }
         }
     }

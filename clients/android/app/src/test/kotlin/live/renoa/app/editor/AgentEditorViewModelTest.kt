@@ -5,6 +5,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import live.renoa.app.agents.DEMO_LOOKS
 import live.renoa.app.MainDispatcherRule
 import live.renoa.app.agents.AbilitySwitch
 import live.renoa.app.agents.AgentProfile
@@ -15,7 +16,6 @@ import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.agents.FakeWorld
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
-import live.renoa.app.badge.AgentHue
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -183,11 +183,9 @@ class AgentEditorViewModelTest {
         val tifa = editing(repo)
         val renoa = editing(repo, FakeWorld.LEAD)
         runCurrent()
-        assertEquals(AgentHue.of("tifa", repo.agents.value), tifa.state.value.hue)
-        assertNotEquals(AgentHue.Ink, tifa.state.value.hue)
+        assertEquals(DEMO_LOOKS["Tifa"], tifa.state.value.look)
         assertTrue(!tifa.state.value.main)
-        assertTrue(renoa.state.value.main, "the main agent wears Renoa's blush and star here too")
-        assertEquals(AgentHue.Ink, renoa.state.value.hue)
+        assertTrue(renoa.state.value.main, "the main agent wears Renoa's own look here too")
     }
 
     @Test

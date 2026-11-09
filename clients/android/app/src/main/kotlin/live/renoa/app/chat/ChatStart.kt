@@ -43,7 +43,7 @@ internal fun ChatStart(state: ChatUiState, onStarter: (String) -> Unit, modifier
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Badge(agent.name, agent.state, 72.dp, primary = state.main, hue = state.hue, label = "")
+        Badge(agent.name, agent.state, 72.dp, primary = state.main, look = agent.look, label = "")
         Text(
             "Say hello to ${agent.name}",
             Modifier.semantics { heading() },

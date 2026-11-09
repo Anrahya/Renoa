@@ -30,6 +30,10 @@ data class AgentApp(val connection: String, val name: String? = null, val endpoi
 @Serializable
 private data class Apps(val apps: List<AgentApp>)
 
+/** How an agent looks, and the revision of a picture the owner set over it, if any. */
+@Serializable
+internal data class Appearance(val look: Look, @SerialName("picture_revision") val pictureRevision: String? = null)
+
 @Serializable
 private data class Created(@SerialName("operation_id") val operationId: String, val record: AgentRecord)
 
@@ -48,6 +52,8 @@ internal class HostAgents(private val host: HostClient) {
     }
 
     suspend fun definition(agentId: Uuid): AgentRecord = host.call(HostMethod.Get, "/v1/host/agents/$agentId", null, AgentRecord.serializer())
+
+    suspend fun appearance(agentId: Uuid): Appearance = host.call(HostMethod.Get, "/v1/host/agents/$agentId/appearance", null, Appearance.serializer())
 
     suspend fun apps(agentId: Uuid): List<AgentApp> = host.call(HostMethod.Get, "/v1/host/agents/$agentId/apps", null, Apps.serializer()).apps
 

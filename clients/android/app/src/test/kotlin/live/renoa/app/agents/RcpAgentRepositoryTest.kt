@@ -87,6 +87,15 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     /** The Host's agents by id, and the agent each operation made, under an id of its own as on the Host. */
     val hostAgents = LinkedHashMap<String, JsonObject>()
+
+    /** Each Host agent's appearance, by id; an agent with none is one the Host does not have. */
+    val looks = LinkedHashMap<String, JsonObject>()
+
+    /** The appearances asked for, by agent id. */
+    val lookCalls = mutableListOf<String>()
+
+    /** Thrown by the next appearance read, once. */
+    var lookFailure: Exception? = null
     val made = LinkedHashMap<String, String>()
 
     /** When set, opening this target drops the connection, once, as when it drops partway through the roster. */
@@ -379,6 +388,15 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         if (path == "/v1/host/profile") return profileCall(method, body)
         if (path.startsWith("/v1/host/uploads/")) return uploadCall(path, body.orEmpty())
         if (path == "/v1/host/feed" || path.startsWith("/v1/host/feed/") || path.endsWith("/run")) return feedCall(method, path)
+        if (method == HostMethod.Get && path.endsWith("/appearance")) {
+            val id = path.removePrefix("/v1/host/agents/").removeSuffix("/appearance")
+            lookCalls += id
+            lookFailure?.let {
+                lookFailure = null
+                throw it
+            }
+            return looks[id]?.let { HostAnswer(200, it.toString()) } ?: HostAnswer(404, "{\"code\":\"not_found\"}")
+        }
         hostCalls += Triple(method, path, body)
         hostFailure?.let {
             hostFailure = null
@@ -1230,6 +1248,16 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun aLookHomeLastShowedStaysOnTheLiveRosterUntilTheHostSaysAgain() = runTest {
+        val look = DEMO_LOOKS.getValue("Nagisa")
+        kept().keep(flowOf(HomeSnapshot(listOf(AgentSummary(nagisa, "Nagisa", "", AgentState.Resting, look = look)), emptyList())))
+        val repo = started(kept())
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf("Nagisa" to look), repo.agents.value.map { it.name to it.look }, "a look never changes, so the live roster keeps it")
+    }
+
+    @Test
     fun whatHomeLastShowedShowsUntilRenoaAnswersThenTheLiveRosterReplacesItAndIsKept() = runTest {
         val gone = "${surface.node}/gone"
         kept().keep(flowOf(HomeSnapshot(listOf(AgentSummary(gone, "Kept", "", AgentState.Working, Glance(line = "See you", doing = "Cooking", with = nagisa))), emptyList())))
@@ -1367,6 +1395,31 @@ class RcpAgentRepositoryTest {
         advanceTimeBy(1.minutes)
         runCurrent()
         assertEquals(2, surface.hostCalls.size, "read once")
+    }
+
+    @Test
+    fun eachHostAgentWearsTheLookTheHostPickedReadOnceAndAgainWhenTheHostCouldNotAnswer() = runTest {
+        val id = Uuid.random().toString()
+        surface.hostAgents[id] = buildJsonObject { put("id", id); put("name", "Kcal"); put("operational", buildJsonObject {}) }
+        surface.looks[id] =
+            Json.parseToJsonElement(
+                """{"look": {"hair_front": "princess", "hair_back": "twin_tails", "hair_colour": "auburn", "skin": "deep",
+                "eyes": "sparkle", "cheeks": "lines", "wear": "cat_ears", "tile": "ochre", "tuft": true}, "picture_revision": null}""",
+            ).jsonObject
+        surface.targets += TargetSummary(surface.node, "agent:$id", "Kcal")
+        surface.lookFailure = IllegalStateException("dropped")
+        val repo = started()
+        assertEquals(listOf("Nagisa" to null, "Kcal" to null), repo.agents.value.map { it.name to it.look }, "not read yet")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        val look = Look(HairFront.Princess, HairBack.TwinTails, HairColour.Auburn, Skin.Deep, Eyes.Sparkle, Cheeks.Lines, Wear.CatEars, Tile.Ochre, tuft = true)
+        assertEquals(listOf("Nagisa" to null, "Kcal" to look), repo.agents.value.map { it.name to it.look })
+        assertEquals(listOf(id, id), surface.lookCalls, "only Host agents are asked about")
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(2, surface.lookCalls.size, "read once")
     }
 
     @Test

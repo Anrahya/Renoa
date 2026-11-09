@@ -25,7 +25,6 @@ import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.StreamingReply
 import live.renoa.app.agents.wordsOr
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.mainAgent
 import live.renoa.rcp.Attachment
 import kotlin.uuid.Uuid
@@ -53,8 +52,7 @@ data class ChatUiState(
      * on it waits for this to tell old messages from new.
      */
     val loaded: Boolean = false,
-    /** The colour the agent wears on every screen, and whether it is the owner's main agent. */
-    val hue: AgentHue = AgentHue.Ink,
+    /** Whether the agent is the owner's main agent, who wears Renoa's own look. */
     val main: Boolean = false,
     val link: Link = Link.Connected,
     /** A send the owner started has not finished yet. */
@@ -92,7 +90,7 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
             agents, conversation, (draft, files), (notice, inFlight), link ->
             ChatUiState(
                 agents.firstOrNull { it.id == agentId }, conversation?.messages.orEmpty(), conversation?.streaming, draft, notice, loaded = conversation != null,
-                hue = AgentHue.of(agentId, agents), main = mainAgent(agents)?.id == agentId, link = link, sending = inFlight > 0, files = files,
+                main = mainAgent(agents)?.id == agentId, link = link, sending = inFlight > 0, files = files,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(link = repository.link.value))
 

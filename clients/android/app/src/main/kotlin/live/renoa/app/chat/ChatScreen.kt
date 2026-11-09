@@ -232,7 +232,7 @@ private fun Header(state: ChatUiState, onBack: () -> Unit, onOpenProfile: (Strin
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Badge(agent.name, agent.state, 22.dp, primary = state.main, arriveAfterMillis = 0, hue = state.hue, label = "")
+                    Badge(agent.name, agent.state, 22.dp, primary = state.main, look = agent.look, arriveAfterMillis = 0, label = "")
                     Text(agent.name, style = Type.system(13f).semibold, color = Palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 HeaderSubtitle(state)

@@ -85,6 +85,16 @@ import live.renoa.app.agents.AgentProfile
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
+import live.renoa.app.agents.Cheeks
+import live.renoa.app.agents.DEMO_LOOKS
+import live.renoa.app.agents.Eyes
+import live.renoa.app.agents.HairBack
+import live.renoa.app.agents.HairColour
+import live.renoa.app.agents.HairFront
+import live.renoa.app.agents.Look
+import live.renoa.app.agents.Skin
+import live.renoa.app.agents.Tile
+import live.renoa.app.agents.Wear
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Conversation
 import live.renoa.app.agents.EditProfile
@@ -98,12 +108,13 @@ import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.Speaker
 import live.renoa.app.agents.StreamingReply
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.badge.BadgeFrame.Companion.LIFT
+import live.renoa.app.badge.BadgeFrame.Companion.RADIUS
 import live.renoa.app.badge.FACE_INK
 import live.renoa.app.badge.HALF
-import live.renoa.app.badge.PAPER_SKIN
+import live.renoa.app.badge.PAPER
+import live.renoa.app.badge.color
 import live.renoa.app.chat.ArrivingReply
 import live.renoa.app.chat.ChatScreen
 import live.renoa.app.chat.Reply
@@ -136,10 +147,10 @@ class ScreensTest : ScreenTest() {
         show(theme, seconds = 3.97f) {
             Column(Modifier.background(Renoa.colors.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AgentState.entries.forEach { Badge("Tifa", it, 66.dp, primary = false, hue = AgentHue.Ink, label = "Tifa ${it.name}") }
+                    AgentState.entries.forEach { Badge("Tifa", it, 66.dp, primary = false, look = DEMO_LOOKS["Tifa"], label = "Tifa ${it.name}") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AgentState.entries.forEach { Badge("Renoa", it, 66.dp, primary = true, hue = AgentHue.Ink, label = "Renoa ${it.name}") }
+                    AgentState.entries.forEach { Badge("Renoa", it, 66.dp, primary = true, look = null, label = "Renoa ${it.name}") }
                 }
             }
         }
@@ -149,14 +160,18 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun theMainAgentWearsPaperAndTheOthersTheirColourInGraphite() = facesIn(ThemeName.Graphite)
+    fun theMainAgentWearsPaperAndTheOthersTheLookTheHostPickedInGraphite() = facesIn(ThemeName.Graphite)
 
     @Test
-    fun theMainAgentWearsPaperAndTheOthersTheirColourInPaper() = facesIn(ThemeName.Paper)
+    fun theMainAgentWearsPaperAndTheOthersTheLookTheHostPickedInPaper() = facesIn(ThemeName.Paper)
 
-    /** Each face's eye is ink, and the skin beside it is Paper for the main agent and the agent's own colour for another. */
+    /**
+     * Each face's eye is ink. The main agent's tile is Paper; another's is its own tile colour, under
+     * its own skin and hair.
+     */
     private fun facesIn(theme: ThemeName) {
-        val roster = listOf(AgentSummary("renoa", "Renoa", "", AgentState.Resting, primary = true), AgentSummary("tifa", "Tifa", "", AgentState.Resting))
+        val look = Look(HairFront.Short, HairBack.None, HairColour.Auburn, Skin.Medium, Eyes.Round, Cheeks.None, Wear.None, Tile.Clay, tuft = false)
+        val roster = listOf(AgentSummary("renoa", "Renoa", "", AgentState.Resting, primary = true), AgentSummary("tifa", "Tifa", "", AgentState.Resting, look = look))
         show(theme) {
             Column(Modifier.background(Renoa.colors.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(40.dp)) {
                 roster.forEach { Badge(it, roster, 140.dp) }
@@ -166,14 +181,19 @@ class ScreensTest : ScreenTest() {
         val dp = picture.density / 160f
         // How many pixels one unit of the drawing spans, and where each tile's centre is drawn.
         val perUnit = 140 * dp / (HALF * 2)
-        fun at(tile: Int, x: Float, y: Float): Int {
+        // A point of the board's 100-unit face, taken to tile units round the tile's centre.
+        fun at(tile: Int, faceX: Float, faceY: Float): Int {
+            val x = (faceX - 50f) * RADIUS / 46f
+            val y = (faceY - 50f) * RADIUS / 46f
             val top = 20 * dp + tile * (140 + 40) * dp
             return picture.getPixel((20 * dp + 70 * dp + x * perUnit).roundToInt(), (top + 70 * dp + LIFT * 0.3f * perUnit + y * perUnit).roundToInt())
         }
-        assertEquals(FACE_INK.toArgb(), at(0, -9f, -1f), "Renoa's eye")
-        assertEquals(PAPER_SKIN.toArgb(), at(0, -26f, -6f), "Renoa's skin")
-        assertEquals(FACE_INK.toArgb(), at(1, -9f, -1f), "Tifa's eye")
-        assertEquals(theme.colors.partModel.toArgb(), at(1, -26f, -6f), "Tifa's skin, in clay")
+        assertEquals(FACE_INK.toArgb(), at(0, 42f, 56f), "Renoa's eye")
+        assertEquals(PAPER.toArgb(), at(0, 14f, 50f), "Renoa's tile")
+        assertEquals(FACE_INK.toArgb(), at(1, 42f, 56f), "Tifa's eye")
+        assertEquals(theme.colors.partModel.toArgb(), at(1, 14f, 50f), "Tifa's tile, in clay")
+        assertEquals(Skin.Medium.color().toArgb(), at(1, 50f, 70f), "Tifa's skin")
+        assertEquals(HairColour.Auburn.color().toArgb(), at(1, 50f, 35f), "Tifa's hair")
         snapshot("badge-faces-${theme.name.lowercase()}")
     }
 

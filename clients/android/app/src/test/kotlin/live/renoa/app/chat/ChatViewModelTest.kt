@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import live.renoa.app.agents.DEMO_LOOKS
 import live.renoa.app.MainDispatcherRule
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.AgentState
@@ -14,7 +15,6 @@ import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.CreateAgent
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.agents.FakeWorld
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.agents.OutgoingFile
 import live.renoa.app.agents.Problem
 import live.renoa.app.agents.Reply
@@ -173,14 +173,14 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun aChatWearsItsAgentsColourFromHome() = runTest {
+    fun aChatWearsItsAgentsLookFromHome() = runTest {
         val seen =
             listOf("renoa", "kaisa", "nagisa").map { id ->
                 val (vm, _) = model(id)
                 runCurrent()
-                Triple(id, vm.state.value.hue, vm.state.value.main)
+                Triple(id, vm.state.value.agent?.look, vm.state.value.main)
             }
-        assertEquals(listOf(Triple("renoa", AgentHue.Ink, true), Triple("kaisa", AgentHue.Cobalt, false), Triple("nagisa", AgentHue.Clay, false)), seen)
+        assertEquals(listOf(Triple("renoa", null, true), Triple("kaisa", DEMO_LOOKS["Kai'Sa"], false), Triple("nagisa", DEMO_LOOKS["Nagisa"], false)), seen)
     }
 
     @Test

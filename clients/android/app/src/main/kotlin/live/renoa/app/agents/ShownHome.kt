@@ -25,15 +25,17 @@ internal class ShownHome(private val home: SavedHome?) {
      * [followed] has it, or, while its chat could not be opened, as it was kept. So a refused open
      * never shrinks the roster, and one Renoa has not listed this launch is not shown. Each is
      * marked main or not as [primary] says, kept ones too. With no [primary], before the Host has
-     * said, each keeps the mark it is shown with, the last launch's at first.
+     * said, each keeps the mark it is shown with, the last launch's at first. An agent's look never
+     * changes, so one shown keeps it until the Host has said again.
      */
     fun show(listed: Collection<String>, followed: List<AgentSummary>, primary: ((agentId: String) -> Boolean)?) {
         if (!heard.value) return
         val marked = agents.value.associate { it.id to it.primary }
+        val looks = agents.value.associate { it.id to it.look }
         agents.value =
             listed.mapNotNull { id ->
                 val agent = followed.firstOrNull { it.id == id } ?: kept?.agents?.firstOrNull { it.id == id }
-                agent?.copy(primary = primary?.invoke(id) ?: marked[id] ?: false)
+                agent?.copy(primary = primary?.invoke(id) ?: marked[id] ?: false, look = agent.look ?: looks[id])
             }
     }
 

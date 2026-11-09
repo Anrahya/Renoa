@@ -48,6 +48,8 @@ data class AgentSummary(
      * The Host names it: the first agent made, until the owner names another.
      */
     val primary: Boolean = false,
+    /** How the agent looks, as the Host picked it; null until the Host has said. */
+    val look: Look? = null,
 )
 
 /** A question only the owner can answer, with the answers the agent offers, and when it was asked, where Renoa said. */

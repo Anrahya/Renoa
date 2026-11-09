@@ -50,13 +50,6 @@ class BadgeMotionTest {
     }
 
     @Test
-    fun aNameAlwaysWearsTheSameTraitAndNamesWearThemAll() {
-        assertEquals(Trait.of("Kaisa"), Trait.of("  kaisa "))
-        val names = listOf("Tifa", "Kaisa", "Nagisa", "Sensei", "Optimus", "Ledger", "Echo", "Arcee")
-        assertEquals(Trait.entries.toSet(), names.map(Trait::of).toSet(), "a handful of agents already wear every trait")
-    }
-
-    @Test
     fun theHaloLightIsBrightestAtItsHeadAndFadesBehindIt() {
         assertEquals(1f, haloLight(0.5f, 0.5f), 1e-4f)
         assertTrue(haloLight(0.45f, 0.5f) in 0.5f..0.9f)

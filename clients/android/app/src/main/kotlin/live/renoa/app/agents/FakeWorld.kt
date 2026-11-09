@@ -56,7 +56,7 @@ object FakeWorld {
         doing: String = "Thinking about what you said",
         messages: List<ChatMessage> = emptyList(),
         abilities: List<AbilitySwitch> = lit("calendar", "search", "notes"),
-    ) = AgentSeed(AgentSummary(idFor(name), name, purpose, state, glance, primary = idFor(name) == LEAD), abilities, messages, doing)
+    ) = AgentSeed(AgentSummary(idFor(name), name, purpose, state, glance, primary = idFor(name) == LEAD, look = DEMO_LOOKS[name]), abilities, messages, doing)
 
     fun idFor(name: String): String = name.lowercase().filter { it.isLetterOrDigit() }
 
