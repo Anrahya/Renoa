@@ -7,6 +7,7 @@ use std::{
 use thiserror::Error;
 
 pub(crate) mod agents;
+pub(crate) mod appearance;
 pub(crate) mod automations;
 pub(crate) mod catalog;
 pub(crate) mod definition;

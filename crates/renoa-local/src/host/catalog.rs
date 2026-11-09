@@ -58,7 +58,7 @@ pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 #[cfg(test)]
 pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 53;
+const SCHEMA_VERSION: u32 = 54;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -203,6 +203,9 @@ fn upgrade(
     if version < 53 {
         crate::shares::initialize(transaction)?;
     }
+    if version < 54 {
+        crate::host::appearance::upgrade(transaction)?;
+    }
     Ok(purged)
 }
 
@@ -223,7 +226,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=52 => {
+        28..=53 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -254,6 +257,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             super::automations::initialize(&transaction)?;
             super::plugin_setups::initialize(&transaction)?;
             crate::shares::initialize(&transaction)?;
+            super::appearance::initialize(&transaction)?;
             memory_dream::add_triggers_and_memory_jobs(&transaction)?;
             memory_note_pass::add_note_passes(&transaction)?;
             feed::add_feed(&transaction)?;

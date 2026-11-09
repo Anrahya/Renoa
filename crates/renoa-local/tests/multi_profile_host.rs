@@ -91,6 +91,7 @@ async fn host_assembles_and_restores_an_exact_non_alpha_agent() {
     for table in [
         "host_agent_creations",
         "host_agent_tool_selections",
+        "host_agent_looks",
         "host_main_agent",
     ] {
         catalog

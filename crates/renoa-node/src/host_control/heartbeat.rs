@@ -1,11 +1,10 @@
 //! How often an agent's heartbeat checks in, read and set by the owner.
 
-use renoa_kernel::AgentId;
 use renoa_local::{LocalHost, LocalHostError, PluginError};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::reply::{BAD_REQUEST, CONFLICT, NOT_FOUND, Reply, UNAVAILABLE, UNPROCESSABLE, log};
+use super::reply::{CONFLICT, NOT_FOUND, Reply, UNAVAILABLE, UNPROCESSABLE, agent_id, log};
 
 /// A change, retried under its operation ID.
 #[derive(Deserialize)]
@@ -22,14 +21,14 @@ struct Heartbeat {
 }
 
 pub(super) async fn read(host: &LocalHost, id: &str) -> Reply {
-    match agent(id) {
+    match agent_id(id) {
         Ok(agent) => answer(None, host.heartbeat_hours(agent).await),
         Err(reply) => reply,
     }
 }
 
 pub(super) async fn set(host: &LocalHost, id: &str, change: Change) -> Reply {
-    match agent(id) {
+    match agent_id(id) {
         Ok(agent) => answer(
             Some(change.operation_id),
             host.set_heartbeat_hours(agent, change.heartbeat_hours, change.operation_id)
@@ -37,16 +36,6 @@ pub(super) async fn set(host: &LocalHost, id: &str, change: Change) -> Reply {
         ),
         Err(reply) => reply,
     }
-}
-
-fn agent(id: &str) -> Result<AgentId, Reply> {
-    Uuid::parse_str(id).map(AgentId::from_uuid).map_err(|_| {
-        Reply::failure(
-            BAD_REQUEST,
-            "invalid_request",
-            "An agent id is a UUID, such as 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0.",
-        )
-    })
 }
 
 fn answer(operation: Option<Uuid>, outcome: Result<Option<u8>, LocalHostError>) -> Reply {
