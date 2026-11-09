@@ -6,8 +6,8 @@ use std::{
 };
 
 use gpui_kit::{
-    AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Task, Window,
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task, Window,
     component::{
         input::{InputEvent, InputState},
         message_scroller::MessageScrollerState,
@@ -69,6 +69,14 @@ pub struct Chats {
     opened: Instant,
     _updates: Task<()>,
     _blinks: Task<()>,
+    /// What this Mac calls itself.
+    computer: SharedString,
+    /// Holds the keys while a sheet is up.
+    focus: FocusHandle,
+    sheet: Option<overlay::Shown>,
+    jumping: Option<overlay::Jumping>,
+    /// How many sheets have opened, so each rises afresh.
+    sheets_opened: usize,
 }
 
 impl EventEmitter<SignedOut> for Chats {}
@@ -78,6 +86,7 @@ impl Chats {
     pub fn new(
         commands: mpsc::UnboundedSender<Command>,
         mut updates: mpsc::UnboundedReceiver<Update>,
+        computer: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -128,6 +137,11 @@ impl Chats {
             opened: Instant::now(),
             _updates,
             _blinks,
+            computer,
+            focus: cx.focus_handle(),
+            sheet: None,
+            jumping: None,
+            sheets_opened: 0,
         }
     }
 
@@ -361,15 +375,27 @@ impl Chats {
 
 impl Render for Chats {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = Palette::of(window);
+        let palette = Palette::of(window, cx);
+        let keys = cx.listener(|this, event, window, cx| {
+            if this.key(event, window, cx) {
+                cx.stop_propagation();
+            }
+        });
+        let sidebar = self.sidebar(palette, cx);
+        let conversation = self.conversation(palette, cx);
+        let overlay = self.overlay(palette, cx);
         div()
             .size_full()
+            .relative()
             .flex()
+            .track_focus(&self.focus)
+            .capture_key_down(keys)
             .bg(palette.background)
             .text_color(palette.text)
             .text_size(px(13.))
-            .child(self.sidebar(palette, cx))
-            .child(self.conversation(palette, cx))
+            .child(sidebar)
+            .child(conversation)
+            .children(overlay)
     }
 }
 
@@ -382,8 +408,12 @@ fn joined(first: String, then: &str) -> String {
     }
 }
 
+mod jump;
+mod keys;
+mod overlay;
+#[cfg(test)]
+mod screens;
 mod sidebar;
-mod stamp;
 #[cfg(test)]
 mod tests;
 mod thread;

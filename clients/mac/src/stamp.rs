@@ -1,7 +1,7 @@
 //! When lines were said, as the chats show it: a time between lines far
 //! apart, and beside each agent the time of its chat's last timed line.
 
-use chrono::{DateTime, Datelike as _, TimeZone};
+use chrono::{DateTime, Datelike as _, NaiveTime, TimeZone, Timelike as _};
 
 /// Lines at least this far apart get a time between them.
 const GAP_MS: i64 = 60 * 60 * 1000;
@@ -59,6 +59,35 @@ where
     }
 }
 
+/// A time still to come: "Today 7:30 AM", "Tomorrow 6 PM",
+/// "Thursday 6 PM", "14 Nov 9 AM" or, another year, "3 Jan 2027 9 AM". A
+/// time already past, from a clock running slow, is today.
+pub fn ahead<Tz: TimeZone>(at_ms: i64, now: &DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let Some(at) = local(at_ms, now) else {
+        return String::new();
+    };
+    let clock = clock(at.time());
+    match (at.date_naive() - now.date_naive()).num_days().max(0) {
+        0 => format!("Today {clock}"),
+        1 => format!("Tomorrow {clock}"),
+        2..=NAMED_DAYS => format!("{} {clock}", at.format("%A")),
+        _ if at.year() == now.year() => format!("{} {clock}", at.format("%-d %b")),
+        _ => format!("{} {clock}", at.format("%-d %b %Y")),
+    }
+}
+
+/// A time of day as the app writes it: "6:30 PM", or "7 PM" on the hour.
+pub fn clock(time: NaiveTime) -> String {
+    if time.minute() == 0 {
+        time.format("%-I %p").to_string()
+    } else {
+        time.format("%-I:%M %p").to_string()
+    }
+}
+
 fn local<Tz: TimeZone>(at_ms: i64, now: &DateTime<Tz>) -> Option<DateTime<Tz>> {
     now.timezone().timestamp_millis_opt(at_ms).single()
 }
@@ -79,7 +108,7 @@ fn day<Tz: TimeZone>(at_ms: i64, zone: &Tz) -> Option<chrono::NaiveDate> {
 mod tests {
     use chrono::{FixedOffset, TimeZone as _};
 
-    use super::{long, separates, short};
+    use super::{ahead, long, separates, short};
 
     const MINUTE_MS: i64 = 60_000;
 
@@ -150,5 +179,25 @@ mod tests {
             pair("Today 8:05 PM", "8:05 PM"),
             "a fast clock is today"
         );
+    }
+
+    #[test]
+    fn a_time_to_come_names_its_day_as_near_as_it_is() {
+        let now = zone()
+            .with_ymd_and_hms(2026, 11, 9, 20, 0, 0)
+            .single()
+            .expect("now");
+        for (when, said) in [
+            (at(2026, 11, 9, 21, 30), "Today 9:30 PM"),
+            (at(2026, 11, 10, 7, 30), "Tomorrow 7:30 AM"),
+            (at(2026, 11, 12, 18, 0), "Thursday 6 PM"),
+            (at(2026, 11, 15, 18, 0), "Sunday 6 PM"),
+            (at(2026, 11, 16, 9, 0), "16 Nov 9 AM"),
+            (at(2027, 1, 3, 9, 0), "3 Jan 2027 9 AM"),
+            (at(2026, 11, 9, 19, 59), "Today 7:59 PM"),
+            (at(2026, 11, 8, 23, 0), "Today 11 PM"),
+        ] {
+            assert_eq!(ahead(when, &now), said);
+        }
     }
 }

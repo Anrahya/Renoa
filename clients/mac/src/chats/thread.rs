@@ -14,10 +14,11 @@ use gpui_kit::{
     px, relative,
 };
 
-use super::{Chats, Row, stamp};
+use super::{Chats, Row};
 use crate::{
     chat::{Line, Speaker, Transcript, chat_task_id},
     face::{Face, Look, Mood},
+    stamp,
     theme::Palette,
 };
 
@@ -54,7 +55,11 @@ impl Agent {
 }
 
 impl Chats {
-    pub(super) fn conversation(&self, palette: Palette, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn conversation(
+        &self,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
         let chosen = self.chosen.as_ref();
         let task_id = self.chosen_task();
         let listed = task_id.and_then(|task_id| {

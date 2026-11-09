@@ -36,7 +36,7 @@ fn open(cx: &mut TestAppContext) -> Opened {
                 ..WindowOptions::default()
             },
             cx,
-            |window, cx| cx.new(|cx| Chats::new(commands, received, window, cx)),
+            |window, cx| cx.new(|cx| Chats::new(commands, received, "Test Mac".into(), window, cx)),
         )
         .expect("open a window")
     });

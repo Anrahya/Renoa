@@ -14,7 +14,7 @@ use crate::{
     chats::{Chats, SignedOut},
     key::MacKey,
     link::{self, Endpoints, SignInStep},
-    theme::Palette,
+    theme::{self, Palette},
     vault,
 };
 
@@ -44,6 +44,13 @@ pub struct Renoa {
 
 impl Renoa {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        theme::apply(theme::kept_appearance(), window, cx);
+        // The system's look matters while the owner leaves it to the system.
+        cx.observe_window_appearance(window, |_, window, cx| {
+            theme::sync(window, cx);
+            cx.notify();
+        })
+        .detach();
         let mut renoa = Self {
             endpoints: Endpoints::from_environment(),
             key: None,
@@ -134,7 +141,7 @@ impl Renoa {
             commands_received,
             updates_sender,
         ));
-        let chats = cx.new(|cx| Chats::new(commands, updates, window, cx));
+        let chats = cx.new(|cx| Chats::new(commands, updates, computer_name().into(), window, cx));
         cx.subscribe_in(&chats, window, |this, _, _: &SignedOut, window, cx| {
             vault::forget_credentials();
             this.sign_in(window, cx);
@@ -147,8 +154,8 @@ impl Renoa {
 }
 
 impl Render for Renoa {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let palette = Palette::of(window);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = Palette::of(window, cx);
         match &self.screen {
             Screen::Chats(chats) => div().size_full().child(chats.clone()),
             Screen::Problem => centered(palette)

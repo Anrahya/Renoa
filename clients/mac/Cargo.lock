@@ -5998,6 +5998,8 @@ dependencies = [
  "chrono",
  "futures-util",
  "gpui-kit",
+ "gpui-pre-apple",
+ "iana-time-zone",
  "lyon_tessellation",
  "md-5",
  "renoa-protocol",
