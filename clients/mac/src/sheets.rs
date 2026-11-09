@@ -8,7 +8,8 @@ use gpui_kit::{
     SpringConfig, Stateful, StatefulInteractiveElement as _, Styled as _, Window, assets::IconName,
     div, prelude::FluentBuilder as _, px,
 };
-use renoa_rcp_wire::{HostMethod, TaskId};
+use renoa_protocol::TargetRef;
+use renoa_rcp_wire::{HostMethod, NodeId, TaskId};
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -79,10 +80,13 @@ pub enum SheetEvent {
 }
 
 /// An agent as the sheets show it: one of the Host's, with its chat and face.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub name: SharedString,
     pub host_id: Uuid,
+    /// Where its chat runs, to open it before writing to it.
+    pub node_id: NodeId,
+    pub target: TargetRef,
     pub task_id: TaskId,
     pub look: Option<Look>,
     pub primary: bool,

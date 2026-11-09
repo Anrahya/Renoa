@@ -5,7 +5,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, assets::AllAssets, px, size,
+    AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, px, size,
     test::TestWindowExt as _,
 };
 use renoa_protocol::{CommandInput, ExecutionEventKind, ExecutionTerminal, TargetRef};
@@ -130,7 +130,7 @@ impl Screen {
     fn open(appearance: Appearance) -> Self {
         let mut cx = HeadlessAppContext::with_platform(
             Arc::new(gpui_apple::AppleTextSystem::new()),
-            Arc::new(AllAssets),
+            Arc::new(crate::icons::Icons),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(gpui_kit::init);

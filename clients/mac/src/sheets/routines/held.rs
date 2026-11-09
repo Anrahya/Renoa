@@ -15,22 +15,22 @@ pub(crate) struct Observation {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Automation {
-    pub(crate) id: String,
+    pub(super) id: String,
     pub(crate) agent_id: Uuid,
     pub(crate) name: String,
     pub(crate) schedule: schedule::Schedule,
     pub(crate) enabled: bool,
-    pub(crate) revision: i64,
+    pub(super) revision: i64,
     pub(crate) next_due_ms: i64,
     #[serde(default)]
-    pub(crate) last_run: Option<Run>,
+    pub(super) last_run: Option<Run>,
     /// The Host plugin whose own trigger this is, such as a reminder.
     #[serde(default)]
-    pub(crate) plugin: Option<String>,
+    pub(super) plugin: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct Run {
+pub(super) struct Run {
     status: Outcome,
     due_ms: i64,
     #[serde(default)]
@@ -40,7 +40,7 @@ pub(crate) struct Run {
 /// How a run ended. The names are the Host's run statuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Outcome {
+pub(super) enum Outcome {
     /// The agent finished it, even if some of its tool calls failed.
     Succeeded,
     Failed,
@@ -50,15 +50,15 @@ pub(crate) enum Outcome {
 
 /// The Host's receipt for turning a routine on or off.
 #[derive(Debug, Deserialize)]
-pub(crate) struct Enablement {
-    pub(crate) revision: i64,
-    pub(crate) enabled: bool,
-    pub(crate) next_due_ms: i64,
+pub(super) struct Enablement {
+    pub(super) revision: i64,
+    pub(super) enabled: bool,
+    pub(super) next_due_ms: i64,
 }
 
 /// Shows the Host's receipt on routine `id`, unless what is shown is
 /// already newer: a read that landed after the switch.
-pub(crate) fn take(automations: &mut [Automation], id: &str, receipt: &Enablement) {
+pub(super) fn take(automations: &mut [Automation], id: &str, receipt: &Enablement) {
     if let Some(automation) = automations
         .iter_mut()
         .find(|automation| automation.id == id)
@@ -73,7 +73,7 @@ pub(crate) fn take(automations: &mut [Automation], id: &str, receipt: &Enablemen
 /// What a read shows, given what is shown: a routine whose receipt is newer
 /// than the read keeps the receipt, as a read sent before a switch can land
 /// after it.
-pub(crate) fn merge(shown: Option<&[Automation]>, read: Vec<Automation>) -> Vec<Automation> {
+pub(super) fn merge(shown: Option<&[Automation]>, read: Vec<Automation>) -> Vec<Automation> {
     read.into_iter()
         .map(|read| {
             shown
@@ -96,7 +96,7 @@ pub(crate) fn own(automations: Vec<Automation>) -> Vec<Automation> {
 }
 
 /// How a routine's last run went, and whether that needs the owner.
-pub(crate) fn last_run(run: &Run) -> (String, bool) {
+pub(super) fn last_run(run: &Run) -> (String, bool) {
     let now = Local::now();
     let at = stamp::long(run.finished_at_ms.unwrap_or(run.due_ms), &now);
     match run.status {

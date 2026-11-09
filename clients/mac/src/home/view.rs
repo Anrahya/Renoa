@@ -203,7 +203,18 @@ fn needs_you(
                     .gap(px(8.))
                     // Answering needs the agent's chat on this Mac.
                     .when(chat.is_some(), |row| row.children(answers))
-                    .children(open),
+                    .children(open)
+                    .when(chat.is_none(), |row| {
+                        row.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(palette.secondary)
+                                .child(format!(
+                                    "{} isn't online, so its chat can't open here yet.",
+                                    ask.agent.name
+                                )),
+                        )
+                    }),
             )
             .into_any_element()
     });

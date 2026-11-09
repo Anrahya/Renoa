@@ -97,8 +97,11 @@ pub struct Held {
 }
 
 impl Held {
-    /// The feed as read, keeping what was dealt with here.
+    /// The feed as read, keeping hidden what was dealt with here and is
+    /// still open on the Host.
     pub fn read(&mut self, today: String, items: Vec<Item>) {
+        self.dealt
+            .retain(|id| items.iter().any(|item| item.id == *id && !item.done));
         self.today = today;
         self.items = items;
     }
@@ -128,10 +131,13 @@ impl Held {
         self.open().find(|item| item.id == id)
     }
 
-    /// How many things wait on the owner: questions, and routines that
-    /// failed.
-    pub fn needing_you(&self) -> usize {
-        self.asks().len()
+    /// How many things wait on the owner: the questions of agents
+    /// `answerable` says this Mac can answer, and routines that failed.
+    pub fn needing_you(&self, answerable: impl Fn(Uuid) -> bool) -> usize {
+        self.asks()
+            .iter()
+            .filter(|ask| answerable(ask.agent.id))
+            .count()
             + self
                 .open()
                 .filter(|item| item.kind == Kind::Problem)
@@ -215,10 +221,19 @@ mod tests {
             ],
             "done items and kinds this app does not know are left out"
         );
-        assert_eq!(held.needing_you(), 2, "a question and a failed routine");
+        assert_eq!(
+            held.needing_you(|_| true),
+            2,
+            "a question and a failed routine"
+        );
+        assert_eq!(
+            held.needing_you(|_| false),
+            1,
+            "a question this Mac cannot answer"
+        );
         let mut held = held;
         held.deal(Uuid::from_u128(3));
-        assert_eq!(held.needing_you(), 1, "the failed routine put away");
+        assert_eq!(held.needing_you(|_| true), 1, "the failed routine put away");
     }
 
     #[test]
@@ -239,6 +254,19 @@ mod tests {
         assert!(held.item(newest).is_none());
         held.restore(newest);
         assert!(held.item(newest).is_some());
+        held.deal(newest);
+        let closed: Vec<_> = again
+            .items
+            .iter()
+            .filter(|item| item.id != newest)
+            .cloned()
+            .collect();
+        held.read("Later".to_owned(), closed);
+        held.read("Later".to_owned(), again.items.clone());
+        assert!(
+            held.item(newest).is_some(),
+            "once the Host no longer lists it, it is no longer held hidden"
+        );
     }
 
     #[test]

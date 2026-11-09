@@ -1,7 +1,8 @@
 //! Home against a Host the test answers, call by call.
 
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
-use renoa_rcp_wire::{HostMethod, TaskId};
+use renoa_protocol::TargetRef;
+use renoa_rcp_wire::{HostMethod, NodeId, TaskId};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -37,11 +38,34 @@ const ASKED_HERE: Uuid = Uuid::from_u128(1);
 const ASKED_ELSEWHERE: Uuid = Uuid::from_u128(2);
 const PROBLEM: Uuid = Uuid::from_u128(3);
 
+fn deals_node() -> NodeId {
+    NodeId::from_uuid(Uuid::from_u128(9))
+}
+
 fn deals_chat() -> TaskId {
-    chat_task_id(
-        renoa_rcp_wire::NodeId::from_uuid(Uuid::from_u128(9)),
-        "agent:deals",
-    )
+    chat_task_id(deals_node(), "agent:deals")
+}
+
+/// The message an answer sends, after the chat it opens first.
+fn answered(asked: Vec<Command>) -> (TaskId, String, tokio::sync::oneshot::Sender<bool>) {
+    let [
+        Command::Follow {
+            task_id: followed,
+            after: None,
+            ..
+        },
+        Command::Send {
+            task_id,
+            text,
+            sent: Some(took),
+        },
+    ] = <[Command; 2]>::try_from(asked)
+        .unwrap_or_else(|asked| panic!("follow, then send: {asked:?}"))
+    else {
+        panic!("the answer opens the chat, then is a message in it");
+    };
+    assert_eq!(followed, task_id, "the chat it writes to");
+    (task_id, text, took)
 }
 
 fn page() -> String {
@@ -80,11 +104,14 @@ impl Scripted {
         let member = Member {
             name: "Deals".into(),
             host_id: DEALS,
+            node_id: deals_node(),
+            target: TargetRef::new("agent:deals"),
             task_id: deals_chat(),
             look: None,
             primary: false,
         };
         let home = cx.new(|cx| Home::new(commands, vec![member], cx));
+        home.update(cx, |home, cx| home.set_linked(true, cx));
         Self { home, asked }
     }
 
@@ -145,17 +172,7 @@ fn an_answer_goes_to_the_agents_chat_and_one_from_elsewhere_names_and_puts_away_
     scripted.home.update(cx, |home, cx| {
         home.answer(ASKED_HERE, "Add two".to_owned(), cx)
     });
-    let sent = scripted.serve(cx, host(page()));
-    let [
-        Command::Send {
-            task_id,
-            text,
-            sent: Some(took),
-        },
-    ] = <[Command; 1]>::try_from(sent).unwrap_or_else(|sent| panic!("one message: {sent:?}"))
-    else {
-        panic!("the answer is a message");
-    };
+    let (task_id, text, took) = answered(scripted.serve(cx, host(page())));
     assert_eq!((task_id, text.as_str()), (deals_chat(), "Add two"));
     assert!(
         asks(&scripted.home, cx).is_empty(),
@@ -180,17 +197,7 @@ fn an_answer_goes_to_the_agents_chat_and_one_from_elsewhere_names_and_puts_away_
     scripted.home.update(cx, |home, cx| {
         home.answer(ASKED_ELSEWHERE, "Not now".to_owned(), cx)
     });
-    let sent = scripted.serve(cx, host(later_page()));
-    let [
-        Command::Send {
-            text,
-            sent: Some(took),
-            ..
-        },
-    ] = <[Command; 1]>::try_from(sent).unwrap_or_else(|sent| panic!("one message: {sent:?}"))
-    else {
-        panic!("the answer is a message");
-    };
+    let (_, text, took) = answered(scripted.serve(cx, host(later_page())));
     assert_eq!(text, "About your question “Add two?”: Not now");
     took.send(true).expect("Home listens");
     let dismissed = std::sync::Mutex::new(Vec::new());
@@ -217,13 +224,7 @@ fn a_refused_answer_shows_its_question_again(cx: &mut TestAppContext) {
     scripted.home.update(cx, |home, cx| {
         home.answer(ASKED_HERE, "Add two".to_owned(), cx)
     });
-    let sent = scripted.serve(cx, host(page()));
-    let Some(Command::Send {
-        sent: Some(took), ..
-    }) = sent.into_iter().next()
-    else {
-        panic!("the answer is a message");
-    };
+    let (_, _, took) = answered(scripted.serve(cx, host(page())));
     took.send(false).expect("Home listens");
     scripted.serve(cx, host(page()));
     assert_eq!(asks(&scripted.home, cx), [ASKED_HERE]);
@@ -258,11 +259,21 @@ fn a_failed_routine_run_again_keeps_its_run_until_the_host_confirms_it(cx: &mut 
         .read_with(cx, |home, _| home.runs.get(&PROBLEM).copied());
     run(&mut scripted, Answer::Said("{}".to_owned()), cx);
     let first = first.expect("an unconfirmed run keeps its id");
-    let asked = format!(r#"{{"operation_id":"{first}"}}"#);
+    let run = (
+        "/v1/host/automations/routine-1/run".to_owned(),
+        format!(r#"{{"operation_id":"{first}"}}"#),
+    );
     assert_eq!(
         runs.into_inner().expect("runs"),
-        vec![("/v1/host/automations/routine-1/run".to_owned(), asked); 2],
-        "asked again, it is the same run"
+        [
+            run.clone(),
+            run,
+            (
+                format!("/v1/host/feed/items/{PROBLEM}/dismissal"),
+                String::new()
+            )
+        ],
+        "asked again, it is the same run; once it runs, its note is put away"
     );
     scripted.home.read_with(cx, |home, _| {
         assert!(home.runs.is_empty(), "a confirmed run is done with");
@@ -271,4 +282,88 @@ fn a_failed_routine_run_again_keeps_its_run_until_the_host_confirms_it(cx: &mut 
         };
         assert!(held.item(PROBLEM).is_none(), "its note is put away");
     });
+}
+
+#[gpui_kit::test]
+fn a_note_put_away_comes_back_if_the_host_cannot_be_told(cx: &mut TestAppContext) {
+    let mut scripted = Scripted::open(cx);
+    scripted.serve(cx, host(page()));
+    let notes = |scripted: &Scripted, cx: &mut TestAppContext| {
+        scripted.home.read_with(cx, |home, _| match &home.feed {
+            crate::sheets::Loaded::Ready(held) => {
+                held.notes().iter().map(|note| note.id).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        })
+    };
+    scripted
+        .home
+        .update(cx, |home, cx| home.dismiss(PROBLEM, cx));
+    scripted.serve(cx, |_, _, _| Answer::Lost);
+    assert_eq!(notes(&scripted, cx), [PROBLEM]);
+    let asked = std::sync::Mutex::new(Vec::new());
+    scripted
+        .home
+        .update(cx, |home, cx| home.dismiss(PROBLEM, cx));
+    scripted.serve(cx, |method, path, _| {
+        asked.lock().expect("asked").push((method, path.to_owned()));
+        Answer::Said("{}".to_owned())
+    });
+    assert!(notes(&scripted, cx).is_empty());
+    assert_eq!(
+        asked.into_inner().expect("asked"),
+        [(
+            HostMethod::Post,
+            format!("/v1/host/feed/items/{PROBLEM}/dismissal")
+        )]
+    );
+}
+
+#[gpui_kit::test]
+fn home_takes_no_answer_while_renoa_is_out_of_reach(cx: &mut TestAppContext) {
+    let mut scripted = Scripted::open(cx);
+    scripted.serve(cx, host(page()));
+    scripted.home.update(cx, |home, cx| {
+        home.set_linked(false, cx);
+        home.answer(ASKED_HERE, "Add two".to_owned(), cx);
+    });
+    assert!(
+        scripted.serve(cx, host(page())).is_empty(),
+        "nothing is sent"
+    );
+    assert_eq!(asks(&scripted.home, cx), [ASKED_HERE], "the question stays");
+    assert!(
+        scripted
+            .home
+            .read_with(cx, |home, _| home.refused.is_some())
+    );
+}
+
+#[gpui_kit::test]
+fn home_reads_again_once_renoa_is_back(cx: &mut TestAppContext) {
+    let mut scripted = Scripted::open(cx);
+    scripted.serve(cx, host(page()));
+    let read = std::sync::Mutex::new(Vec::new());
+    let heard = |method: HostMethod, path: &str, _: Option<&str>| {
+        read.lock().expect("read").push(path.to_owned());
+        host(later_page())(method, path, None)
+    };
+    scripted
+        .home
+        .update(cx, |home, cx| home.set_linked(true, cx));
+    scripted.serve(cx, heard);
+    assert!(
+        read.lock().expect("read").is_empty(),
+        "still linked: nothing new"
+    );
+    scripted.home.update(cx, |home, cx| {
+        home.set_linked(false, cx);
+        home.set_linked(true, cx);
+    });
+    scripted.serve(cx, heard);
+    assert_eq!(
+        read.into_inner().expect("read"),
+        ["/v1/host/feed", "/v1/host"],
+        "back, it reads the feed and the routines"
+    );
 }

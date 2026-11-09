@@ -60,7 +60,7 @@ pub struct Jump {
 impl EventEmitter<JumpEvent> for Jump {}
 
 /// The places whose name has `query` in it, in any case; every place for an
-/// empty query. Agents come first, as the list has them.
+/// empty query, in the order given.
 pub fn matching<'a>(places: &'a [Place], query: &str) -> Vec<&'a Place> {
     let query = query.trim().to_lowercase();
     places

@@ -57,6 +57,8 @@ impl Chats {
                 Some(Member {
                     name: agent.name.clone().into(),
                     host_id,
+                    node_id: agent.node_id,
+                    target: agent.target.clone(),
                     task_id: chat_task_id(agent.node_id, agent.target.as_str()),
                     look,
                     primary,

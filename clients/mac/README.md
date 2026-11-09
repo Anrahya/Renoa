@@ -75,13 +75,15 @@ minute:
 
 - The day in a line, as the Host words it.
 - **Needs you**: each agent's newest question. A choice is sent to the
-  agent's chat; a question asked in another conversation is named in the
-  answer and put away once Renoa takes it
-  (`POST /v1/host/feed/items/<id>/dismissal`). The question hides at once
-  and shows again if Renoa refuses the answer.
-- **While you were away**: updates, routine results, failed routines (Run
-  again keeps one operation id until the Host confirms the run) and abilities
-  turned on, each dismissable.
+  agent's chat, opened first if this Mac has not; a question asked in
+  another conversation is named in the answer and put away once Renoa takes
+  it (`POST /v1/host/feed/items/<id>/dismissal`). The question hides at once
+  and shows again if Renoa refuses the answer. While Renoa is out of reach,
+  Home does not take an answer.
+- **While you were away**: updates, routine results, failed routines and
+  abilities turned on, each dismissable. Run again asks under one operation
+  id until the Host answers, then puts the note away; the Host opens a new
+  one if the routine fails again.
 - **Coming up**: the three routines that run next.
 
 The sidebar's Home row says how many things need the owner.
@@ -115,9 +117,10 @@ owner's Host through the session (`src/sheets/`):
 A Host call made while Renoa is out of reach is answered at once as not
 reached; it is not made later, when the owner may have moved on.
 
-⌘K opens a box that jumps to Home, an agent or a sheet by part of its name;
-⌘0 goes Home; ⌘1 to ⌘9 open the first nine agents; Esc closes a sheet or the box. Settings lists
-the keys, and a test presses each one it lists (`src/chats/keys.rs`).
+⌘K opens a box that jumps to Home, an agent or a sheet by part of its
+name; ⌘0 goes Home; ⌘1 to ⌘9 open the first nine agents; Esc closes a
+sheet or the box. Settings lists the keys, and a test presses each one it
+lists (`src/chats/keys.rs`).
 
 To look at every screen without a display, in both looks, with made-up
 agents and Host answers (`src/chats/screens.rs`):

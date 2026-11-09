@@ -164,7 +164,10 @@ impl Chats {
 
     fn apply(&mut self, update: Update, window: &mut Window, cx: &mut Context<Self>) {
         match update {
-            Update::Linked(linked) => self.linked = linked,
+            Update::Linked(linked) => {
+                self.linked = linked;
+                self.home.update(cx, |home, cx| home.set_linked(linked, cx));
+            }
             Update::Agents(agents) => {
                 self.agents = agents;
                 match &mut self.chosen {
