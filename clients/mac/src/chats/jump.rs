@@ -2,9 +2,9 @@
 //! goes there.
 
 use gpui_kit::{
-    AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window,
+    AppContext as _, Context, Div, Entity, EventEmitter, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, Window,
     assets::IconName,
     component::input::{Input, InputEvent, InputState},
     div,
@@ -12,12 +12,13 @@ use gpui_kit::{
     px,
 };
 
+use renoa_rcp_wire::TaskId;
+
 use crate::{
     face::{Face, Look},
     sheets::Page,
     theme::Palette,
 };
-use renoa_rcp_wire::TaskId;
 
 /// Somewhere the box can go.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +30,7 @@ pub enum Place {
         look: Option<Look>,
         primary: bool,
     },
+    Home,
     Sheet(Page),
 }
 
@@ -36,6 +38,7 @@ impl Place {
     fn name(&self) -> &str {
         match self {
             Self::Agent { name, .. } => name.as_ref(),
+            Self::Home => "Home",
             Self::Sheet(page) => page.title(),
         }
     }
@@ -157,28 +160,10 @@ impl Render for Jump {
                                 .text_color(palette.secondary)
                                 .child("Chat"),
                         ),
-                    Place::Sheet(page) => row
-                        .child(
-                            div()
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_color(palette.secondary)
-                                .child(page.icon()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(page.title()),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(palette.secondary)
-                                .child(page.keys()),
-                        ),
+                    Place::Home => labelled(row, IconName::House, "Home", "⌘0", palette),
+                    Place::Sheet(page) => {
+                        labelled(row, page.icon(), page.title(), page.keys(), palette)
+                    }
                 })
         });
         div()
@@ -223,6 +208,32 @@ impl Render for Jump {
     }
 }
 
+/// A row for a place that is not an agent: its icon, its name and its keys.
+fn labelled(
+    row: Stateful<Div>,
+    icon: IconName,
+    title: &'static str,
+    keys: &'static str,
+    palette: Palette,
+) -> Stateful<Div> {
+    row.child(
+        div()
+            .size(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(palette.secondary)
+            .child(icon),
+    )
+    .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(title))
+    .child(
+        div()
+            .text_size(px(12.))
+            .text_color(palette.secondary)
+            .child(keys),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use renoa_rcp_wire::TaskId;
@@ -253,6 +264,7 @@ mod tests {
                 .into_iter()
                 .map(|place| match place {
                     Place::Agent { name, .. } => name.to_string(),
+                    Place::Home => "Home".to_owned(),
                     Place::Sheet(page) => page.title().to_owned(),
                 })
                 .collect()

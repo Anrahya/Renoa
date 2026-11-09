@@ -36,11 +36,31 @@ fn open(cx: &mut TestAppContext) -> Opened {
                 ..WindowOptions::default()
             },
             cx,
-            |window, cx| cx.new(|cx| Chats::new(commands, received, "Test Mac".into(), window, cx)),
+            |window, cx| {
+                cx.new(|cx| {
+                    let mut chats = Chats::new(commands, received, "Test Mac".into(), window, cx);
+                    // These tests are about the chats, so one shows rather
+                    // than Home.
+                    chats.on_home = false;
+                    chats
+                })
+            },
         )
         .expect("open a window")
     });
     (window, chats, asked, updates)
+}
+
+/// The next command about the chats, past Home's reads of the Host.
+fn chat_command(
+    asked: &mut mpsc::UnboundedReceiver<Command>,
+) -> Result<Command, mpsc::error::TryRecvError> {
+    loop {
+        match asked.try_recv()? {
+            Command::Host(_) => {}
+            command => return Ok(command),
+        }
+    }
 }
 
 fn agent(node_id: NodeId, name: &str) -> TargetSummary {
@@ -71,7 +91,7 @@ fn the_chats_follow_the_first_agent_show_its_turn_and_send_what_the_owner_types(
         task_id: followed,
         after: None,
         ..
-    }) = asked.try_recv()
+    }) = chat_command(&mut asked)
     else {
         panic!("the first agent's chat is followed from its start");
     };
@@ -140,7 +160,8 @@ fn the_chats_follow_the_first_agent_show_its_turn_and_send_what_the_owner_types(
     let Ok(Command::Send {
         task_id: sent_to,
         text,
-    }) = asked.try_recv()
+        sent: None,
+    }) = chat_command(&mut asked)
     else {
         panic!("Enter sends the message");
     };
@@ -163,7 +184,7 @@ fn each_chat_keeps_its_own_draft_and_a_refused_message_returns_to_its_chat(
         .send(Update::Agents(vec![cook.clone(), shopper.clone()]))
         .unwrap();
     cx.run_until_parked();
-    while asked.try_recv().is_ok() {}
+    while chat_command(&mut asked).is_ok() {}
     let composer = |cx: &mut TestAppContext| {
         chats.read_with(cx, |chats, cx| chats.composer.read(cx).value().to_string())
     };
@@ -210,7 +231,7 @@ fn each_chat_keeps_its_own_draft_and_a_refused_message_returns_to_its_chat(
         "a refused message comes back ahead of the owner's draft"
     );
 
-    while asked.try_recv().is_ok() {}
+    while chat_command(&mut asked).is_ok() {}
     // The cook goes offline and the list comes back without it.
     updates.send(Update::Agents(vec![shopper])).unwrap();
     cx.run_until_parked();
@@ -221,7 +242,10 @@ fn each_chat_keeps_its_own_draft_and_a_refused_message_returns_to_its_chat(
             "the open chat stays open"
         );
     });
-    assert!(asked.try_recv().is_err(), "no other chat was opened");
+    assert!(
+        chat_command(&mut asked).is_err(),
+        "no other chat was opened"
+    );
 }
 
 #[gpui_kit::test]
@@ -241,7 +265,7 @@ fn what_the_owner_types_waits_while_renoa_is_away(cx: &mut TestAppContext) {
         chats.read_with(cx, |chats, cx| chats.composer.read(cx).value().to_string())
     };
     assert_eq!(composer(cx), "Early thought", "the first chat keeps it");
-    while asked.try_recv().is_ok() {}
+    while chat_command(&mut asked).is_ok() {}
 
     updates.send(Update::Linked(false)).unwrap();
     cx.run_until_parked();
@@ -251,7 +275,10 @@ fn what_the_owner_types_waits_while_renoa_is_away(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(asked.try_recv().is_err(), "nothing is sent while offline");
+    assert!(
+        chat_command(&mut asked).is_err(),
+        "nothing is sent while offline"
+    );
     assert_eq!(
         composer(cx),
         "Early thought",
@@ -342,7 +369,7 @@ fn each_agent_wears_its_look_and_the_main_agent_is_marked(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn the_keys_work_from_launch_and_a_click_beside_the_composer_keeps_it_typing(
+fn home_shows_first_with_the_keys_and_a_chat_opened_from_the_side_is_ready_to_type(
     cx: &mut TestAppContext,
 ) {
     use gpui_kit::Focusable as _;
@@ -350,6 +377,7 @@ fn the_keys_work_from_launch_and_a_click_beside_the_composer_keeps_it_typing(
     use crate::sheets::Page;
 
     let (window, chats, _asked, updates) = open(cx);
+    chats.update(cx, |chats, _| chats.on_home = true);
     let node_id = NodeId::new();
     updates
         .send(Update::Agents(vec![
@@ -358,37 +386,41 @@ fn the_keys_work_from_launch_and_a_click_beside_the_composer_keeps_it_typing(
         ]))
         .unwrap();
     cx.run_until_parked();
-    let typing = |cx: &mut TestAppContext| {
+    let focused = |cx: &mut TestAppContext| {
         cx.update_window(window, |_, window, cx| {
-            chats
-                .read(cx)
-                .composer
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
+            let chats = chats.read(cx);
+            let typing = chats.composer.read(cx).focus_handle(cx).is_focused(window);
+            (chats.on_home, chats.home_focus.is_focused(window), typing)
         })
         .unwrap()
     };
     let up = |cx: &mut TestAppContext| {
         chats.read_with(cx, |chats, _| chats.sheet.as_ref().map(|shown| shown.page))
     };
+    let press = |keys: &'static str, cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.press(keys, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
     cx.update_window(window, |_, window, cx| window.render_frame(cx))
         .unwrap();
-    assert!(typing(cx), "the composer has the keys from launch");
-
-    cx.update_window(window, |_, window, cx| window.press("cmd-shift-r", cx))
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(up(cx), Some(Page::Routines));
-    assert!(!typing(cx), "the sheet takes the keys");
-    cx.update_window(window, |_, window, cx| {
-        window.render_frame(cx);
-        window.press("escape", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
+    assert_eq!(
+        focused(cx),
+        (true, true, false),
+        "Home has the keys from launch"
+    );
+    press("cmd-shift-r", cx);
+    assert_eq!(up(cx), Some(Page::Routines), "the keys work on Home");
+    press("escape", cx);
     assert_eq!(up(cx), None);
-    assert!(typing(cx), "closing gives the keys back");
+    assert_eq!(
+        focused(cx),
+        (true, true, false),
+        "closing gives Home the keys back"
+    );
 
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
@@ -397,12 +429,26 @@ fn the_keys_work_from_launch_and_a_click_beside_the_composer_keeps_it_typing(
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(typing(cx), "a click on an agent leaves the composer typing");
+    assert_eq!(
+        focused(cx),
+        (false, false, true),
+        "the chat is ready to type"
+    );
     chats.read_with(cx, |chats, cx| {
         assert_eq!(
             chats.chosen.as_ref().map(|chosen| chosen.name.as_ref()),
             Some("Shopper")
         );
         assert_eq!(chats.composer.read(cx).value().as_ref(), "Oat milk");
+    });
+    press("cmd-0", cx);
+    assert_eq!(focused(cx), (true, true, false), "⌘0 goes Home");
+    press("cmd-1", cx);
+    assert_eq!(focused(cx), (false, false, true));
+    chats.read_with(cx, |chats, _| {
+        assert_eq!(
+            chats.chosen.as_ref().map(|chosen| chosen.name.as_ref()),
+            Some("Cook")
+        );
     });
 }

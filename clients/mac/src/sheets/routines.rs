@@ -23,7 +23,7 @@ use super::{
 use crate::{face::Face, link::host::Answer, stamp, theme::Palette};
 use held::{Automation, Enablement, Observation, last_run, merge, own, take};
 
-mod held;
+pub(crate) mod held;
 
 /// How long a routine the owner ran reads Started, before the sheet reads
 /// the routines again to show how the run went.

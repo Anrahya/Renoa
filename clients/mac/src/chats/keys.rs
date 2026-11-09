@@ -13,6 +13,7 @@ pub enum Move {
     Jump,
     /// Opens the chat with the agent at this place in the list, from 0.
     Agent(usize),
+    Home,
     Sheet(Page),
     /// Closes the sheet or the jump box that is up.
     Close,
@@ -27,6 +28,7 @@ pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
         (false, false, "escape") => Some(Move::Close),
         (true, false, "k") => Some(Move::Jump),
         (true, false, ",") => Some(Move::Sheet(Page::Settings)),
+        (true, false, "0") => Some(Move::Home),
         (true, true, "r") => Some(Move::Sheet(Page::Routines)),
         (true, true, "m") => Some(Move::Sheet(Page::Memory)),
         (true, true, "a") => Some(Move::Sheet(Page::Apps)),
@@ -53,6 +55,7 @@ mod tests {
     fn each_key_settings_lists_does_what_it_says() {
         let pressed = |keys: &str| match keys {
             "⌘K" => press("cmd-k"),
+            "⌘0" => press("cmd-0"),
             "⌘1 – ⌘9" => press("cmd-1").filter(|_| press("cmd-9") == Some(Move::Agent(8))),
             "⌘⇧R" => press("cmd-shift-r"),
             "⌘⇧M" => press("cmd-shift-m"),
@@ -65,6 +68,7 @@ mod tests {
             let moved = pressed(keys);
             let expected = match what {
                 "Jump to an agent or page" => Move::Jump,
+                "Home" => Move::Home,
                 "Open the first nine agents" => Move::Agent(0),
                 "Close a sheet" => Move::Close,
                 page => Move::Sheet(
@@ -92,7 +96,6 @@ mod tests {
         for keys in [
             "k",
             "shift-r",
-            "cmd-0",
             "cmd-ctrl-k",
             "cmd-alt-1",
             "cmd-shift-escape",

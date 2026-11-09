@@ -5,7 +5,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, assets::Assets, px, size,
+    AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, assets::AllAssets, px, size,
     test::TestWindowExt as _,
 };
 use renoa_protocol::{CommandInput, ExecutionEventKind, ExecutionTerminal, TargetRef};
@@ -67,6 +67,29 @@ fn host(path: &str) -> Answer<String> {
                  "plugin": "renoa.memory"}
             ]
         }),
+        "/v1/host/feed" => {
+            let item = |id: u128,
+                        kind: &str,
+                        agent: Uuid,
+                        name: &str,
+                        title: &str,
+                        body: &str,
+                        ago: i64,
+                        choices: Option<Vec<&str>>| {
+                json!({"id": Uuid::from_u128(id), "sequence": id, "kind": kind,
+                    "agent": {"id": agent, "name": name}, "title": title, "body": body,
+                    "at_ms": now - ago, "done": false, "action": "open",
+                    "subject_id": Uuid::from_u128(500 + id), "urgency": "normal", "choices": choices})
+            };
+            json!({"today": "Chef has dinner ideas at 6:30 PM, and Scout found three repos worth a look.",
+                "unread": 4, "seen_through": 0, "next_before": null, "items": [
+                item(9, "ask", CHEF, "Chef", "Chef asks", "Paneer tikka or dal makhani tonight? Both use what's in the fridge.", 20 * 60_000, Some(vec!["Paneer tikka", "Dal makhani"])),
+                item(8, "ask", RENOA, "Renoa", "Renoa asks", "Saturday's grocery list has 14 things. Want to look it over before I order?", 55 * 60_000, None),
+                item(7, "update", SCOUT, "Scout", "Scout", "Three trending repos worth a look, one of them a GPUI component kit.", 3 * hour, None),
+                item(6, "problem", CHEF, "Chef", "Plan the week's dinners didn't finish", "It can run again.", 5 * hour, None),
+                item(5, "result", RENOA, "Renoa", "Morning brief ran", "See what it found.", 10 * hour, None),
+            ]})
+        }
         "/v1/host/profile" => json!({
             "revision": 4,
             "content": "**Yash**, lives in Bengaluru.\n\n- Vegetarian; no mushrooms.\n- Gym on weekday mornings.\n- Building Renoa in the evenings."
@@ -107,7 +130,7 @@ impl Screen {
     fn open(appearance: Appearance) -> Self {
         let mut cx = HeadlessAppContext::with_platform(
             Arc::new(gpui_apple::AppleTextSystem::new()),
-            Arc::new(Assets),
+            Arc::new(AllAssets),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(gpui_kit::init);
@@ -234,6 +257,15 @@ impl Screen {
 fn screens() {
     for (appearance, theme) in [(Appearance::Light, "light"), (Appearance::Dark, "dark")] {
         let mut screen = Screen::open(appearance);
+        screen.shoot(&format!("home-{theme}"));
+        let chats = screen.chats.clone();
+        screen
+            .cx
+            .update_window(screen.window, |_, window, cx| {
+                chats.update(cx, |chats, cx| chats.open_agent(0, window, cx));
+            })
+            .unwrap();
+        screen.settle();
         screen.shoot(&format!("chats-{theme}"));
         for page in Page::ALL {
             let chats = screen.chats.clone();

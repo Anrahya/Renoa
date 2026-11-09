@@ -237,6 +237,7 @@ async fn a_message_cut_off_by_a_broken_connection_is_sent_again_under_the_same_i
         .send(Command::Send {
             task_id: running.task_id,
             text: "Make it vegetarian".to_owned(),
+            sent: None,
         })
         .expect("send");
 
@@ -292,6 +293,7 @@ async fn a_refused_message_comes_back_and_the_connection_stays() {
         .send(Command::Send {
             task_id: running.task_id,
             text: "Hello".to_owned(),
+            sent: None,
         })
         .expect("send");
     hear(&heard, 1, is_submit).await;
@@ -349,6 +351,7 @@ async fn a_long_replay_does_not_hold_up_the_reply_it_came_with() {
         .send(Command::Send {
             task_id: running.task_id,
             text: "Hello".to_owned(),
+            sent: None,
         })
         .expect("send");
     let submits = hear(&heard, 1, is_submit).await;
@@ -547,6 +550,7 @@ async fn a_host_that_never_answers_holds_up_no_message() {
         .send(Command::Send {
             task_id: running.task_id,
             text: "Still there?".to_owned(),
+            sent: None,
         })
         .expect("send");
     hear(&heard, 1, is_submit).await;
@@ -614,4 +618,42 @@ async fn a_host_call_while_renoa_is_out_of_reach_is_answered_lost_and_the_sessio
         .await
         .expect("the session ends once no view is left")
         .expect("the session ran");
+}
+
+#[tokio::test]
+async fn a_sender_that_asks_hears_whether_its_message_was_taken_and_the_chat_does_not() {
+    let (endpoints, _heard) = coordinator(Arc::new(|_, frame: &ClientMessage| {
+        chat_replies(frame).unwrap_or_else(|| match frame {
+            ClientMessage::Submit {
+                request_id, input, ..
+            } if input.text() == "No" => vec![reply(&ServerMessage::Error {
+                request_id: Some(*request_id),
+                code: ErrorCode::NodeOffline,
+                message: "offline".to_owned(),
+            })],
+            _ => accepted(frame),
+        })
+    }))
+    .await;
+    let mut running = start(endpoints);
+    let send = |text: &str| {
+        let (sent, heard) = oneshot::channel();
+        running
+            .commands
+            .send(Command::Send {
+                task_id: running.task_id,
+                text: text.to_owned(),
+                sent: Some(sent),
+            })
+            .expect("send");
+        heard
+    };
+    let (taken, refused) = (send("Yes"), send("No"));
+    let within = Duration::from_secs(10);
+    assert_eq!(timeout(within, taken).await.expect("heard"), Ok(true));
+    assert_eq!(timeout(within, refused).await.expect("heard"), Ok(false));
+    assert!(
+        not_sent(&mut running.updates).is_empty(),
+        "the sender shows its own refusal, not the chat's composer"
+    );
 }

@@ -7,7 +7,7 @@ use std::{
 
 use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, FocusHandle, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task, Window,
+    IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, Window,
     component::{
         input::{InputEvent, InputState},
         message_scroller::MessageScrollerState,
@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::{
     chat::{Line, Speaker, Transcript, chat_task_id},
     face::{Look, blink},
+    home::Home,
     link::{Command, Update, host_agent},
     theme::Palette,
 };
@@ -77,6 +78,12 @@ pub struct Chats {
     jumping: Option<overlay::Jumping>,
     /// How many sheets have opened, so each rises afresh.
     sheets_opened: usize,
+    home: Entity<Home>,
+    /// Whether Home shows rather than the chosen chat.
+    on_home: bool,
+    /// Holds the keys while Home shows: Home tracks it.
+    home_focus: FocusHandle,
+    _home_events: Subscription,
 }
 
 impl EventEmitter<SignedOut> for Chats {}
@@ -91,9 +98,12 @@ impl Chats {
         cx: &mut Context<Self>,
     ) -> Self {
         let composer = cx.new(|cx| InputState::new(window, cx).placeholder("Message"));
+        let home = cx.new(|cx| Home::new(commands.clone(), Vec::new(), cx));
+        let _home_events = cx.subscribe_in(&home, window, Self::on_home);
         // The keys reach the chats through whatever has focus inside them,
-        // so something must from the start.
-        composer.update(cx, |composer, cx| composer.focus(window, cx));
+        // so something must from the start: Home, which shows first.
+        let home_focus = cx.focus_handle();
+        window.focus(&home_focus, cx);
         cx.subscribe_in(
             &composer,
             window,
@@ -145,6 +155,10 @@ impl Chats {
             sheet: None,
             jumping: None,
             sheets_opened: 0,
+            home,
+            on_home: true,
+            home_focus,
+            _home_events,
         }
     }
 
@@ -216,6 +230,10 @@ impl Chats {
             }
             Update::SignedOut => cx.emit(SignedOut),
         }
+        // Home shows each agent as the chats do.
+        let members = self.members();
+        self.home
+            .update(cx, |home, cx| home.set_members(members, cx));
         cx.notify();
     }
 
@@ -368,7 +386,11 @@ impl Chats {
         if text.is_empty() || !self.linked {
             return;
         }
-        let _ = self.commands.send(Command::Send { task_id, text });
+        let _ = self.commands.send(Command::Send {
+            task_id,
+            text,
+            sent: None,
+        });
         self.unsent.remove(&task_id);
         self.composer
             .update(cx, |composer, cx| composer.set_value("", window, cx));
@@ -385,7 +407,11 @@ impl Render for Chats {
             }
         });
         let sidebar = self.sidebar(palette, cx);
-        let conversation = self.conversation(palette, cx);
+        let main = if self.on_home {
+            self.home_pane().into_any_element()
+        } else {
+            self.conversation(palette, cx).into_any_element()
+        };
         let overlay = self.overlay(palette, cx);
         div()
             .size_full()
@@ -396,7 +422,7 @@ impl Render for Chats {
             .text_color(palette.text)
             .text_size(px(13.))
             .child(sidebar)
-            .child(conversation)
+            .child(main)
             .children(overlay)
     }
 }
@@ -410,6 +436,7 @@ fn joined(first: String, then: &str) -> String {
     }
 }
 
+mod home;
 mod jump;
 mod keys;
 mod overlay;

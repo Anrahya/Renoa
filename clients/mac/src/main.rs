@@ -4,6 +4,7 @@ mod app;
 mod chat;
 mod chats;
 mod face;
+mod home;
 mod key;
 mod link;
 mod sheets;
@@ -20,7 +21,7 @@ use gpui_kit::{
 fn main() {
     // The kit's default icons, embedded: the app shows no others.
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx| {
             gpui_kit::init(cx);
             let options = WindowOptions {
