@@ -103,6 +103,9 @@ fn host(path: &str) -> Answer<String> {
                 {"id": "4", "written": "2026-11-05", "text": "Groceries usually on Sunday evenings."}
             ]
         }),
+        path if path.starts_with("/v1/host/agents/") && path.matches('/').count() == 4 => json!({
+            "created_at_ms": now - 40 * 24 * hour
+        }),
         path if path.ends_with("/apps") => {
             let on = path.contains(&RENOA.to_string());
             json!({"apps": [
@@ -114,6 +117,15 @@ fn host(path: &str) -> Answer<String> {
         _ => return Answer::Missing,
     };
     Answer::Said(body.to_string())
+}
+
+/// What each agent is for.
+fn purpose(agent: Uuid) -> &'static str {
+    match agent {
+        CHEF => "Plans the week's dinners from what's in the fridge, and keeps the grocery list.",
+        SCOUT => "Finds things worth a look: trending repos, deals and good reads.",
+        _ => "Keeps your day in order and knows the rest of the team.",
+    }
 }
 
 struct Screen {
@@ -178,6 +190,13 @@ impl Screen {
                     node_id,
                     target: format!("agent:{id}"),
                     look,
+                })
+                .unwrap();
+            updates
+                .send(Update::Purpose {
+                    node_id,
+                    target: format!("agent:{id}"),
+                    purpose: purpose(*id).to_owned(),
                 })
                 .unwrap();
         }
@@ -285,6 +304,18 @@ fn screens() {
                 })
                 .unwrap();
         }
+        let chats = screen.chats.clone();
+        screen
+            .cx
+            .update_window(screen.window, |_, window, cx| {
+                chats.update(cx, |chats, cx| {
+                    let chef = chats.members()[1].task_id;
+                    chats.open_profile(chef, window, cx);
+                });
+            })
+            .unwrap();
+        screen.settle();
+        screen.shoot(&format!("profile-{theme}"));
         let chats = screen.chats.clone();
         screen
             .cx

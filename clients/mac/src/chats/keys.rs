@@ -15,6 +15,8 @@ pub enum Move {
     Agent(usize),
     Home,
     Sheet(Page),
+    /// Opens the page of the agent whose chat is open.
+    Profile,
     /// Closes the sheet or the jump box that is up.
     Close,
 }
@@ -29,6 +31,7 @@ pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
         (true, false, "k") => Some(Move::Jump),
         (true, false, ",") => Some(Move::Sheet(Page::Settings)),
         (true, false, "0") => Some(Move::Home),
+        (true, false, "i") => Some(Move::Profile),
         (true, true, "r") => Some(Move::Sheet(Page::Routines)),
         (true, true, "m") => Some(Move::Sheet(Page::Memory)),
         (true, true, "a") => Some(Move::Sheet(Page::Apps)),
@@ -56,6 +59,7 @@ mod tests {
         let pressed = |keys: &str| match keys {
             "⌘K" => press("cmd-k"),
             "⌘0" => press("cmd-0"),
+            "⌘I" => press("cmd-i"),
             "⌘1 – ⌘9" => press("cmd-1").filter(|_| press("cmd-9") == Some(Move::Agent(8))),
             "⌘⇧R" => press("cmd-shift-r"),
             "⌘⇧M" => press("cmd-shift-m"),
@@ -69,6 +73,7 @@ mod tests {
             let expected = match what {
                 "Jump to an agent or page" => Move::Jump,
                 "Home" => Move::Home,
+                "About the agent you're talking to" => Move::Profile,
                 "Open the first nine agents" => Move::Agent(0),
                 "Close a sheet" => Move::Close,
                 page => Move::Sheet(

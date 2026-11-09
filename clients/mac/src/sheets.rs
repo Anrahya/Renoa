@@ -25,6 +25,7 @@ use crate::{
 
 pub mod apps;
 pub mod memory;
+pub mod profile;
 pub mod routines;
 pub mod schedule;
 pub mod settings;
@@ -76,6 +77,8 @@ pub enum SheetEvent {
     Close,
     /// Opens the chat with this agent, as "Tell Renoa" does.
     Chat(TaskId),
+    /// Opens this sheet in its place.
+    Sheet(Page),
     SignOut,
 }
 

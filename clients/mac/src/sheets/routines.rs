@@ -20,7 +20,7 @@ use super::{
     Host, Loaded, Member, Page, SheetEvent, group, header, not_ready, pill, schedule, section,
     switch,
 };
-use crate::{face::Face, link::host::Answer, stamp, theme::Palette};
+use crate::{face::Face, link::host::Answer, theme::Palette};
 use held::{Automation, Enablement, Observation, last_run, merge, own, take};
 
 pub(crate) mod held;
@@ -307,14 +307,11 @@ impl Render for Routines {
                                     .text_color(palette.secondary)
                                     .child("Next"),
                             )
-                            .child(div().font_weight(FontWeight::MEDIUM).child(
-                                if automation.next_due_ms <= now.timestamp_millis() {
-                                    // Due, and waiting for its turn.
-                                    "Any moment".to_owned()
-                                } else {
-                                    stamp::ahead(automation.next_due_ms, &now)
-                                },
-                            )),
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(automation.next(&now)),
+                            ),
                     )
                 })
                 .child({

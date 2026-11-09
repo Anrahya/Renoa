@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use chrono::Local;
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, Context, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, PathBuilder, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled as _, canvas,
+    Animation, AnimationExt as _, AnyElement, App, ClickEvent, Context, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, TestSupportExt as _, Window,
+    canvas,
     component::{input::Input, message_scroller::MessageScroller, text::TextView},
     div, ease_out_quint, linear_color_stop, linear_gradient, point,
     prelude::FluentBuilder as _,
@@ -18,6 +19,7 @@ use super::{Chats, Row};
 use crate::{
     chat::{Line, Speaker, Transcript, chat_task_id},
     face::{Face, Look, Mood},
+    link::host_agent,
     stamp,
     theme::Palette,
 };
@@ -102,7 +104,23 @@ impl Chats {
             .flex_col()
             .child(thread)
             .when(chosen.is_some(), |column| {
-                column.child(header(&agent, purpose, working, self.linked, palette))
+                // Only the Host's agents have a page.
+                let about = listed
+                    .filter(|agent| host_agent(agent.target.as_str()).is_some())
+                    .and(task_id)
+                    .map(|task_id| {
+                        cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                            this.open_profile(task_id, window, cx);
+                        })
+                    });
+                column.child(header(
+                    &agent,
+                    purpose,
+                    working,
+                    self.linked,
+                    about,
+                    palette,
+                ))
             })
             .when_some(notice, |column, notice| {
                 column.child(centred(
@@ -162,12 +180,14 @@ fn centred(content: impl IntoElement) -> gpui_kit::Div {
     )
 }
 
-/// The agent's face, name and purpose in a pill over a fade the lines go under.
+/// The agent's face, name and purpose in a pill over a fade the lines go
+/// under; clicking the pill opens `about`, the agent's page.
 fn header(
     agent: &Agent,
     purpose: Option<SharedString>,
     working: bool,
     linked: bool,
+    about: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     palette: Palette,
 ) -> impl IntoElement {
     let mood = if working {
@@ -194,6 +214,7 @@ fn header(
         ))
         .child(
             div()
+                .id("about")
                 .flex()
                 .items_center()
                 .gap(px(8.))
@@ -205,6 +226,12 @@ fn header(
                 .bg(palette.frosted)
                 .border_1()
                 .border_color(palette.outline)
+                .when_some(about, |pill, about| {
+                    pill.cursor_pointer()
+                        .hover(|pill| pill.bg(palette.selected))
+                        .on_click(about)
+                })
+                .test_support()
                 .child(agent.face(palette, 26.).mood(mood).alive("header-face"))
                 .child(
                     div()

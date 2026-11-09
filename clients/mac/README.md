@@ -114,11 +114,29 @@ owner's Host through the session (`src/sheets/`):
   shows a new code. Renoa itself is not told, so the Mac stays among the
   owner's devices.
 
+An agent's own page rises the same way (`src/sheets/profile.rs`). It opens
+from the agent's name at the top of its chat or with ⌘I, for the Host's
+agents only. The page shows:
+
+- the agent's face, and what it is for, as the chats already read it;
+- how long it has been around (`GET /v1/host/agents/<id>`);
+- the routines it runs (`GET /v1/host`);
+- the apps it has on (`GET /v1/host/agents/<id>/apps`);
+- its four latest notes and questions, read back through the feed's pages
+  until four are found (`GET /v1/host/feed`).
+
+If the agent itself cannot be read, the page offers to read again; an agent
+the Host no longer has is said to be gone. Each other part that cannot be
+read says so on its own line while the rest shows. The page only shows,
+because the Host cannot change an agent from an app yet. Message opens the
+agent's chat; All routines and Manage open those sheets in its place.
+
 A Host call made while Renoa is out of reach is answered at once as not
 reached; it is not made later, when the owner may have moved on.
 
 ⌘K opens a box that jumps to Home, an agent or a sheet by part of its
-name; ⌘0 goes Home; ⌘1 to ⌘9 open the first nine agents; Esc closes a
+name; ⌘0 goes Home; ⌘1 to ⌘9 open the first nine agents; ⌘I opens the
+page of the agent whose chat is open; Esc closes a
 sheet or the box. Settings lists the keys, and a test presses each one it
 lists (`src/chats/keys.rs`).
 

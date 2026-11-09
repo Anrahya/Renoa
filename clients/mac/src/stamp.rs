@@ -79,6 +79,20 @@ where
     }
 }
 
+/// A day as the app writes it in a sentence: "3 November" or, another
+/// year, "24 December 2025".
+pub fn date<Tz: TimeZone>(at_ms: i64, now: &DateTime<Tz>) -> Option<String>
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let at = local(at_ms, now)?;
+    Some(if at.year() == now.year() {
+        at.format("%-d %B").to_string()
+    } else {
+        at.format("%-d %B %Y").to_string()
+    })
+}
+
 /// A time of day as the app writes it: "6:30 PM", or "7 PM" on the hour.
 pub fn clock(time: NaiveTime) -> String {
     if time.minute() == 0 {
@@ -199,5 +213,24 @@ mod tests {
         ] {
             assert_eq!(ahead(when, &now), said);
         }
+    }
+
+    #[test]
+    fn a_day_in_a_sentence_names_the_year_only_when_another() {
+        let now = chrono::Utc.with_ymd_and_hms(2026, 11, 9, 12, 0, 0).unwrap();
+        let at = |year, month, day| {
+            chrono::Utc
+                .with_ymd_and_hms(year, month, day, 8, 0, 0)
+                .unwrap()
+                .timestamp_millis()
+        };
+        assert_eq!(
+            super::date(at(2026, 11, 3), &now).as_deref(),
+            Some("3 November")
+        );
+        assert_eq!(
+            super::date(at(2025, 12, 24), &now).as_deref(),
+            Some("24 December 2025")
+        );
     }
 }
