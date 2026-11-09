@@ -1,6 +1,6 @@
 //! The Mac app's palette: Codync desktop's black-and-white theme, in light
 //! and dark (`licenses/README.md`). Colour comes only from what needs the
-//! owner: amber for attention, red for errors.
+//! owner (amber for attention, red for errors) and from the agents' tiles.
 
 use gpui_kit::{Hsla, Window, WindowAppearance, rgb, rgba};
 
@@ -18,6 +18,10 @@ pub struct Palette {
     pub frosted: Hsla,
     pub attention: Hsla,
     pub danger: Hsla,
+    /// The tiles' colours: the landing page's clay, cobalt and ochre.
+    pub clay: Hsla,
+    pub cobalt: Hsla,
+    pub ochre: Hsla,
 }
 
 impl Palette {
@@ -43,6 +47,9 @@ impl Palette {
             frosted: rgba(0xf4f4f4d1).into(),
             attention: rgb(0x936000).into(),
             danger: rgb(0xc23a2b).into(),
+            clay: rgb(0xc4553f).into(),
+            cobalt: rgb(0x3b61ac).into(),
+            ochre: rgb(0xb37b22).into(),
         }
     }
 
@@ -60,6 +67,9 @@ impl Palette {
             frosted: rgba(0x232323d1).into(),
             attention: rgb(0xecaf52).into(),
             danger: rgb(0xf0a7a7).into(),
+            clay: rgb(0xe27b63).into(),
+            cobalt: rgb(0x7298de).into(),
+            ochre: rgb(0xd9a24b).into(),
         }
     }
 }

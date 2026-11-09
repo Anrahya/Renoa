@@ -6,6 +6,8 @@ use renoa_protocol::{
 };
 use renoa_rcp_wire::{TaskEvent, TaskEventId, TaskEventKind, TaskId};
 
+pub const MINUTE_MS: i64 = 60_000;
+
 fn task_event(task_id: TaskId, sequence: u64, kind: TaskEventKind) -> TaskEvent {
     TaskEvent {
         event_id: TaskEventId::new(),
@@ -32,6 +34,7 @@ pub fn said(task_id: TaskId, sequence: u64, input: CommandInput) -> TaskEvent {
     )
 }
 
+/// An execution event recorded `sequence` minutes after the epoch.
 pub fn executed(task_id: TaskId, sequence: u64, kind: ExecutionEventKind) -> TaskEvent {
     task_event(
         task_id,
@@ -42,7 +45,7 @@ pub fn executed(task_id: TaskId, sequence: u64, kind: ExecutionEventKind) -> Tas
                 event_id: ExecutionEventId::new(),
                 execution_id: ExecutionId::new(),
                 sequence,
-                recorded_at_ms: 0,
+                recorded_at_ms: i64::try_from(sequence).expect("a small sequence") * MINUTE_MS,
                 kind,
             },
         },

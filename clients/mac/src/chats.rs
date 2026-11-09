@@ -1,27 +1,40 @@
 //! The chats: the owner's agents down the side, one conversation beside them.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use gpui_kit::{
-    AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Task, Window,
+    AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Task, Window,
     component::{
-        input::{Input, InputEvent, InputState},
-        message_scroller::{MessageScroller, MessageScrollerState},
+        input::{InputEvent, InputState},
+        message_scroller::MessageScrollerState,
     },
-    div,
-    prelude::FluentBuilder as _,
-    px, relative,
+    div, px,
 };
 use renoa_rcp_wire::{TargetSummary, TaskId};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::{
     chat::{Line, Speaker, Transcript, chat_task_id},
-    link::{Command, Update},
+    face::{Look, blink},
+    link::{Command, Update, host_agent},
     theme::Palette,
 };
+
+/// What a row of the conversation shows.
+struct Row {
+    /// `None` past the last line: the agent at work.
+    line: Option<Line>,
+    before: Option<Line>,
+    /// Who says the next line, if anyone has.
+    after: Option<Speaker>,
+    /// Whether it is coming in.
+    live: bool,
+}
 
 /// Renoa no longer knows this Mac.
 pub struct SignedOut;
@@ -40,6 +53,10 @@ pub struct Chats {
     transcripts: HashMap<TaskId, Transcript>,
     /// What each chat's agent is for, as its owner wrote it.
     purposes: HashMap<TaskId, SharedString>,
+    /// How each chat's agent looks, as the Host picked it.
+    looks: HashMap<TaskId, Look>,
+    /// The Host's main agent.
+    main: Option<Uuid>,
     /// What the owner typed in each chat they are not looking at.
     drafts: HashMap<TaskId, String>,
     /// The chats where Renoa refused the owner's last message.
@@ -48,7 +65,10 @@ pub struct Chats {
     scroller: Entity<MessageScrollerState>,
     /// Whether the scroller's last row is the agent at work.
     shown_working: bool,
+    /// The clock the faces blink by.
+    opened: Instant,
     _updates: Task<()>,
+    _blinks: Task<()>,
 }
 
 impl EventEmitter<SignedOut> for Chats {}
@@ -81,6 +101,16 @@ impl Chats {
                 }
             }
         });
+        // Draws again only as an eye opens or shuts; a list that changes
+        // meanwhile is caught on the next wake.
+        let _blinks = cx.spawn_in(window, async move |this, cx| {
+            while let Ok(wait) = this.update(cx, |this, _| this.next_blink()) {
+                cx.background_executor().timer(wait).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        });
         Self {
             commands,
             linked: false,
@@ -88,12 +118,16 @@ impl Chats {
             chosen: None,
             transcripts: HashMap::new(),
             purposes: HashMap::new(),
+            looks: HashMap::new(),
+            main: None,
             drafts: HashMap::new(),
             unsent: HashSet::new(),
             composer,
             scroller,
             shown_working: false,
+            opened: Instant::now(),
             _updates,
+            _blinks,
         }
     }
 
@@ -122,13 +156,32 @@ impl Chats {
                 self.purposes
                     .insert(chat_task_id(node_id, &target), purpose.into());
             }
+            Update::Look {
+                node_id,
+                target,
+                look,
+            } => {
+                self.looks.insert(chat_task_id(node_id, &target), look);
+            }
+            Update::Main(main) => self.main = main,
             Update::Event(event) => {
-                self.transcripts
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |since| {
+                        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+                    });
+                let timed = self
+                    .transcripts
                     .entry(event.task_id)
                     .or_default()
-                    .apply(&event);
+                    .apply(&event, now_ms);
                 if self.chosen_task() == Some(event.task_id) {
                     self.show_rows(cx);
+                    // A line that took a time may now show one above it.
+                    if let Some(timed) = timed {
+                        self.scroller
+                            .update(cx, |scroller, cx| scroller.remeasure_items(timed, cx));
+                    }
                 }
             }
             Update::NotSent { task_id, text } => {
@@ -215,10 +268,62 @@ impl Chats {
         })
     }
 
-    /// The line at row `index`; `None` past the last line, the agent at work.
-    fn row(&self, index: usize) -> Option<Line> {
-        self.transcript()
-            .and_then(|transcript| transcript.lines().get(index).cloned())
+    /// What row `index` shows: a line, with the one before it; past the
+    /// last line, the agent at work.
+    fn row(&self, index: usize) -> Row {
+        let transcript = self.transcript();
+        let lines = transcript.map_or(&[][..], Transcript::lines);
+        let working = transcript.is_some_and(Transcript::working);
+        Row {
+            line: lines.get(index).cloned(),
+            before: index
+                .checked_sub(1)
+                .and_then(|before| lines.get(before))
+                .cloned(),
+            // The agent at work speaks after the last line.
+            after: lines
+                .get(index + 1)
+                .map(|after| after.speaker)
+                .or_else(|| (working && index + 1 == lines.len()).then_some(Speaker::Agent)),
+            live: transcript.is_some_and(|transcript| transcript.coming_in(index)),
+        }
+    }
+
+    /// Whether the agent of `task_id`'s chat has its eyes shut just now.
+    fn blinking(&self, task_id: TaskId) -> bool {
+        blink::shut(task_id.as_uuid().as_u128(), self.blink_clock())
+    }
+
+    fn blink_clock(&self) -> u64 {
+        u64::try_from(self.opened.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// How long until any listed agent's eyes open or shut.
+    fn next_blink(&self) -> Duration {
+        let seeds = self.agents.iter().map(|agent| {
+            chat_task_id(agent.node_id, agent.target.as_str())
+                .as_uuid()
+                .as_u128()
+        });
+        blink::next_change(seeds, self.blink_clock())
+    }
+
+    /// How the agent of `agent` looks, and whether it is the main agent: the
+    /// one the Host names, or while it names none that is listed, the first
+    /// listed, as on the phone (`mainAgent` in the Android app's `Badge.kt`).
+    fn face(&self, agent: &TargetSummary) -> (Option<Look>, bool) {
+        let task_id = chat_task_id(agent.node_id, agent.target.as_str());
+        let named = |agent: &TargetSummary| {
+            host_agent(agent.target.as_str()).is_some_and(|id| Some(id) == self.main)
+        };
+        let main = self
+            .agents
+            .iter()
+            .find(|listed| named(listed))
+            .or_else(|| self.agents.first());
+        let primary =
+            main.is_some_and(|main| main.node_id == agent.node_id && main.target == agent.target);
+        (self.looks.get(&task_id).copied(), primary)
     }
 
     /// Tells the scroller what changed: rows after the old working row are
@@ -229,10 +334,9 @@ impl Chats {
         let shown_working = std::mem::replace(&mut self.shown_working, working);
         self.scroller.update(cx, |scroller, cx| {
             let shown = scroller.item_count();
+            // A transcript only grows, so the rows never fall below those settled.
             let settled = shown - usize::from(shown_working);
-            if rows < settled {
-                scroller.reset(rows, cx);
-            } else if (rows, working) != (shown, shown_working) {
+            if (rows, working) != (shown, shown_working) {
                 scroller.splice(settled..shown, rows - settled, cx);
             }
         });
@@ -269,142 +373,6 @@ impl Render for Chats {
     }
 }
 
-impl Chats {
-    fn sidebar(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = self.agents.iter().enumerate().map(|(index, agent)| {
-            let task_id = chat_task_id(agent.node_id, agent.target.as_str());
-            let preview = self.preview(task_id);
-            div()
-                .id(("agent", index))
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .px(px(10.))
-                .py(px(8.))
-                .rounded(px(10.))
-                .cursor_pointer()
-                .when(self.chosen_task() == Some(task_id), |row| {
-                    row.bg(palette.selected)
-                })
-                .on_click(cx.listener(move |this, _, window, cx| this.select(index, window, cx)))
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(SharedString::from(agent.name.clone())),
-                )
-                .child(
-                    div()
-                        .text_color(palette.secondary)
-                        .text_size(px(12.))
-                        .truncate()
-                        .child(preview),
-                )
-        });
-        div()
-            .w(px(240.))
-            .h_full()
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .px(px(8.))
-            // Room for the window's traffic lights.
-            .pt(px(44.))
-            .bg(palette.sidebar)
-            .border_r_1()
-            .border_color(palette.outline)
-            .children(rows)
-            .when(self.agents.is_empty(), |side| {
-                side.child(
-                    div()
-                        .px(px(10.))
-                        .text_color(palette.secondary)
-                        .child(if self.linked {
-                            "No agents yet. Make one in Renoa on your phone."
-                        } else {
-                            "Connecting to Renoa…"
-                        }),
-                )
-            })
-    }
-
-    fn conversation(&self, palette: Palette, cx: &Context<Self>) -> impl IntoElement {
-        let name: SharedString = self
-            .chosen
-            .as_ref()
-            .map_or_else(SharedString::default, |chosen| chosen.name.clone());
-        let notice = self
-            .chosen_task()
-            .filter(|task_id| self.unsent.contains(task_id))
-            .map(|_| "Your message didn't send. Try again.");
-        // Rows read the chat as they are drawn; only the visible ones are.
-        let chats = cx.entity().downgrade();
-        let agent_name = name.clone();
-        let thread = MessageScroller::new("thread", self.scroller.clone(), move |index, _, cx| {
-            let line = chats.upgrade().and_then(|chats| chats.read(cx).row(index));
-            line_row(line.as_ref(), &agent_name, palette)
-        })
-        .flex_1();
-        div()
-            .flex_1()
-            .h_full()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .h(px(52.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(8.))
-                    .when(!name.is_empty(), |header| {
-                        header.child(
-                            div()
-                                .px(px(14.))
-                                .py(px(6.))
-                                .rounded_full()
-                                .bg(palette.frosted)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(name.clone()),
-                        )
-                    })
-                    .when(!self.linked, |header| {
-                        header.child(
-                            div()
-                                .text_color(palette.attention)
-                                .text_size(px(12.))
-                                .child("Reconnecting…"),
-                        )
-                    }),
-            )
-            .child(thread)
-            .when_some(notice, |column, notice| {
-                column.child(
-                    div()
-                        .px(px(20.))
-                        .text_color(palette.danger)
-                        .text_size(px(12.))
-                        .child(notice),
-                )
-            })
-            .child(
-                div()
-                    .m(px(12.))
-                    .px(px(14.))
-                    .py(px(10.))
-                    .rounded(px(22.))
-                    .bg(palette.composer)
-                    .border_1()
-                    .border_color(palette.outline)
-                    .child(
-                        Input::new(&self.composer)
-                            .id("composer")
-                            .aria_label("Message")
-                            .appearance(false),
-                    ),
-            )
-    }
-}
-
 /// `first`, then `then` after a space when there is any.
 fn joined(first: String, then: &str) -> String {
     match (first.is_empty(), then.is_empty()) {
@@ -414,31 +382,8 @@ fn joined(first: String, then: &str) -> String {
     }
 }
 
-/// One row of the conversation; past the last line, the agent at work.
-fn line_row(line: Option<&Line>, agent: &SharedString, palette: Palette) -> gpui_kit::Div {
-    let row = div().w_full().flex().px(px(20.)).py(px(4.));
-    let Some(line) = line else {
-        return row.child(
-            div()
-                .text_color(palette.secondary)
-                .child(format!("{agent} is thinking…")),
-        );
-    };
-    let bubble = div()
-        .max_w(relative(0.72))
-        .px(px(12.))
-        .py(px(8.))
-        .rounded(px(16.))
-        .child(SharedString::from(line.text.clone()));
-    match line.speaker {
-        Speaker::Owner => row.justify_end().child(bubble.bg(palette.chat_user)),
-        Speaker::Agent => row.child(
-            bubble
-                .bg(palette.chat_agent)
-                .when(line.failed, |bubble| bubble.text_color(palette.danger)),
-        ),
-    }
-}
-
+mod sidebar;
+mod stamp;
 #[cfg(test)]
 mod tests;
+mod thread;

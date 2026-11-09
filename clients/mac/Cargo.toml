@@ -9,7 +9,10 @@ publish = false
 [workspace]
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 gpui-kit = "0.9.0"
+# GPUI strokes with lyon's options but does not re-export their caps and joins.
+lyon_tessellation = "1.0.23"
 md-5 = "0.10"
 renoa-protocol = { path = "../../crates/renoa-protocol" }
 renoa-rcp-client = { path = "../../crates/renoa-rcp-client" }

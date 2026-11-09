@@ -18,7 +18,7 @@ use tokio::{net::TcpListener, sync::mpsc, time::timeout};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use super::{Command, Endpoints, Pace, Update, session};
-use crate::{key::MacKey, test_events::said};
+use crate::{face::look::HairFront, key::MacKey, test_events::said};
 
 const QUICK: Pace = Pace {
     collect_every: Duration::from_millis(5),
@@ -361,7 +361,7 @@ async fn a_long_replay_does_not_hold_up_the_reply_it_came_with() {
 }
 
 #[tokio::test]
-async fn each_agents_purpose_is_read_once_and_a_host_that_did_not_answer_is_asked_again() {
+async fn the_main_agent_and_each_agents_purpose_and_look_are_read_until_the_host_answers() {
     const PLANS: &str = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
     const GONE: &str = "6fa459ea-ee8a-3ca4-894e-db77e160355e";
     const LATE: &str = "886313e1-3b8a-5372-9b90-0c9aee199e5d";
@@ -385,25 +385,37 @@ async fn each_agents_purpose_is_read_once_and_a_host_that_did_not_answer_is_aske
         ClientMessage::CallHost {
             request_id, path, ..
         } => {
-            let definition = |purpose: &str| ServerMessage::HostAnswer {
+            let answer = |status: u16, body: &str| ServerMessage::HostAnswer {
                 request_id: *request_id,
-                status: 200,
-                body: format!(r#"{{"id":"x","operational":{{"purpose":"{purpose}"}}}}"#),
+                status,
+                body: body.to_owned(),
             };
-            vec![reply(&match path.rsplit('/').next() {
-                Some(PLANS) => definition("Plans dinners"),
-                Some(GONE) => ServerMessage::HostAnswer {
-                    request_id: *request_id,
-                    status: 404,
-                    body: "{}".to_owned(),
-                },
-                Some(LATE) if asked.fetch_add(1, Ordering::SeqCst) == 0 => ServerMessage::Error {
-                    request_id: Some(*request_id),
-                    code: ErrorCode::NodeOffline,
-                    message: "Your Host could not be reached.".to_owned(),
-                },
-                Some(LATE) => definition(r"  Books trips\n"),
-                other => panic!("asked for {other:?}"),
+            let definition = |purpose: &str| {
+                answer(
+                    200,
+                    &format!(r#"{{"id":"x","operational":{{"purpose":"{purpose}"}}}}"#),
+                )
+            };
+            let plans = format!("/v1/host/agents/{PLANS}");
+            let late = format!("/v1/host/agents/{LATE}");
+            vec![reply(&match path.as_str() {
+                "/v1/host" => answer(
+                    200,
+                    &format!(r#"{{"automations":[],"main_agent":{{"main_agent_id":"{PLANS}"}}}}"#),
+                ),
+                path if path == plans => definition("Plans dinners"),
+                path if path == format!("{plans}/appearance") => answer(200, LOOK),
+                path if path == format!("/v1/host/agents/{GONE}") => answer(404, "{}"),
+                path if path == late && asked.fetch_add(1, Ordering::SeqCst) == 0 => {
+                    ServerMessage::Error {
+                        request_id: Some(*request_id),
+                        code: ErrorCode::NodeOffline,
+                        message: "Your Host could not be reached.".to_owned(),
+                    }
+                }
+                path if path == late => definition(r"  Books trips\n"),
+                path if path == format!("{late}/appearance") => answer(404, "{}"),
+                other => panic!("asked for {other}"),
             })]
         }
         other => chat_replies(other).expect("a chat frame"),
@@ -411,35 +423,57 @@ async fn each_agents_purpose_is_read_once_and_a_host_that_did_not_answer_is_aske
     .await;
     let mut running = start(endpoints);
 
-    let mut purposes = Vec::new();
+    let mut told = Vec::new();
     timeout(Duration::from_secs(10), async {
-        while purposes.len() < 2 {
-            if let Some(Update::Purpose {
-                node_id: of,
-                target,
-                purpose,
-            }) = running.updates.recv().await
-            {
-                assert_eq!(of, node_id);
-                purposes.push((target, purpose));
+        while told.len() < 4 {
+            match running.updates.recv().await {
+                Some(Update::Main(main)) => told.push(format!("main {main:?}")),
+                Some(Update::Purpose {
+                    node_id: of,
+                    target,
+                    purpose,
+                }) => {
+                    assert_eq!(of, node_id);
+                    told.push(format!("{target} is for {purpose}"));
+                }
+                Some(Update::Look {
+                    node_id: of,
+                    target,
+                    look,
+                }) => {
+                    assert_eq!(of, node_id);
+                    assert_eq!(look.hair_front, HairFront::SidePart);
+                    assert!(look.tuft);
+                    told.push(format!("{target} has a look"));
+                }
+                _ => {}
             }
         }
     })
     .await
-    .expect("both purposes arrive");
+    .expect("the main agent, both purposes and the look arrive");
     assert_eq!(
-        purposes,
+        told,
         [
-            (format!("agent:{PLANS}"), "Plans dinners".to_owned()),
-            (format!("agent:{LATE}"), "Books trips".to_owned()),
+            format!("main Some({PLANS})"),
+            format!("agent:{PLANS} is for Plans dinners"),
+            format!("agent:{PLANS} has a look"),
+            format!("agent:{LATE} is for Books trips"),
         ]
     );
 
-    // Several more agent lists later, nothing read is asked for again.
+    // Several more agent lists later, only the main agent is asked again,
+    // and an unchanged one is not told again.
     hear(&heard, 6, |frame| {
         matches!(frame, ClientMessage::ListTargets { .. })
     })
     .await;
+    while let Ok(update) = running.updates.try_recv() {
+        assert!(!matches!(
+            update,
+            Update::Main(_) | Update::Purpose { .. } | Update::Look { .. }
+        ));
+    }
     let calls: Vec<_> = heard
         .lock()
         .expect("heard")
@@ -450,9 +484,24 @@ async fn each_agents_purpose_is_read_once_and_a_host_that_did_not_answer_is_aske
             } => Some((*method, path.clone(), body.clone())),
             _ => None,
         })
+        .filter(|(_, path, _)| path != "/v1/host")
         .collect();
-    let path = |id: &str| (HostMethod::Get, format!("/v1/host/agents/{id}"), None);
-    assert_eq!(calls, [path(PLANS), path(GONE), path(LATE), path(LATE)]);
+    let path = |path: String| (HostMethod::Get, path, None);
+    let agent = |id: &str| path(format!("/v1/host/agents/{id}"));
+    let look = |id: &str| path(format!("/v1/host/agents/{id}/appearance"));
+    assert_eq!(
+        calls,
+        [
+            agent(PLANS),
+            look(PLANS),
+            // No such agent has no look to ask for.
+            agent(GONE),
+            // A purpose not read yet holds back the look.
+            agent(LATE),
+            agent(LATE),
+            look(LATE),
+        ]
+    );
     let connections = heard.lock().expect("heard").iter().map(|(n, _)| *n).max();
     assert_eq!(
         connections,
@@ -460,6 +509,9 @@ async fn each_agents_purpose_is_read_once_and_a_host_that_did_not_answer_is_aske
         "a Host's refusal is not a lost connection"
     );
 }
+
+/// A look as the Host sends it, with names of more than one word.
+const LOOK: &str = r#"{"look":{"hair_front":"side_part","hair_back":"twin_tails","hair_colour":"auburn","skin":"deep","eyes":"cat","cheeks":"freckles","wear":"cat_ears","tile":"ochre","tuft":true},"picture_revision":null}"#;
 
 #[tokio::test]
 async fn a_host_that_never_answers_holds_up_no_message() {
