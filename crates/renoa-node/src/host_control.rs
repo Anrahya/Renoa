@@ -7,6 +7,7 @@
 //! lost on the way is recovered, not repeated.
 
 mod agents;
+mod appearance;
 mod apps;
 mod automations;
 mod discord;
@@ -52,6 +53,9 @@ enum Operation {
     AgentOptions,
     AgentDefinition(String),
     AgentCreate,
+    AppearanceRead(String),
+    PictureRead(String),
+    PictureSet(String),
     HeartbeatRead(String),
     HeartbeatSet(String),
     AppsList(String),
@@ -86,6 +90,11 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         ["agents", "options"] => vec![(Get, Op::AgentOptions)],
         ["agents", id] => vec![(Get, Op::AgentDefinition((*id).to_owned()))],
         ["agents"] => vec![(Post, Op::AgentCreate)],
+        ["agents", id, "appearance"] => vec![(Get, Op::AppearanceRead((*id).to_owned()))],
+        ["agents", id, "picture"] => vec![
+            (Get, Op::PictureRead((*id).to_owned())),
+            (Put, Op::PictureSet((*id).to_owned())),
+        ],
         ["agents", id, "heartbeat"] => vec![
             (Get, Op::HeartbeatRead((*id).to_owned())),
             (Put, Op::HeartbeatSet((*id).to_owned())),
@@ -204,6 +213,10 @@ impl HostControl {
             .unwrap_or_else(|reply| reply)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exhaustive dispatch table owns every Host operation"
+    )]
     async fn run(
         &self,
         operation: Operation,
@@ -223,6 +236,16 @@ impl HostControl {
                     "Send a valid agent creation request.",
                 )?;
                 agents::create(host, host_id, principal, request).await
+            }
+            Operation::AppearanceRead(id) => appearance::read(host, &id).await,
+            Operation::PictureRead(id) => appearance::picture(host, &id).await,
+            Operation::PictureSet(id) => {
+                let change = decode(
+                    body,
+                    appearance::PICTURE_BODY_LIMIT,
+                    appearance::PICTURE_HINT,
+                )?;
+                appearance::set_picture(host, &id, change).await
             }
             Operation::HeartbeatRead(id) => heartbeat::read(host, &id).await,
             Operation::HeartbeatSet(id) => {

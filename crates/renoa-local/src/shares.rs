@@ -60,6 +60,7 @@ pub(crate) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
 /// Turns a schema 53 catalog back into schema 52's tables.
 #[cfg(test)]
 pub(crate) fn restore_schema_52(connection: &rusqlite::Connection) {
+    crate::host::appearance::restore_schema_53(connection);
     connection
         .execute_batch("DROP TABLE host_shares;")
         .expect("restore schema 52");

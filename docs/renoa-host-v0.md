@@ -573,6 +573,27 @@ needs no new sign-in; the plugin's skills stay. A malformed connection id return
 complete, returns 404 `app_not_found`; turning on one whose plugin is switched
 off, replaced or not admitted for the agent returns 409 `app_unavailable`.
 
+Every agent has a look: one choice of each part, `hair_front`, `hair_back`,
+`hair_colour`, `skin`, `eyes`, `cheeks`, `wear` and `tile`, and a `tuft` on or
+off. The Host picks it in the transaction that makes the agent and never gives
+two agents of one Host the same one; a unique index on `host_agent_looks`
+enforces it. The walk through the looks starts at the agent id's SHA-256 and
+steps by a stride coprime with their count, so it meets every look once. The
+Host stores choices by name; each app draws them in its own colours. `GET
+/v1/host/agents/{id}/appearance` returns `{look, picture_revision}`, the
+revision `null` while no picture is set. `GET /v1/host/agents/{id}/picture`
+returns `{revision, content_type, data}`, the bytes in base64, or 404
+`picture_not_found`. `PUT /v1/host/agents/{id}/picture` with `{operation_id,
+expected_revision, picture}` sets the picture, `{content_type, data}`, or takes
+it away, `null`, and returns `{picture_revision}`. A picture is a PNG, JPEG or
+WebP of 1 byte to 256 KiB whose first bytes match its type; the revision is
+the bytes' SHA-256. A change applies only while the picture is still
+`expected_revision`, else 409 `revision_conflict`; the same change sent again
+returns its first answer, and its operation id sent with another change returns
+409 `operation_reused`. A refused picture returns 422 `invalid_picture` and
+stores nothing. The receipt records the revision, never the bytes. An unknown
+agent returns 404 `not_found`.
+
 `PUT /v1/host/uploads/{id}` with `{size, sha256}` starts an upload of a file the
 signed-in owner will attach to a message; the app chooses `id`, a UUID. The size is
 1 byte to 25 MiB and the hash 64 lowercase hex digits. `PUT
@@ -1508,7 +1529,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 53
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 54
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1540,8 +1561,10 @@ owed its wake. Every catalog below schema 50 lets every compiled plugin keep
 settings and triggers, keeping every stored setting, trigger and reminder; no
 agent has a heartbeat until it is set. Every catalog below schema 51 gains the
 mark of follow-ups, empty, every catalog below schema 52 gains the saved
-setups waiting on the person, empty, and every catalog below schema 53 gains
-the shares agents keep, empty. Live selections
+setups waiting on the person, empty, every catalog below schema 53 gains
+the shares agents keep, empty, and every catalog below schema 54 gives every
+agent a look, oldest first, ties broken by agent id, and gains the pictures,
+empty. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.

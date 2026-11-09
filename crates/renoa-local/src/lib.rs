@@ -59,6 +59,10 @@ pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use code_mode::validate_code_mode_worker;
 pub use compact_invocation::{CompactInvocation, compact_invocation};
 pub use documents::UserProfile;
+pub use host::appearance::{
+    AgentAppearance, AgentPicture, Cheeks, Eyes, HairBack, HairColour, HairFront, Look,
+    MAX_PICTURE_BYTES, NewPicture, PictureChange, PictureError, Skin, Tile, Wear,
+};
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
     AgentApp, AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate,

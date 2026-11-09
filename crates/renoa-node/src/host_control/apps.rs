@@ -2,12 +2,10 @@
 //! off takes its tools away and keeps its sign-in; switching it on again needs
 //! none.
 
-use renoa_kernel::AgentId;
 use renoa_local::{AgentApp, LocalHost, LocalHostError, McpHostError};
 use serde::Deserialize;
-use uuid::Uuid;
 
-use super::reply::{BAD_REQUEST, CONFLICT, NOT_FOUND, Reply, UNAVAILABLE, UNPROCESSABLE, log};
+use super::reply::{CONFLICT, NOT_FOUND, Reply, UNAVAILABLE, UNPROCESSABLE, agent_id, log};
 
 /// The state asked for. Asking twice is the same as asking once.
 #[derive(Deserialize)]
@@ -17,27 +15,17 @@ pub(super) struct Switch {
 }
 
 pub(super) async fn list(host: &LocalHost, id: &str) -> Reply {
-    match agent(id) {
+    match agent_id(id) {
         Ok(agent) => answer(host.agent_apps(agent).await),
         Err(reply) => reply,
     }
 }
 
 pub(super) async fn set(host: &LocalHost, id: &str, connection: &str, switch: Switch) -> Reply {
-    match agent(id) {
+    match agent_id(id) {
         Ok(agent) => answer(host.set_agent_app(agent, connection, switch.enabled).await),
         Err(reply) => reply,
     }
-}
-
-fn agent(id: &str) -> Result<AgentId, Reply> {
-    Uuid::parse_str(id).map(AgentId::from_uuid).map_err(|_| {
-        Reply::failure(
-            BAD_REQUEST,
-            "invalid_request",
-            "An agent id is a UUID, such as 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0.",
-        )
-    })
 }
 
 fn answer(outcome: Result<Vec<AgentApp>, LocalHostError>) -> Reply {

@@ -11,6 +11,9 @@ fn name(operation: &Operation) -> &'static str {
         Operation::AgentOptions => "agent_options",
         Operation::AgentDefinition(_) => "agent_definition",
         Operation::AgentCreate => "agent_create",
+        Operation::AppearanceRead(_) => "appearance_read",
+        Operation::PictureRead(_) => "picture_read",
+        Operation::PictureSet(_) => "picture_set",
         Operation::HeartbeatRead(_) => "heartbeat_read",
         Operation::HeartbeatSet(_) => "heartbeat_set",
         Operation::AppsList(_) => "apps_list",
@@ -49,6 +52,13 @@ fn routes() -> Vec<(HostMethod, String, &'static str)> {
         (Get, "/v1/host/agents/options".to_owned(), "agent_options"),
         (Get, format!("/v1/host/agents/{id}"), "agent_definition"),
         (Post, "/v1/host/agents".to_owned(), "agent_create"),
+        (
+            Get,
+            format!("/v1/host/agents/{id}/appearance"),
+            "appearance_read",
+        ),
+        (Get, format!("/v1/host/agents/{id}/picture"), "picture_read"),
+        (Put, format!("/v1/host/agents/{id}/picture"), "picture_set"),
         (
             Get,
             format!("/v1/host/agents/{id}/heartbeat"),
@@ -128,6 +138,9 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
         "agent_options",
         "agent_definition",
         "agent_create",
+        "appearance_read",
+        "picture_read",
+        "picture_set",
         "heartbeat_read",
         "heartbeat_set",
         "apps_list",
@@ -162,6 +175,8 @@ fn a_known_path_with_another_method_is_refused_and_an_unknown_path_is_not_found(
     assert_eq!(status(Post, "/v1/host"), 405);
     assert_eq!(status(Get, "/v1/host/agents"), 405);
     assert_eq!(status(Put, "/v1/host/agents/options"), 405);
+    assert_eq!(status(Put, "/v1/host/agents/a/appearance"), 405);
+    assert_eq!(status(Post, "/v1/host/agents/a/picture"), 405);
     assert_eq!(status(Get, "/v1/host/discord/inspection"), 405);
     assert_eq!(status(Get, "/v1/host/main-agent"), 405);
     assert_eq!(status(Post, "/v1/host/feed"), 405);

@@ -1,7 +1,9 @@
 //! One Host control answer: an HTTP-shaped status and a JSON body, as the
 //! coordinator relays it to the owner's browser.
 
+use renoa_kernel::AgentId;
 use serde::{Serialize, de::DeserializeOwned};
+use uuid::Uuid;
 
 use crate::node_log;
 
@@ -86,5 +88,16 @@ pub(super) fn decode<T: DeserializeOwned>(
             BAD_REQUEST
         };
         Reply::failure(status, "invalid_request", hint)
+    })
+}
+
+/// The agent an `id` in a path names, or the answer for one that is no UUID.
+pub(super) fn agent_id(id: &str) -> Result<AgentId, Reply> {
+    Uuid::parse_str(id).map(AgentId::from_uuid).map_err(|_| {
+        Reply::failure(
+            BAD_REQUEST,
+            "invalid_request",
+            "An agent id is a UUID, such as 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0.",
+        )
     })
 }
