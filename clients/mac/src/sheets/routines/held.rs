@@ -1,7 +1,7 @@
 //! The routines as the sheet holds them: the Host's automations as read,
 //! and how a receipt or a later read changes what is shown.
 
-use chrono::Local;
+use chrono::{DateTime, Local};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -84,6 +84,17 @@ pub(super) fn merge(shown: Option<&[Automation]>, read: Vec<Automation>) -> Vec<
                 .unwrap_or(read)
         })
         .collect()
+}
+
+impl Automation {
+    /// When it runs next: one due and waiting for its turn runs any moment.
+    pub(crate) fn next(&self, now: &DateTime<Local>) -> String {
+        if self.next_due_ms <= now.timestamp_millis() {
+            "Any moment".to_owned()
+        } else {
+            stamp::ahead(self.next_due_ms, now)
+        }
+    }
 }
 
 /// The routines an agent or the owner made: a plugin's own triggers, such as

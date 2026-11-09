@@ -7,7 +7,7 @@ use renoa_rcp_wire::{NodeId, TargetSummary};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::Chats;
+use super::{Chats, overlay::Up};
 use crate::{
     chat::{Speaker, chat_task_id},
     face::look::PLAIN,
@@ -395,7 +395,7 @@ fn home_shows_first_with_the_keys_and_a_chat_opened_from_the_side_is_ready_to_ty
         .unwrap()
     };
     let up = |cx: &mut TestAppContext| {
-        chats.read_with(cx, |chats, _| chats.sheet.as_ref().map(|shown| shown.page))
+        chats.read_with(cx, |chats, _| chats.sheet.as_ref().map(|shown| shown.up))
     };
     let press = |keys: &'static str, cx: &mut TestAppContext| {
         cx.update_window(window, |_, window, cx| {
@@ -413,7 +413,11 @@ fn home_shows_first_with_the_keys_and_a_chat_opened_from_the_side_is_ready_to_ty
         "Home has the keys from launch"
     );
     press("cmd-shift-r", cx);
-    assert_eq!(up(cx), Some(Page::Routines), "the keys work on Home");
+    assert_eq!(
+        up(cx),
+        Some(Up::Sheet(Page::Routines)),
+        "the keys work on Home"
+    );
     press("escape", cx);
     assert_eq!(up(cx), None);
     assert_eq!(
@@ -449,6 +453,85 @@ fn home_shows_first_with_the_keys_and_a_chat_opened_from_the_side_is_ready_to_ty
         assert_eq!(
             chats.chosen.as_ref().map(|chosen| chosen.name.as_ref()),
             Some("Cook")
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mut TestAppContext) {
+    use crate::{link::host::Answer, sheets::Page};
+
+    let (window, chats, mut asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    let chef = format!("agent:{}", Uuid::from_u128(0xc1));
+    let task_id = chat_task_id(node_id, &chef);
+    updates
+        .send(Update::Agents(vec![
+            agent(node_id, "Cook"),
+            TargetSummary {
+                node_id,
+                target: TargetRef::new(chef.clone()),
+                name: "Chef".to_owned(),
+            },
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    let up = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| chats.sheet.as_ref().map(|shown| shown.up))
+    };
+    let mut act = |act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App),
+                   cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        loop {
+            cx.run_until_parked();
+            let mut served = false;
+            while let Ok(command) = asked.try_recv() {
+                if let Command::Host(call) = command {
+                    served = true;
+                    let said = match call.path.as_str() {
+                        "/v1/host" => r#"{"automations":[]}"#,
+                        "/v1/host/feed" => r#"{"today":"","items":[]}"#,
+                        path if path.ends_with("/apps") => r#"{"apps":[]}"#,
+                        _ => r#"{"created_at_ms":0,"operational":{}}"#,
+                    };
+                    let _ = call.answered.send(Answer::Said(said.to_owned()));
+                }
+            }
+            if !served {
+                break;
+            }
+        }
+    };
+    act(&|window, cx| window.click(("agent", 0usize), cx), cx);
+    act(&|window, cx| window.press("cmd-i", cx), cx);
+    assert_eq!(up(cx), None, "the first agent is not one of the Host's");
+    act(&|window, cx| window.click(("agent", 1usize), cx), cx);
+    act(&|window, cx| window.press("cmd-i", cx), cx);
+    assert_eq!(up(cx), Some(Up::Profile(task_id)), "⌘I opens it");
+    act(&|window, cx| window.click("manage-apps", cx), cx);
+    assert_eq!(up(cx), Some(Up::Sheet(Page::Apps)), "Manage opens Apps");
+    act(&|window, cx| window.press("escape", cx), cx);
+    act(&|window, cx| window.click("about", cx), cx);
+    assert_eq!(
+        up(cx),
+        Some(Up::Profile(task_id)),
+        "so does its name at the top"
+    );
+    act(&|window, cx| window.press("cmd-0", cx), cx);
+    act(&|window, cx| window.press("cmd-i", cx), cx);
+    assert_eq!(up(cx), None, "Home has no agent to show");
+    act(&|window, cx| window.click(("agent", 1usize), cx), cx);
+    act(&|window, cx| window.press("cmd-i", cx), cx);
+    act(&|window, cx| window.click("message", cx), cx);
+    chats.read_with(cx, |chats, _| {
+        assert!(chats.sheet.is_none());
+        assert_eq!(
+            chats.chosen.as_ref().map(|chosen| chosen.task_id),
+            Some(task_id)
         );
     });
 }

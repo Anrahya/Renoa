@@ -22,8 +22,8 @@ use crate::{
     chat::chat_task_id,
     link::host_agent,
     sheets::{
-        self, Host, Member, Page, SheetEvent, apps::AppsSheet, memory::Memory, routines::Routines,
-        settings::Settings,
+        self, Host, Member, Page, SheetEvent, apps::AppsSheet, memory::Memory, profile::Profile,
+        routines::Routines, settings::Settings,
     },
     theme::Palette,
 };
@@ -31,9 +31,17 @@ use crate::{
 /// How long a sheet takes to rise into place.
 const RISE: Duration = Duration::from_millis(280);
 
+/// What a sheet that is up shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Up {
+    Sheet(Page),
+    /// The page of the agent whose chat this is.
+    Profile(TaskId),
+}
+
 /// A sheet that is up.
 pub(super) struct Shown {
-    pub(super) page: Page,
+    pub(super) up: Up,
     view: AnyView,
     /// Counts the sheets opened, so each rises afresh.
     opened: usize,
@@ -68,10 +76,9 @@ impl Chats {
     }
 
     pub(super) fn open_sheet(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sheet.as_ref().is_some_and(|shown| shown.page == page) {
+        if self.sheet.as_ref().map(|shown| shown.up) == Some(Up::Sheet(page)) {
             return;
         }
-        self.jumping = None;
         let host = Host(self.commands.clone());
         let members = self.members();
         let (view, events) = match page {
@@ -96,9 +103,51 @@ impl Chats {
                 (AnyView::from(sheet), events)
             }
         };
+        self.raise(Up::Sheet(page), view, events, window, cx);
+    }
+
+    /// Opens the page of the agent whose chat is `task_id`, if it is one of
+    /// the Host's.
+    pub(super) fn open_profile(
+        &mut self,
+        task_id: TaskId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sheet.as_ref().map(|shown| shown.up) == Some(Up::Profile(task_id)) {
+            return;
+        }
+        let Some(member) = self
+            .members()
+            .into_iter()
+            .find(|member| member.task_id == task_id)
+        else {
+            return;
+        };
+        let host = Host(self.commands.clone());
+        let sheet = cx.new(|cx| Profile::new(host, member, cx));
+        let events = cx.subscribe_in(&sheet, window, Self::on_sheet);
+        self.raise(
+            Up::Profile(task_id),
+            AnyView::from(sheet),
+            events,
+            window,
+            cx,
+        );
+    }
+
+    fn raise(
+        &mut self,
+        up: Up,
+        view: AnyView,
+        events: Subscription,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jumping = None;
         self.sheets_opened += 1;
         self.sheet = Some(Shown {
-            page,
+            up,
             view,
             opened: self.sheets_opened,
             _events: events,
@@ -122,6 +171,7 @@ impl Chats {
                 self.close(window, cx);
                 self.open_chat(*task_id, window, cx);
             }
+            SheetEvent::Sheet(page) => self.open_sheet(*page, window, cx),
             SheetEvent::SignOut => cx.emit(SignedOut),
         }
     }
@@ -217,6 +267,10 @@ impl Chats {
                 self.open_agent(index, window, cx);
             }
             Move::Home => self.go_home(window, cx),
+            Move::Profile => match self.chosen_task().filter(|_| !self.on_home) {
+                Some(task_id) => self.open_profile(task_id, window, cx),
+                None => return false,
+            },
         }
         true
     }
@@ -286,7 +340,7 @@ impl Chats {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let up = self.sheet.as_ref().map(|shown| shown.page);
+        let up = self.sheet.as_ref().map(|shown| shown.up);
         div()
             .flex()
             .gap(px(2.))
@@ -306,7 +360,7 @@ impl Chats {
                     .cursor_pointer()
                     .text_color(palette.secondary)
                     .hover(|button| button.bg(palette.selected).text_color(palette.text))
-                    .when(up == Some(page), |button| {
+                    .when(up == Some(Up::Sheet(page)), |button| {
                         button.bg(palette.selected).text_color(palette.text)
                     })
                     .on_click(

@@ -322,11 +322,7 @@ fn coming(home: &Home, palette: Palette, cx: &mut Context<Home>) -> impl IntoEle
     let rows = home.coming.iter().map(|routine| {
         let member = home.member(routine.agent_id);
         let words = schedule::words(&routine.schedule, &Local, home.here_zone.as_deref());
-        let next = if routine.next_due_ms <= now.timestamp_millis() {
-            "Any moment".to_owned()
-        } else {
-            stamp::ahead(routine.next_due_ms, &now)
-        };
+        let next = routine.next(&now);
         div()
             .flex()
             .items_center()

@@ -21,17 +21,17 @@ use crate::{face::Face, link::host::Answer, theme::Palette};
 /// An app an agent can use: a connection on the Host, named by the plugin
 /// that serves it, if any. Switching it off keeps its sign-in.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct AgentApp {
-    connection: String,
+pub(super) struct AgentApp {
+    pub(super) connection: String,
     #[serde(default)]
-    name: Option<String>,
+    pub(super) name: Option<String>,
     endpoint: String,
-    on: bool,
+    pub(super) on: bool,
 }
 
 #[derive(Debug, Deserialize)]
-struct Apps {
-    apps: Vec<AgentApp>,
+pub(super) struct Apps {
+    pub(super) apps: Vec<AgentApp>,
 }
 
 /// Each agent's apps, by the agent's Host id.
@@ -149,7 +149,7 @@ fn segment(text: &str) -> String {
 /// What an app is called, in plain words: its plugin's name, else its
 /// connection's, without the word mcp and with spaces for dashes, such as
 /// Exa for exa-mcp.
-fn label(app: &AgentApp) -> String {
+pub(super) fn label(app: &AgentApp) -> String {
     let words: Vec<&str> = app
         .name
         .as_deref()
