@@ -37,7 +37,8 @@ impl Chats {
         let open = self
             .agents
             .iter()
-            .position(|agent| Some(chat_task_id(agent.node_id, agent.target.as_str())) == chosen);
+            .position(|agent| Some(chat_task_id(agent.node_id, agent.target.as_str())) == chosen)
+            .filter(|_| !self.on_home);
         let now = Local::now();
         let rows = self.agents.iter().enumerate().map(|(index, agent)| {
             let task_id = chat_task_id(agent.node_id, agent.target.as_str());
@@ -62,7 +63,9 @@ impl Chats {
                 .px(px(10.))
                 .rounded(px(10.))
                 .cursor_pointer()
-                .on_click(cx.listener(move |this, _, window, cx| this.select(index, window, cx)))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.open_agent(index, window, cx)),
+                )
                 .child(
                     Face::new(look, primary, palette, px(30.))
                         .blinking(self.blinking(task_id))
@@ -149,9 +152,11 @@ impl Chats {
             .border_r_1()
             .border_color(palette.outline)
             .child(div().px(px(8.)).child(self.jump_button(palette, cx)))
+            .child(div().pt(px(8.)).child(self.home_row(palette, cx)))
             .child(
                 div()
                     .px(px(18.))
+                    .pt(px(10.))
                     .pb(px(6.))
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)

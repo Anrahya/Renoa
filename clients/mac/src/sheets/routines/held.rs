@@ -9,19 +9,19 @@ use crate::{sheets::schedule, stamp};
 
 /// The parts of the Host's observation (`GET /v1/host`) this reads.
 #[derive(Debug, Deserialize)]
-pub(super) struct Observation {
-    pub(super) automations: Vec<Automation>,
+pub(crate) struct Observation {
+    pub(crate) automations: Vec<Automation>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct Automation {
+pub(crate) struct Automation {
     pub(super) id: String,
-    pub(super) agent_id: Uuid,
-    pub(super) name: String,
-    pub(super) schedule: schedule::Schedule,
-    pub(super) enabled: bool,
+    pub(crate) agent_id: Uuid,
+    pub(crate) name: String,
+    pub(crate) schedule: schedule::Schedule,
+    pub(crate) enabled: bool,
     pub(super) revision: i64,
-    pub(super) next_due_ms: i64,
+    pub(crate) next_due_ms: i64,
     #[serde(default)]
     pub(super) last_run: Option<Run>,
     /// The Host plugin whose own trigger this is, such as a reminder.
@@ -88,7 +88,7 @@ pub(super) fn merge(shown: Option<&[Automation]>, read: Vec<Automation>) -> Vec<
 
 /// The routines an agent or the owner made: a plugin's own triggers, such as
 /// reminders, are the Host's work, and Memory shows them.
-pub(super) fn own(automations: Vec<Automation>) -> Vec<Automation> {
+pub(crate) fn own(automations: Vec<Automation>) -> Vec<Automation> {
     automations
         .into_iter()
         .filter(|automation| automation.plugin.is_none())

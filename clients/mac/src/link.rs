@@ -13,7 +13,7 @@ use renoa_rcp_client::{ClientError, Connection, Events, connect_with_key};
 use renoa_rcp_wire::{DeviceCredentials, ErrorCode, NodeId, TargetSummary, TaskEvent, TaskId};
 use tokio::{
     runtime::Runtime,
-    sync::mpsc,
+    sync::{mpsc, oneshot},
     task::JoinHandle,
     time::{MissedTickBehavior, sleep},
 };
@@ -128,6 +128,9 @@ pub enum Command {
     Send {
         task_id: TaskId,
         text: String,
+        /// Told whether Renoa took the message (`true`) or refused it; it
+        /// is kept across reconnects until one or the other.
+        sent: Option<oneshot::Sender<bool>>,
     },
     /// Calls the Host, beside the chats, and answers on the call.
     Host(HostCall),
@@ -145,6 +148,7 @@ struct Outgoing {
     task_id: TaskId,
     command_id: CommandId,
     text: String,
+    sent: Option<oneshot::Sender<bool>>,
 }
 
 /// The last event received of each chat, noted as events arrive.
@@ -180,11 +184,16 @@ impl Kept {
                 });
                 None
             }
-            Command::Send { task_id, text } => {
+            Command::Send {
+                task_id,
+                text,
+                sent,
+            } => {
                 self.outbox.push_back(Outgoing {
                     task_id,
                     command_id: CommandId::new(),
                     text,
+                    sent,
                 });
                 None
             }
@@ -406,7 +415,7 @@ async fn follow(
 }
 
 /// Sends every waiting message in order. A refusal drops a message and tells
-/// the views; a lost link keeps it, and the rest, for the next connection.
+/// its sender, or else the views; a lost link keeps it, and the rest, for the next connection.
 async fn flush(
     connection: &Connection,
     outbox: &mut VecDeque<Outgoing>,
@@ -415,13 +424,23 @@ async fn flush(
     while let Some(next) = outbox.front() {
         let input = CommandInput::from_text(next.text.clone());
         let submitted = within(connection.submit(next.task_id, next.command_id, input)).await;
-        if !settled(connection, submitted).await? {
-            let _ = updates.send(Update::NotSent {
-                task_id: next.task_id,
-                text: next.text.clone(),
-            });
+        let took = settled(connection, submitted).await?;
+        let Some(done) = outbox.pop_front() else {
+            break;
+        };
+        match done.sent {
+            // Whoever sent it hears how it went, and shows a refusal itself.
+            Some(sent) => {
+                let _ = sent.send(took);
+            }
+            None if !took => {
+                let _ = updates.send(Update::NotSent {
+                    task_id: done.task_id,
+                    text: done.text,
+                });
+            }
+            None => {}
         }
-        outbox.pop_front();
     }
     Ok(())
 }

@@ -12,8 +12,9 @@ use crate::theme::{self, Appearance, Palette};
 
 /// The keys that move around the app, as Settings lists them. The bindings
 /// themselves are `chats::keys`; a test checks each listed one is bound.
-pub const SHORTCUTS: [(&str, &str); 7] = [
+pub const SHORTCUTS: [(&str, &str); 8] = [
     ("Jump to an agent or page", "⌘K"),
+    ("Home", "⌘0"),
     ("Open the first nine agents", "⌘1 – ⌘9"),
     ("Routines", "⌘⇧R"),
     ("Memory", "⌘⇧M"),

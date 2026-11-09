@@ -17,6 +17,7 @@ use super::{
     jump::{Jump, JumpEvent, Place},
     keys::{self, Move},
 };
+
 use crate::{
     chat::chat_task_id,
     link::host_agent,
@@ -47,7 +48,7 @@ pub(super) struct Jumping {
 
 impl Chats {
     /// The Host's agents as the sheets show them.
-    fn members(&self) -> Vec<Member> {
+    pub(super) fn members(&self) -> Vec<Member> {
         self.agents
             .iter()
             .filter_map(|agent| {
@@ -56,6 +57,8 @@ impl Chats {
                 Some(Member {
                     name: agent.name.clone().into(),
                     host_id,
+                    node_id: agent.node_id,
+                    target: agent.target.clone(),
                     task_id: chat_task_id(agent.node_id, agent.target.as_str()),
                     look,
                     primary,
@@ -124,13 +127,18 @@ impl Chats {
     }
 
     /// Opens the chat `task_id`, if its agent is still listed.
-    fn open_chat(&mut self, task_id: TaskId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_chat(
+        &mut self,
+        task_id: TaskId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(index) = self
             .agents
             .iter()
             .position(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == task_id)
         {
-            self.select(index, window, cx);
+            self.open_agent(index, window, cx);
         }
     }
 
@@ -138,8 +146,7 @@ impl Chats {
     pub(super) fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sheet = None;
         self.jumping = None;
-        self.composer
-            .update(cx, |composer, cx| composer.focus(window, cx));
+        self.refocus(window, cx);
         cx.notify();
     }
 
@@ -158,6 +165,7 @@ impl Chats {
                 }
             })
             .collect();
+        places.insert(0, Place::Home);
         places.extend(Page::ALL.map(Place::Sheet));
         let jump = cx.new(|cx| Jump::new(places, window, cx));
         let events = cx.subscribe_in(&jump, window, |this, _, event: &JumpEvent, window, cx| {
@@ -167,6 +175,7 @@ impl Chats {
                     this.close(window, cx);
                     this.open_chat(*task_id, window, cx);
                 }
+                Place::Home => this.go_home(window, cx),
                 Place::Sheet(page) => this.open_sheet(*page, window, cx),
             }
         });
@@ -205,8 +214,9 @@ impl Chats {
                     return false;
                 }
                 self.close(window, cx);
-                self.select(index, window, cx);
+                self.open_agent(index, window, cx);
             }
+            Move::Home => self.go_home(window, cx),
         }
         true
     }
