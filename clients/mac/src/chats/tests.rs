@@ -567,11 +567,15 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
 
 #[gpui_kit::test]
 fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
-    use crate::sheets::{Page, settings::SHORTCUTS};
+    use crate::{
+        chats::keys::AboutAgent,
+        sheets::{Page, settings::SHORTCUTS},
+    };
 
     let (window, chats, _asked, updates) = open(cx);
     let node_id = NodeId::new();
     let chef = format!("agent:{}", Uuid::from_u128(0xc1));
+    let chef_chat = chat_task_id(node_id, &chef);
     updates
         .send(Update::Agents(vec![
             TargetSummary {
@@ -603,34 +607,45 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
             )
         })
     };
+    let pressed = |keys: &str| match keys {
+        "⌘K" => "cmd-k",
+        "⌘0" => "cmd-0",
+        "⌘I" => "cmd-i",
+        "⌘1 – ⌘9" => "cmd-1",
+        "⌘⇧R" => "cmd-shift-r",
+        "⌘⇧M" => "cmd-shift-m",
+        "⌘⇧A" => "cmd-shift-a",
+        "⌘," => "cmd-,",
+        "Esc" => "escape",
+        other => panic!("Settings lists {other}, which this test does not press"),
+    };
     let chat = |name: &str| Some(name.to_owned());
-    let page = |page: Page| (false, Some(Up::Sheet(page)), false, chat("Cook"));
     for (what, keys) in SHORTCUTS {
-        // From the second agent's chat, ready to type.
-        act(&|window, cx| window.click(("agent", 1usize), cx), cx);
-        let (pressed, expected) = match keys {
-            "⌘K" => ("cmd-k", (false, None, true, chat("Cook"))),
-            "⌘0" => ("cmd-0", (true, None, false, chat("Cook"))),
-            "⌘I" => {
-                act(&|window, cx| window.click(("agent", 0usize), cx), cx);
-                let task_id = chat_task_id(node_id, &chef);
-                (
-                    "cmd-i",
-                    (false, Some(Up::Profile(task_id)), false, chat("Chef")),
-                )
+        // From Chef's chat, ready to type; Esc from over a sheet.
+        act(&|window, cx| window.click(("agent", 0usize), cx), cx);
+        if what == "Close a sheet" {
+            act(&|window, cx| window.press("cmd-shift-m", cx), cx);
+        }
+        let expected = match what {
+            "Jump to an agent or page" => (false, None, true, chat("Chef")),
+            "Home" => (true, None, false, chat("Chef")),
+            "About the agent you're talking to" => {
+                (false, Some(Up::Profile(chef_chat)), false, chat("Chef"))
             }
-            "⌘1 – ⌘9" => ("cmd-1", (false, None, false, chat("Chef"))),
-            "⌘⇧R" => ("cmd-shift-r", page(Page::Routines)),
-            "⌘⇧M" => ("cmd-shift-m", page(Page::Memory)),
-            "⌘⇧A" => ("cmd-shift-a", page(Page::Apps)),
-            "⌘," => ("cmd-,", page(Page::Settings)),
-            "Esc" => {
-                act(&|window, cx| window.press("cmd-k", cx), cx);
-                ("escape", (false, None, false, chat("Cook")))
+            "Open the first nine agents" => {
+                act(&|window, cx| window.click(("agent", 1usize), cx), cx);
+                (false, None, false, chat("Chef"))
             }
-            other => panic!("Settings lists {other}, which this test does not press"),
+            "Close a sheet" => (false, None, false, chat("Chef")),
+            page => {
+                let page = Page::ALL
+                    .into_iter()
+                    .find(|listed| listed.title() == page)
+                    .unwrap_or_else(|| panic!("no page named {page}"));
+                (false, Some(Up::Sheet(page)), false, chat("Chef"))
+            }
         };
-        act(&|window, cx| window.press(pressed, cx), cx);
+        act(&|window, cx| window.press(pressed(keys), cx), cx);
         assert_eq!(at(cx), expected, "{what}: {keys}");
         act(&|window, cx| window.press("escape", cx), cx);
     }
@@ -643,4 +658,34 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
             page.title()
         );
     }
+
+    // The keys reach the chats from Home and from the jump box's own field.
+    act(&|window, cx| window.press("cmd-0", cx), cx);
+    act(&|window, cx| window.press("cmd-shift-r", cx), cx);
+    assert_eq!(
+        at(cx),
+        (true, Some(Up::Sheet(Page::Routines)), false, chat("Chef"))
+    );
+    act(&|window, cx| window.press("escape", cx), cx);
+    act(&|window, cx| window.press("cmd-k", cx), cx);
+    act(&|window, cx| window.press("cmd-0", cx), cx);
+    assert_eq!(
+        at(cx),
+        (true, None, false, chat("Chef")),
+        "from the jump box"
+    );
+
+    // About This Agent is there only while a page can open.
+    let about = |cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.is_action_available(&AboutAgent, cx)
+        })
+        .unwrap()
+    };
+    assert!(!about(cx), "not on Home");
+    act(&|window, cx| window.click(("agent", 1usize), cx), cx);
+    assert!(!about(cx), "not for an agent that is not the Host's");
+    act(&|window, cx| window.click(("agent", 0usize), cx), cx);
+    assert!(about(cx));
 }

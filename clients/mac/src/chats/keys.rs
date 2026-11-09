@@ -1,8 +1,8 @@
 //! The keys that move around the app. The ones the menus show are bound to
-//! actions (`bindings`), so a menu item and its key are one; the rest are
-//! read as they are pressed (`shortcut`). Settings lists them all
-//! (`sheets::settings::SHORTCUTS`); a test checks that each key it lists
-//! does what it says and that each sheet's own keys are among them.
+//! actions (`bind`), so a menu item and its key are one; the rest are read
+//! as they are pressed (`shortcut`). Settings lists them all
+//! (`sheets::settings::SHORTCUTS`); a test in `chats/tests.rs` presses each
+//! one it lists and checks where it leads.
 
 use gpui_kit::{
     Action, App, Context, Div, InteractiveElement as _, KeyBinding, Keystroke, actions,
@@ -69,11 +69,12 @@ pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
     }
 }
 
-/// Answers each bound action with its move; one the chats cannot make just
-/// now, such as ⌘I on Home, does nothing.
+/// Answers each bound action with its move. ⌘I is answered only while a
+/// page can open, so elsewhere its menu item is dimmed and the key passes.
 impl Chats {
     pub(super) fn answer_keys(&self, root: Div, cx: &mut Context<Self>) -> Div {
         let mut root = root;
+        let page = self.profile_task().is_some();
         for (moved, listen) in [
             (Move::Home, listen::<GoHome> as Listen),
             (Move::Jump, listen::<JumpTo>),
@@ -83,7 +84,9 @@ impl Chats {
             (Move::Sheet(Page::Apps), listen::<OpenApps>),
             (Move::Sheet(Page::Settings), listen::<OpenSettings>),
         ] {
-            root = listen(root, moved, cx);
+            if moved != Move::Profile || page {
+                root = listen(root, moved, cx);
+            }
         }
         root
     }

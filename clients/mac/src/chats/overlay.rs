@@ -106,6 +106,19 @@ impl Chats {
         self.raise(Up::Sheet(page), view, events, window, cx);
     }
 
+    /// The chat whose agent's page can open: the one showing, when its agent
+    /// is one of the Host's.
+    pub(super) fn profile_task(&self) -> Option<TaskId> {
+        let task_id = self.chosen_task().filter(|_| !self.on_home)?;
+        self.agents
+            .iter()
+            .any(|agent| {
+                chat_task_id(agent.node_id, agent.target.as_str()) == task_id
+                    && host_agent(agent.target.as_str()).is_some()
+            })
+            .then_some(task_id)
+    }
+
     /// Opens the page of the agent whose chat is `task_id`, if it is one of
     /// the Host's.
     pub(super) fn open_profile(
@@ -270,7 +283,7 @@ impl Chats {
                 self.open_agent(index, window, cx);
             }
             Move::Home => self.go_home(window, cx),
-            Move::Profile => match self.chosen_task().filter(|_| !self.on_home) {
+            Move::Profile => match self.profile_task() {
                 Some(task_id) => self.open_profile(task_id, window, cx),
                 None => return false,
             },
