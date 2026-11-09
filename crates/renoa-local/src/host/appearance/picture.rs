@@ -172,7 +172,7 @@ pub(super) fn apply(
     change: &PictureChange,
     revision: Option<String>,
 ) -> Result<Option<String>, PictureError> {
-    let request = serde_json::to_string(&Request {
+    let request = Request {
         agent_id: agent.to_string(),
         expected_revision: change.expected_revision.clone(),
         revision: revision.clone(),
@@ -180,8 +180,7 @@ pub(super) fn apply(
             .picture
             .as_ref()
             .map(|picture| picture.content_type.clone()),
-    })
-    .map_err(|error| HostCatalogError::Invalid(error.to_string()))?;
+    };
     let receipt: Option<(String, String)> = transaction
         .query_row(
             "SELECT request_json, result_json FROM host_agent_picture_operations
@@ -191,6 +190,8 @@ pub(super) fn apply(
         )
         .optional()?;
     if let Some((stored, result)) = receipt {
+        let stored: Request = serde_json::from_str(&stored)
+            .map_err(|error| HostCatalogError::Invalid(error.to_string()))?;
         if stored != request {
             return Err(PictureError::OperationReused(change.operation_id));
         }
@@ -221,6 +222,8 @@ pub(super) fn apply(
             [agent.to_string()],
         )?,
     };
+    let request = serde_json::to_string(&request)
+        .map_err(|error| HostCatalogError::Invalid(error.to_string()))?;
     let result = serde_json::to_string(&revision)
         .map_err(|error| HostCatalogError::Invalid(error.to_string()))?;
     transaction.execute(

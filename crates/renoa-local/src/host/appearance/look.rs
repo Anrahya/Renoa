@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use renoa_kernel::AgentId;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 use crate::host::catalog::HostCatalogError;
@@ -15,7 +15,7 @@ use crate::host::catalog::HostCatalogError;
 macro_rules! part {
     ($(#[$doc:meta])* $part:ident { $($choice:ident = $name:literal),+ $(,)? }) => {
         $(#[$doc])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
         pub enum $part {
             $(#[serde(rename = $name)] $choice),+
         }
@@ -82,7 +82,10 @@ part!(
 );
 
 /// One choice of every part. Two agents of one Host never share a look.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// The choices are stored by name and checked by the table, so adding,
+/// renaming or removing one is a schema change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct Look {
     pub hair_front: HairFront,
     pub hair_back: HairBack,
@@ -112,7 +115,7 @@ pub(super) const LOOKS: u64 = HairFront::ALL.len() as u64
 pub(super) const STRIDE: u64 = 1009;
 
 /// Where an agent's walk through the looks starts: from its id, so the same
-/// agents on the same Host always get the same looks.
+/// agents made in the same order always get the same looks.
 const START_DOMAIN: &str = "renoa.agent.look.v1\n";
 
 impl Look {
@@ -121,7 +124,7 @@ impl Look {
     pub(super) fn at(index: u64) -> Self {
         fn take<T: Copy>(index: &mut u64, all: &[T]) -> T {
             let count = all.len() as u64;
-            let choice = all[usize::try_from(*index % count).unwrap_or_default()];
+            let choice = all[usize::try_from(*index % count).expect("a choice's place fits usize")];
             *index /= count;
             choice
         }
@@ -191,10 +194,7 @@ pub(in crate::host) fn assign(
     agent: AgentId,
 ) -> Result<Look, HostCatalogError> {
     let taken = taken(transaction)?;
-    let digest = Sha256::digest(format!("{START_DOMAIN}{agent}"));
-    let mut start = [0; 8];
-    start.copy_from_slice(&digest[..8]);
-    let start = u64::from_be_bytes(start) % LOOKS;
+    let start = start(agent);
     let look = (0..LOOKS)
         .map(|step| Look::at((start + step * STRIDE) % LOOKS))
         .find(|look| !taken.contains(look))
@@ -219,6 +219,14 @@ pub(in crate::host) fn assign(
         ],
     )?;
     Ok(look)
+}
+
+/// Where `agent`'s walk starts, below [`LOOKS`].
+pub(super) fn start(agent: AgentId) -> u64 {
+    let digest = Sha256::digest(format!("{START_DOMAIN}{agent}"));
+    let mut start = [0; 8];
+    start.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(start) % LOOKS
 }
 
 /// `agent`'s look, or `None` for an agent the Host gave none.

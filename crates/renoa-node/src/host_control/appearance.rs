@@ -22,7 +22,11 @@ pub(super) const PICTURE_HINT: &str = "Send an operation ID, the expected_revisi
 #[serde(deny_unknown_fields)]
 pub(super) struct Change {
     operation_id: Uuid,
+    // Required, `null` meaning none: a change that left the picture out would
+    // otherwise take it away.
+    #[serde(deserialize_with = "Option::deserialize")]
     expected_revision: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     picture: Option<Picture>,
 }
 

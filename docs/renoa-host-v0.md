@@ -583,16 +583,19 @@ Host stores choices by name; each app draws them in its own colours. `GET
 /v1/host/agents/{id}/appearance` returns `{look, picture_revision}`, the
 revision `null` while no picture is set. `GET /v1/host/agents/{id}/picture`
 returns `{revision, content_type, data}`, the bytes in base64, or 404
-`picture_not_found`. `PUT /v1/host/agents/{id}/picture` with `{operation_id,
+`picture_not_found` when the agent has no picture or is unknown. `PUT /v1/host/agents/{id}/picture` with `{operation_id,
 expected_revision, picture}` sets the picture, `{content_type, data}`, or takes
 it away, `null`, and returns `{picture_revision}`. A picture is a PNG, JPEG or
 WebP of 1 byte to 256 KiB whose first bytes match its type; the revision is
 the bytes' SHA-256. A change applies only while the picture is still
 `expected_revision`, else 409 `revision_conflict`; the same change sent again
 returns its first answer, and its operation id sent with another change returns
-409 `operation_reused`. A refused picture returns 422 `invalid_picture` and
-stores nothing. The receipt records the revision, never the bytes. An unknown
-agent returns 404 `not_found`.
+409 `operation_reused`. Every field is required, `null` meaning none, so a
+change that leaves one out returns 422 and changes nothing. A nil operation id,
+or a picture of another type, size or signature, returns 422 `invalid_picture`
+and stores nothing. The receipt records the revision, never the bytes. Reading
+the appearance of, or changing the picture of, an unknown agent returns 404
+`not_found`.
 
 `PUT /v1/host/uploads/{id}` with `{size, sha256}` starts an upload of a file the
 signed-in owner will attach to a message; the app chooses `id`, a UUID. The size is

@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 
 use renoa_kernel::AgentId;
 use rusqlite::Connection;
@@ -164,7 +168,12 @@ async fn an_agent_whose_first_look_is_worn_gets_the_next_one_on_its_walk() {
         )
         .expect("the wearer wears it");
     let next = look::assign(&transaction, newcomer).expect("pick past it");
-    assert_ne!(next, first);
+    assert_eq!(first, Look::at(look::start(newcomer)));
+    assert_eq!(
+        next,
+        Look::at((look::start(newcomer) + STRIDE) % LOOKS),
+        "the newcomer takes the next look on its walk"
+    );
     // And the table itself refuses a second wearer.
     let second = transaction.execute(
         "UPDATE host_agent_looks SET hair_front = ?1, hair_back = ?2, hair_colour = ?3,
@@ -287,11 +296,111 @@ async fn a_picture_is_set_once_per_operation_and_only_over_the_one_expected() {
         picture: None,
     };
     assert_eq!(
-        host.set_agent_picture(agent, cleared).await.expect("clear"),
+        host.set_agent_picture(agent, cleared.clone())
+            .await
+            .expect("clear"),
         Some(None)
     );
     assert_eq!(host.agent_picture(agent).await.expect("read"), None);
     assert_eq!(count(&host.config.database, "host_agent_pictures"), 0);
+    assert_eq!(
+        host.set_agent_picture(agent, cleared)
+            .await
+            .expect("replay"),
+        Some(None),
+        "a replayed clear answers as the first time"
+    );
+}
+
+#[test]
+fn the_stored_names_of_every_choice_stay_as_catalogs_hold_them() {
+    fn names<T: Copy>(all: &[T], name: fn(T) -> &'static str) -> Vec<&'static str> {
+        all.iter().copied().map(name).collect()
+    }
+    // A catalog checks these names; changing one is a schema change.
+    assert_eq!(
+        [
+            names(super::HairFront::ALL, super::HairFront::as_str),
+            names(super::HairBack::ALL, super::HairBack::as_str),
+            names(super::HairColour::ALL, super::HairColour::as_str),
+            names(super::Skin::ALL, super::Skin::as_str),
+            names(super::Eyes::ALL, super::Eyes::as_str),
+            names(super::Cheeks::ALL, super::Cheeks::as_str),
+            names(super::Wear::ALL, super::Wear::as_str),
+            names(super::Tile::ALL, super::Tile::as_str),
+        ],
+        [
+            vec!["short", "fringe", "side_part", "curls", "princess"],
+            vec!["none", "bun", "long", "twin_tails"],
+            vec!["ink", "brown", "auburn", "blonde", "grey"],
+            vec!["fair", "light", "medium", "deep"],
+            vec!["round", "oval", "lashes", "sparkle", "cat"],
+            vec!["none", "blush", "freckles", "lines"],
+            vec![
+                "none",
+                "glasses",
+                "bow",
+                "clip",
+                "beanie",
+                "headphones",
+                "cat_ears"
+            ],
+            vec!["clay", "cobalt", "ochre"],
+        ]
+    );
+}
+
+/// Two agent ids whose walks start at the same look, the first found first.
+fn sharing_a_start() -> (AgentId, AgentId) {
+    let mut starts = HashMap::new();
+    (1..)
+        .find_map(|n| {
+            let agent = AgentId::from_uuid(Uuid::from_u128(n));
+            starts
+                .insert(look::start(agent), agent)
+                .map(|other| (other, agent))
+        })
+        .expect("two walks share a start")
+}
+
+#[tokio::test]
+async fn schema_54_walks_the_oldest_agent_first_and_breaks_a_tie_by_agent_id() {
+    let (a, b) = sharing_a_start();
+    let (low, high) = if a.to_string() < b.to_string() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    // (created_at_ms of `low`, of `high`, the one that takes the shared start)
+    for (low_at, high_at, first) in [(2, 1, high), (1, 1, low)] {
+        let directory = tempdir().expect("fixture");
+        let host = host(directory.path());
+        let database = host.config.database.clone();
+        let db = Connection::open(&database).expect("catalog");
+        restore_schema_53(&db);
+        for (agent, at) in [(low, low_at), (high, high_at)] {
+            crate::test_agents::insert_agent(&database, &agent.to_string());
+            db.execute(
+                "UPDATE host_agents SET created_at_ms = ?1 WHERE agent_id = ?2",
+                rusqlite::params![at, agent.to_string()],
+            )
+            .expect("creation time");
+        }
+        db.execute_batch(
+            "UPDATE host_metadata SET schema_version = 53 WHERE singleton = 1;
+             PRAGMA user_version = 53;",
+        )
+        .expect("a schema 53 catalog");
+        drop(db);
+        catalog::initialize(&database).expect("upgrade schema 53");
+        let second = if first == low { high } else { low };
+        let start = look::start(first);
+        assert_eq!(look_of(&host, first).await, Look::at(start));
+        assert_eq!(
+            look_of(&host, second).await,
+            Look::at((start + STRIDE) % LOOKS)
+        );
+    }
 }
 
 #[tokio::test]

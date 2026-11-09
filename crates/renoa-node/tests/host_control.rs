@@ -999,6 +999,86 @@ async fn owner_turn(
 }
 
 /// Makes an agent through the owner's Host route, as the app does.
+#[tokio::test]
+async fn the_owner_sets_an_agents_picture_over_the_look_the_host_picked() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let (id, _) = make_agent(&f, &creation()).await;
+        let appearance = f
+            .browser
+            .json_of(&format!("/v1/host/agents/{id}/appearance"))
+            .await;
+        let look = appearance["look"].as_object().expect("a look");
+        assert_eq!(look.len(), 9, "{appearance}");
+        assert_eq!(appearance["picture_revision"], Value::Null);
+        let path = format!("/v1/host/agents/{id}/picture");
+        let put = |body: Value| {
+            let path = path.clone();
+            let browser = &f.browser;
+            async move {
+                let reply = browser.write(Method::PUT, &path, ORIGIN, &body).send().await.expect("PUT");
+                let status = reply.status();
+                (status, reply.json::<Value>().await.expect("JSON"))
+            }
+        };
+        let absent = f.browser.get(&path).send().await.expect("GET");
+        assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+
+        let png = b"\x89PNG\r\n\x1a\na picture".as_slice();
+        let picture = json!({"content_type": "image/png", "data": STANDARD.encode(png)});
+        let operation = Uuid::new_v4();
+        // A change that leaves a field out is refused, not read as a clear.
+        let (status, _) = put(json!({"operation_id": operation, "expected_revision": null})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        for (body, code) in [
+            (json!({"operation_id": Uuid::nil(), "expected_revision": null, "picture": picture}), "invalid_picture"),
+            (json!({"operation_id": operation, "expected_revision": null,
+                "picture": {"content_type": "image/gif", "data": STANDARD.encode(b"GIF89a")}}), "invalid_picture"),
+            (json!({"operation_id": operation, "expected_revision": null,
+                "picture": {"content_type": "image/png", "data": "not base64!"}}), "invalid_picture"),
+        ] {
+            let (status, refusal) = put(body).await;
+            assert_eq!((status, refusal["code"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some(code)), "{refusal}");
+        }
+
+        let set = json!({"operation_id": operation, "expected_revision": null, "picture": picture});
+        let (status, answer) = put(set.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        let revision = answer["picture_revision"].as_str().expect("revision").to_owned();
+        assert_eq!(revision.len(), 64);
+        assert_eq!(put(set).await, (StatusCode::OK, answer.clone()), "a retry answers the same");
+        let stored = f.browser.json_of(&path).await;
+        assert_eq!(stored["revision"], revision.as_str());
+        assert_eq!(STANDARD.decode(stored["data"].as_str().expect("data")).expect("base64"), png);
+        assert_eq!(
+            f.browser.json_of(&format!("/v1/host/agents/{id}/appearance")).await["picture_revision"],
+            revision.as_str()
+        );
+
+        let (status, refusal) = put(json!({"operation_id": operation, "expected_revision": revision, "picture": null})).await;
+        assert_eq!((status, refusal["code"].as_str()), (StatusCode::CONFLICT, Some("operation_reused")));
+        let (status, refusal) = put(json!({"operation_id": Uuid::new_v4(), "expected_revision": null, "picture": null})).await;
+        assert_eq!((status, refusal["code"].as_str()), (StatusCode::CONFLICT, Some("revision_conflict")));
+        let (status, answer) = put(json!({"operation_id": Uuid::new_v4(), "expected_revision": revision, "picture": null})).await;
+        assert_eq!((status, answer), (StatusCode::OK, json!({"picture_revision": null})));
+
+        let stranger = Uuid::new_v4();
+        for reply in [
+            f.browser.get(&format!("/v1/host/agents/{stranger}/appearance")).send().await.expect("GET"),
+            f.browser
+                .write(Method::PUT, &format!("/v1/host/agents/{stranger}/picture"), ORIGIN,
+                    &json!({"operation_id": Uuid::new_v4(), "expected_revision": null, "picture": null}))
+                .send().await.expect("PUT"),
+        ] {
+            assert_eq!(reply.status(), StatusCode::NOT_FOUND);
+            assert_eq!(reply.json::<Value>().await.expect("JSON")["code"], "not_found");
+        }
+        f.close().await;
+    }))
+    .await;
+}
+
 async fn make_agent(f: &Fixture, body: &Value) -> (AgentId, Value) {
     let created = f.browser.post("/v1/host/agents", body).await;
     assert_eq!(created.status(), StatusCode::OK);
