@@ -29,6 +29,9 @@ pub struct Line {
     pub text: String,
     /// Whether the line says a turn failed rather than what the agent said.
     pub failed: bool,
+    /// When it was said, in Unix milliseconds. An owner's line has no time of
+    /// its own: it takes the time the agent began answering it.
+    pub at_ms: Option<i64>,
 }
 
 /// A chat as its task's events tell it, in order, each event once.
@@ -74,35 +77,46 @@ impl Transcript {
                 } = &command.input;
                 // Another agent's message and a quiet command are not the owner speaking.
                 if !quiet && author.is_principal() && command.origin.is_none() {
-                    self.say(Speaker::Owner, text, false);
+                    self.say(Speaker::Owner, text, false, None);
                 }
             }
-            TaskEventKind::ExecutionEvent { event, .. } => match &event.kind {
-                ExecutionEventKind::TurnStarted | ExecutionEventKind::ExecutionStarted => {
-                    self.working = true;
-                }
-                ExecutionEventKind::AssistantMessage { text } => {
-                    self.say(Speaker::Agent, text, false);
-                }
-                ExecutionEventKind::ExecutionTerminated { terminal } => {
-                    self.working = false;
-                    if let ExecutionTerminal::Failed { .. } = terminal {
-                        self.say(Speaker::Agent, "Something went wrong with that one.", true);
+            TaskEventKind::ExecutionEvent { event, .. } => {
+                let at_ms = Some(event.recorded_at_ms);
+                for line in self.lines.iter_mut().rev() {
+                    if line.at_ms.is_some() {
+                        break;
                     }
+                    line.at_ms = at_ms;
                 }
-                ExecutionEventKind::ToolStarted { .. }
-                | ExecutionEventKind::ToolFinished { .. } => {}
-            },
+                match &event.kind {
+                    ExecutionEventKind::TurnStarted | ExecutionEventKind::ExecutionStarted => {
+                        self.working = true;
+                    }
+                    ExecutionEventKind::AssistantMessage { text } => {
+                        self.say(Speaker::Agent, text, false, at_ms);
+                    }
+                    ExecutionEventKind::ExecutionTerminated { terminal } => {
+                        self.working = false;
+                        if let ExecutionTerminal::Failed { .. } = terminal {
+                            let text = "Something went wrong with that one.";
+                            self.say(Speaker::Agent, text, true, at_ms);
+                        }
+                    }
+                    ExecutionEventKind::ToolStarted { .. }
+                    | ExecutionEventKind::ToolFinished { .. } => {}
+                }
+            }
         }
     }
 
-    fn say(&mut self, speaker: Speaker, text: &str, failed: bool) {
+    fn say(&mut self, speaker: Speaker, text: &str, failed: bool, at_ms: Option<i64>) {
         let text = text.trim();
         if !text.is_empty() {
             self.lines.push(Line {
                 speaker,
                 text: text.to_owned(),
                 failed,
+                at_ms,
             });
         }
     }

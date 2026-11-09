@@ -3,7 +3,7 @@ use renoa_rcp_wire::{NodeId, TaskId};
 use uuid::Uuid;
 
 use super::{Line, Speaker, Transcript, chat_task_id};
-use crate::test_events::{executed, said};
+use crate::test_events::{MINUTE_MS, executed, said};
 
 #[test]
 fn the_chat_is_the_one_the_phone_opens() {
@@ -16,11 +16,12 @@ fn the_chat_is_the_one_the_phone_opens() {
     assert_ne!(chat_task_id(node, "renoa"), chat_task_id(node, "kaede"));
 }
 
-fn line(speaker: Speaker, text: &str) -> Line {
+fn line(speaker: Speaker, text: &str, minute: i64) -> Line {
     Line {
         speaker,
         text: text.to_owned(),
         failed: false,
+        at_ms: Some(minute * MINUTE_MS),
     }
 }
 
@@ -60,8 +61,9 @@ fn a_turn_reads_as_the_owner_then_the_agent_and_a_replay_adds_nothing() {
     assert_eq!(
         transcript.lines(),
         [
-            line(Speaker::Owner, "What's for dinner?"),
-            line(Speaker::Agent, "Pasta.")
+            // The owner's line takes the time the agent began on it.
+            line(Speaker::Owner, "What's for dinner?", 1),
+            line(Speaker::Agent, "Pasta.", 2)
         ]
     );
 }

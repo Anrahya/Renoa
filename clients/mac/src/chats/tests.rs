@@ -5,10 +5,12 @@ use gpui_kit::{
 use renoa_protocol::{CommandInput, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use renoa_rcp_wire::{NodeId, TargetSummary};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use super::Chats;
 use crate::{
     chat::{Speaker, chat_task_id},
+    face::look::PLAIN,
     link::{Command, Update},
     test_events::{executed, said},
 };
@@ -290,4 +292,43 @@ fn a_chat_shows_what_its_agent_is_for_until_something_is_said(cx: &mut TestAppCo
         chats.read_with(cx, |chats, _| chats.preview(task_id)),
         "Tacos tonight?"
     );
+}
+
+#[gpui_kit::test]
+fn each_agent_wears_its_look_and_the_main_agent_is_marked(cx: &mut TestAppContext) {
+    const ADA: &str = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+    const BO: &str = "6fa459ea-ee8a-3ca4-894e-db77e160355e";
+    let (_window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    let listed = |id: &str, name: &str| TargetSummary {
+        node_id,
+        target: TargetRef::new(format!("agent:{id}")),
+        name: name.to_owned(),
+    };
+    let (ada, bo) = (listed(ADA, "Ada"), listed(BO, "Bo"));
+    updates
+        .send(Update::Agents(vec![ada.clone(), bo.clone()]))
+        .unwrap();
+    updates
+        .send(Update::Look {
+            node_id,
+            target: format!("agent:{ADA}"),
+            look: PLAIN,
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let faces = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| (chats.face(&ada), chats.face(&bo)))
+    };
+    assert_eq!(
+        faces(cx),
+        ((Some(PLAIN), false), (None, false)),
+        "no agent is main before the Host names one"
+    );
+
+    updates
+        .send(Update::Main(Some(Uuid::parse_str(BO).unwrap())))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(faces(cx), ((Some(PLAIN), false), (None, true)));
 }

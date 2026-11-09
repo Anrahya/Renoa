@@ -3,6 +3,7 @@
 mod app;
 mod chat;
 mod chats;
+mod face;
 mod key;
 mod link;
 #[cfg(test)]

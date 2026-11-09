@@ -23,7 +23,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::key::MacKey;
+use crate::{face::Look, key::MacKey};
 
 const DEFAULT_ORIGIN: &str = "https://renoa.live";
 /// How long a call may wait for Renoa before the link counts as lost, as the
@@ -75,7 +75,7 @@ pub struct Pace {
     pub collect_every: Duration,
     pub retry_after: Duration,
     /// Each read shows agents that came online and retries the chats,
-    /// messages and purposes a refusal held back. A connection that died
+    /// messages and profiles a refusal held back. A connection that died
     /// without closing fails it within [`REPLY_WITHIN`].
     pub agents_every: Duration,
 }
@@ -180,6 +180,14 @@ pub enum Update {
         target: String,
         purpose: String,
     },
+    /// How the agent `target` on `node_id` looks, as the Host picked it.
+    Look {
+        node_id: NodeId,
+        target: String,
+        look: Look,
+    },
+    /// The Host's main agent, by its Host agent id; `None` while it names none.
+    Main(Option<Uuid>),
     Event(Box<TaskEvent>),
     /// Renoa refused a message to this chat; it was not sent.
     NotSent {
@@ -229,7 +237,7 @@ struct Kept {
     through: Through,
     followed: HashMap<TaskId, Followed>,
     outbox: VecDeque<Outgoing>,
-    purposes: Arc<Mutex<purposes::Read>>,
+    profiles: Arc<Mutex<profiles::Read>>,
 }
 
 /// Keeps one connection up for as long as the views hold the command
@@ -308,7 +316,7 @@ async fn linked(
     // The first tick is at once: it lists the agents and catches up.
     let mut agents = tokio::time::interval(agents_every);
     agents.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    // Purposes are read beside the loop: a slow Host holds up no message.
+    // Profiles are read beside the loop: a slow Host holds up no message.
     let mut reading: Option<Aborting> = None;
     loop {
         let served = tokio::select! {
@@ -331,10 +339,10 @@ async fn linked(
             _ = agents.tick() => match within(connection.list_targets()).await {
                 Ok(listed) => {
                     if reading.as_ref().is_none_or(Aborting::finished) {
-                        reading = Some(Aborting(tokio::spawn(purposes::read(
+                        reading = Some(Aborting(tokio::spawn(profiles::read(
                             connection.clone(),
                             listed.clone(),
-                            Arc::clone(&kept.purposes),
+                            Arc::clone(&kept.profiles),
                             updates.clone(),
                         ))));
                     }
@@ -468,7 +476,9 @@ async fn within<T>(call: impl Future<Output = Result<T, ClientError>>) -> Result
         .unwrap_or_else(|_| Err(ClientError::Transport("Renoa did not answer".to_owned())))
 }
 
-mod purposes;
+mod profiles;
+
+pub use profiles::host_agent;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]
