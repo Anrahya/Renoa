@@ -12,6 +12,13 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
+`cargo run` signs the app with a code-signing identity named `Renoa Dev`
+when the login Keychain has one (`scripts/run-signed.sh`). Without it, each
+build is a new app to the Keychain, which asks for the login password again.
+Make it once in Keychain Access: Certificate Assistant → Create a
+Certificate…, name `Renoa Dev`, identity type Self Signed Root, certificate
+type Code Signing.
+
 The first build takes a few minutes; `target/` grows to several GB, which `cargo clean`
 frees.
 
