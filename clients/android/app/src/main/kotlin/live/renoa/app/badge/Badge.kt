@@ -15,9 +15,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
+import live.renoa.app.agents.Look
 import live.renoa.app.badge.BadgeFrame.Companion.DEPTH
 import live.renoa.app.badge.BadgeFrame.Companion.LIFT
 import live.renoa.app.badge.BadgeFrame.Companion.RADIUS
@@ -43,30 +44,32 @@ import live.renoa.app.theme.RenoaType
 internal const val HALF = RADIUS * 1.42f
 private const val CORNER = 3f
 
-/** Phosphor Star, fill weight (MIT; see clients/android/licenses). */
-private const val STAR =
-    "M234.29,114.85l-45,38.83L203,211.75a16.4,16.4,0,0,1-24.5,17.82L128,198.49,77.47,229.57A16.4,16.4,0,0,1,53,211.75l13.76-58.07-45-38.83A16.46,16.46,0,0,1,31.08,86l59-4.76,22.76-55.08a16.36,16.36,0,0,1,30.27,0l22.75,55.08,59,4.76a16.46,16.46,0,0,1,9.37,28.86Z"
+/** The board's faces are drawn in a square of 100 units round a tile of radius 46. */
+private const val FACE_SCALE = RADIUS / 46f
 
 private class Shapes {
     val face = hexPath(0f, 0f, RADIUS, CORNER)
     val halo = hexPath(0f, 0f, RADIUS + 6f, CORNER + 1f)
-    val star = PathParser().parsePathString(STAR).toPath()
     val features = FaceShapes()
 }
 
 /**
- * [agent] as a tile, wearing what it wears on every screen: its hue on [roster], and, if it is
- * the main agent, Renoa's blush and star.
+ * The main agent: the one marked [AgentSummary.primary], as the Host names it. While none is marked,
+ * before the Host has named one or while the one it names is not on this roster, the first on the
+ * roster stands in.
  */
+fun mainAgent(roster: List<AgentSummary>): AgentSummary? = roster.firstOrNull { it.primary } ?: roster.firstOrNull()
+
+/** [agent] as a tile, wearing its own look on every screen, or Renoa's if it is the main agent on [roster]. */
 @Composable
 fun Badge(agent: AgentSummary, roster: List<AgentSummary>, size: Dp, modifier: Modifier = Modifier, label: String = agent.name, arriveAfterMillis: Int? = null) =
-    Badge(agent.name, agent.state, size, mainAgent(roster)?.id == agent.id, AgentHue.of(agent.id, roster), modifier, label, arriveAfterMillis)
+    Badge(agent.name, agent.state, size, mainAgent(roster)?.id == agent.id, agent.look, modifier, label, arriveAfterMillis)
 
 /**
- * An agent as a tile on the board, drawn the way the landing page draws a core: a face, a short
- * body below it, and a shadow on the socket. The tile has a face: an agent other than the main one
- * wears its [hue] and the [Trait] its name gives it. The [primary] agent, the one the owner talks to
- * first, is Paper with a blush, a star, and a light that runs round its edge. State shows in the
+ * An agent as a tile on the board, drawn the way the landing page draws a core: a tile, and a
+ * shadow on the socket. On the tile is the agent's head and shoulders in the [look] the Host picked
+ * for it, on a tile of its colour. The [primary] agent, the one the owner talks to first, wears
+ * Renoa's own look on Paper, with a star and a light that runs round her edge. State shows in the
  * face (see [drawFace]) and in motion (see [BadgeMotion]); an agent that wants the owner holds up
  * a question bubble. With [arriveAfterMillis] the tile drops into its socket once, the way tiles
  * assemble on the landing page.
@@ -77,7 +80,7 @@ fun Badge(
     state: AgentState,
     size: Dp,
     primary: Boolean,
-    hue: AgentHue,
+    look: Look?,
     modifier: Modifier = Modifier,
     label: String = name,
     arriveAfterMillis: Int? = null,
@@ -88,7 +91,6 @@ fun Badge(
     val shapes = remember { Shapes() }
     val measurer = rememberTextMeasurer()
     val question = remember(measurer) { measurer.measure("?", QUESTION_STYLE, density = UNIT_DENSITY) }
-    val trait = if (primary) null else Trait.of(name)
     val arrival = remember { Animatable(if (arriveAfterMillis != null && !reduced) 0f else 1f) }
     LaunchedEffect(Unit) {
         if (arrival.value < 1f) {
@@ -111,29 +113,29 @@ fun Badge(
         // Arriving, a tile falls the last 1.6 lifts into its socket, as on the landing page.
         val drop = (1f - arrival.value) * 1.6f
         withTransform({ translate(this.size.width / 2, this.size.height / 2 + LIFT * 0.3f * scale); scale(scale, scale, Offset.Zero) }) {
-            drawTile(frame, frame.lift + drop, shapes, question, state, trait, primary, colors, hue.face(colors), if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
+            drawTile(frame, frame.lift + drop, scale, shapes, question, state, look, primary, colors, if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
         }
     }
 }
 
-/** [pigment] is the agent's hue, or null for a Paper face with an ink edge. */
 private fun DrawScope.drawTile(
     frame: BadgeFrame,
     lift: Float,
+    pixelsPerUnit: Float,
     shapes: Shapes,
     question: TextLayoutResult,
     state: AgentState,
-    trait: Trait?,
+    look: Look?,
     primary: Boolean,
     colors: RenoaColors,
-    pigment: Color?,
     sweep: Float?,
 ) {
     val up = -lift * LIFT
-    val skin = if (frame.retiring) colors.secondary else pigment ?: PAPER_SKIN
-    val edge = pigment ?: FACE_INK
-    // The ring goes out over the page, so a Paper face's ring takes the page's ink, not its own.
-    val ring = pigment ?: colors.foreground
+    val pigment = tileColor(look, primary, colors)
+    val tile = if (frame.retiring) colors.secondary else pigment
+    val edge = if (primary) FACE_INK else pigment
+    // The ring goes out over the page, so a Paper tile's ring takes the page's ink, not its own.
+    val ring = if (primary) colors.foreground else pigment
     if (!frame.retiring) {
         // The shadow stays on the socket and softens as the tile rises.
         withTransform({ translate(0f, DEPTH + 3f) }) { drawPath(shapes.face, Color.Black.copy(alpha = 0.32f / (1f + lift))) }
@@ -146,21 +148,17 @@ private fun DrawScope.drawTile(
     }
     withTransform({ translate(0f, up) }) {
         if (sweep != null) drawHalo(shapes.halo, colors.foreground, sweep)
-        if (trait == Trait.Bun) drawBun(shapes.features, skin)
         if (!frame.retiring) withTransform({ translate(0f, DEPTH) }) { drawPath(shapes.face, Color.Black) }
-        drawPath(shapes.face, skin)
-        drawFace(shapes.features, shapes.face, state, trait, primary, skin, if (frame.retiring) colors.mutedForeground else FACE_INK)
+        drawPath(shapes.face, tile)
+        clipPath(shapes.face) {
+            // One device pixel, in the board's units at this size.
+            val finest = 1f / (pixelsPerUnit * FACE_SCALE)
+            drawFace(shapes.features, look, primary, state, tile, if (frame.retiring) colors.mutedForeground else FACE_INK, FACE_SCALE, finest)
+        }
         when {
             frame.retiring -> drawPath(shapes.face, colors.border, style = Stroke(1.25f))
             frame.failed -> drawPath(shapes.face, colors.stateFailed, style = Stroke(3.5f))
-            else -> drawPath(shapes.face, edge, style = Stroke(if (pigment == null) 2.5f else 1.25f))
-        }
-        if (sweep != null) {
-            val s = 14f / 256f
-            withTransform({ translate(-RADIUS * 0.92f, -RADIUS * 0.98f); scale(s, s, Offset.Zero) }) {
-                drawPath(shapes.star, colors.background, style = Stroke(48f))
-                drawPath(shapes.star, colors.foreground)
-            }
+            else -> drawPath(shapes.face, edge, style = Stroke(if (primary) 2.5f else 1.25f))
         }
         frame.bubble?.let { scale ->
             withTransform({ scale(scale, scale, BUBBLE_CENTRE) }) {

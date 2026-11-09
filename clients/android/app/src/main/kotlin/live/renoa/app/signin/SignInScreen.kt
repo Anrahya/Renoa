@@ -59,7 +59,7 @@ import androidx.compose.ui.unit.sp
 import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.delay
 import live.renoa.app.agents.AgentState
-import live.renoa.app.badge.AgentHue
+import live.renoa.app.agents.DEMO_LOOKS
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.LocalMotionClock
 import live.renoa.app.theme.LocalReducedMotion
@@ -149,14 +149,14 @@ private fun WelcomePage(onStart: () -> Unit) {
     }
 }
 
-private class ClusterAgent(val name: String, val primary: Boolean, val hue: AgentHue, val size: Int, val x: Float, val y: Float, val state: AgentState)
+private class ClusterAgent(val name: String, val primary: Boolean, val size: Int, val x: Float, val y: Float, val state: AgentState)
 
 private val CLUSTER = listOf(
-    ClusterAgent("Renoa", true, AgentHue.Ink, 92, 0f, 0f, AgentState.Working),
-    ClusterAgent("Tifa", false, AgentHue.Clay, 64, -104f, -34f, AgentState.Resting),
-    ClusterAgent("Optimus", false, AgentHue.Cobalt, 58, 100f, -46f, AgentState.Working),
-    ClusterAgent("Echo", false, AgentHue.Ochre, 48, -76f, 64f, AgentState.Resting),
-    ClusterAgent("Mira", false, AgentHue.Clay, 52, 84f, 58f, AgentState.Wants),
+    ClusterAgent("Renoa", true, 92, 0f, 0f, AgentState.Working),
+    ClusterAgent("Tifa", false, 64, -104f, -34f, AgentState.Resting),
+    ClusterAgent("Optimus", false, 58, 100f, -46f, AgentState.Working),
+    ClusterAgent("Echo", false, 48, -76f, 64f, AgentState.Resting),
+    ClusterAgent("Mira", false, 52, 84f, 58f, AgentState.Wants),
 )
 
 /** Five Renoa hex badges bobbing out of step on the welcome stage, driven by [LocalMotionClock]. */
@@ -187,7 +187,7 @@ private fun AgentCluster(shown: Boolean, modifier: Modifier = Modifier) {
                     alpha = entry.value.coerceIn(0f, 1f)
                 },
             ) {
-                Badge(member.name, member.state, member.size.dp, primary = member.primary, hue = member.hue, label = "")
+                Badge(member.name, member.state, member.size.dp, primary = member.primary, look = DEMO_LOOKS[member.name], label = "")
             }
         }
     }
@@ -209,7 +209,7 @@ private fun ChatGlimpse(shown: Boolean, modifier: Modifier = Modifier) {
             GlimpseBubble("What's the plan for dinner?", Palette.bubbleUser)
         }
         Row(Modifier.rise(shown), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Badge("Renoa", if (replied) AgentState.Resting else AgentState.Working, 28.dp, primary = true, hue = AgentHue.Ink, label = "")
+            Badge("Renoa", if (replied) AgentState.Resting else AgentState.Working, 28.dp, primary = true, look = null, label = "")
             AnimatedContent(
                 replied,
                 transitionSpec = {
@@ -247,7 +247,7 @@ private fun CodePage(state: SignInState, code: String, onCodeChange: (String) ->
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
-                Badge("Renoa", if (working) AgentState.Working else AgentState.Resting, 72.dp, primary = true, hue = AgentHue.Ink, label = "")
+                Badge("Renoa", if (working) AgentState.Working else AgentState.Resting, 72.dp, primary = true, look = null, label = "")
             }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Sign in to Renoa", style = PAGE_TITLE, color = Palette.text)

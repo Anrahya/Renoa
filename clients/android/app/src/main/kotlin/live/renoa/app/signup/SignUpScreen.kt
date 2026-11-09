@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.sp
 import com.kyant.shapes.Capsule
 import com.kyant.shapes.RoundedRectangle
 import live.renoa.app.agents.AgentState
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.RenoaEasing
@@ -253,7 +252,7 @@ private fun MeetStep(state: SignUpUiState, viewModel: SignUpViewModel, onDone: (
             AgentState.Resting,
             112.dp,
             primary = true,
-            hue = AgentHue.Ink,
+            look = null,
             modifier =
                 Modifier.graphicsLayer {
                     alpha = arrival.value
@@ -291,7 +290,7 @@ private fun StepBody(
 }
 
 @Composable
-private fun Tile(size: Int) = Badge(RENOA, AgentState.Resting, size.dp, primary = true, hue = AgentHue.Ink, label = "")
+private fun Tile(size: Int) = Badge(RENOA, AgentState.Resting, size.dp, primary = true, look = null, label = "")
 
 @Composable
 private fun Heading(text: String) = Text(text, Modifier.semantics { heading() }, style = PAGE_TITLE, color = Palette.text)

@@ -53,7 +53,6 @@ import androidx.compose.ui.zIndex
 import com.kyant.shapes.Capsule
 import kotlinx.coroutines.delay
 import live.renoa.app.agents.AgentState
-import live.renoa.app.badge.AgentHue
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.Appearance
 import live.renoa.app.ui.LinkLine
@@ -285,7 +284,7 @@ private fun EmptyRoster(onNewAgent: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Badge("Renoa", AgentState.Resting, 72.dp, primary = true, hue = AgentHue.Ink, label = "")
+        Badge("Renoa", AgentState.Resting, 72.dp, primary = true, look = null, label = "")
         Text("Nobody is here yet", style = Type.title3.semibold, color = Palette.text)
         Text(
             "Make your first agent, and they will start helping.",

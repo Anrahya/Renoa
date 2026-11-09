@@ -44,8 +44,8 @@ import kotlin.uuid.Uuid
  * Making an agent, reading its profile, the routines, the feed and which agent is main are Host
  * control, carried by the same connection ([HostAgents], [HostRoutines], [HostFeed]). The routines
  * and the main agent come from one read of the Host's observation, and the feed from its own read,
- * on every roster check and when the owner comes back; each Host agent's purpose is read until the
- * Host has answered for it. An open question in the feed is its agent's [Glance.ask].
+ * on every roster check and when the owner comes back; each Host agent's purpose and look are read
+ * until the Host has answered for them. An open question in the feed is its agent's [Glance.ask].
  * A new agent is an `agent:<id>` target once its node next advertises; [create] waits for that and
  * follows its chat. Abilities and edits are not on the Host's agent API yet, so those calls are
  * refused as [Problem.NotYet] and nothing is sent.
@@ -73,9 +73,6 @@ class RcpAgentRepository(
 
         /** Set once [RcpSurface.attach] returned; from then on [RcpSurface.connect] re-attaches it. */
         var attached = false
-
-        /** What the agent is for, as the Host keeps it; null until read. */
-        var purpose: String? = null
     }
 
     /** The Host's answer to which agent is main: [id] is its Host agent id, or null when the Host has no agent. */
@@ -100,6 +97,7 @@ class RcpAgentRepository(
         )
     private val hostClient = HostClient(surface)
     private val host = HostAgents(hostClient)
+    private val profiles = HostProfiles(host)
     private val owner = HostOwner(hostClient)
     private val uploads = HostUploads(hostClient)
     private val heldRoutines = HeldRoutines(HostRoutines(hostClient), changed = ::publish)
@@ -150,7 +148,7 @@ class RcpAgentRepository(
                     refusals = 0
                     readObservation()
                     heldFeed.read()
-                    readPurposes()
+                    readProfiles()
                     // Only a connection that got this far resets the wait, so one that fails at once backs off.
                     attempt = 0
                     coroutineScope {
@@ -163,7 +161,7 @@ class RcpAgentRepository(
                                     follow(surface.listTargets())
                                     readObservation()
                                     heldFeed.read()
-                                    readPurposes()
+                                    readProfiles()
                                 }
                             }
                         surface.awaitDisconnect()
@@ -254,9 +252,13 @@ class RcpAgentRepository(
             roster.value =
                 rooms.filterValues { it.attached }.map { (id, room) ->
                     // A question the agent asked, in its chat or elsewhere, is the owner's to answer first.
-                    val ask = hostAgentId(id)?.let { asks[it.toString()] }?.ask
+                    val hostId = hostAgentId(id)
+                    val ask = hostId?.let { asks[it.toString()] }?.ask
                     val state = if (ask != null && room.journal.state.homeRank > AgentState.Wants.homeRank) AgentState.Wants else room.journal.state
-                    AgentSummary(id, room.target.name, purpose = room.purpose.orEmpty(), state = state, glance = room.journal.glance.copy(ask = ask))
+                    AgentSummary(
+                        id, room.target.name, purpose = hostId?.let(profiles::purpose).orEmpty(), state = state,
+                        glance = room.journal.glance.copy(ask = ask), look = hostId?.let(profiles::look),
+                    )
                 }
             // A Host that names no agent, or one not on this roster, marks no one, so the first stands in.
             val named = main?.id
@@ -267,25 +269,10 @@ class RcpAgentRepository(
         }
     }
 
-    /**
-     * Reads what each followed Host agent is for. Once the Host answered, with the definition or with
-     * no such agent, it is not asked again this launch; any other failure is asked again on the next
-     * roster check.
-     */
-    private suspend fun readPurposes() {
-        val unread = synchronized(lock) { rooms.values.filter { it.attached && it.purpose == null } }
-        for (room in unread) {
-            val hostId = hostAgentId(agentId(room.target)) ?: continue
-            val purpose =
-                try {
-                    host.definition(hostId).operational.purpose.orEmpty()
-                } catch (failed: RepositoryException) {
-                    if (failed.problem != Problem.NotFound) continue
-                    ""
-                }
-            synchronized(lock) { room.purpose = purpose }
-            publish()
-        }
+    /** Reads what each followed Host agent is for and how it looks, as [HostProfiles] says. */
+    private suspend fun readProfiles() {
+        val agents = synchronized(lock) { rooms.filterValues { it.attached }.keys.mapNotNull(::hostAgentId) }
+        profiles.read(agents, ::publish)
     }
 
     /**
@@ -451,8 +438,11 @@ class RcpAgentRepository(
         if (synchronized(lock) { rooms[agentId(joined)]?.attached } != true) {
             throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but its chat could not be opened")
         }
-        synchronized(lock) { rooms[agentId(joined)]?.purpose = record.operational.purpose.orEmpty() }
+        val made = Uuid.parse(record.id)
+        profiles.learned(made, record.operational.purpose.orEmpty())
         publish()
+        // The Host picked its look as it made it; one it could not tell now, the next roster check reads.
+        profiles.read(listOf(made), ::publish)
         return record.profile(agentId(joined))
     }
 

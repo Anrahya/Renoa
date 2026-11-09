@@ -88,7 +88,7 @@ private fun CreateAgentSheet(state: EditorUiState, called: String, viewModel: Ag
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
-            Badge(state.name.ifBlank { "?" }, AgentState.Resting, 96.dp, state.main, state.hue, label = "")
+            Badge(state.name.ifBlank { "?" }, AgentState.Resting, 96.dp, state.main, state.look, label = "")
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 PlainTextField(
                     text = state.name,
@@ -161,7 +161,7 @@ private fun EditAgentSheet(state: EditorUiState, called: String, viewModel: Agen
                 row {
                     ValueRow("Avatar") {
                         Box(Modifier.clip(RoundedRectangle(10.dp)).background(Palette.bubbleAgent).padding(4.dp)) {
-                            Badge(state.name.ifBlank { "?" }, AgentState.Resting, 32.dp, state.main, state.hue, label = "")
+                            Badge(state.name.ifBlank { "?" }, AgentState.Resting, 32.dp, state.main, state.look, label = "")
                         }
                     }
                 }
