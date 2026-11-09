@@ -156,7 +156,7 @@ impl Renoa {
 impl Render for Renoa {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::of(window, cx);
-        match &self.screen {
+        let screen = match &self.screen {
             Screen::Chats(chats) => div().size_full().child(chats.clone()),
             Screen::Problem => centered(palette)
                 .child(
@@ -211,7 +211,8 @@ impl Render for Renoa {
                         )
                     })
             }
-        }
+        };
+        crate::menus::window_items(screen)
     }
 }
 

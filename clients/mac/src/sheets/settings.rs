@@ -10,8 +10,9 @@ use gpui_kit::{
 use super::{Page, SheetEvent, group, header, pill, section};
 use crate::theme::{self, Appearance, Palette};
 
-/// The keys that move around the app, as Settings lists them. The bindings
-/// themselves are `chats::keys`; a test checks each listed one is bound.
+/// The keys that move around the app, as Settings lists them. The keys
+/// themselves are `chats::keys`; a test in `chats/tests.rs` presses each one
+/// listed here and checks it leads where its words say.
 pub const SHORTCUTS: [(&str, &str); 9] = [
     ("Jump to an agent or page", "⌘K"),
     ("Home", "⌘0"),

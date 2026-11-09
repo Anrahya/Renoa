@@ -1,10 +1,42 @@
-//! The keys that move around the app. Settings lists them
-//! (`sheets::settings::SHORTCUTS`); a test checks that each key it lists
-//! does what it says and that each sheet's own keys are among them.
+//! The keys that move around the app. The ones the menus show are bound to
+//! actions (`bind`), so a menu item and its key are one; the rest are read
+//! as they are pressed (`shortcut`). Settings lists them all
+//! (`sheets::settings::SHORTCUTS`); a test in `chats/tests.rs` presses each
+//! one it lists and checks where it leads.
 
-use gpui_kit::Keystroke;
+use gpui_kit::{
+    Action, App, Context, Div, InteractiveElement as _, KeyBinding, Keystroke, actions,
+};
+
+use super::Chats;
 
 use crate::sheets::Page;
+
+actions!(
+    renoa,
+    [
+        GoHome,
+        JumpTo,
+        AboutAgent,
+        OpenRoutines,
+        OpenMemory,
+        OpenApps,
+        OpenSettings
+    ]
+);
+
+/// Binds the keys the menus show to their actions, for the whole app.
+pub fn bind(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-0", GoHome, None),
+        KeyBinding::new("cmd-k", JumpTo, None),
+        KeyBinding::new("cmd-i", AboutAgent, None),
+        KeyBinding::new("cmd-shift-r", OpenRoutines, None),
+        KeyBinding::new("cmd-shift-m", OpenMemory, None),
+        KeyBinding::new("cmd-shift-a", OpenApps, None),
+        KeyBinding::new("cmd-,", OpenSettings, None),
+    ]);
+}
 
 /// Where a key takes the owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,20 +53,14 @@ pub enum Move {
     Close,
 }
 
-/// The move `keystroke` asks for, if any.
+/// The move an unbound `keystroke` asks for, if any: Esc, which the text
+/// fields would otherwise take, and the agents' numbers.
 pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
     let held = &keystroke.modifiers;
     let command = held.platform && !held.control && !held.alt;
     let key = keystroke.key.as_str();
     match (command, held.shift, key) {
         (false, false, "escape") => Some(Move::Close),
-        (true, false, "k") => Some(Move::Jump),
-        (true, false, ",") => Some(Move::Sheet(Page::Settings)),
-        (true, false, "0") => Some(Move::Home),
-        (true, false, "i") => Some(Move::Profile),
-        (true, true, "r") => Some(Move::Sheet(Page::Routines)),
-        (true, true, "m") => Some(Move::Sheet(Page::Memory)),
-        (true, true, "a") => Some(Move::Sheet(Page::Apps)),
         (true, false, digit) => match digit.parse::<usize>() {
             Ok(place @ 1..=9) => Some(Move::Agent(place - 1)),
             _ => None,
@@ -43,57 +69,45 @@ pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
     }
 }
 
+/// Answers each bound action with its move. ⌘I is answered only while a
+/// page can open, so elsewhere its menu item is dimmed and the key passes.
+impl Chats {
+    pub(super) fn answer_keys(&self, root: Div, cx: &mut Context<Self>) -> Div {
+        let mut root = root;
+        let page = self.profile_task().is_some();
+        for (moved, listen) in [
+            (Move::Home, listen::<GoHome> as Listen),
+            (Move::Jump, listen::<JumpTo>),
+            (Move::Profile, listen::<AboutAgent>),
+            (Move::Sheet(Page::Routines), listen::<OpenRoutines>),
+            (Move::Sheet(Page::Memory), listen::<OpenMemory>),
+            (Move::Sheet(Page::Apps), listen::<OpenApps>),
+            (Move::Sheet(Page::Settings), listen::<OpenSettings>),
+        ] {
+            if moved != Move::Profile || page {
+                root = listen(root, moved, cx);
+            }
+        }
+        root
+    }
+}
+
+type Listen = fn(Div, Move, &mut Context<Chats>) -> Div;
+
+fn listen<A: Action>(root: Div, moved: Move, cx: &mut Context<Chats>) -> Div {
+    root.on_action(cx.listener(move |chats, _: &A, window, cx| {
+        chats.go(moved, window, cx);
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use gpui_kit::Keystroke;
 
     use super::{Move, shortcut};
-    use crate::sheets::{Page, settings::SHORTCUTS};
 
     fn press(keys: &'static str) -> Option<Move> {
         shortcut(&Keystroke::parse(keys).expect("a keystroke"))
-    }
-
-    #[test]
-    fn each_key_settings_lists_does_what_it_says() {
-        let pressed = |keys: &str| match keys {
-            "⌘K" => press("cmd-k"),
-            "⌘0" => press("cmd-0"),
-            "⌘I" => press("cmd-i"),
-            "⌘1 – ⌘9" => press("cmd-1").filter(|_| press("cmd-9") == Some(Move::Agent(8))),
-            "⌘⇧R" => press("cmd-shift-r"),
-            "⌘⇧M" => press("cmd-shift-m"),
-            "⌘⇧A" => press("cmd-shift-a"),
-            "⌘," => press("cmd-,"),
-            "Esc" => press("escape"),
-            other => panic!("Settings lists {other}, which this test does not press"),
-        };
-        for (what, keys) in SHORTCUTS {
-            let moved = pressed(keys);
-            let expected = match what {
-                "Jump to an agent or page" => Move::Jump,
-                "Home" => Move::Home,
-                "About the agent you're talking to" => Move::Profile,
-                "Open the first nine agents" => Move::Agent(0),
-                "Close a sheet" => Move::Close,
-                page => Move::Sheet(
-                    Page::ALL
-                        .into_iter()
-                        .find(|listed| listed.title() == page)
-                        .unwrap_or_else(|| panic!("no page named {page}")),
-                ),
-            };
-            assert_eq!(moved, Some(expected), "{what}: {keys}");
-        }
-        for page in Page::ALL {
-            assert!(
-                SHORTCUTS
-                    .iter()
-                    .any(|(what, keys)| *what == page.title() && *keys == page.keys()),
-                "{} shows its keys in Settings",
-                page.title()
-            );
-        }
     }
 
     #[test]
