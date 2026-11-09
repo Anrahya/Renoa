@@ -42,7 +42,7 @@ pub(super) enum Up {
 /// A sheet that is up.
 pub(super) struct Shown {
     pub(super) up: Up,
-    view: AnyView,
+    pub(super) view: AnyView,
     /// Counts the sheets opened, so each rises afresh.
     opened: usize,
     _events: Subscription,
@@ -125,7 +125,8 @@ impl Chats {
             return;
         };
         let host = Host(self.commands.clone());
-        let sheet = cx.new(|cx| Profile::new(host, member, cx));
+        let purpose = self.purposes.get(&task_id).cloned();
+        let sheet = cx.new(|cx| Profile::new(host, member, purpose, cx));
         let events = cx.subscribe_in(&sheet, window, Self::on_sheet);
         self.raise(
             Up::Profile(task_id),

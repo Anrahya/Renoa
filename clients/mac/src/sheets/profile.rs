@@ -1,9 +1,9 @@
 //! An agent's page: who it is, what it is for, the routines it runs, the
-//! apps it uses and what it has been up to. It only shows: the Host cannot change an agent from an app
-//! yet, so changes happen in the agent's chat, the Routines sheet and the
-//! Apps sheet.
+//! apps it uses and what it has been up to. It only shows: the Host cannot
+//! change an agent from an app yet, so changes happen in the agent's chat
+//! and on the Routines and Apps sheets.
 
-use chrono::{DateTime, Datelike as _, Local, TimeZone};
+use chrono::Local;
 use gpui_kit::{
     AnyElement, Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -29,84 +29,126 @@ use crate::{
 /// How many of its latest notes the page shows.
 const LATELY: usize = 4;
 
-/// The fields of the Host's agent definition this page reads.
+/// The field of the Host's agent definition this page reads; what the
+/// agent is for comes from the chats, which read it once for every agent.
 #[derive(Debug, Deserialize)]
 struct Definition {
     created_at_ms: i64,
-    operational: Operational,
 }
 
-#[derive(Debug, Deserialize)]
-struct Operational {
-    #[serde(default)]
-    purpose: Option<String>,
-}
-
-/// What the page shows of the agent, as the Host last said.
+/// What the page shows of the agent, as the Host last said. Each part is
+/// `None` when it could not be read; the rest still shows.
 #[derive(Debug)]
 struct Held {
-    purpose: Option<String>,
     since_ms: i64,
-    routines: Vec<Automation>,
-    apps: Vec<AgentApp>,
+    routines: Option<Vec<Automation>>,
+    apps: Option<Vec<AgentApp>>,
     /// Its latest notes and questions, newest first.
-    lately: Vec<Item>,
+    lately: Option<Vec<Item>>,
 }
 
 pub struct Profile {
     host: Host,
     member: Member,
+    purpose: Option<SharedString>,
     loaded: Loaded<Held>,
+    /// The Host no longer has the agent.
+    gone: bool,
+    reading: bool,
     here_zone: Option<String>,
 }
 
 impl EventEmitter<SheetEvent> for Profile {}
 
 impl Profile {
-    pub fn new(host: Host, member: Member, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        host: Host,
+        member: Member,
+        purpose: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut profile = Self {
             host,
             member,
+            purpose,
             loaded: Loaded::Waiting,
+            gone: false,
+            reading: false,
             here_zone: iana_time_zone::get_timezone().ok(),
         };
         profile.read(cx);
         profile
     }
 
+    /// What the page says the agent is for.
+    #[cfg(test)]
+    pub fn purpose(&self) -> Option<&SharedString> {
+        self.purpose.as_ref()
+    }
+
+    /// Reads the agent, then each part of the page in turn; a read already
+    /// on its way is enough, and one for a page that closed stops.
     fn read(&mut self, cx: &mut Context<Self>) {
+        if self.reading {
+            return;
+        }
+        self.reading = true;
         let host = self.host.clone();
         let agent = self.member.host_id;
         cx.spawn(async move |this, cx| {
+            let open = || this.upgrade().is_some();
             let definition = host
                 .get::<Definition>(format!("/v1/host/agents/{agent}"))
                 .await;
-            let apps = host
-                .get::<Apps>(format!("/v1/host/agents/{agent}/apps"))
-                .await;
-            let observed = host.get::<Observation>("/v1/host".to_owned()).await;
-            let feed = host.get::<feed::Page>(feed::page_path(None)).await;
-            let held = match (definition, apps, observed, feed) {
-                (
-                    Answer::Said(definition),
-                    Answer::Said(apps),
-                    Answer::Said(observed),
-                    Answer::Said(feed),
-                ) => Loaded::Ready(Held {
-                    purpose: definition
-                        .operational
-                        .purpose
-                        .map(|purpose| purpose.trim().to_owned())
-                        .filter(|purpose| !purpose.is_empty()),
-                    since_ms: definition.created_at_ms,
-                    routines: its_routines(observed.automations, agent),
-                    apps: apps.apps.into_iter().filter(|app| app.on).collect(),
-                    lately: lately(feed.items, agent),
-                }),
-                _ => Loaded::Unread,
+            let read = match definition {
+                Answer::Said(definition) if open() => {
+                    let apps = match host
+                        .get::<Apps>(format!("/v1/host/agents/{agent}/apps"))
+                        .await
+                    {
+                        Answer::Said(apps) => {
+                            Some(apps.apps.into_iter().filter(|app| app.on).collect())
+                        }
+                        // Gone meanwhile: it has no apps.
+                        Answer::Missing => Some(Vec::new()),
+                        Answer::Conflict | Answer::Later | Answer::Lost => None,
+                    };
+                    let routines = match host.get::<Observation>("/v1/host".to_owned()).await {
+                        Answer::Said(observed) => Some(its_routines(observed.automations, agent)),
+                        _ => None,
+                    };
+                    let mut lately = Some(Vec::new());
+                    let mut at = None;
+                    while let Some(found) = lately.as_mut().filter(|_| open()) {
+                        let Answer::Said(page) = host.get::<feed::Page>(feed::page_path(at)).await
+                        else {
+                            lately = None;
+                            break;
+                        };
+                        at = feed::next(at, &page);
+                        found.extend(page.items.into_iter().filter(|item| mine(item, agent)));
+                        if found.len() >= LATELY || at.is_none() {
+                            found.truncate(LATELY);
+                            break;
+                        }
+                    }
+                    Some(Loaded::Ready(Held {
+                        since_ms: definition.created_at_ms,
+                        routines,
+                        apps,
+                        lately,
+                    }))
+                }
+                Answer::Said(_) => return,
+                Answer::Missing => None,
+                Answer::Conflict | Answer::Later | Answer::Lost => Some(Loaded::Unread),
             };
             let _ = this.update(cx, |this, cx| {
-                this.loaded = held;
+                this.reading = false;
+                match read {
+                    Some(loaded) => this.loaded = loaded,
+                    None => this.gone = true,
+                }
                 cx.notify();
             });
         })
@@ -125,14 +167,10 @@ fn its_routines(automations: Vec<Automation>, agent: uuid::Uuid) -> Vec<Automati
     routines
 }
 
-/// The newest notes and questions `agent` left, from the feed's newest
-/// page, whether or not the owner has dealt with them.
-fn lately(items: Vec<Item>, agent: uuid::Uuid) -> Vec<Item> {
-    items
-        .into_iter()
-        .filter(|item| item.agent.id == agent && item.kind != Kind::Unknown)
-        .take(LATELY)
-        .collect()
+/// Whether the page shows `item` among what `agent` did lately: a note or
+/// question of its own, whether or not the owner has dealt with it.
+fn mine(item: &Item, agent: uuid::Uuid) -> bool {
+    item.agent.id == agent && item.kind != Kind::Unknown
 }
 
 /// What a note says on the page: a question in its own words.
@@ -142,20 +180,6 @@ fn said(item: &Item) -> String {
     } else {
         item.words().to_owned()
     }
-}
-
-/// "With you since 3 November", with the year when it was another year.
-fn since<Tz: TimeZone>(at_ms: i64, now: &DateTime<Tz>) -> Option<String>
-where
-    Tz::Offset: std::fmt::Display,
-{
-    let at = now.timezone().timestamp_millis_opt(at_ms).single()?;
-    let day = if at.year() == now.year() {
-        at.format("%-d %B")
-    } else {
-        at.format("%-d %B %Y")
-    };
-    Some(format!("With you since {day}"))
 }
 
 impl Render for Profile {
@@ -170,7 +194,8 @@ impl Render for Profile {
         };
         let line = [
             member.primary.then(|| "Your main agent".to_owned()),
-            held.and_then(|held| since(held.since_ms, &now)),
+            held.and_then(|held| stamp::date(held.since_ms, &now))
+                .map(|day| format!("With you since {day}")),
         ]
         .into_iter()
         .flatten()
@@ -206,18 +231,8 @@ impl Render for Profile {
                                 .child(line),
                         )
                     })
-                    .when_some(held, |words, held| {
-                        words.child(
-                            div()
-                                .pt(px(4.))
-                                .line_height(px(20.))
-                                .when(held.purpose.is_none(), |words| {
-                                    words.text_color(palette.secondary)
-                                })
-                                .child(held.purpose.clone().unwrap_or_else(|| {
-                                    format!("Tell {} in the chat what it's for.", member.name)
-                                })),
-                        )
+                    .when_some(self.purpose.clone(), |words, purpose| {
+                        words.child(div().pt(px(4.)).line_height(px(20.)).child(purpose))
                     }),
             )
             .child(
@@ -243,6 +258,18 @@ impl Render for Profile {
                     .child(IconName::Close),
             );
         let page = div().size_full().flex().flex_col().child(top);
+        let name = &member.name;
+        if self.gone {
+            return page.child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(palette.secondary)
+                    .child(format!("{name} is no longer one of your agents.")),
+            );
+        }
         if let Some(note) = not_ready(
             &self.loaded,
             "Reading about this agent…",
@@ -257,9 +284,11 @@ impl Render for Profile {
         let Some(held) = held else {
             unreachable!("not_ready covers the rest")
         };
+        let unread = || "Renoa couldn't read this just now.".to_owned();
         let routines: Vec<AnyElement> = held
             .routines
             .iter()
+            .flatten()
             .map(|routine| {
                 let when = schedule::words(&routine.schedule, &Local, self.here_zone.as_deref());
                 row(
@@ -280,6 +309,7 @@ impl Render for Profile {
         let apps: Vec<AnyElement> = held
             .apps
             .iter()
+            .flatten()
             .map(|app| {
                 let name = label(app);
                 row(
@@ -295,6 +325,7 @@ impl Render for Profile {
         let lately: Vec<AnyElement> = held
             .lately
             .iter()
+            .flatten()
             .map(|item| {
                 row(
                     said(item),
@@ -309,7 +340,6 @@ impl Render for Profile {
                 .into_any_element()
             })
             .collect();
-        let name = &member.name;
         page.child(
             div()
                 .id("profile")
@@ -327,13 +357,17 @@ impl Render for Profile {
                         .gap(px(20.))
                         .child(column(
                             "Routines",
-                            pill("all-routines", "All routines", false, palette).on_click(
-                                cx.listener(|_, _, _, cx| {
+                            pill("all-routines", "All routines", false, palette)
+                                .test_support()
+                                .on_click(cx.listener(|_, _, _, cx| {
                                     cx.emit(SheetEvent::Sheet(Page::Routines))
-                                }),
-                            ),
+                                })),
                             routines,
-                            format!("{name} runs no routines yet. Ask in the chat to set one up."),
+                            held.routines.as_ref().map_or_else(unread, |_| {
+                                format!(
+                                    "{name} runs no routines yet. Ask in the chat to set one up."
+                                )
+                            }),
                             palette,
                         ))
                         .child(column(
@@ -344,7 +378,9 @@ impl Render for Profile {
                                     cx.emit(SheetEvent::Sheet(Page::Apps))
                                 })),
                             apps,
-                            format!("{name} uses no apps yet. Ask in the chat to connect one."),
+                            held.apps.as_ref().map_or_else(unread, |_| {
+                                format!("{name} uses no apps yet. Ask in the chat to connect one.")
+                            }),
                             palette,
                         )),
                 )
@@ -352,7 +388,9 @@ impl Render for Profile {
                     "Lately",
                     div(),
                     lately,
-                    format!("Nothing from {name} yet."),
+                    held.lately
+                        .as_ref()
+                        .map_or_else(unread, |_| format!("Nothing from {name} yet.")),
                     palette,
                 )),
         )

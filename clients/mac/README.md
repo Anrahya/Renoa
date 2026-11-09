@@ -114,15 +114,22 @@ owner's Host through the session (`src/sheets/`):
   shows a new code. Renoa itself is not told, so the Mac stays among the
   owner's devices.
 
-An agent's own page rises the same way, from its name at the top of its
-chat or ⌘I (`src/sheets/profile.rs`). It shows the agent's face, what it is
-for and how long it has been around (`GET /v1/host/agents/<id>`), the
-routines it runs (`GET /v1/host`), the apps it has on (`GET
-/v1/host/agents/<id>/apps`), and its four latest notes and questions from
-the feed's newest page (`GET /v1/host/feed`). If any of those reads fails,
-the page says so and offers to read again. The page only shows, because the
-Host cannot change an agent from an app yet. Message opens the agent's chat;
-All routines and Manage open those sheets in its place.
+An agent's own page rises the same way (`src/sheets/profile.rs`). It opens
+from the agent's name at the top of its chat or with ⌘I, for the Host's
+agents only. The page shows:
+
+- the agent's face, and what it is for, as the chats already read it;
+- how long it has been around (`GET /v1/host/agents/<id>`);
+- the routines it runs (`GET /v1/host`);
+- the apps it has on (`GET /v1/host/agents/<id>/apps`);
+- its four latest notes and questions, read back through the feed's pages
+  until four are found (`GET /v1/host/feed`).
+
+If the agent itself cannot be read, the page offers to read again; an agent
+the Host no longer has is said to be gone. Each other part that cannot be
+read says so on its own line while the rest shows. The page only shows,
+because the Host cannot change an agent from an app yet. Message opens the
+agent's chat; All routines and Manage open those sheets in its place.
 
 A Host call made while Renoa is out of reach is answered at once as not
 reached; it is not made later, when the owner may have moved on.

@@ -459,7 +459,10 @@ fn home_shows_first_with_the_keys_and_a_chat_opened_from_the_side_is_ready_to_ty
 
 #[gpui_kit::test]
 fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mut TestAppContext) {
-    use crate::{link::host::Answer, sheets::Page};
+    use crate::{
+        link::host::Answer,
+        sheets::{Page, profile::Profile},
+    };
 
     let (window, chats, mut asked, updates) = open(cx);
     let node_id = NodeId::new();
@@ -474,6 +477,13 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
                 name: "Chef".to_owned(),
             },
         ]))
+        .unwrap();
+    updates
+        .send(Update::Purpose {
+            node_id,
+            target: chef.clone(),
+            purpose: "Plans dinners.".to_owned(),
+        })
         .unwrap();
     cx.run_until_parked();
     let up = |cx: &mut TestAppContext| {
@@ -509,9 +519,21 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
     act(&|window, cx| window.click(("agent", 0usize), cx), cx);
     act(&|window, cx| window.press("cmd-i", cx), cx);
     assert_eq!(up(cx), None, "the first agent is not one of the Host's");
+    act(&|window, cx| window.click("about", cx), cx);
+    assert_eq!(up(cx), None, "nor is its name a way to a page");
     act(&|window, cx| window.click(("agent", 1usize), cx), cx);
     act(&|window, cx| window.press("cmd-i", cx), cx);
     assert_eq!(up(cx), Some(Up::Profile(task_id)), "⌘I opens it");
+    let purpose = chats.read_with(cx, |chats, cx| {
+        let shown = chats.sheet.as_ref().expect("a sheet");
+        let profile = shown.view.clone().downcast::<Profile>().expect("the page");
+        profile.read(cx).purpose().cloned()
+    });
+    assert_eq!(
+        purpose.as_deref(),
+        Some("Plans dinners."),
+        "what the chats know it is for"
+    );
     act(&|window, cx| window.click("manage-apps", cx), cx);
     assert_eq!(up(cx), Some(Up::Sheet(Page::Apps)), "Manage opens Apps");
     act(&|window, cx| window.press("escape", cx), cx);
@@ -520,6 +542,12 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
         up(cx),
         Some(Up::Profile(task_id)),
         "so does its name at the top"
+    );
+    act(&|window, cx| window.click("all-routines", cx), cx);
+    assert_eq!(
+        up(cx),
+        Some(Up::Sheet(Page::Routines)),
+        "All routines opens Routines"
     );
     act(&|window, cx| window.press("cmd-0", cx), cx);
     act(&|window, cx| window.press("cmd-i", cx), cx);

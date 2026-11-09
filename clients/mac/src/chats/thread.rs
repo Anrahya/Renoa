@@ -19,6 +19,7 @@ use super::{Chats, Row};
 use crate::{
     chat::{Line, Speaker, Transcript, chat_task_id},
     face::{Face, Look, Mood},
+    link::host_agent,
     stamp,
     theme::Palette,
 };
@@ -103,11 +104,15 @@ impl Chats {
             .flex_col()
             .child(thread)
             .when(chosen.is_some(), |column| {
-                let about = task_id.map(|task_id| {
-                    cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
-                        this.open_profile(task_id, window, cx);
-                    })
-                });
+                // Only the Host's agents have a page.
+                let about = listed
+                    .filter(|agent| host_agent(agent.target.as_str()).is_some())
+                    .and(task_id)
+                    .map(|task_id| {
+                        cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                            this.open_profile(task_id, window, cx);
+                        })
+                    });
                 column.child(header(
                     &agent,
                     purpose,

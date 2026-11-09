@@ -1,11 +1,10 @@
-use chrono::{TimeZone as _, Utc};
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
 use renoa_protocol::TargetRef;
 use renoa_rcp_wire::NodeId;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::{Profile, its_routines, since};
+use super::{Profile, its_routines};
 use crate::{
     chat::chat_task_id,
     link::{Command, host::Answer},
@@ -47,24 +46,6 @@ fn an_agents_page_lists_its_own_routines_on_first_then_soonest() {
     );
 }
 
-#[test]
-fn how_long_an_agent_has_been_around_names_the_year_only_when_another() {
-    let now = Utc.with_ymd_and_hms(2026, 11, 9, 12, 0, 0).unwrap();
-    let at = |year, month, day| {
-        Utc.with_ymd_and_hms(year, month, day, 8, 0, 0)
-            .unwrap()
-            .timestamp_millis()
-    };
-    assert_eq!(
-        since(at(2026, 11, 3), &now).as_deref(),
-        Some("With you since 3 November")
-    );
-    assert_eq!(
-        since(at(2025, 12, 24), &now).as_deref(),
-        Some("With you since 24 December 2025")
-    );
-}
-
 fn chef() -> Member {
     let node_id = NodeId::from_uuid(Uuid::from_u128(9));
     Member {
@@ -101,57 +82,81 @@ fn serve(
     }
 }
 
+fn item(id: u128, kind: &str, agent: Uuid) -> serde_json::Value {
+    serde_json::json!({"id": Uuid::from_u128(id), "kind": kind,
+        "agent": {"id": agent, "name": "?"}, "title": format!("title {id}"),
+        "body": format!("body {id}"), "at_ms": id, "done": id == 4, "subject_id": "s"})
+}
+
+/// The Host: Chef's notes start on the feed's second page, past Scout's.
 fn host(path: &str) -> Answer<String> {
     let said = match path {
         "/v1/host" => observed(),
-        "/v1/host/feed" => {
-            let item = |id: u128, kind: &str, agent: Uuid| {
-                serde_json::json!({"id": Uuid::from_u128(id), "kind": kind,
-                    "agent": {"id": agent, "name": "?"}, "title": format!("title {id}"),
-                    "body": format!("body {id}"), "at_ms": id, "done": id == 4,
-                    "subject_id": "s"})
-            };
-            serde_json::json!({"today": "", "items": [
-                item(9, "update", SCOUT), item(8, "weather", CHEF), item(7, "ask", CHEF),
-                item(6, "update", CHEF), item(5, "problem", CHEF), item(4, "result", CHEF),
-                item(3, "ability", CHEF),
-            ]})
-        }
+        "/v1/host/feed" => serde_json::json!({"today": "", "next_before": 10,
+            "items": [item(12, "update", SCOUT), item(11, "update", SCOUT)]}),
+        "/v1/host/feed/before/10" => serde_json::json!({"today": "", "next_before": 3, "items": [
+            item(9, "update", SCOUT), item(8, "weather", CHEF), item(7, "ask", CHEF),
+            item(6, "update", CHEF), item(5, "problem", CHEF), item(4, "result", CHEF),
+            item(3, "ability", CHEF),
+        ]}),
         path if path.ends_with("/apps") => serde_json::json!({"apps": [
             {"connection": "gmail", "name": "Gmail", "endpoint": "https://gmail.example/mcp", "on": true},
             {"connection": "exa-mcp", "endpoint": "https://mcp.exa.ai/mcp", "on": false},
         ]}),
         _ => serde_json::json!({"id": CHEF, "name": "Chef", "created_at_ms": 7,
-            "operational": {"instructions": "Cook.", "purpose": "  Plans dinners from the fridge.  "}}),
+            "operational": {"instructions": "Cook."}}),
     };
     Answer::Said(said.to_string())
 }
 
-/// What the page shows: its purpose, routines and apps, once read.
+/// What the page shows once read: when the agent came, its routines, its
+/// apps and its latest notes, each `None` when unread.
 #[allow(clippy::type_complexity)]
 fn shown(
     profile: &Entity<Profile>,
     cx: &mut TestAppContext,
-) -> Option<(Option<String>, i64, Vec<String>, Vec<String>, Vec<String>)> {
+) -> Option<(
+    i64,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+)> {
     profile.read_with(cx, |profile, _| match &profile.loaded {
         Loaded::Ready(held) => Some((
-            held.purpose.clone(),
             held.since_ms,
-            held.routines
-                .iter()
-                .map(|routine| routine.name.clone())
-                .collect(),
-            held.apps.iter().map(|app| app.connection.clone()).collect(),
-            held.lately.iter().map(super::said).collect(),
+            held.routines.as_ref().map(|routines| {
+                routines
+                    .iter()
+                    .map(|routine| routine.name.clone())
+                    .collect()
+            }),
+            held.apps
+                .as_ref()
+                .map(|apps| apps.iter().map(|app| app.connection.clone()).collect()),
+            held.lately
+                .as_ref()
+                .map(|lately| lately.iter().map(super::said).collect()),
         )),
         Loaded::Waiting | Loaded::Unread => None,
     })
 }
 
+fn open(cx: &mut TestAppContext) -> (Entity<Profile>, mpsc::UnboundedReceiver<Command>) {
+    let (commands, asked) = mpsc::unbounded_channel();
+    let profile = cx.new(|cx| Profile::new(Host(commands), chef(), None, cx));
+    (profile, asked)
+}
+
+fn names(names: &[&str]) -> Option<Vec<String>> {
+    Some(names.iter().map(|name| (*name).to_owned()).collect())
+}
+
 #[gpui_kit::test]
-fn an_agents_page_reads_what_it_is_for_its_routines_and_the_apps_it_uses(cx: &mut TestAppContext) {
-    let (commands, mut asked) = mpsc::unbounded_channel();
-    let profile = cx.new(|cx| Profile::new(Host(commands), chef(), cx));
+fn an_agents_page_reads_when_it_came_its_routines_its_apps_and_its_latest_notes(
+    cx: &mut TestAppContext,
+) {
+    let (profile, mut asked) = open(cx);
+    profile.update(cx, |profile, cx| profile.read(cx));
     let paths = serve(&mut asked, host, cx);
     assert_eq!(
         paths,
@@ -159,32 +164,30 @@ fn an_agents_page_reads_what_it_is_for_its_routines_and_the_apps_it_uses(cx: &mu
             format!("/v1/host/agents/{CHEF}"),
             format!("/v1/host/agents/{CHEF}/apps"),
             "/v1/host".to_owned(),
-            "/v1/host/feed".to_owned()
-        ]
+            "/v1/host/feed".to_owned(),
+            "/v1/host/feed/before/10".to_owned(),
+        ],
+        "one read at a time; the feed is read back until four notes are found"
     );
     assert_eq!(
         shown(&profile, cx),
         Some((
-            Some("Plans dinners from the fridge.".to_owned()),
             7,
-            vec!["Sooner".to_owned(), "Later".to_owned(), "Paused".to_owned()],
-            vec!["gmail".to_owned()],
-            ["Asked: body 7", "body 6", "title 5", "title 4"]
-                .map(str::to_owned)
-                .to_vec(),
+            names(&["Sooner", "Later", "Paused"]),
+            names(&["gmail"]),
+            names(&["Asked: body 7", "body 6", "title 5", "title 4"]),
         )),
         "only the apps it has on; its latest notes, done or not, in their own words"
     );
 }
 
 #[gpui_kit::test]
-fn an_agents_page_says_so_when_any_part_cannot_be_read_and_reads_again(cx: &mut TestAppContext) {
-    let (commands, mut asked) = mpsc::unbounded_channel();
-    let profile = cx.new(|cx| Profile::new(Host(commands), chef(), cx));
+fn a_part_that_cannot_be_read_says_so_and_the_rest_still_shows(cx: &mut TestAppContext) {
+    let (profile, mut asked) = open(cx);
     serve(
         &mut asked,
         |path| {
-            if path.ends_with("/apps") {
+            if path.ends_with("/apps") || path.contains("/feed/before/") {
                 Answer::Later
             } else {
                 host(path)
@@ -192,7 +195,44 @@ fn an_agents_page_says_so_when_any_part_cannot_be_read_and_reads_again(cx: &mut 
         },
         cx,
     );
-    assert!(profile.read_with(cx, |profile, _| matches!(profile.loaded, Loaded::Unread)));
+    assert_eq!(
+        shown(&profile, cx),
+        Some((7, names(&["Sooner", "Later", "Paused"]), None, None))
+    );
+
+    let (profile, mut asked) = open(cx);
+    serve(
+        &mut asked,
+        |path| {
+            if path.ends_with("/apps") {
+                Answer::Missing
+            } else {
+                host(path)
+            }
+        },
+        cx,
+    );
+    assert_eq!(
+        shown(&profile, cx).and_then(|(_, _, apps, _)| apps),
+        Some(Vec::new()),
+        "an agent gone while its apps are read has none"
+    );
+}
+
+#[gpui_kit::test]
+fn an_agent_the_host_no_longer_has_is_gone_and_one_unread_can_be_read_again(
+    cx: &mut TestAppContext,
+) {
+    let (profile, mut asked) = open(cx);
+    serve(&mut asked, |_| Answer::Missing, cx);
+    assert!(profile.read_with(cx, |profile, _| profile.gone));
+
+    let (profile, mut asked) = open(cx);
+    serve(&mut asked, |_| Answer::Later, cx);
+    assert!(
+        profile.read_with(cx, |profile, _| matches!(profile.loaded, Loaded::Unread)
+            && !profile.gone)
+    );
     profile.update(cx, |profile, cx| profile.read(cx));
     serve(&mut asked, host, cx);
     assert!(shown(&profile, cx).is_some());
