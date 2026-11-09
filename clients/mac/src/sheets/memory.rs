@@ -36,6 +36,27 @@ struct Note {
     due: Option<String>,
 }
 
+impl Note {
+    /// When it is due, if it is a reminder whose time reads; one whose time
+    /// does not read shows as a note.
+    fn reminder(&self) -> Option<String> {
+        due(self.due.as_deref()?)
+    }
+}
+
+/// The reminders, each with when it is due, and the other notes.
+fn split(notes: &[Note]) -> (Vec<(String, String)>, Vec<&Note>) {
+    let mut reminders = Vec::new();
+    let mut rest = Vec::new();
+    for note in notes {
+        match note.reminder() {
+            Some(due) => reminders.push((note.text.clone(), due)),
+            None => rest.push(note),
+        }
+    }
+    (reminders, rest)
+}
+
 /// The newest notes, newest first, and how many there are in all.
 #[derive(Debug, Clone, Deserialize)]
 struct Notes {
@@ -138,17 +159,9 @@ impl Render for Memory {
             unreachable!("not_ready covers the rest")
         };
         let about = known.profile.trim().to_owned();
-        let reminders: Vec<(String, String)> = known
-            .notes
-            .notes
-            .iter()
-            .filter_map(|note| Some((note.text.clone(), due(note.due.as_deref()?)?)))
-            .collect();
-        let notes: Vec<_> = known
-            .notes
-            .notes
-            .iter()
-            .filter(|note| note.due.is_none())
+        let (reminders, notes) = split(&known.notes.notes);
+        let notes: Vec<_> = notes
+            .into_iter()
             .map(|note| {
                 let member = note.author.as_deref().and_then(|author| {
                     self.members
@@ -297,7 +310,7 @@ impl Render for Memory {
 
 #[cfg(test)]
 mod tests {
-    use super::{Notes, day, due};
+    use super::{Notes, day, due, split};
 
     #[test]
     fn the_hosts_notes_read_and_their_days_read_as_people_write_them() {
@@ -310,5 +323,22 @@ mod tests {
         assert_eq!(day(&notes.notes[0].written).as_deref(), Some("9 Nov"));
         assert_eq!(due("2026-11-12T09:00").as_deref(), Some("12 Nov, 9 AM"));
         assert_eq!(due("soon"), None);
+        assert_eq!(notes.notes[0].reminder(), None);
+        assert_eq!(notes.notes[1].reminder().as_deref(), Some("12 Nov, 9 AM"));
+        let mut unread = notes.notes[1].clone();
+        unread.due = Some("soon".to_owned());
+        let shown = [notes.notes[0].clone(), notes.notes[1].clone(), unread];
+        let (reminders, rest) = split(&shown);
+        assert_eq!(
+            reminders,
+            [("Gym renewal".to_owned(), "12 Nov, 9 AM".to_owned())]
+        );
+        assert_eq!(
+            rest.iter()
+                .map(|note| note.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Less spicy next time.", "Gym renewal"],
+            "a reminder whose time does not read shows as a note"
+        );
     }
 }

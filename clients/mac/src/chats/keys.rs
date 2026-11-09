@@ -1,5 +1,6 @@
 //! The keys that move around the app. Settings lists them
-//! (`sheets::settings::SHORTCUTS`); a test checks the two agree.
+//! (`sheets::settings::SHORTCUTS`); a test checks that each key it lists
+//! does what it says and that each sheet's own keys are among them.
 
 use gpui_kit::Keystroke;
 

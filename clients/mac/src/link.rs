@@ -159,6 +159,40 @@ struct Kept {
     profiles: Arc<Mutex<profiles::Read>>,
 }
 
+impl Kept {
+    /// Keeps a chat to follow or a message to send for the next catch-up;
+    /// a Host call is the caller's to make.
+    fn hold(&mut self, command: Command) -> Option<HostCall> {
+        match command {
+            Command::Follow {
+                task_id,
+                node_id,
+                target,
+                after,
+            } => {
+                if let Some(after) = after {
+                    note(&self.through, task_id, after);
+                }
+                self.followed.entry(task_id).or_insert(Followed {
+                    node_id,
+                    target,
+                    attached: false,
+                });
+                None
+            }
+            Command::Send { task_id, text } => {
+                self.outbox.push_back(Outgoing {
+                    task_id,
+                    command_id: CommandId::new(),
+                    text,
+                });
+                None
+            }
+            Command::Host(call) => Some(call),
+        }
+    }
+}
+
 /// Keeps one connection up for as long as the views hold the command
 /// sender. After a reconnect it follows every chat again from the last event
 /// received and sends every message Renoa had not confirmed.
@@ -189,7 +223,9 @@ pub async fn session(
             }
             Err(_) => {
                 let _ = updates.send(Update::Linked(false));
-                sleep(pace.retry_after).await;
+                if offline(pace.retry_after, &mut commands, &mut kept).await == Ended::ViewsGone {
+                    return;
+                }
                 continue;
             }
         };
@@ -211,7 +247,34 @@ pub async fn session(
             return;
         }
         let _ = updates.send(Update::Linked(false));
-        sleep(pace.retry_after).await;
+        if offline(pace.retry_after, &mut commands, &mut kept).await == Ended::ViewsGone {
+            return;
+        }
+    }
+}
+
+/// Waits `wait` before trying Renoa again, keeping what the views ask
+/// meanwhile for the next connection. A Host call is answered Lost at once:
+/// it is not made later, when the owner may have given up on it.
+async fn offline(
+    wait: Duration,
+    commands: &mut mpsc::UnboundedReceiver<Command>,
+    kept: &mut Kept,
+) -> Ended {
+    let waited = sleep(wait);
+    tokio::pin!(waited);
+    loop {
+        tokio::select! {
+            () = &mut waited => return Ended::LinkLost,
+            command = commands.recv() => match command {
+                None => return Ended::ViewsGone,
+                Some(command) => {
+                    if let Some(call) = kept.hold(command) {
+                        let _ = call.answered.send(host::Answer::Lost);
+                    }
+                }
+            },
+        }
     }
 }
 
@@ -242,29 +305,19 @@ async fn linked(
         let served = tokio::select! {
             command = commands.recv() => match command {
                 None => return Ended::ViewsGone,
-                Some(Command::Follow { task_id, node_id, target, after }) => {
-                    if let Some(after) = after {
-                        note(&kept.through, task_id, after);
+                Some(command) => match kept.hold(command) {
+                    None => catch_up(connection, updates, kept).await,
+                    Some(call) => {
+                        let connection = connection.clone();
+                        // A call the link outlives is answered Lost when it ends.
+                        calls.push(Aborting(tokio::spawn(async move {
+                            let answer = host::ask(&connection, call.method, &call.path, call.body).await;
+                            let _ = call.answered.send(answer);
+                        })));
+                        calls.retain(|call| !call.finished());
+                        Ok(())
                     }
-                    kept.followed
-                        .entry(task_id)
-                        .or_insert(Followed { node_id, target, attached: false });
-                    catch_up(connection, updates, kept).await
-                }
-                Some(Command::Send { task_id, text }) => {
-                    kept.outbox.push_back(Outgoing { task_id, command_id: CommandId::new(), text });
-                    flush(connection, &mut kept.outbox, updates).await
-                }
-                Some(Command::Host(call)) => {
-                    let connection = connection.clone();
-                    // A call the link outlives is answered Lost when it ends.
-                    calls.push(Aborting(tokio::spawn(async move {
-                        let answer = host::ask(&connection, call.method, &call.path, call.body).await;
-                        let _ = call.answered.send(answer);
-                    })));
-                    calls.retain(|call| !call.finished());
-                    Ok(())
-                }
+                },
             },
             _ = agents.tick() => match within(connection.list_targets()).await {
                 Ok(listed) => {

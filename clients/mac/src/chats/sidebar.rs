@@ -5,7 +5,8 @@ use chrono::Local;
 use gpui_kit::{
     AnimationExt as _, Context, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, SpringAnimation, SpringConfig,
-    StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
+    prelude::FluentBuilder as _, px,
 };
 
 use super::Chats;
@@ -109,6 +110,7 @@ impl Chats {
                                 }),
                         ),
                 )
+                .test_support()
         });
         let empty = self.agents.is_empty();
         let list =

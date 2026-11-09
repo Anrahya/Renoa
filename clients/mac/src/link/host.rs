@@ -19,7 +19,10 @@ pub enum Answer<T> {
     Said(T),
     /// There is no such thing.
     Missing,
-    /// Refused, in conflict, or not understood: worth asking again later.
+    /// At odds with how things stand: what was asked is already under way,
+    /// or changed meanwhile.
+    Conflict,
+    /// Refused or not understood: worth asking again later.
     Later,
     /// The call failed or went unanswered, or the session is gone.
     Lost,
@@ -32,6 +35,7 @@ impl Answer<String> {
         match self {
             Self::Said(body) => serde_json::from_str(&body).map_or(Answer::Later, Answer::Said),
             Self::Missing => Answer::Missing,
+            Self::Conflict => Answer::Conflict,
             Self::Later => Answer::Later,
             Self::Lost => Answer::Lost,
         }
@@ -60,9 +64,15 @@ pub(super) async fn ask(
         Ok(Err(ClientError::Rejected { .. } | ClientError::Protocol(_))) => return Answer::Later,
         Ok(Err(_)) | Err(_) => return Answer::Lost,
     };
-    match answer.status {
-        200..=299 => Answer::Said(answer.body),
+    by_status(answer.status, answer.body)
+}
+
+/// How the Host answered, by its HTTP status.
+fn by_status(status: u16, body: String) -> Answer<String> {
+    match status {
+        200..=299 => Answer::Said(body),
         404 => Answer::Missing,
+        409 => Answer::Conflict,
         _ => Answer::Later,
     }
 }
@@ -71,7 +81,7 @@ pub(super) async fn ask(
 mod tests {
     use serde::Deserialize;
 
-    use super::Answer;
+    use super::{Answer, by_status};
 
     #[derive(Debug, PartialEq, Eq, Deserialize)]
     struct Count {
@@ -87,5 +97,15 @@ mod tests {
         assert_eq!(Answer::Said("{}".to_owned()).read::<Count>(), Answer::Later);
         assert_eq!(Answer::<String>::Missing.read::<Count>(), Answer::Missing);
         assert_eq!(Answer::<String>::Lost.read::<Count>(), Answer::Lost);
+    }
+
+    #[test]
+    fn a_status_says_how_the_host_answered() {
+        let body = || "{}".to_owned();
+        assert_eq!(by_status(201, body()), Answer::Said(body()));
+        assert_eq!(by_status(404, body()), Answer::Missing);
+        assert_eq!(by_status(409, body()), Answer::Conflict);
+        assert_eq!(by_status(503, body()), Answer::Later);
+        assert_eq!(by_status(400, body()), Answer::Later);
     }
 }

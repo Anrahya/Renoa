@@ -71,7 +71,7 @@ pub struct Chats {
     _blinks: Task<()>,
     /// What this Mac calls itself.
     computer: SharedString,
-    /// Holds the keys while a sheet is up.
+    /// Holds the keys while a sheet is up: the scrim under it tracks it.
     focus: FocusHandle,
     sheet: Option<overlay::Shown>,
     jumping: Option<overlay::Jumping>,
@@ -91,6 +91,9 @@ impl Chats {
         cx: &mut Context<Self>,
     ) -> Self {
         let composer = cx.new(|cx| InputState::new(window, cx).placeholder("Message"));
+        // The keys reach the chats through whatever has focus inside them,
+        // so something must from the start.
+        composer.update(cx, |composer, cx| composer.focus(window, cx));
         cx.subscribe_in(
             &composer,
             window,
@@ -388,7 +391,6 @@ impl Render for Chats {
             .size_full()
             .relative()
             .flex()
-            .track_focus(&self.focus)
             .capture_key_down(keys)
             .bg(palette.background)
             .text_color(palette.text)

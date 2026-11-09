@@ -97,7 +97,7 @@ pub(super) async fn read(
                 return;
             }
         }
-        Answer::Missing | Answer::Later => {}
+        Answer::Missing | Answer::Conflict | Answer::Later => {}
         Answer::Lost => return,
     }
     for (agent, agent_id) in agents {
@@ -133,7 +133,7 @@ pub(super) async fn read(
                     }
                 }
                 // Its look waits for its purpose, as on the phone.
-                Answer::Later => continue,
+                Answer::Conflict | Answer::Later => continue,
                 Answer::Lost => return,
             }
             held().agents.insert(key.clone(), profile);
@@ -159,7 +159,7 @@ pub(super) async fn read(
                     profile.look = true;
                     held().agents.insert(key, profile);
                 }
-                Answer::Later => {}
+                Answer::Conflict | Answer::Later => {}
                 Answer::Lost => return,
             }
         }

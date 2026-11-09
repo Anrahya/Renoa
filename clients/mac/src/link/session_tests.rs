@@ -14,10 +14,18 @@ use renoa_rcp_wire::{
     ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HostMethod,
     JSON_WS_VERSION, NodeId, ServerMessage, TargetSummary, TaskId,
 };
-use tokio::{net::TcpListener, sync::mpsc, time::timeout};
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc, oneshot},
+    time::timeout,
+};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-use super::{Command, Endpoints, Pace, Update, session};
+use super::{
+    Command, Endpoints, Pace, Update,
+    host::{Answer, HostCall},
+    session,
+};
 use crate::{face::look::HairFront, key::MacKey, test_events::said};
 
 const QUICK: Pace = Pace {
@@ -557,4 +565,53 @@ async fn a_host_that_never_answers_holds_up_no_message() {
             "the link stays up"
         );
     }
+}
+
+#[tokio::test]
+async fn a_host_call_while_renoa_is_out_of_reach_is_answered_lost_and_the_session_ends_with_the_views()
+ {
+    // A port nothing listens on: every connection fails.
+    let closed = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let endpoints = Endpoints::at(&format!("http://{}", closed.local_addr().expect("address")));
+    drop(closed);
+    let (commands, received) = mpsc::unbounded_channel();
+    let (sender, mut updates) = mpsc::unbounded_channel();
+    let credentials = DeviceCredentials {
+        device_id: DeviceId::new(),
+        credential: DeviceCredential::new("credential"),
+    };
+    let key = Arc::new(MacKey::generate().expect("key"));
+    let running = tokio::spawn(session(
+        endpoints,
+        credentials,
+        key,
+        QUICK,
+        received,
+        sender,
+    ));
+    let Some(Update::Linked(false)) = timeout(Duration::from_secs(5), updates.recv())
+        .await
+        .expect("the session says it is offline")
+    else {
+        panic!("the first update is the failed link");
+    };
+    let (answered, answer) = oneshot::channel();
+    commands
+        .send(Command::Host(HostCall {
+            method: HostMethod::Get,
+            path: "/v1/host".to_owned(),
+            body: None,
+            answered,
+        }))
+        .expect("call");
+    let answer = timeout(Duration::from_secs(5), answer)
+        .await
+        .expect("answered while offline")
+        .expect("an answer");
+    assert_eq!(answer, Answer::Lost);
+    drop(commands);
+    timeout(Duration::from_secs(5), running)
+        .await
+        .expect("the session ends once no view is left")
+        .expect("the session ran");
 }

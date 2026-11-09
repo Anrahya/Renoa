@@ -340,3 +340,69 @@ fn each_agent_wears_its_look_and_the_main_agent_is_marked(cx: &mut TestAppContex
         "one named but not listed leaves the first to stand in"
     );
 }
+
+#[gpui_kit::test]
+fn the_keys_work_from_launch_and_a_click_beside_the_composer_keeps_it_typing(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::Focusable as _;
+
+    use crate::sheets::Page;
+
+    let (window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    updates
+        .send(Update::Agents(vec![
+            agent(node_id, "Cook"),
+            agent(node_id, "Shopper"),
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    let typing = |cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            chats
+                .read(cx)
+                .composer
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        })
+        .unwrap()
+    };
+    let up = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| chats.sheet.as_ref().map(|shown| shown.page))
+    };
+    cx.update_window(window, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(typing(cx), "the composer has the keys from launch");
+
+    cx.update_window(window, |_, window, cx| window.press("cmd-shift-r", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(up(cx), Some(Page::Routines));
+    assert!(!typing(cx), "the sheet takes the keys");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(up(cx), None);
+    assert!(typing(cx), "closing gives the keys back");
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("agent", 1usize), cx);
+        window.input("Oat milk", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(typing(cx), "a click on an agent leaves the composer typing");
+    chats.read_with(cx, |chats, cx| {
+        assert_eq!(
+            chats.chosen.as_ref().map(|chosen| chosen.name.as_ref()),
+            Some("Shopper")
+        );
+        assert_eq!(chats.composer.read(cx).value().as_ref(), "Oat milk");
+    });
+}

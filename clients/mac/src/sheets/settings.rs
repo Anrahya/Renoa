@@ -137,6 +137,14 @@ impl Render for Settings {
                             }),
                     ),
             )
+            .when(signing_out, |row| {
+                row.child(pill("keep", "Cancel", false, palette).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.signing_out = false;
+                        cx.notify();
+                    },
+                )))
+            })
             .child(
                 pill(
                     "sign-out",

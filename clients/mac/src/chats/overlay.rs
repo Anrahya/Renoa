@@ -10,6 +10,8 @@ use gpui_kit::{
     ease_out_quint, prelude::FluentBuilder as _, px,
 };
 
+use renoa_rcp_wire::TaskId;
+
 use super::{
     Chats, SignedOut,
     jump::{Jump, JumpEvent, Place},
@@ -30,7 +32,7 @@ const RISE: Duration = Duration::from_millis(280);
 
 /// A sheet that is up.
 pub(super) struct Shown {
-    page: Page,
+    pub(super) page: Page,
     view: AnyView,
     /// Counts the sheets opened, so each rises afresh.
     opened: usize,
@@ -98,7 +100,8 @@ impl Chats {
             opened: self.sheets_opened,
             _events: events,
         });
-        // Keys reach the chats while the sheet is up, so Esc closes it.
+        // The scrim takes the keys from the composer under it, so typing
+        // goes nowhere and Esc reaches the chats.
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -114,13 +117,20 @@ impl Chats {
             SheetEvent::Close => self.close(window, cx),
             SheetEvent::Chat(task_id) => {
                 self.close(window, cx);
-                if let Some(index) = self.agents.iter().position(|agent| {
-                    chat_task_id(agent.node_id, agent.target.as_str()) == *task_id
-                }) {
-                    self.select(index, window, cx);
-                }
+                self.open_chat(*task_id, window, cx);
             }
             SheetEvent::SignOut => cx.emit(SignedOut),
+        }
+    }
+
+    /// Opens the chat `task_id`, if its agent is still listed.
+    fn open_chat(&mut self, task_id: TaskId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self
+            .agents
+            .iter()
+            .position(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == task_id)
+        {
+            self.select(index, window, cx);
         }
     }
 
@@ -138,11 +148,10 @@ impl Chats {
         let mut places: Vec<Place> = self
             .agents
             .iter()
-            .enumerate()
-            .map(|(index, agent)| {
+            .map(|agent| {
                 let (look, primary) = self.face(agent);
                 Place::Agent {
-                    index,
+                    task_id: chat_task_id(agent.node_id, agent.target.as_str()),
                     name: agent.name.clone().into(),
                     look,
                     primary,
@@ -154,9 +163,9 @@ impl Chats {
         let events = cx.subscribe_in(&jump, window, |this, _, event: &JumpEvent, window, cx| {
             let JumpEvent::Go(place) = event;
             match place {
-                Place::Agent { index, .. } => {
+                Place::Agent { task_id, .. } => {
                     this.close(window, cx);
-                    this.select(*index, window, cx);
+                    this.open_chat(*task_id, window, cx);
                 }
                 Place::Sheet(page) => this.open_sheet(*page, window, cx),
             }
@@ -215,6 +224,7 @@ impl Chats {
                 .flex()
                 .justify_center()
                 .bg(palette.scrim)
+                .track_focus(&self.focus)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| this.close(window, cx)),

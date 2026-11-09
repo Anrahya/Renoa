@@ -130,7 +130,15 @@ impl<T> Loaded<T> {
     pub fn from_answer(answer: Answer<T>) -> Self {
         match answer {
             Answer::Said(read) => Self::Ready(read),
-            Answer::Missing | Answer::Later | Answer::Lost => Self::Unread,
+            Answer::Missing | Answer::Conflict | Answer::Later | Answer::Lost => Self::Unread,
+        }
+    }
+
+    pub fn map<U>(self, change: impl FnOnce(T) -> U) -> Loaded<U> {
+        match self {
+            Self::Waiting => Loaded::Waiting,
+            Self::Ready(read) => Loaded::Ready(change(read)),
+            Self::Unread => Loaded::Unread,
         }
     }
 }

@@ -17,13 +17,14 @@ use crate::{
     sheets::Page,
     theme::Palette,
 };
+use renoa_rcp_wire::TaskId;
 
 /// Somewhere the box can go.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Place {
-    /// The agent at this place in the list, from 0.
+    /// The agent whose chat this is.
     Agent {
-        index: usize,
+        task_id: TaskId,
         name: SharedString,
         look: Option<Look>,
         primary: bool,
@@ -224,6 +225,8 @@ impl Render for Jump {
 
 #[cfg(test)]
 mod tests {
+    use renoa_rcp_wire::TaskId;
+
     use super::{Place, matching};
     use crate::sheets::Page;
 
@@ -231,13 +234,13 @@ mod tests {
     fn a_place_matches_part_of_its_name_in_any_case() {
         let places = vec![
             Place::Agent {
-                index: 0,
+                task_id: TaskId::new(),
                 name: "Renoa".into(),
                 look: None,
                 primary: true,
             },
             Place::Agent {
-                index: 1,
+                task_id: TaskId::new(),
                 name: "Chef".into(),
                 look: None,
                 primary: false,

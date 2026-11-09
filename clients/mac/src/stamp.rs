@@ -60,8 +60,8 @@ where
 }
 
 /// A time still to come: "Today 7:30 AM", "Tomorrow 6 PM",
-/// "Thursday 6 PM", "14 Nov 9 AM" or, another year, "3 Jan 2027 9 AM". A
-/// time already past, from a clock running slow, is today.
+/// "Thursday 6 PM", "14 Nov 9 AM" or, another year, "3 Jan 2027 9 AM". It
+/// is for times ahead: one already past reads as today, whatever its day.
 pub fn ahead<Tz: TimeZone>(at_ms: i64, now: &DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,

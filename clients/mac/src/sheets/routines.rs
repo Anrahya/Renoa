@@ -2,7 +2,10 @@
 //! each with its next run, how its last one went, a way to run it now, and a
 //! switch, as the phone's Routines show them (`agents/Routines.kt`).
 
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use chrono::Local;
 use gpui_kit::{
@@ -11,7 +14,6 @@ use gpui_kit::{
     prelude::FluentBuilder as _, px,
 };
 use renoa_rcp_wire::HostMethod;
-use serde::Deserialize;
 use uuid::Uuid;
 
 use super::{
@@ -19,55 +21,13 @@ use super::{
     switch,
 };
 use crate::{face::Face, link::host::Answer, stamp, theme::Palette};
+use held::{Automation, Enablement, Observation, last_run, merge, own, take};
 
-/// The parts of the Host's observation (`GET /v1/host`) this reads.
-#[derive(Debug, Deserialize)]
-struct Observation {
-    automations: Vec<Automation>,
-}
+mod held;
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Automation {
-    id: String,
-    agent_id: Uuid,
-    name: String,
-    schedule: schedule::Schedule,
-    enabled: bool,
-    revision: i64,
-    next_due_ms: i64,
-    #[serde(default)]
-    last_run: Option<Run>,
-    /// The Host plugin whose own trigger this is, such as a reminder.
-    #[serde(default)]
-    plugin: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Run {
-    status: Outcome,
-    due_ms: i64,
-    #[serde(default)]
-    finished_at_ms: Option<i64>,
-}
-
-/// How a run ended. The names are the Host's run statuses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Outcome {
-    /// The agent finished it, even if some of its tool calls failed.
-    Succeeded,
-    Failed,
-    /// It came due too late to be worth running.
-    Skipped,
-}
-
-/// The Host's receipt for turning a routine on or off.
-#[derive(Debug, Deserialize)]
-struct Enablement {
-    revision: i64,
-    enabled: bool,
-    next_due_ms: i64,
-}
+/// How long a routine the owner ran reads Started, before the sheet reads
+/// the routines again to show how the run went.
+const STARTED_FOR: Duration = Duration::from_secs(5);
 
 pub struct Routines {
     host: Host,
@@ -77,6 +37,12 @@ pub struct Routines {
     changing: HashSet<String>,
     /// Routines the owner just ran.
     started: HashSet<String>,
+    /// The run asked of each routine that the Host has not confirmed: asked
+    /// again, it is the same run.
+    runs: HashMap<String, Uuid>,
+    /// This Mac's timezone, which a schedule on another clock is named
+    /// against.
+    here_zone: Option<String>,
     /// A change the Host refused, said once.
     refused: Option<SharedString>,
 }
@@ -91,6 +57,8 @@ impl Routines {
             loaded: Loaded::Waiting,
             changing: HashSet::new(),
             started: HashSet::new(),
+            runs: HashMap::new(),
+            here_zone: iana_time_zone::get_timezone().ok(),
             refused: None,
         };
         routines.read(cx);
@@ -102,7 +70,20 @@ impl Routines {
         cx.spawn(async move |this, cx| {
             let answer = host.get::<Observation>("/v1/host".to_owned()).await;
             let _ = this.update(cx, |this, cx| {
-                this.loaded = Loaded::from_answer(answer).map(|observed| own(observed.automations));
+                let shown = match &this.loaded {
+                    Loaded::Ready(shown) => Some(shown.as_slice()),
+                    Loaded::Waiting | Loaded::Unread => None,
+                };
+                match (Loaded::from_answer(answer), shown.is_some()) {
+                    // What is shown stays, with a word that it may be behind.
+                    (Loaded::Unread, true) => {
+                        this.refused = Some("Renoa couldn't be reached just now.".into());
+                    }
+                    (read, _) => {
+                        let read = read.map(|observed| merge(shown, own(observed.automations)));
+                        this.loaded = read;
+                    }
+                }
                 cx.notify();
             });
         })
@@ -134,14 +115,20 @@ impl Routines {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.changing.remove(&id);
-                match answer.read::<Enablement>() {
-                    Answer::Said(receipt) => this.took(&id, &receipt),
-                    // Changed elsewhere meanwhile, or gone: read what is there now.
-                    _ => {
-                        this.refused =
-                            Some("That didn't change. Here is how it stands now.".into());
-                        this.read(cx);
+                let refused = match answer.read::<Enablement>() {
+                    Answer::Said(receipt) => {
+                        this.took(&id, &receipt);
+                        None
                     }
+                    Answer::Conflict => Some("It changed meanwhile. Here is how it stands now."),
+                    Answer::Missing => Some("That routine is gone."),
+                    Answer::Later | Answer::Lost => {
+                        Some("Renoa couldn't confirm that. Here is how it stands now.")
+                    }
+                };
+                if let Some(refused) = refused {
+                    this.refused = Some(refused.into());
+                    this.read(cx);
                 }
                 cx.notify();
             });
@@ -161,7 +148,9 @@ impl Routines {
             return;
         }
         self.started.insert(id.to_owned());
-        let body = serde_json::json!({ "operation_id": Uuid::new_v4() });
+        self.refused = None;
+        let operation_id = *self.runs.entry(id.to_owned()).or_insert_with(Uuid::new_v4);
+        let body = serde_json::json!({ "operation_id": operation_id });
         let (host, id) = (self.host.clone(), id.to_owned());
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -169,12 +158,33 @@ impl Routines {
             let answer = host
                 .call(HostMethod::Post, path, Some(body.to_string()))
                 .await;
-            let _ = this.update(cx, |this, cx| {
-                if !matches!(answer, Answer::Said(_)) {
-                    this.started.remove(&id);
-                    this.refused = Some("That routine didn't start. Try again in a moment.".into());
+            let ran = this.update(cx, |this, cx| {
+                let refused = match answer {
+                    // Started, or a run of it already under way.
+                    Answer::Said(_) | Answer::Conflict => None,
+                    Answer::Missing => Some("That routine is gone."),
+                    Answer::Later | Answer::Lost => {
+                        Some("Renoa couldn't confirm that routine started. Try again in a moment.")
+                    }
+                };
+                if !matches!(answer, Answer::Later | Answer::Lost) {
+                    this.runs.remove(&id);
                 }
                 cx.notify();
+                let Some(refused) = refused else {
+                    return true;
+                };
+                this.started.remove(&id);
+                this.refused = Some(refused.into());
+                false
+            });
+            if !matches!(ran, Ok(true)) {
+                return;
+            }
+            cx.background_executor().timer(STARTED_FOR).await;
+            let _ = this.update(cx, |this, cx| {
+                this.started.remove(&id);
+                this.read(cx);
             });
         })
         .detach();
@@ -184,54 +194,6 @@ impl Routines {
         self.members
             .iter()
             .find(|member| member.host_id == agent_id)
-    }
-}
-
-/// The routines an agent or the owner made: a plugin's own triggers, such as
-/// reminders, are the Host's work, and Memory shows them.
-/// Shows the Host's receipt on routine `id`, unless what is shown is
-/// already newer: a read that landed after the switch.
-fn take(automations: &mut [Automation], id: &str, receipt: &Enablement) {
-    if let Some(automation) = automations
-        .iter_mut()
-        .find(|automation| automation.id == id)
-        && automation.revision < receipt.revision
-    {
-        automation.revision = receipt.revision;
-        automation.enabled = receipt.enabled;
-        automation.next_due_ms = receipt.next_due_ms;
-    }
-}
-
-fn own(automations: Vec<Automation>) -> Vec<Automation> {
-    automations
-        .into_iter()
-        .filter(|automation| automation.plugin.is_none())
-        .collect()
-}
-
-/// How a routine's last run went, and whether that needs the owner.
-fn last_run(run: &Run) -> (String, bool) {
-    let now = Local::now();
-    let at = stamp::long(run.finished_at_ms.unwrap_or(run.due_ms), &now);
-    match run.status {
-        Outcome::Succeeded => (format!("Last ran {}", lower_first(&at)), false),
-        Outcome::Failed => (
-            format!("Last run didn't finish · {}", lower_first(&at)),
-            true,
-        ),
-        Outcome::Skipped => (
-            format!("Skipped {}: it came due too late", lower_first(&at)),
-            false,
-        ),
-    }
-}
-
-/// "Today 6:12 PM" as it reads mid-sentence: "today 6:12 PM".
-fn lower_first(text: &str) -> String {
-    match text.split_once(' ') {
-        Some((first @ ("Today" | "Yesterday"), rest)) => format!("{} {rest}", first.to_lowercase()),
-        _ => text.to_owned(),
     }
 }
 
@@ -272,13 +234,12 @@ impl Render for Routines {
         let Loaded::Ready(automations) = &self.loaded else {
             unreachable!("not_ready covers the rest")
         };
-        let here_zone = iana_time_zone::get_timezone().ok();
         let now = Local::now();
         let row = |automation: &Automation, cx: &mut Context<Self>| {
             let member = self.member(automation.agent_id);
             let agent: SharedString =
                 member.map_or_else(|| "An agent".into(), |member| member.name.clone());
-            let when = schedule::words(&automation.schedule, &Local, here_zone.as_deref());
+            let when = schedule::words(&automation.schedule, &Local, self.here_zone.as_deref());
             let last = automation.last_run.as_ref().map(last_run);
             let id = automation.id.clone();
             let (on, busy, started) = (
@@ -346,11 +307,14 @@ impl Render for Routines {
                                     .text_color(palette.secondary)
                                     .child("Next"),
                             )
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(stamp::ahead(automation.next_due_ms, &now)),
-                            ),
+                            .child(div().font_weight(FontWeight::MEDIUM).child(
+                                if automation.next_due_ms <= now.timestamp_millis() {
+                                    // Due, and waiting for its turn.
+                                    "Any moment".to_owned()
+                                } else {
+                                    stamp::ahead(automation.next_due_ms, &now)
+                                },
+                            )),
                     )
                 })
                 .child({
@@ -424,71 +388,5 @@ impl Render for Routines {
                         .child(group(paused_rows, palette))
                 }),
         )
-    }
-}
-
-impl<T> Loaded<T> {
-    fn map<U>(self, change: impl FnOnce(T) -> U) -> Loaded<U> {
-        match self {
-            Self::Waiting => Loaded::Waiting,
-            Self::Ready(read) => Loaded::Ready(change(read)),
-            Self::Unread => Loaded::Unread,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Enablement, Observation, Outcome, lower_first, own, take};
-
-    const OBSERVED: &str = r#"{"automations":[
-        {"id":"a1","agent_id":"1b4e28ba-2fa1-11d2-883f-0016d3cca427","name":"Dinner ideas",
-         "schedule":{"kind":"cron","expression":"30 18 * * *","timezone":"Asia/Kolkata"},
-         "enabled":true,"revision":3,"next_due_ms":1762695000000,
-         "last_run":{"status":"failed","due_ms":1762608600000,"finished_at_ms":1762608660000}},
-        {"id":"r1","agent_id":"1b4e28ba-2fa1-11d2-883f-0016d3cca427","name":"Renew the gym",
-         "schedule":{"kind":"once","at":"2026-11-12T03:30:00Z"},
-         "enabled":true,"revision":1,"next_due_ms":1762918200000,"plugin":"renoa.memory"}
-    ],"main_agent":null}"#;
-
-    #[test]
-    fn the_hosts_automations_read_and_its_plugins_triggers_are_left_to_memory() {
-        let observed: Observation =
-            serde_json::from_str(OBSERVED).expect("the Host's observation reads");
-        let own = own(observed.automations);
-        let [dinner] = &own[..] else {
-            panic!("one routine: {own:?}")
-        };
-        assert_eq!(dinner.name, "Dinner ideas");
-        assert_eq!(
-            dinner.last_run.as_ref().map(|run| run.status),
-            Some(Outcome::Failed)
-        );
-    }
-
-    #[test]
-    fn a_day_reads_mid_sentence() {
-        assert_eq!(lower_first("Today 6:12 PM"), "today 6:12 PM");
-        assert_eq!(lower_first("Yesterday 9:03 AM"), "yesterday 9:03 AM");
-        assert_eq!(lower_first("Monday 6:12 PM"), "Monday 6:12 PM");
-    }
-
-    #[test]
-    fn a_receipt_shows_unless_a_newer_read_came_first() {
-        let observed: Observation =
-            serde_json::from_str(OBSERVED).expect("the Host's observation reads");
-        let mut shown = own(observed.automations);
-        let paused = |revision| Enablement {
-            revision,
-            enabled: false,
-            next_due_ms: 1,
-        };
-        take(&mut shown, "a1", &paused(3));
-        assert!(shown[0].enabled, "a receipt no newer than the read is old");
-        take(&mut shown, "a1", &paused(4));
-        assert!(!shown[0].enabled);
-        assert_eq!((shown[0].revision, shown[0].next_due_ms), (4, 1));
-        take(&mut shown, "gone", &paused(9));
-        assert_eq!(shown[0].revision, 4, "a receipt for another routine");
     }
 }

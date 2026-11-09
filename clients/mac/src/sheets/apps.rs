@@ -77,15 +77,16 @@ impl AppsSheet {
                     }
                     // An agent gone meanwhile has no apps to show.
                     Answer::Missing => {}
-                    Answer::Later | Answer::Lost => unread = true,
+                    Answer::Conflict | Answer::Later | Answer::Lost => unread = true,
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                this.loaded = if unread {
-                    Loaded::Unread
-                } else {
-                    Loaded::Ready(held)
-                };
+                match (unread, &this.loaded) {
+                    // What is shown stays; the note above it says it may be behind.
+                    (true, Loaded::Ready(_)) => this.refused = true,
+                    (true, _) => this.loaded = Loaded::Unread,
+                    (false, _) => this.loaded = Loaded::Ready(held),
+                }
                 cx.notify();
             });
         })
@@ -111,14 +112,18 @@ impl AppsSheet {
                 .await
                 .read::<Apps>();
             let _ = this.update(cx, |this, cx| {
-                this.changing.remove(&(agent, connection));
+                this.changing.remove(&(agent, connection.clone()));
                 match answer {
                     Answer::Said(apps) => {
                         if let Loaded::Ready(held) = &mut this.loaded {
-                            held.insert(agent, apps.apps);
+                            adopt(held, agent, &connection, &apps.apps);
                         }
                     }
-                    _ => this.refused = true,
+                    // Refused, or unconfirmed: read how things stand.
+                    _ => {
+                        this.refused = true;
+                        this.read(cx);
+                    }
                 }
                 cx.notify();
             });
@@ -127,7 +132,8 @@ impl AppsSheet {
     }
 }
 
-/// `text` as one path segment, so a connection id cannot reach another path.
+/// `text` as one path segment: anything but a letter, a digit or `-._~` is
+/// percent-encoded, as the phone does (`encodedSegment`).
 fn segment(text: &str) -> String {
     text.bytes()
         .map(|byte| {
@@ -169,6 +175,26 @@ fn site(endpoint: &str) -> String {
         .unwrap_or(rest)
         .trim_start_matches("www.")
         .to_owned()
+}
+
+/// Takes from the Host's answer to one switch only that switch: answers to
+/// two switches of one agent can come back in either order.
+fn adopt(held: &mut Held, agent: Uuid, connection: &str, answered: &[AgentApp]) {
+    let Some(on) = answered
+        .iter()
+        .find(|app| app.connection == connection)
+        .map(|app| app.on)
+    else {
+        return;
+    };
+    if let Some(app) = held
+        .get_mut(&agent)
+        .into_iter()
+        .flatten()
+        .find(|app| app.connection == connection)
+    {
+        app.on = on;
+    }
 }
 
 /// Every connection any agent has, once each, in name order, with each
@@ -324,10 +350,14 @@ impl Render for AppsSheet {
                 .flex_col()
                 .gap(px(10.))
                 .when(self.refused, |body| {
-                    body.child(div().text_size(px(12.)).text_color(palette.attention).child("That didn't change. Try again in a moment."))
+                    body.child(div().text_size(px(12.)).text_color(palette.attention).child("Renoa couldn't confirm that. Here is how it stands now."))
                 })
                 .when(empty, |body| {
-                    body.child(div().pt(px(40.)).flex().justify_center().text_color(palette.secondary).child("No apps are connected yet."))
+                    body.child(div().pt(px(40.)).flex().justify_center().text_color(palette.secondary).child(if self.members.is_empty() {
+                        "Your agents aren't online just now."
+                    } else {
+                        "No apps are connected yet."
+                    }))
                 })
                 .when(!empty, |body| {
                     body.child(group(rows, palette)).child(
@@ -362,7 +392,7 @@ mod tests {
 
     use uuid::Uuid;
 
-    use super::{AgentApp, connections, label, segment, site};
+    use super::{AgentApp, adopt, connections, label, segment, site};
 
     fn app(connection: &str, name: Option<&str>, on: bool) -> AgentApp {
         AgentApp {
@@ -408,5 +438,40 @@ mod tests {
     fn a_connection_stays_one_path_segment() {
         assert_eq!(segment("exa-mcp"), "exa-mcp");
         assert_eq!(segment("a/../b c"), "a%2F..%2Fb%20c");
+    }
+
+    #[test]
+    fn an_answer_to_one_switch_changes_only_that_switch() {
+        let agent = Uuid::from_u128(1);
+        let mut held = BTreeMap::from([(
+            agent,
+            vec![app("github", None, false), app("notion", None, false)],
+        )]);
+        // The answer to the github switch, sent before the notion switch
+        // was answered, says notion is still off.
+        adopt(
+            &mut held,
+            agent,
+            "github",
+            &[app("github", None, true), app("notion", None, false)],
+        );
+        held.get_mut(&agent).expect("held")[1].on = true;
+        adopt(
+            &mut held,
+            agent,
+            "github",
+            &[app("github", None, true), app("notion", None, false)],
+        );
+        assert_eq!(
+            held[&agent].iter().map(|app| app.on).collect::<Vec<_>>(),
+            [true, true]
+        );
+        adopt(
+            &mut held,
+            Uuid::from_u128(2),
+            "github",
+            &[app("github", None, false)],
+        );
+        assert!(held[&agent][0].on, "another agent's answer");
     }
 }
