@@ -438,8 +438,11 @@ class RcpAgentRepository(
         if (synchronized(lock) { rooms[agentId(joined)]?.attached } != true) {
             throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but its chat could not be opened")
         }
-        profiles.learned(Uuid.parse(record.id), record.operational.purpose.orEmpty())
+        val made = Uuid.parse(record.id)
+        profiles.learned(made, record.operational.purpose.orEmpty())
         publish()
+        // The Host picked its look as it made it; one it could not tell now, the next roster check reads.
+        profiles.read(listOf(made), ::publish)
         return record.profile(agentId(joined))
     }
 

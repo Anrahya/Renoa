@@ -213,6 +213,32 @@ class ScreensTest : ScreenTest() {
         snapshot("sign-up-3-graphite")
     }
 
+    /** Every choice of every part, worn on each tile, large and at the chat header's 22 dp, for a look at each. */
+    @Test
+    fun everyPartOnEveryTile() {
+        val base = Look(HairFront.Short, HairBack.None, HairColour.Ink, Skin.Light, Eyes.Round, Cheeks.None, Wear.None, Tile.Clay, tuft = false)
+        val looks =
+            HairFront.entries.map { base.copy(hairFront = it) } + HairBack.entries.map { base.copy(hairBack = it) } +
+                HairColour.entries.map { base.copy(hairColour = it, tile = Tile.Ochre) } + Skin.entries.map { base.copy(skin = it, tile = Tile.Cobalt) } +
+                Eyes.entries.map { base.copy(eyes = it) } + Cheeks.entries.map { base.copy(cheeks = it) } +
+                Wear.entries.map { base.copy(wear = it, tile = Tile.Cobalt) } + listOf(base.copy(tuft = true, wear = Wear.Beanie, hairBack = HairBack.Bun))
+        show(ThemeName.Graphite) {
+            Column(Modifier.background(Renoa.colors.background).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                looks.chunked(8).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        row.forEach { look ->
+                            Column {
+                                Badge("", AgentState.Resting, 44.dp, primary = false, look = look, label = "")
+                                Badge("", AgentState.Wants, 22.dp, primary = false, look = look, label = "")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        snapshot("face-parts-graphite")
+    }
+
     @Test
     fun theFiveBadgeStatesSideBySideInGraphite() = badgesIn(ThemeName.Graphite)
 

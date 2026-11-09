@@ -67,11 +67,11 @@ private val BLUSH = Color(0xFFE9A493)
 private val BLUSH_LINES = Color(0xFFD9826E)
 private val WEAR = Color.White
 
-/** Renoa's own look, worn by the main agent whatever the Host picked for it. */
+/** Renoa's own look, worn by the main agent whatever the Host picked for it. Her tile is Paper, not this one's. */
 private val RENOA =
     Look(HairFront.Fringe, HairBack.None, HairColour.Ink, Skin.Fair, Eyes.Round, Cheeks.Blush, Wear.None, Tile.Clay, tuft = false)
 
-/** Before the Host has said how an agent looks: a head, and nothing it would have to unlearn. */
+/** Before the Host has said how an agent looks: a short-haired head on a quiet tile. */
 private val PLAIN =
     Look(HairFront.Short, HairBack.None, HairColour.Grey, Skin.Light, Eyes.Round, Cheeks.None, Wear.None, Tile.Clay, tuft = false)
 
@@ -116,44 +116,61 @@ internal fun tileColor(look: Look?, primary: Boolean, colors: RenoaColors): Colo
  * plain one. Content looks ahead and smiles with its own eyes; busy looks down at its work, asking
  * raises its brows and opens its mouth, stuck knits its brows over a wavering mouth, and asleep
  * closes its eyes. [scale] takes the board's units to the tile's; the caller clips to the tile.
+ * [finest] is the thinnest line worth drawing, in the board's units, so a small face keeps its lines.
+ * Hair and head carry a rim a shade darker than the tile, so no skin or hair melts into its tile.
  */
-internal fun DrawScope.drawFace(shapes: FaceShapes, look: Look?, primary: Boolean, state: AgentState, tile: Color, ink: Color, scale: Float) {
+internal fun DrawScope.drawFace(shapes: FaceShapes, look: Look?, primary: Boolean, state: AgentState, tile: Color, ink: Color, scale: Float, finest: Float) {
     val worn = if (primary) RENOA else look ?: PLAIN
     val skin = worn.skin.color()
-    val hair = if (primary) Color(0xFF1D1A18) else worn.hairColour.color()
-    val line = { width: Float -> Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round) }
+    val hair = worn.hairColour.color()
+    val rim = Stroke(maxOf(1.2f, finest), join = StrokeJoin.Round)
+    val rimColor = (if (primary) Color(0xFFD9D4C8) else tile).darker(0.35f)
+    val line = { width: Float -> Stroke(maxOf(width, finest), cap = StrokeCap.Round, join = StrokeJoin.Round) }
+    fun shape(path: Path, color: Color) {
+        drawPath(path, color)
+        drawPath(path, rimColor, style = rim)
+    }
     withTransform({
         scale(scale, scale, Offset.Zero)
         translate(-50f, -50f)
     }) {
         when (worn.hairBack) {
-            HairBack.Long -> drawPath(shapes.long, hair)
-            HairBack.TwinTails -> drawPath(shapes.twinTails, hair)
-            else -> Unit
+            HairBack.Long -> shape(shapes.long, hair)
+            HairBack.TwinTails -> shape(shapes.twinTails, hair)
+            HairBack.None, HairBack.Bun -> Unit
         }
         drawOval(if (primary) Color(0xFFD9D4C8) else tile.darker(0.28f), Offset(19f, 78f), Size(62f, 46f))
-        if (worn.hairBack == HairBack.Bun) drawCircle(hair, 9f, Offset(50f, 27f))
+        if (worn.hairBack == HairBack.Bun) {
+            drawCircle(hair, 9f, Offset(50f, 27f))
+            drawCircle(rimColor, 9f, Offset(50f, 27f), style = rim)
+        }
         drawCircle(skin, 22f, Offset(50f, 54f))
+        drawCircle(rimColor, 22f, Offset(50f, 54f), style = rim)
         when (worn.hairFront) {
-            HairFront.Short -> drawPath(shapes.short, hair)
-            HairFront.Fringe -> drawPath(shapes.fringe, hair)
-            HairFront.SidePart -> drawPath(shapes.sidePart, hair)
-            HairFront.Princess -> drawPath(shapes.princess, hair)
-            HairFront.Curls -> for ((x, y, r) in CURLS) drawCircle(hair, r, Offset(x, y))
+            HairFront.Short -> shape(shapes.short, hair)
+            HairFront.Fringe -> shape(shapes.fringe, hair)
+            HairFront.SidePart -> shape(shapes.sidePart, hair)
+            HairFront.Princess -> shape(shapes.princess, hair)
+            HairFront.Curls -> {
+                for ((x, y, r) in CURLS) drawCircle(rimColor, r, Offset(x, y), style = rim)
+                for ((x, y, r) in CURLS) drawCircle(hair, r, Offset(x, y))
+            }
         }
         if (worn.hairBack == HairBack.TwinTails) {
             for (x in listOf(28.5f, 71.5f)) {
                 drawCircle(WEAR, 3.2f, Offset(x, 42f))
-                drawCircle(ink, 3.2f, Offset(x, 42f), style = Stroke(0.9f))
+                drawCircle(ink, 3.2f, Offset(x, 42f), style = line(0.9f))
             }
         }
-        if (worn.tuft) drawPath(shapes.tuft, hair)
+        if (worn.tuft) shape(shapes.tuft, hair)
         when (worn.cheeks) {
             Cheeks.Lines -> drawPath(shapes.blushLines, BLUSH_LINES, style = line(1.2f))
             Cheeks.Blush -> for (x in listOf(37f, 63f)) drawCircle(BLUSH, 3.3f, Offset(x, 62f))
             Cheeks.Freckles -> for ((x, y) in FRECKLES) drawCircle(skin.darker(0.38f), 1f, Offset(x, y))
             Cheeks.None -> Unit
         }
+        // What it wears goes under the face's lines, so a beanie never hides a raised brow.
+        if (worn.wear != Wear.Glasses) drawWear(shapes, worn.wear, ink, line)
         fun pair(rx: Float, ry: Float, cy: Float, dx: Float = 0f) {
             for (x in listOf(42f, 58f)) drawOval(ink, Offset(x + dx - rx, cy - ry), Size(rx * 2, ry * 2))
         }
@@ -194,7 +211,7 @@ internal fun DrawScope.drawFace(shapes: FaceShapes, look: Look?, primary: Boolea
                 drawPath(shapes.flat, ink, style = line(1.6f))
             }
         }
-        drawWear(shapes, worn.wear, ink, line)
+        if (worn.wear == Wear.Glasses) drawWear(shapes, worn.wear, ink, line)
         if (primary) {
             withTransform({
                 translate(66f, 34f)
@@ -211,19 +228,19 @@ private fun DrawScope.drawWear(shapes: FaceShapes, wear: Wear, ink: Color, line:
     when (wear) {
         Wear.None -> Unit
         Wear.Glasses -> {
-            for (x in listOf(42f, 58f)) drawCircle(ink, 6.2f, Offset(x, 56f), style = Stroke(1.6f))
-            drawPath(shapes.bridge, ink, style = Stroke(1.6f))
+            for (x in listOf(42f, 58f)) drawCircle(ink, 6.2f, Offset(x, 56f), style = line(1.6f))
+            drawPath(shapes.bridge, ink, style = line(1.6f))
         }
         Wear.Bow -> {
             drawPath(shapes.bow, WEAR)
             drawPath(shapes.bow, ink, style = line(0.9f))
             drawCircle(WEAR, 2.4f, Offset(64f, 33f))
-            drawCircle(ink, 2.4f, Offset(64f, 33f), style = Stroke(0.9f))
+            drawCircle(ink, 2.4f, Offset(64f, 33f), style = line(0.9f))
         }
         Wear.Clip ->
             withTransform({ rotate(-24f, Offset(67.5f, 39.2f)) }) {
                 drawRoundRect(WEAR, Offset(62f, 37f), Size(11f, 4.4f), CORNER_CLIP)
-                drawRoundRect(ink, Offset(62f, 37f), Size(11f, 4.4f), CORNER_CLIP, style = Stroke(0.9f))
+                drawRoundRect(ink, Offset(62f, 37f), Size(11f, 4.4f), CORNER_CLIP, style = line(0.9f))
             }
         Wear.Beanie -> {
             drawPath(shapes.beanie, WEAR)
@@ -234,7 +251,7 @@ private fun DrawScope.drawWear(shapes: FaceShapes, wear: Wear, ink: Color, line:
             drawPath(shapes.band, ink, style = line(3f))
             for (x in listOf(22f, 70f)) {
                 drawRoundRect(WEAR, Offset(x, 50f), Size(8f, 13f), CORNER_CUP)
-                drawRoundRect(ink, Offset(x, 50f), Size(8f, 13f), CORNER_CUP, style = Stroke(1.2f))
+                drawRoundRect(ink, Offset(x, 50f), Size(8f, 13f), CORNER_CUP, style = line(1.2f))
             }
         }
         Wear.CatEars -> {

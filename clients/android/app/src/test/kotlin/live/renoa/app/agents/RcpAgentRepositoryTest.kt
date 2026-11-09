@@ -434,6 +434,8 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
                         )
                     }
                 }
+            // The Host picks the look as it makes the agent.
+            looks.getOrPut(id) { buildJsonObject { put("look", Json.encodeToJsonElement(Look.serializer(), DEMO_LOOKS.getValue("Echo"))) } }
             val created =
                 buildJsonObject {
                     put("operation_id", operation)
@@ -1370,6 +1372,7 @@ class RcpAgentRepositoryTest {
         runCurrent()
         assertEquals(AgentProfile(kcalId, "Kcal", "Count my calories.", emptyList()), made.await())
         assertEquals(listOf("Nagisa" to "", "Kcal" to "Count my calories."), repo.agents.value.map { it.name to it.purpose }, "with its purpose at once")
+        assertEquals(DEMO_LOOKS["Echo"], repo.agents.value.single { it.name == "Kcal" }.look, "and its look, before any roster check")
         assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$agent") })
     }
 
@@ -1431,6 +1434,7 @@ class RcpAgentRepositoryTest {
         advanceTimeBy(2.minutes)
         runCurrent()
         assertEquals(listOf("/v1/host/agents/$gone"), surface.hostCalls.map { it.second })
+        assertEquals(emptyList(), surface.lookCalls, "an agent the Host does not have has no look to ask about")
     }
 
     @Test

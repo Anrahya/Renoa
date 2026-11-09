@@ -40,6 +40,8 @@ internal class HostProfiles(private val host: HostAgents) {
                         host.definition(agent).operational.purpose.orEmpty()
                     } catch (failed: RepositoryException) {
                         if (failed.problem != Problem.NotFound) continue
+                        // No such agent: it has no look either.
+                        profile.lookRead = true
                         ""
                     }
                 changed()

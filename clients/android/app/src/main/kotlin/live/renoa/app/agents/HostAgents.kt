@@ -30,9 +30,9 @@ data class AgentApp(val connection: String, val name: String? = null, val endpoi
 @Serializable
 private data class Apps(val apps: List<AgentApp>)
 
-/** How an agent looks, and the revision of a picture the owner set over it, if any. */
+/** How an agent looks. */
 @Serializable
-internal data class Appearance(val look: Look, @SerialName("picture_revision") val pictureRevision: String? = null)
+internal data class Appearance(val look: Look)
 
 @Serializable
 private data class Created(@SerialName("operation_id") val operationId: String, val record: AgentRecord)

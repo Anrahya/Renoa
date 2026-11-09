@@ -113,7 +113,7 @@ fun Badge(
         // Arriving, a tile falls the last 1.6 lifts into its socket, as on the landing page.
         val drop = (1f - arrival.value) * 1.6f
         withTransform({ translate(this.size.width / 2, this.size.height / 2 + LIFT * 0.3f * scale); scale(scale, scale, Offset.Zero) }) {
-            drawTile(frame, frame.lift + drop, shapes, question, state, look, primary, colors, if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
+            drawTile(frame, frame.lift + drop, scale, shapes, question, state, look, primary, colors, if (primary) primarySweep(clock.value, reduced) ?: 0.125f else null)
         }
     }
 }
@@ -121,6 +121,7 @@ fun Badge(
 private fun DrawScope.drawTile(
     frame: BadgeFrame,
     lift: Float,
+    pixelsPerUnit: Float,
     shapes: Shapes,
     question: TextLayoutResult,
     state: AgentState,
@@ -150,7 +151,9 @@ private fun DrawScope.drawTile(
         if (!frame.retiring) withTransform({ translate(0f, DEPTH) }) { drawPath(shapes.face, Color.Black) }
         drawPath(shapes.face, tile)
         clipPath(shapes.face) {
-            drawFace(shapes.features, look, primary, state, tile, if (frame.retiring) colors.mutedForeground else FACE_INK, FACE_SCALE)
+            // One device pixel, in the board's units at this size.
+            val finest = 1f / (pixelsPerUnit * FACE_SCALE)
+            drawFace(shapes.features, look, primary, state, tile, if (frame.retiring) colors.mutedForeground else FACE_INK, FACE_SCALE, finest)
         }
         when {
             frame.retiring -> drawPath(shapes.face, colors.border, style = Stroke(1.25f))

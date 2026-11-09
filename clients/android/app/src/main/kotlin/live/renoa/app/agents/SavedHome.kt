@@ -37,7 +37,7 @@ data class HomeSnapshot(val agents: List<AgentSummary>, val routines: List<Routi
 /**
  * The last [HomeSnapshot] this phone saw, so the next launch opens on it while the connection is
  * made. [owner] names the Renoa and the sign-in it belongs to; a snapshot kept for any other owner
- * reads as nothing kept. It holds the agents' names, purposes and last lines and the routines'
+ * reads as nothing kept. It holds the agents' names, purposes, looks and last lines and the routines'
  * names, but no credential: the owner is an origin and a device id. It lives in the app's private
  * storage, which the app keeps out of backups.
  *
