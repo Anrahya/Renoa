@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use gpui_kit::{
@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::{
     chat::{Line, Speaker, Transcript, chat_task_id},
-    face::Look,
+    face::{Look, blink},
     link::{Command, Update, host_agent},
     theme::Palette,
 };
@@ -32,7 +32,7 @@ struct Row {
     before: Option<Line>,
     /// Who says the next line, if anyone has.
     after: Option<Speaker>,
-    /// Whether it arrived while the chat was open.
+    /// Whether it is coming in.
     live: bool,
 }
 
@@ -65,10 +65,10 @@ pub struct Chats {
     scroller: Entity<MessageScrollerState>,
     /// Whether the scroller's last row is the agent at work.
     shown_working: bool,
-    /// The first row that arrived while the chat was open: it and those
-    /// after it come in with a motion, the ones before were already there.
-    live_from: usize,
+    /// The clock the faces blink by.
+    opened: Instant,
     _updates: Task<()>,
+    _blinks: Task<()>,
 }
 
 impl EventEmitter<SignedOut> for Chats {}
@@ -101,6 +101,16 @@ impl Chats {
                 }
             }
         });
+        // Draws again only as an eye opens or shuts; a list that changes
+        // meanwhile is caught on the next wake.
+        let _blinks = cx.spawn_in(window, async move |this, cx| {
+            while let Ok(wait) = this.update(cx, |this, _| this.next_blink()) {
+                cx.background_executor().timer(wait).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        });
         Self {
             commands,
             linked: false,
@@ -115,8 +125,9 @@ impl Chats {
             composer,
             scroller,
             shown_working: false,
-            live_from: 0,
+            opened: Instant::now(),
             _updates,
+            _blinks,
         }
     }
 
@@ -154,12 +165,23 @@ impl Chats {
             }
             Update::Main(main) => self.main = main,
             Update::Event(event) => {
-                self.transcripts
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |since| {
+                        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+                    });
+                let timed = self
+                    .transcripts
                     .entry(event.task_id)
                     .or_default()
-                    .apply(&event);
+                    .apply(&event, now_ms);
                 if self.chosen_task() == Some(event.task_id) {
                     self.show_rows(cx);
+                    // A line that took a time may now show one above it.
+                    if let Some(timed) = timed {
+                        self.scroller
+                            .update(cx, |scroller, cx| scroller.remeasure_items(timed, cx));
+                    }
                 }
             }
             Update::NotSent { task_id, text } => {
@@ -222,9 +244,6 @@ impl Chats {
             .update(cx, |composer, cx| composer.set_value(draft, window, cx));
         let rows = self.rows();
         self.shown_working = self.transcript().is_some_and(Transcript::working);
-        self.live_from = self
-            .transcript()
-            .map_or(0, |transcript| transcript.lines().len());
         self.scroller
             .update(cx, |scroller, cx| scroller.reset(rows, cx));
         cx.notify();
@@ -252,22 +271,58 @@ impl Chats {
     /// What row `index` shows: a line, with the one before it; past the
     /// last line, the agent at work.
     fn row(&self, index: usize) -> Row {
-        let lines = self.transcript().map_or(&[][..], Transcript::lines);
+        let transcript = self.transcript();
+        let lines = transcript.map_or(&[][..], Transcript::lines);
+        let working = transcript.is_some_and(Transcript::working);
         Row {
             line: lines.get(index).cloned(),
             before: index
                 .checked_sub(1)
                 .and_then(|before| lines.get(before))
                 .cloned(),
-            after: lines.get(index + 1).map(|after| after.speaker),
-            live: index >= self.live_from && lines.get(index).is_none_or(fresh),
+            // The agent at work speaks after the last line.
+            after: lines
+                .get(index + 1)
+                .map(|after| after.speaker)
+                .or_else(|| (working && index + 1 == lines.len()).then_some(Speaker::Agent)),
+            live: transcript.is_some_and(|transcript| transcript.coming_in(index)),
         }
     }
 
-    /// How the agent of `agent` looks, and whether it is the main agent.
+    /// Whether the agent of `task_id`'s chat has its eyes shut just now.
+    fn blinking(&self, task_id: TaskId) -> bool {
+        blink::shut(task_id.as_uuid().as_u128(), self.blink_clock())
+    }
+
+    fn blink_clock(&self) -> u64 {
+        u64::try_from(self.opened.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// How long until any listed agent's eyes open or shut.
+    fn next_blink(&self) -> Duration {
+        let seeds = self.agents.iter().map(|agent| {
+            chat_task_id(agent.node_id, agent.target.as_str())
+                .as_uuid()
+                .as_u128()
+        });
+        blink::next_change(seeds, self.blink_clock())
+    }
+
+    /// How the agent of `agent` looks, and whether it is the main agent: the
+    /// one the Host names, or while it names none that is listed, the first
+    /// listed, as on the phone (`mainAgent` in the Android app's `Badge.kt`).
     fn face(&self, agent: &TargetSummary) -> (Option<Look>, bool) {
         let task_id = chat_task_id(agent.node_id, agent.target.as_str());
-        let primary = host_agent(agent.target.as_str()).is_some_and(|id| Some(id) == self.main);
+        let named = |agent: &TargetSummary| {
+            host_agent(agent.target.as_str()).is_some_and(|id| Some(id) == self.main)
+        };
+        let main = self
+            .agents
+            .iter()
+            .find(|listed| named(listed))
+            .or_else(|| self.agents.first());
+        let primary =
+            main.is_some_and(|main| main.node_id == agent.node_id && main.target == agent.target);
         (self.looks.get(&task_id).copied(), primary)
     }
 
@@ -279,11 +334,9 @@ impl Chats {
         let shown_working = std::mem::replace(&mut self.shown_working, working);
         self.scroller.update(cx, |scroller, cx| {
             let shown = scroller.item_count();
+            // A transcript only grows, so the rows never fall below those settled.
             let settled = shown - usize::from(shown_working);
-            if rows < settled {
-                self.live_from = rows;
-                scroller.reset(rows, cx);
-            } else if (rows, working) != (shown, shown_working) {
+            if (rows, working) != (shown, shown_working) {
                 scroller.splice(settled..shown, rows - settled, cx);
             }
         });
@@ -318,20 +371,6 @@ impl Render for Chats {
             .child(self.sidebar(palette, cx))
             .child(self.conversation(palette, cx))
     }
-}
-
-/// How long after it was said a line still comes in with a motion: a replay
-/// of older lines, on first opening a chat, comes in still.
-const FRESH_FOR_MS: i64 = 30_000;
-
-/// Whether `line` was said within [`FRESH_FOR_MS`], or has no time yet.
-fn fresh(line: &Line) -> bool {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-        });
-    line.at_ms.is_none_or(|at_ms| now - at_ms < FRESH_FOR_MS)
 }
 
 /// `first`, then `then` after a space when there is any.

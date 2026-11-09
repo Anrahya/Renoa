@@ -31,12 +31,23 @@ code.
 ## What it does
 
 - Agents are the targets the owner's online nodes advertise.
+- Each agent wears a face drawn from the look its Host picked
+  (`GET /v1/host/agents/<id>/appearance`), the same parts the phone draws
+  (`src/face.rs`). The main agent, the one the Host names (`GET /v1/host`) or
+  until it names one the first listed, wears Renoa's own look and her star; an
+  agent whose look is not read yet wears a plain one. Faces blink from one
+  clock and bob while their agent works.
 - Under each agent's name the sidebar shows the last thing said, or, before
-  anything is, the purpose its owner gave it, read once from the Host
-  (`GET /v1/host/agents/<id>` over `call_host`) for every `agent:<id>` target.
-  The reads run beside the chats, so a slow Host holds up no message; any
-  answer but a purpose or "no such agent" is asked again with the next agent
-  list, every 30 seconds.
+  anything is, the purpose its owner gave it (`GET /v1/host/agents/<id>`), and
+  the time of the last line that has one.
+- The Host is read for every `agent:<id>` target beside the chats, so a slow
+  Host holds up no message. The main agent is read with every agent list,
+  every 30 seconds; a purpose or look is read until the Host gives it or says
+  there is no such agent.
+- Agent lines show as Markdown, with the agent's face beside the last of a
+  run; a time goes between lines an hour or a midnight apart. An owner's line
+  takes the time the agent began answering it. Lines new when they arrive
+  come in with a motion; a replay of older ones does not.
 - Each agent's chat is the task every app derives from the agent's node and
   target, so the phone and the Mac share one conversation (`src/chat.rs`).
 - A lost connection is retried every five seconds; each chat is attached again

@@ -50,11 +50,11 @@ fn a_turn_reads_as_the_owner_then_the_agent_and_a_replay_adds_nothing() {
         ),
     ];
     let mut transcript = Transcript::default();
-    transcript.apply(&events[0]);
-    transcript.apply(&events[1]);
+    transcript.apply(&events[0], 0);
+    transcript.apply(&events[1], 0);
     assert!(transcript.working());
     for event in &events {
-        transcript.apply(event);
+        transcript.apply(event, 0);
     }
     assert!(!transcript.working());
     assert_eq!(transcript.through(), Some(3));
@@ -85,16 +85,19 @@ fn a_quiet_command_is_not_shown_and_a_failed_turn_says_so() {
         attachments,
     };
     let mut transcript = Transcript::default();
-    transcript.apply(&said(TaskId::new(), 0, quiet));
-    transcript.apply(&executed(
-        TaskId::new(),
-        1,
-        ExecutionEventKind::ExecutionTerminated {
-            terminal: ExecutionTerminal::Failed {
-                error: "model unavailable".to_owned(),
+    transcript.apply(&said(TaskId::new(), 0, quiet), 0);
+    transcript.apply(
+        &executed(
+            TaskId::new(),
+            1,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Failed {
+                    error: "model unavailable".to_owned(),
+                },
             },
-        },
-    ));
+        ),
+        0,
+    );
     let [failure] = transcript.lines() else {
         panic!("one line: {:?}", transcript.lines());
     };
@@ -103,5 +106,48 @@ fn a_quiet_command_is_not_shown_and_a_failed_turn_says_so() {
     assert!(
         !failure.text.contains("model unavailable"),
         "no plumbing reaches the owner"
+    );
+}
+
+#[test]
+fn only_lines_new_when_they_arrive_come_in_and_the_owners_take_the_agents_time() {
+    let task_id = TaskId::new();
+    let asked = |sequence| said(task_id, sequence, CommandInput::from_text("Still there?"));
+    let answered = |sequence| {
+        executed(
+            task_id,
+            sequence,
+            ExecutionEventKind::AssistantMessage {
+                text: "Here.".to_owned(),
+            },
+        )
+    };
+    let mut transcript = Transcript::default();
+    // An old turn, replayed an hour after it was said.
+    let later = 60 * MINUTE_MS;
+    assert_eq!(transcript.apply(&asked(0), later), None);
+    assert!(
+        transcript.coming_in(0),
+        "an owner's line is new until its time says otherwise"
+    );
+    assert_eq!(transcript.apply(&answered(1), later), Some(0..1));
+    assert!(
+        !transcript.coming_in(0) && !transcript.coming_in(1),
+        "a replay comes in still"
+    );
+
+    // Two lines sent while the agent was away both take its first time.
+    transcript.apply(&asked(70), later);
+    transcript.apply(&asked(71), later);
+    assert_eq!(transcript.apply(&answered(72), 72 * MINUTE_MS), Some(2..4));
+    assert!(
+        (2..5).all(|index| transcript.coming_in(index)),
+        "a new turn comes in"
+    );
+    assert_eq!(transcript.lines()[2].at_ms, Some(72 * MINUTE_MS));
+    assert_eq!(
+        transcript.apply(&answered(73), 73 * MINUTE_MS),
+        None,
+        "nothing left to time"
     );
 }

@@ -322,8 +322,8 @@ fn each_agent_wears_its_look_and_the_main_agent_is_marked(cx: &mut TestAppContex
     };
     assert_eq!(
         faces(cx),
-        ((Some(PLAIN), false), (None, false)),
-        "no agent is main before the Host names one"
+        ((Some(PLAIN), true), (None, false)),
+        "the first listed stands in before the Host names one"
     );
 
     updates
@@ -331,4 +331,12 @@ fn each_agent_wears_its_look_and_the_main_agent_is_marked(cx: &mut TestAppContex
         .unwrap();
     cx.run_until_parked();
     assert_eq!(faces(cx), ((Some(PLAIN), false), (None, true)));
+
+    updates.send(Update::Main(Some(Uuid::new_v4()))).unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        faces(cx),
+        ((Some(PLAIN), true), (None, false)),
+        "one named but not listed leaves the first to stand in"
+    );
 }

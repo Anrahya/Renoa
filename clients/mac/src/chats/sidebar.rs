@@ -59,6 +59,7 @@ impl Chats {
                 .on_click(cx.listener(move |this, _, window, cx| this.select(index, window, cx)))
                 .child(
                     Face::new(look, primary, palette, px(30.))
+                        .blinking(self.blinking(task_id))
                         .mood(mood)
                         .alive(format!("side-{task_id}")),
                 )

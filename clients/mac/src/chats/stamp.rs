@@ -1,5 +1,5 @@
 //! When lines were said, as the chats show it: a time between lines far
-//! apart, and beside each agent the time of the last thing said.
+//! apart, and beside each agent the time of its chat's last timed line.
 
 use chrono::{DateTime, Datelike as _, TimeZone};
 

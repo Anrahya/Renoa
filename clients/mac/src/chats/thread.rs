@@ -34,12 +34,23 @@ const SETTLE: Duration = Duration::from_millis(500);
 /// One beat of the working dots.
 const DOTS: Duration = Duration::from_millis(1100);
 
+/// The dots need no more frames than this a second.
+const DOT_FPS: f32 = 30.;
+
 /// Who is talking in the open chat, as each row draws them.
 #[derive(Clone)]
 struct Agent {
     name: SharedString,
     look: Option<Look>,
     primary: bool,
+    /// Whether its eyes are shut just now.
+    blinking: bool,
+}
+
+impl Agent {
+    fn face(&self, palette: Palette, size: f32) -> Face {
+        Face::new(self.look, self.primary, palette, px(size)).blinking(self.blinking)
+    }
 }
 
 impl Chats {
@@ -56,6 +67,7 @@ impl Chats {
             name: chosen.map_or_else(SharedString::default, |chosen| chosen.name.clone()),
             look,
             primary,
+            blinking: task_id.is_some_and(|task_id| self.blinking(task_id)),
         };
         let purpose = task_id.and_then(|task_id| self.purposes.get(&task_id).cloned());
         let working = self.transcript().is_some_and(Transcript::working);
@@ -71,7 +83,9 @@ impl Chats {
                 |chats| row(index, chats.read(cx).row(index), &speaking, palette),
             )
         })
-        .with_content_style(padded(StyleRefinement::default()))
+        .with_list_style(padded(StyleRefinement::default()))
+        // Each row owns the space above it.
+        .with_row_style(StyleRefinement::default().pb_0().px_0())
         .flex_1();
         let sendable = self.linked && !self.composer.read(cx).value().trim().is_empty();
         div()
@@ -186,11 +200,7 @@ fn header(
                 .bg(palette.frosted)
                 .border_1()
                 .border_color(palette.outline)
-                .child(
-                    Face::new(agent.look, agent.primary, palette, px(26.))
-                        .mood(mood)
-                        .alive("header-face"),
-                )
+                .child(agent.face(palette, 26.).mood(mood).alive("header-face"))
                 .child(
                     div()
                         .flex_none()
@@ -316,9 +326,7 @@ fn said_by_agent(
             }
         });
     let face = div().w(px(24.)).flex_none().when(last, |slot| {
-        slot.child(
-            Face::new(agent.look, agent.primary, palette, px(24.)).alive(format!("said-{index}")),
-        )
+        slot.child(agent.face(palette, 24.).alive(format!("said-{index}")))
     });
     let placed = div()
         .w_full()
@@ -350,7 +358,7 @@ fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
             .bg(palette.secondary)
             .with_animation(
                 ("dot", usize::from(dot)),
-                Animation::new(DOTS).repeat(),
+                Animation::new(DOTS).repeat().with_max_fps(DOT_FPS),
                 move |dot, t| {
                     // Bright at its moment in the beat, faint the rest.
                     let at = (t - offset).rem_euclid(1.);
@@ -365,7 +373,8 @@ fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
         .items_end()
         .gap(px(8.))
         .child(
-            Face::new(agent.look, agent.primary, palette, px(24.))
+            agent
+                .face(palette, 24.)
                 .mood(Mood::Working)
                 .alive("working-face"),
         )
@@ -379,7 +388,7 @@ fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
                 .rounded(px(18.))
                 .bg(palette.chat_agent)
                 .text_color(palette.secondary)
-                .child(format!("{} is thinking", agent.name))
+                .child(format!("{} is working on it", agent.name))
                 .child(div().flex().gap(px(3.)).children(dots)),
         )
 }

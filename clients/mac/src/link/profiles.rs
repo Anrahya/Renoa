@@ -195,3 +195,22 @@ async fn ask<T: for<'de> Deserialize<'de>>(connection: &Connection, path: &str) 
 pub fn host_agent(target: &str) -> Option<Uuid> {
     Uuid::parse_str(target.strip_prefix(AGENT_TARGET)?).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Observation;
+
+    #[test]
+    fn an_observation_must_say_whether_there_is_a_main_agent() {
+        let read = |body: &str| {
+            serde_json::from_str::<Observation>(body).map(|seen| seen.main_agent.is_some())
+        };
+        assert!(
+            read("{}").is_err(),
+            "a Host that does not say is not read as naming none"
+        );
+        assert_eq!(read(r#"{"main_agent":null}"#).ok(), Some(false));
+        let named = r#"{"main_agent":{"main_agent_id":"1b4e28ba-2fa1-11d2-883f-0016d3cca427"}}"#;
+        assert_eq!(read(named).ok(), Some(true));
+    }
+}

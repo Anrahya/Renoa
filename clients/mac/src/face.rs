@@ -1,6 +1,7 @@
 //! An agent's face on its tile, drawn from the look the Host picked, as the
 //! Android app draws it (`badge/Face.kt`).
 
+pub mod blink;
 pub mod look;
 mod shapes;
 
@@ -63,45 +64,28 @@ impl Face {
         self
     }
 
-    /// The face as it lives on screen: it blinks every few seconds, each
-    /// agent at its own moment, and bobs while it works. `id` names it among
-    /// its siblings and sets its moment.
+    /// The face as it sits on screen, bobbing while it works. `id` names it
+    /// among its siblings. Its blinks come from [`blink`], through
+    /// [`Face::blinking`].
     pub fn alive(self, id: impl Into<SharedString>) -> AnyElement {
-        let id: SharedString = id.into();
-        // Where in the blink's cycle this face starts, from its name.
-        let moment = id.bytes().fold(0_u32, |sum, byte| {
-            sum.wrapping_mul(31).wrapping_add(byte.into())
-        }) % 100;
-        let moment = f32::from(u8::try_from(moment).unwrap_or(0)) / 100.;
         let working = self.mood == Mood::Working;
         let size = self.size;
-        let face = self.with_animation(
-            ElementId::Name(format!("{id}-blink").into()),
-            Animation::new(BLINK_EVERY).repeat().with_max_fps(BLINK_FPS),
-            move |face, t| face.blinking((t + moment).fract() > 1. - BLINK_SHUT),
-        );
-        let held = div().relative().size(size).flex_none().child(face);
+        let held = div().relative().size(size).flex_none().child(self);
         if !working {
             return held.into_any_element();
         }
         let lift = size * BOB_LIFT;
         held.with_animation(
-            ElementId::Name(format!("{id}-bob").into()),
-            Animation::new(BOB_EVERY).repeat(),
+            ElementId::Name(format!("{}-bob", id.into()).into()),
+            Animation::new(BOB_EVERY).repeat().with_max_fps(BOB_FPS),
             move |held, t| held.top(-lift * (t * TAU).sin().abs()),
         )
         .into_any_element()
     }
 }
 
-/// How often a face blinks, as the motion board has it.
-const BLINK_EVERY: Duration = Duration::from_millis(4200);
-
-/// The part of a blink's cycle the eyes are shut: about 170 milliseconds.
-const BLINK_SHUT: f32 = 0.04;
-
-/// A blink needs no more frames than this a second.
-const BLINK_FPS: f32 = 30.;
+/// A bob needs no more frames than this a second.
+const BOB_FPS: f32 = 30.;
 
 /// How long a working face takes to bob twice.
 const BOB_EVERY: Duration = Duration::from_millis(2800);
