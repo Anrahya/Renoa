@@ -241,6 +241,7 @@
     "ModelProvider": {
       "description": "A model provider supported by Renoa's native process adapter.",
       "enum": [
+        "anthropic",
         "xai",
         "opencode-go",
         "deepseek"

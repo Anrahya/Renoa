@@ -18,10 +18,16 @@ import {
   type OpenCodeCatalogOptions,
 } from "./opencode-catalog.js";
 import { fromOauth, oauthCredential, xaiOAuth } from "./providers/xai.js";
-import type { Api, Model, SimpleStreamOptions } from "./upstream/types.js";
-import { streamSimple as streamAnthropic } from "./transports/anthropic-messages.js";
-import { streamSimple as streamOpenAiChat } from "./transports/openai-chat.js";
-import { streamSimple as streamOpenAiResponses } from "./transports/openai-responses.js";
+import {
+  normalizeContext,
+  type Api,
+  type Context,
+  type Model,
+  type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import { streamSimple as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
+import { streamSimple as streamOpenAiChat } from "@earendil-works/pi-ai/api/openai-completions";
+import { streamSimple as streamOpenAiResponses } from "@earendil-works/pi-ai/api/openai-responses";
 
 const OAUTH_SKEW_MS = 5 * 60 * 1000;
 
@@ -132,16 +138,19 @@ export async function refreshOauth(
 
 export function dispatchStream(
   model: Model<Api>,
-  context: Parameters<typeof streamOpenAiChat>[1],
+  context: Context,
   options: SimpleStreamOptions,
 ) {
+  const transcript = normalizeContext(context);
   switch (model.api) {
     case "openai-completions":
-      return streamOpenAiChat(model as Model<"openai-completions">, context, options);
+      return streamOpenAiChat(model as Model<"openai-completions">, transcript, options);
     case "openai-responses":
-      return streamOpenAiResponses(model as Model<"openai-responses">, context, options);
+      return streamOpenAiResponses(model as Model<"openai-responses">, transcript, options);
     case "anthropic-messages":
-      return streamAnthropic(model as Model<"anthropic-messages">, context, options);
+      return streamAnthropic(model as Model<"anthropic-messages">, transcript, options);
+    default:
+      throw new Error(`${model.provider}/${model.id} uses the unsupported ${model.api} API`);
   }
 }
 
@@ -170,6 +179,9 @@ function requireCredential(
   const credential = store.read(provider);
   if (credential === undefined) {
     throw new Error(`${provider} credentials are not configured`);
+  }
+  if (provider === "anthropic" && credential.type !== "api_key") {
+    throw new Error("Anthropic requires an API key");
   }
   if (provider === "xai" && credential.type !== "oauth") {
     throw new Error("xAI requires OAuth credentials");

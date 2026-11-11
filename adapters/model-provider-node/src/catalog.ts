@@ -1,18 +1,20 @@
 import { createHash } from "node:crypto";
 
-import deepseekCatalog from "./upstream/catalogs/deepseek.json" with { type: "json" };
-import xaiCatalog from "./upstream/catalogs/xai.json" with { type: "json" };
-import opencodeGoCatalog from "./upstream/catalogs/opencode-go.json" with { type: "json" };
+import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
+import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.models";
+import { DEEPSEEK_MODELS } from "@earendil-works/pi-ai/providers/deepseek.models";
+import { OPENCODE_GO_MODELS } from "@earendil-works/pi-ai/providers/opencode-go.models";
+import { XAI_MODELS } from "@earendil-works/pi-ai/providers/xai.models";
+
 import type { CatalogModel, ProviderId, ReasoningLevel } from "./contract.js";
 import {
   OPENCODE_GO_BASE_URL,
   opencodeGoTransport,
   type OpenCodeTransport,
 } from "./providers/opencode-go.js";
+import { ANTHROPIC_BASE_URL } from "./providers/anthropic.js";
 import { DEEPSEEK_BASE_URL } from "./providers/deepseek.js";
 import { XAI_BASE_URL } from "./providers/xai.js";
-import { getSupportedThinkingLevels } from "./upstream/thinking.js";
-import type { Api, Model } from "./upstream/types.js";
 
 export interface CatalogEntry {
   readonly id: string;
@@ -27,15 +29,17 @@ export interface CatalogEntry {
  */
 const UNCONSUMED_CATALOG_FIELDS = ["type", "inputLimits"] as const;
 
-const PINNED_CATALOGS: Readonly<Record<ProviderId, unknown>> = {
-  xai: xaiCatalog,
-  "opencode-go": opencodeGoCatalog,
-  deepseek: deepseekCatalog,
+/** Pi's chat catalogs, keyed by model id, as the pinned package publishes them. */
+const PINNED_CATALOGS: Readonly<Record<ProviderId, Readonly<Record<string, object>>>> = {
+  anthropic: ANTHROPIC_MODELS,
+  xai: XAI_MODELS,
+  "opencode-go": OPENCODE_GO_MODELS,
+  deepseek: DEEPSEEK_MODELS,
 };
 
 export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[] {
-  const raw = PINNED_CATALOGS[provider];
-  const discovered = flattenCatalog(raw)
+  const discovered = Object.values(PINNED_CATALOGS[provider])
+    .map((entry) => ({ ...entry }) as Record<string, unknown>)
     .filter((entry) => isAdvertisableCatalogEntry(provider, entry))
     .map(withoutUnconsumedFields)
     .map((entry) => (provider === "opencode-go" ? applyOpenCodeOfficialTransport(entry) : entry))
@@ -52,9 +56,10 @@ export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[]
 }
 
 /**
- * Pi catalogs (data schema 6) also list image and classifier models and models
- * on APIs this adapter does not carry, such as Google Generative AI. Only chat
- * models on a retained API are advertised; an entry without `type` is chat.
+ * Pi's chat catalogs also list models on APIs this adapter does not carry, such
+ * as Google Generative AI, and discovered OpenCode Go entries may be image or
+ * classifier models. Only chat models on a retained API are advertised; an
+ * entry without `type` is chat.
  */
 export function isAdvertisableCatalogEntry(
   provider: ProviderId,
@@ -163,32 +168,18 @@ function applyOpenCodeOfficialTransport(
     api: official,
     baseUrl: OPENCODE_GO_BASE_URL[official],
   };
-  if (official === "anthropic-messages") {
+  // A compat block describes the API it was written for: it is kept when
+  // only the endpoint moves, and dropped when the entry changes API.
+  if (official === "anthropic-messages" && entry.api !== official) {
     delete next.compat;
   }
   return next;
 }
 
-function flattenCatalog(value: unknown): Record<string, unknown>[] {
-  if (!isRecord(value)) {
-    return [];
-  }
-  const entries: Record<string, unknown>[] = [];
-  for (const group of Object.values(value)) {
-    if (!isRecord(group)) {
-      continue;
-    }
-    for (const model of Object.values(group)) {
-      if (isRecord(model)) {
-        entries.push(model);
-      }
-    }
-  }
-  return entries;
-}
-
 function supportsApi(provider: ProviderId, api: unknown): api is Api {
   switch (provider) {
+    case "anthropic":
+      return api === "anthropic-messages";
     case "xai":
       return api === "openai-responses";
     case "deepseek":
@@ -209,6 +200,9 @@ function trustedBaseUrl(
   }
   if (allowLoopback && isLoopbackBaseUrl(value)) {
     return true;
+  }
+  if (provider === "anthropic") {
+    return value === ANTHROPIC_BASE_URL;
   }
   if (provider === "xai") {
     return value === XAI_BASE_URL;

@@ -1,7 +1,10 @@
 # Renoa model-provider adapter
 
 `@renoa/model-provider` is the Node process that translates Renoa's
-provider-neutral model contract into xAI, OpenCode Go, and DeepSeek API calls.
+provider-neutral model contract into Anthropic, xAI, OpenCode Go, and DeepSeek
+API calls. The provider protocols and bundled catalogs come from Pi's published
+`@earendil-works/pi-ai` package, pinned to an exact version; Renoa owns the
+contract mapping, credentials, retry, and request identity around it.
 
 It is not the kernel, the durable loop, compaction, tools, ACP, Waku, or RCP.
 Those remain provider-neutral. A future adapter can replace this process if it
@@ -9,11 +12,13 @@ speaks the same stdin/stdout protocol and environment contract.
 
 ## What it owns
 
+- Anthropic over its API key
 - xAI/Grok over OAuth
 - OpenCode Go over its API key
 - DeepSeek over its API key
 - OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages transports
-- one retry policy
+- one retry policy: Pi's own client retries are off (`maxRetries: 0`)
+- the request identity: `User-Agent: renoa/0.1.0` and no attribution headers
 - classified, redacted provider failures
 - SQLite credential storage compatible with the existing `pi-auth.sqlite` file
 
@@ -27,6 +32,7 @@ compaction, ACP, Waku, and RCP. The Rust host launches this process for
 
 | Provider | Auth | Transports |
 | --- | --- | --- |
+| Anthropic | API key | Messages at `https://api.anthropic.com`, from the bundled catalog only |
 | xAI | OAuth device flow | Responses, as advertised by the bundled catalog |
 | OpenCode Go | API key | Official Go transports only: Responses, Chat Completions, Anthropic Messages |
 | DeepSeek | API key | Chat Completions at `https://api.deepseek.com`, from the bundled catalog only |
@@ -43,7 +49,7 @@ The adapter conditionally revalidates `models.dev` with its ETag and atomically
 caches the last complete result beside the credential database. A cached model
 whose binding no longer validates, such as one learned on the retired
 `/zen/go` route, invalidates that cache file; the next successful refresh
-replaces it. A bundled Pi `v1.4.0` catalog remains available even when the
+replaces it. The bundled catalog of the pinned Pi package remains available even when the
 public inventory omits a previously supported model. Bundled entries are
 advertised only when they are chat models on one of the three transports above
 and, for OpenCode Go, listed in the documented transport table; image and
@@ -153,7 +159,7 @@ pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scrip
 pnpm --dir adapters/model-provider-node build
 export RENOA_MODEL_BRIDGE="$PWD/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of xai, opencode-go, deepseek
+export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek
 export RENOA_MODEL_PROVIDER=opencode-go # default for new ACP sessions
 export RENOA_MODEL=deepseek-v4-pro
 export RENOA_MODEL_REASONING=high # optional

@@ -3,8 +3,8 @@ import type {
   WireModelRequest,
   WireModelResponse,
 } from "./contract.js";
-import type { Api, AssistantMessage, Context, Message, Tool } from "./upstream/types.js";
-import { isContextOverflow } from "./upstream/overflow.js";
+import type { Api, AssistantMessage, Context, Message, Tool } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 
 export function parseWireModelRequest(value: unknown): WireModelRequest {
   if (!isRecord(value)) {
@@ -461,8 +461,15 @@ function toTool(tool: { name: string; description: string; input_schema: JsonVal
   return {
     name: tool.name,
     description: tool.description,
-    parameters: tool.input_schema,
+    parameters: schemaObject(tool.name, tool.input_schema),
   };
+}
+
+function schemaObject(name: string, schema: JsonValue): Record<string, JsonValue> {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+    throw invalidRequest(`tool ${name} input_schema must be a JSON object`);
+  }
+  return schema;
 }
 
 function stopReason(message: AssistantMessage): WireModelResponse["stop_reason"] {
@@ -476,6 +483,7 @@ function stopReason(message: AssistantMessage): WireModelResponse["stop_reason"]
     case "pending":
     case "error":
     case "aborted":
+    case "deferred":
       throw new Error(`unsupported model stop reason: ${message.stopReason}`);
   }
 }

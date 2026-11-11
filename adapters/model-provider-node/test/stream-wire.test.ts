@@ -180,7 +180,8 @@ test("each supported transport uses the official method, route, auth, and body f
       const request = server.requests[0];
       assert.ok(request);
       assert.equal(request.method, "POST");
-      assert.equal(request.url, "/v1/messages");
+      // Pi sends every Anthropic Messages request through the SDK's beta route.
+      assert.equal(request.url, "/v1/messages?beta=true");
       assert.equal(request.headers["x-api-key"], "opencode-test-key");
       const body = JSON.parse(request.body) as {
         model?: string;

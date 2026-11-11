@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { isContextOverflow, type AssistantMessage } from "@earendil-works/pi-ai";
+
 import type { WireMessage, WireModelRequest } from "../src/contract.js";
-import { isContextOverflow } from "../src/upstream/overflow.js";
-import type { AssistantMessage } from "../src/upstream/types.js";
 import {
   anthropicSse,
   chatChunk,
@@ -16,7 +16,8 @@ import {
 } from "./helpers.js";
 import { completedRecord, runStream, streamFailure, type StreamOptions } from "./stream-support.js";
 
-// Behaviour ported from Pi v1.4.0 that Renoa's retained transports now exhibit.
+// Pi protocol behaviour that Renoa depends on, pinned so a version bump that
+// changes it fails here.
 
 const OPENCODE_KEY = { type: "api_key", key: "opencode-test-key" } as const;
 const PIXEL = "iVBORw0KGgo=";

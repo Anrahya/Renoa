@@ -4,8 +4,11 @@
   "private": true,
   "license": "Apache-2.0 OR MIT",
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
+    "auth:anthropic": "pnpm run build && node dist/src/auth-anthropic.js",
     "auth:deepseek": "pnpm run build && node dist/src/auth-deepseek.js",
     "auth:opencode-go": "pnpm run build && node dist/src/auth-opencode-go.js",
     "auth:xai": "pnpm run build && node --dns-result-order=ipv4first dist/src/auth-xai.js",
@@ -15,6 +18,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",
+    "@earendil-works/pi-ai": "1.5.0",
     "openai": "6.40.0",
     "partial-json": "0.1.7"
   },

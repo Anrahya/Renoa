@@ -13,8 +13,8 @@ import {
   opencodeGoTransport,
   type OpenCodeTransport,
 } from "./providers/opencode-go.js";
-import { getSupportedThinkingLevels } from "./upstream/thinking.js";
-import type { Api, Model, ModelCost, ThinkingLevelMap } from "./upstream/types.js";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import type { Api, Model, ModelCost, ThinkingLevelMap } from "@earendil-works/pi-ai";
 
 const OFFICIAL_MODELS_URL = "https://opencode.ai/inference/go/v1/models";
 const MODELS_DEV_URL = "https://models.dev/api.json";

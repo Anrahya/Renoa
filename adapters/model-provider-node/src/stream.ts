@@ -25,7 +25,12 @@ import {
 } from "./runtime.js";
 import { capturingFetch, errorFromAssistant, abortError, isAbortError, type HttpCapture } from "./http-capture.js";
 import { fromAssistant, parseWireModelRequest, toContext } from "./wire-request.js";
-import type { AssistantMessageEvent } from "./upstream/types.js";
+import type { AssistantMessageEvent, ClientIdentity } from "@earendil-works/pi-ai";
+
+const RENOA_IDENTITY: ClientIdentity = {
+  userAgent: { custom: "renoa/0.1.0" },
+  attribution: null,
+};
 
 export interface StreamInvocation {
   readonly runtime: LoadedRuntime;
@@ -189,11 +194,10 @@ async function runAttempt(
     maxRetries: 0,
     fetch: fetchImpl,
     ...(invocation.sessionId === undefined ? {} : { sessionId: invocation.sessionId }),
-    ...(invocation.runtime.provider === "opencode-go"
-      ? { headers: {
-          "user-agent": "renoa/0.1.0",
-          ...(invocation.sessionId === undefined ? {} : { "x-opencode-session": invocation.sessionId }),
-        } }
+    // Every provider sees Renoa, never Pi, and no attribution headers.
+    identity: RENOA_IDENTITY,
+    ...(invocation.runtime.provider === "opencode-go" && invocation.sessionId !== undefined
+      ? { headers: { "x-opencode-session": invocation.sessionId } }
       : {}),
     onPayload: async (payload: unknown) => {
       await invocation.emit({

@@ -29,11 +29,12 @@ projects are studied for established agent-runtime mechanics.
   only durable activity into RCP, and keeps Pi messages, provider events,
   workspace policy, and credentials local to that node. Pi's CLI, TUI, and
   coding-agent package are not dependencies.
-- Current Alpha provider path: `adapters/model-provider-node` is Renoa-owned and
-  has no Pi runtime-package dependency. It adapts the minimal xAI, OpenCode
-  Go, and DeepSeek provider source needed from Pi `v1.4.0`; exact copied files, removals,
-  modifications, source revision, and MIT notice are recorded beside the code
-  in `adapters/model-provider-node/UPSTREAM.md`.
+- Current Alpha provider path: `adapters/model-provider-node` imports Pi's
+  published `@earendil-works/pi-ai` package at an exact version for its
+  provider protocols and catalogs, so a new model or provider arrives with a
+  version bump. Renoa keeps its own contract mapping, credential store, retry,
+  and request identity around it; the pinned version and what Renoa turns off
+  are recorded in `adapters/model-provider-node/UPSTREAM.md`.
 - Renoa deliberately does not adopt Pi's catalog persistence, unbounded queues,
   hidden inference retries, or unfinished durable-harness proposal. Context
   projection, compaction, recovery, and scheduling remain Renoa contracts.
@@ -122,10 +123,9 @@ Reviewed on 2026-08-20.
   source is copied.
 
 The Pi, Codex, Grok Build, and DeepSeek Harness repositories above are studied
-references. Substantial Pi provider code adapted into Renoa is recorded with
-its exact source revision, modification scope, and license in
-`adapters/model-provider-node/UPSTREAM.md`; the other reviewed source is not
-copied wholesale.
+references. Pi's model package is a pinned dependency, recorded with its
+version and license in `adapters/model-provider-node/UPSTREAM.md`; the other
+reviewed source is not copied wholesale.
 
 ## Interoperability standards checked
 

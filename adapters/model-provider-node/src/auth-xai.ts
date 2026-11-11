@@ -1,7 +1,7 @@
 import { loadAuthStorePath } from "./config.js";
 import { SqliteCredentialStore } from "./credentials.js";
 import { fromOauth, xaiOAuth } from "./providers/xai.js";
-import type { AuthEvent, AuthPrompt } from "./upstream/oauth-xai.js";
+import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 
 async function main(): Promise<void> {
   const credentials = new SqliteCredentialStore(loadAuthStorePath(process.env));

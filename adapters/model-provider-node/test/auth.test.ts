@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { SqliteCredentialStore } from "../src/credentials.js";
 
 const PROVIDERS = [
+  { id: "anthropic", label: "Anthropic" },
   { id: "opencode-go", label: "OpenCode Go" },
   { id: "deepseek", label: "DeepSeek" },
 ] as const;

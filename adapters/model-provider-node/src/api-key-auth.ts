@@ -3,7 +3,7 @@ import { providerDisplayName, type ProviderId } from "./contract.js";
 import { SqliteCredentialStore } from "./credentials.js";
 
 /** Providers that authenticate with an API key piped on standard input. */
-export type ApiKeyProvider = Extract<ProviderId, "opencode-go" | "deepseek">;
+export type ApiKeyProvider = Extract<ProviderId, "anthropic" | "opencode-go" | "deepseek">;
 
 /** Stores the API key read from standard input; the key is never printed. */
 export function runApiKeyAuth(provider: ApiKeyProvider): void {

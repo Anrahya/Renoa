@@ -6,7 +6,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export const PROVIDER_IDS = ["xai", "opencode-go", "deepseek"] as const;
+export const PROVIDER_IDS = ["anthropic", "xai", "opencode-go", "deepseek"] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
@@ -189,6 +189,8 @@ export interface DescriptionResponse {
 
 export function providerDisplayName(provider: string): string {
   switch (provider) {
+    case "anthropic":
+      return "Anthropic";
     case "xai":
       return "xAI";
     case "opencode-go":
