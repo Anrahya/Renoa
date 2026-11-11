@@ -24,7 +24,8 @@ import {
   type LoadedRuntime,
 } from "./runtime.js";
 import { capturingFetch, errorFromAssistant, abortError, isAbortError, type HttpCapture } from "./http-capture.js";
-import { fromAssistant, parseWireModelRequest, toContext } from "./wire-request.js";
+import { parseWireModelRequest, toContext } from "./wire-request.js";
+import { fromAssistant } from "./wire-response.js";
 import type { AssistantMessageEvent, ClientIdentity } from "@earendil-works/pi-ai";
 
 const RENOA_IDENTITY: ClientIdentity = {
