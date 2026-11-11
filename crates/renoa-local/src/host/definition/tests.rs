@@ -562,6 +562,7 @@ async fn validation_rejects_untrusted_pairs_unknown_names_and_preset_mismatches(
         "renoa.app.v2",
         "renoa.app.v3",
         "renoa.app.v4",
+        "renoa.app.v5",
         "renoa.personal.arcee.v3",
         "renoa.personal.arcee.v4",
     ] {
