@@ -37,7 +37,8 @@ use fake_provider::{
 /// the `deepseek` provider, whose pinned catalog serves that API directly.
 const LOOPBACK_PROVIDER: &str = "deepseek";
 const LOOPBACK_MODEL: &str = "deepseek-flash";
-const LOOPBACK_CATALOG: &str = "adapters/model-provider-node/src/upstream/catalogs/deepseek.json";
+/// Pi's published catalog for the `deepseek` provider, as the adapter's pinned dependency installs it.
+const LOOPBACK_CATALOG: &str = "adapters/model-provider-node/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json";
 
 #[tokio::test]
 async fn rust_launches_the_compiled_adapter_for_deepseek_and_consumes_its_protocol() {

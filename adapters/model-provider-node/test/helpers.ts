@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { SqliteCredentialStore, type Credential } from "../src/credentials.js";
 import type { JsonValue, ProviderId } from "../src/contract.js";
 import type { RetryClock } from "../src/retry.js";
-import type { Api, Model } from "../src/upstream/types.js";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { findCatalogModel } from "../src/catalog.js";
 
 export interface QueuedResponse {

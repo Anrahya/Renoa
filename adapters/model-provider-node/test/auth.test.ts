@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { SqliteCredentialStore } from "../src/credentials.js";
 
 const PROVIDERS = [
+  { id: "anthropic", label: "Anthropic" },
   { id: "opencode-go", label: "OpenCode Go" },
   { id: "deepseek", label: "DeepSeek" },
 ] as const;
@@ -58,6 +59,20 @@ for (const { id, label } of PROVIDERS) {
     }
   });
 }
+
+test("Anthropic enrollment refuses a subscription token, which Pi would send as Claude Code", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "renoa-anthropic-oat-"));
+  const storePath = join(directory, "credentials.sqlite");
+  try {
+    const result = enroll("anthropic", storePath, "sk-ant-oat01-secret-token\n");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /not a subscription token/u);
+    assert.doesNotMatch(result.stderr, /secret-token/u);
+    await assert.rejects(access(storePath), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
 
 function enroll(provider: (typeof PROVIDERS)[number]["id"], storePath: string, input: string) {
   const executable = fileURLToPath(new URL(`../src/auth-${provider}.js`, import.meta.url));

@@ -6,7 +6,7 @@ runtimes from:
 - one stored agent definition: its instructions, behavior, exact capability
   selection, and connection bindings, plus workspace `AGENTS.md` rules where
   the agent's stored behavior reads them;
-- the `@renoa/model-provider` process adapter for xAI, OpenCode Go, and DeepSeek; and
+- the `@renoa/model-provider` process adapter for Anthropic, xAI, OpenCode Go, and DeepSeek; and
 - Renoa's durable model/tool loop and compaction strategy;
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
   tools; and
@@ -69,10 +69,12 @@ pnpm --dir adapters/mcp-registry-node build
 
 Enroll provider credentials into an owner-only SQLite file before starting the
 host. SuperGrok uses `pnpm --dir adapters/model-provider-node auth:xai`.
-OpenCode Go uses the non-echoing piped-key flow:
+OpenCode Go, DeepSeek and Anthropic use the non-echoing piped-key flow:
 
 ```sh
 printf '%s' "$OPENCODE_API_KEY" | pnpm --dir adapters/model-provider-node auth:opencode-go
+printf '%s' "$DEEPSEEK_API_KEY" | pnpm --dir adapters/model-provider-node auth:deepseek
+printf '%s' "$ANTHROPIC_API_KEY" | pnpm --dir adapters/model-provider-node auth:anthropic
 ```
 
 Existing `~/.config/renoa/pi-auth.sqlite` files remain the credential store.
@@ -84,7 +86,7 @@ Then configure one model and run a turn:
 ```sh
 export RENOA_MODEL_BRIDGE='/absolute/path/to/adapters/model-provider-node/dist/src/main.js'
 export RENOA_MODEL_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
-export RENOA_MODEL_PROVIDER='xai' # or opencode-go, deepseek
+export RENOA_MODEL_PROVIDER='xai' # or anthropic, opencode-go, deepseek
 export RENOA_MODEL='grok-4.7'
 export RENOA_MODEL_REASONING='high' # optional: off|minimal|low|medium|high|xhigh|max
 export RENOA_MCP_ADAPTER='/absolute/path/to/adapters/mcp-client-node/dist/src/main.js'
@@ -127,7 +129,7 @@ selection changes also validate the runtime before acknowledging success.
 Authentication is resolved when the first model stream starts. A credential
 rejection proven to happen before inference fails the operation clearly and
 leaves the session usable; a failure after output starts remains uncertain. The
-adapter advertises the pinned xAI, OpenCode Go, and DeepSeek catalogs only. Renoa
+adapter advertises the pinned Anthropic, xAI, OpenCode Go, and DeepSeek catalogs only. Renoa
 validates the provider, API, and endpoint, then pins the exact model record
 and includes its SHA-256 identity in the runtime revision. The kernel freezes
 that revision with the loop, context configuration, instructions, and

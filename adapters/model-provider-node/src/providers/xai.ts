@@ -1,4 +1,6 @@
-import { xaiOAuth, type OAuthCredential } from "../upstream/oauth-xai.js";
+import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
+import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
+
 import type { Credential } from "../credentials.js";
 
 export const XAI_BASE_URL = "https://api.x.ai/v1";
@@ -32,4 +34,12 @@ export function fromOauth(credential: OAuthCredential): Extract<Credential, { ty
   return stored;
 }
 
-export { xaiOAuth };
+/** Pi's xAI device-code login and refresh, loaded on first use. */
+export const xaiOAuth: OAuthAuth = requireOAuth(xaiProvider().auth.oauth);
+
+function requireOAuth(oauth: OAuthAuth | undefined): OAuthAuth {
+  if (oauth === undefined) {
+    throw new Error("Pi's xAI provider has no OAuth login");
+  }
+  return oauth;
+}

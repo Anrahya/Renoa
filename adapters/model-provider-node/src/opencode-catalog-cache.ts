@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 import type { CatalogEntry } from "./catalog.js";
 import { validateModelSpec } from "./catalog.js";
-import type { Api, Model } from "./upstream/types.js";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 const CACHE_VERSION = 1;
 const MAX_CACHE_BYTES = 1024 * 1024;

@@ -194,7 +194,7 @@ test("OpenCode Go discovers a new official model and reuses cached metadata on 3
     const live = second.find((model) => model.id === LIVE_MODEL);
     assert.ok(live);
     const modelSpec = live.model_spec as Record<string, unknown>;
-    assert.equal(live.name, "Kimi K3.1 Pro");
+    assert.equal(live.name, "Kimi K4 Preview");
     assert.equal(live.context_window_tokens, 1_000_000);
     assert.equal(modelSpec.api, "openai-completions");
     assert.equal(modelSpec.baseUrl, "https://opencode.ai/inference/go/v1");
@@ -266,7 +266,7 @@ test("OpenCode Go replaces a cached binding learned on the retired zen route", a
     writeOpenCodeCredential(path);
     const retired = {
       id: LIVE_MODEL,
-      name: "Kimi K3.1 Pro",
+      name: "Kimi K4 Preview",
       api: "openai-completions",
       provider: "opencode-go",
       baseUrl: "https://opencode.ai/zen/go/v1",
@@ -311,7 +311,7 @@ test("an OpenCode Go cache holding a now-pinned model keeps its other dynamic mo
     assert.ok(flash);
     const live = {
       id: LIVE_MODEL,
-      name: "Kimi K3.1 Pro",
+      name: "Kimi K4 Preview",
       api: "openai-completions",
       provider: "opencode-go",
       baseUrl: "https://opencode.ai/inference/go/v1",
@@ -414,8 +414,8 @@ test("model specs reject untrusted base URLs unless loopback tests are enabled",
   assert.equal(loopback.baseUrl, "http://127.0.0.1:9/v1");
 });
 
-/** A documented OpenCode Go model that only live discovery supplies. */
-const LIVE_MODEL = "kimi-k3.1-pro";
+/** An OpenCode Go model that only live discovery supplies: not pinned and not documented. */
+const LIVE_MODEL = "kimi-k4-preview";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -454,7 +454,7 @@ function modelsDevCatalog(model: Record<string, unknown>): Record<string, unknow
 function flashMetadata(context = 1_000_000): Record<string, unknown> {
   return {
     id: LIVE_MODEL,
-    name: "Kimi K3.1 Pro",
+    name: "Kimi K4 Preview",
     attachment: true,
     reasoning: true,
     reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }],

@@ -24,8 +24,14 @@ import {
   type LoadedRuntime,
 } from "./runtime.js";
 import { capturingFetch, errorFromAssistant, abortError, isAbortError, type HttpCapture } from "./http-capture.js";
-import { fromAssistant, parseWireModelRequest, toContext } from "./wire-request.js";
-import type { AssistantMessageEvent } from "./upstream/types.js";
+import { parseWireModelRequest, toContext } from "./wire-request.js";
+import { fromAssistant } from "./wire-response.js";
+import type { AssistantMessageEvent, ClientIdentity, Context } from "@earendil-works/pi-ai";
+
+const RENOA_IDENTITY: ClientIdentity = {
+  userAgent: { custom: "renoa/0.1.0" },
+  attribution: null,
+};
 
 export interface StreamInvocation {
   readonly runtime: LoadedRuntime;
@@ -189,11 +195,10 @@ async function runAttempt(
     maxRetries: 0,
     fetch: fetchImpl,
     ...(invocation.sessionId === undefined ? {} : { sessionId: invocation.sessionId }),
-    ...(invocation.runtime.provider === "opencode-go"
-      ? { headers: {
-          "user-agent": "renoa/0.1.0",
-          ...(invocation.sessionId === undefined ? {} : { "x-opencode-session": invocation.sessionId }),
-        } }
+    // Every provider sees Renoa, never Pi, and no attribution headers.
+    identity: RENOA_IDENTITY,
+    ...(invocation.runtime.provider === "opencode-go" && invocation.sessionId !== undefined
+      ? { headers: { "x-opencode-session": invocation.sessionId } }
       : {}),
     onPayload: async (payload: unknown) => {
       await invocation.emit({
@@ -213,7 +218,8 @@ async function runAttempt(
       ? {}
       : { reasoning: invocation.runtime.reasoningLevel }),
   };
-  const stream = dispatchStream(invocation.runtime.model, toContext(invocation.request), options);
+  const context = withReplayedEffort(toContext(invocation.request), invocation.runtime);
+  const stream = dispatchStream(invocation.runtime.model, context, options);
   for await (const event of stream) {
     if (signal.aborted) {
       throw abortError();
@@ -301,5 +307,34 @@ function diagnosticFromFailure(error: ProviderFailure): WireErrorDiagnostic {
     ...(error.causeCode === undefined ? {} : { cause_code: error.causeCode }),
     ...(error.causeMessage === undefined ? {} : { cause_message: error.causeMessage }),
     ...(error.providerMessage === undefined ? {} : { provider_message: error.providerMessage }),
+  };
+}
+
+const ANTHROPIC_EFFORTS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * Pi sets an Anthropic model's effort with a system marker after the last
+ * message, and on replay puts each reply's own level back before it, so the
+ * history repeats what was sent and its thinking blocks stay valid. The wire
+ * does not carry a reply's level; a session's replies were made at its current
+ * level unless the owner changed it, and then Anthropic drops the earlier
+ * blocks (`drop_block`) rather than refusing the turn.
+ */
+export function withReplayedEffort(context: Context, runtime: LoadedRuntime): Context {
+  const model = runtime.model;
+  const level = runtime.reasoningLevel;
+  if (model.api !== "anthropic-messages" || !ANTHROPIC_EFFORTS.has(level)) {
+    return context;
+  }
+  return {
+    ...context,
+    messages: context.messages.map((message) =>
+      message.role === "assistant" &&
+      message.api === model.api &&
+      message.provider === model.provider &&
+      message.providerThinkingLevel === undefined
+        ? { ...message, providerThinkingLevel: level }
+        : message,
+    ),
   };
 }

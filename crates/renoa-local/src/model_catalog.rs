@@ -8,6 +8,8 @@ use crate::model_bridge::{ModelBridgeConfig, ModelBridgeError, decode_response, 
 /// A model provider supported by Renoa's native process adapter.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq, Hash)]
 pub enum ModelProvider {
+    #[serde(rename = "anthropic")]
+    Anthropic,
     #[serde(rename = "xai")]
     Xai,
     #[serde(rename = "opencode-go")]
@@ -20,6 +22,7 @@ impl ModelProvider {
     #[must_use]
     pub fn from_id(value: &str) -> Option<Self> {
         match value {
+            "anthropic" => Some(Self::Anthropic),
             "xai" => Some(Self::Xai),
             "opencode-go" => Some(Self::OpenCodeGo),
             "deepseek" => Some(Self::DeepSeek),
@@ -30,6 +33,7 @@ impl ModelProvider {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Anthropic => "anthropic",
             Self::Xai => "xai",
             Self::OpenCodeGo => "opencode-go",
             Self::DeepSeek => "deepseek",
@@ -39,6 +43,7 @@ impl ModelProvider {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Anthropic => "Anthropic",
             Self::Xai => "xAI",
             Self::OpenCodeGo => "OpenCode Go",
             Self::DeepSeek => "DeepSeek",
@@ -258,13 +263,17 @@ mod tests {
     #[test]
     fn every_provider_round_trips_its_wire_id() {
         for provider in [
+            ModelProvider::Anthropic,
             ModelProvider::Xai,
             ModelProvider::OpenCodeGo,
             ModelProvider::DeepSeek,
         ] {
             // A new variant must be added to this list: the match is exhaustive.
             match provider {
-                ModelProvider::Xai | ModelProvider::OpenCodeGo | ModelProvider::DeepSeek => {}
+                ModelProvider::Anthropic
+                | ModelProvider::Xai
+                | ModelProvider::OpenCodeGo
+                | ModelProvider::DeepSeek => {}
             }
             assert_eq!(ModelProvider::from_id(provider.as_str()), Some(provider));
             assert_eq!(
@@ -277,6 +286,11 @@ mod tests {
             Some(ModelProvider::DeepSeek)
         );
         assert_eq!(ModelProvider::DeepSeek.name(), "DeepSeek");
-        assert_eq!(ModelProvider::from_id("anthropic"), None);
+        assert_eq!(
+            ModelProvider::from_id("anthropic"),
+            Some(ModelProvider::Anthropic)
+        );
+        assert_eq!(ModelProvider::Anthropic.name(), "Anthropic");
+        assert_eq!(ModelProvider::from_id("openrouter"), None);
     }
 }

@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "./upstream/types.js";
-import { isContextOverflow } from "./upstream/overflow.js";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 
 export interface HttpCapture {
   dispatched?: boolean;

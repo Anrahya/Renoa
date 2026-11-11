@@ -303,7 +303,9 @@ function categoryHint(error: unknown): FailureCategory | undefined {
     return undefined;
   }
   const hint = (error as { categoryHint?: unknown }).categoryHint;
-  return hint === "invalid_request" || hint === "context_window_exceeded" ? hint : undefined;
+  return hint === "invalid_request" || hint === "context_window_exceeded" || hint === "protocol"
+    ? hint
+    : undefined;
 }
 
 function isRetryable(category: FailureCategory, status: number | undefined): boolean {
