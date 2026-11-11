@@ -31,13 +31,11 @@ const UNCONSUMED_CATALOG_FIELDS = ["type", "inputLimits"] as const;
 
 /**
  * Pi compat switches whose behaviour Renoa's contract cannot carry: one system
- * prompt, one tool list and one effort per request, and no reply from a model
- * other than the one bound. Mid-conversation effort markers would also be
- * missing from replayed history, which carries no per-turn effort, so every
- * replayed thinking block would fail its prefix check.
+ * prompt and one tool list per request, and no reply from a model other than
+ * the one bound. Mid-conversation effort stays: `src/stream.ts` gives replayed
+ * replies the session's level so Pi's markers repeat what was sent.
  */
 const UNCARRIED_COMPAT_FIELDS = [
-  "supportsMidConvoEffort",
   "supportsMidConvoSystemMessages",
   "supportsMidConvoToolAdditions",
   "supportsMidConvoToolChanges",

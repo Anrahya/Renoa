@@ -26,7 +26,7 @@ import {
 import { capturingFetch, errorFromAssistant, abortError, isAbortError, type HttpCapture } from "./http-capture.js";
 import { parseWireModelRequest, toContext } from "./wire-request.js";
 import { fromAssistant } from "./wire-response.js";
-import type { AssistantMessageEvent, ClientIdentity } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, ClientIdentity, Context } from "@earendil-works/pi-ai";
 
 const RENOA_IDENTITY: ClientIdentity = {
   userAgent: { custom: "renoa/0.1.0" },
@@ -201,15 +201,11 @@ async function runAttempt(
       ? { headers: { "x-opencode-session": invocation.sessionId } }
       : {}),
     onPayload: async (payload: unknown) => {
-      // Only Anthropic's own API is known to take the binding field; a proxy
-      // such as OpenCode Go gets Pi's request unchanged.
-      const sent =
-        invocation.runtime.provider === "anthropic" ? withThinkingBinding(payload) : undefined;
       await invocation.emit({
         event: "provider_request",
-        payload: diagnosticValue(sent ?? payload),
+        payload: diagnosticValue(payload),
       });
-      return sent;
+      return undefined;
     },
     onResponse: async (response: { status: number; headers: Readonly<Record<string, string>> }) => {
       await invocation.emit({
@@ -222,7 +218,8 @@ async function runAttempt(
       ? {}
       : { reasoning: invocation.runtime.reasoningLevel }),
   };
-  const stream = dispatchStream(invocation.runtime.model, toContext(invocation.request), options);
+  const context = withReplayedEffort(toContext(invocation.request), invocation.runtime);
+  const stream = dispatchStream(invocation.runtime.model, context, options);
   for await (const event of stream) {
     if (signal.aborted) {
       throw abortError();
@@ -313,29 +310,31 @@ function diagnosticFromFailure(error: ProviderFailure): WireErrorDiagnostic {
   };
 }
 
+const ANTHROPIC_EFFORTS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
+
 /**
- * Anthropic checks that everything before a returned thinking block is
- * unchanged, and on newer accounts refuses the request when it is not. Renoa
- * edits history when it compacts and when an agent's documents change, so an
- * adaptive-thinking request asks the API to drop such a block instead. Pi adds
- * this only alongside mid-conversation effort markers, which Renoa turns off.
- * Returns the payload to send, or `undefined` to send Pi's unchanged.
+ * Pi sets an Anthropic model's effort with a system marker after the last
+ * message, and on replay puts each reply's own level back before it, so the
+ * history repeats what was sent and its thinking blocks stay valid. The wire
+ * does not carry a reply's level; a session's replies were made at its current
+ * level unless the owner changed it, and then Anthropic drops the earlier
+ * blocks (`drop_block`) rather than refusing the turn.
  */
-export function withThinkingBinding(payload: unknown): unknown {
-  if (typeof payload !== "object" || payload === null || !("thinking" in payload)) {
-    return undefined;
-  }
-  const thinking = (payload as { thinking?: unknown }).thinking;
-  if (
-    typeof thinking !== "object" ||
-    thinking === null ||
-    (thinking as { type?: unknown }).type !== "adaptive" ||
-    "block_binding" in thinking
-  ) {
-    return undefined;
+export function withReplayedEffort(context: Context, runtime: LoadedRuntime): Context {
+  const model = runtime.model;
+  const level = runtime.reasoningLevel;
+  if (model.api !== "anthropic-messages" || !ANTHROPIC_EFFORTS.has(level)) {
+    return context;
   }
   return {
-    ...payload,
-    thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: "drop_block" } },
+    ...context,
+    messages: context.messages.map((message) =>
+      message.role === "assistant" &&
+      message.api === model.api &&
+      message.provider === model.provider &&
+      message.providerThinkingLevel === undefined
+        ? { ...message, providerThinkingLevel: level }
+        : message,
+    ),
   };
 }

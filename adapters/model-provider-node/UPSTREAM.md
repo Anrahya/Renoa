@@ -20,15 +20,19 @@ What Renoa sets on every request (`src/stream.ts`):
 - `identity`: `User-Agent: renoa/0.1.0` and no attribution headers; no Pi
   identity is sent.
 - `timeoutMs`: 30 minutes, because the Host owns the invocation deadline.
-- On Anthropic's own API, `thinking.block_binding.prefix_mismatch_behavior:
-  drop_block` on adaptive thinking, so a reasoning block from before a
-  compaction or a changed system prompt is dropped instead of refusing the turn.
+- For a model whose effort Pi sets with mid-conversation markers (Claude Haiku
+  and Sonnet 5.5), each replayed reply carries the session's reasoning level
+  (`withReplayedEffort`), so Pi puts back the marker it was sent with and the
+  reply's thinking stays valid. Pi then also sends
+  `block_binding.prefix_mismatch_behavior: drop_block`, so a block from before
+  a compaction, a changed system prompt, or a changed level is dropped instead
+  of refusing the turn.
 
 Compat switches Renoa's contract cannot carry are removed from every pinned
 catalog entry (`UNCARRIED_COMPAT_FIELDS` in `src/catalog.ts`): mid-conversation
-effort markers, system messages and tool changes, additional tools, and
-server-side fallback models. A request has one system prompt, one tool list,
-one effort, and an answer only from the bound model.
+system messages and tool changes, additional tools, and server-side fallback
+models. A request has one system prompt, one tool list, and an answer only from
+the bound model.
 
 Pi reports tool-call arguments it cannot parse as `{}` with `argumentsError`;
 when the reply asks to run that call, the turn fails as a protocol error

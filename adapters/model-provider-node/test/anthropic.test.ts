@@ -65,20 +65,21 @@ test("Haiku 5.5 sends the key, Renoa's identity, adaptive thinking, and drops st
       model?: string;
       thinking?: { type?: string; block_binding?: { prefix_mismatch_behavior?: string } };
       output_config?: { effort?: string };
-      messages?: { role?: string }[];
+      messages?: { role?: string; output_config?: { effort?: string } }[];
       tools?: { name?: string }[];
     };
     assert.equal(body.model, "claude-haiku-5-5");
     assert.equal(body.thinking?.type, "adaptive");
     assert.equal(body.thinking?.block_binding?.prefix_mismatch_behavior, "drop_block");
-    // One effort for the request and the one tool list Renoa sent: no
-    // mid-conversation effort markers, deferred-tool placeholder, or the betas
-    // that carry them.
-    assert.equal(body.output_config?.effort, "medium");
-    assert.deepEqual(body.messages?.map((message) => message.role), ["user"]);
+    // Pi sets the turn's effort with a trailing system marker. The one tool
+    // list Renoa sent goes as is: no deferred-tool placeholder, and no beta
+    // for tool changes or fallback models.
+    assert.deepEqual(body.messages?.map((message) => message.role), ["user", "system"]);
+    assert.equal(body.messages?.at(-1)?.output_config?.effort, "medium");
     assert.deepEqual(body.tools?.map((tool) => tool.name), ["lookup"]);
     const betas = String(request.headers["anthropic-beta"] ?? "");
-    assert.doesNotMatch(betas, /inline-tools|mid-conversation|fallback/u);
+    assert.match(betas, /thinking-binding-controls/u);
+    assert.doesNotMatch(betas, /inline-tools|fallback/u);
   } finally {
     await server.close();
     directory.close();
@@ -89,7 +90,6 @@ test("Anthropic catalog entries carry no compat switch Renoa's contract cannot h
   for (const entry of loadPinnedCatalog("anthropic")) {
     const compat = (entry.model as { compat?: Record<string, unknown> }).compat ?? {};
     for (const field of [
-      "supportsMidConvoEffort",
       "supportsMidConvoSystemMessages",
       "supportsMidConvoToolAdditions",
       "supportsMidConvoToolChanges",
@@ -169,3 +169,49 @@ function brokenToolCallSse(): string[] {
     frame("message_stop", { type: "message_stop" }),
   ];
 }
+
+test("a replayed Haiku reply gets its effort marker back, so its thinking stays valid", async () => {
+  const server = await startFakeServer();
+  server.enqueue({ sse: anthropicSse("again") });
+  const directory = tempDir();
+  try {
+    await runStream({
+      directory: directory.path,
+      provider: "anthropic",
+      modelId: "claude-haiku-5-5",
+      baseUrl: server.origin,
+      credential: ANTHROPIC_KEY,
+      reasoningLevel: "high",
+      request: {
+        system_prompt: "You are a test model.",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Hi" }] },
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "greet", signature: "sig", redacted: false },
+              { type: "text", text: "Hello" },
+            ],
+            stop_reason: "stop",
+            usage: null,
+            metadata: { api: "anthropic-messages", provider: "anthropic", model: "claude-haiku-5-5" },
+          },
+          { role: "user", content: [{ type: "text", text: "Again" }] },
+        ],
+        tools: [],
+      },
+    });
+    const body = JSON.parse(server.requests[0]?.body ?? "{}") as {
+      messages?: { role?: string; output_config?: { effort?: string } }[];
+    };
+    // The first request ended [user, marker]; its reply now follows that marker.
+    assert.deepEqual(
+      body.messages?.map((message) => message.role),
+      ["user", "system", "assistant", "user", "system"],
+    );
+    assert.equal(body.messages?.[1]?.output_config?.effort, "high");
+  } finally {
+    await server.close();
+    directory.close();
+  }
+});
