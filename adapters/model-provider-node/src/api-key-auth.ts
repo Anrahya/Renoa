@@ -1,6 +1,7 @@
 import { loadAuthStorePath } from "./config.js";
 import { providerDisplayName, type ProviderId } from "./contract.js";
 import { SqliteCredentialStore } from "./credentials.js";
+import { ANTHROPIC_OAUTH_REFUSAL, isAnthropicOAuthToken } from "./runtime.js";
 
 /** Providers that authenticate with an API key piped on standard input. */
 export type ApiKeyProvider = Extract<ProviderId, "anthropic" | "opencode-go" | "deepseek">;
@@ -25,6 +26,9 @@ async function enroll(provider: ApiKeyProvider): Promise<void> {
   }
   process.stdin.setEncoding("utf8");
   const apiKey = await readApiKey(process.stdin, label);
+  if (provider === "anthropic" && isAnthropicOAuthToken(apiKey)) {
+    throw new Error(ANTHROPIC_OAUTH_REFUSAL);
+  }
   const credentials = new SqliteCredentialStore(loadAuthStorePath(process.env));
   try {
     credentials.write(provider, { type: "api_key", key: apiKey });

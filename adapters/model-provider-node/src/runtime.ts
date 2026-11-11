@@ -183,6 +183,9 @@ function requireCredential(
   if (provider === "anthropic" && credential.type !== "api_key") {
     throw new Error("Anthropic requires an API key");
   }
+  if (provider === "anthropic" && credential.type === "api_key" && isAnthropicOAuthToken(credential.key ?? "")) {
+    throw new Error(ANTHROPIC_OAUTH_REFUSAL);
+  }
   if (provider === "xai" && credential.type !== "oauth") {
     throw new Error("xAI requires OAuth credentials");
   }
@@ -193,4 +196,15 @@ function requireCredential(
     throw new Error("DeepSeek requires an API key");
   }
   return credential;
+}
+
+/**
+ * Pi treats any Anthropic key containing `sk-ant-oat` as a Claude subscription
+ * token and sends it as Claude Code. Renoa sends only API keys as itself.
+ */
+export const ANTHROPIC_OAUTH_REFUSAL =
+  "Anthropic needs an API key from the Claude Console, not a subscription token (sk-ant-oat)";
+
+export function isAnthropicOAuthToken(key: string): boolean {
+  return key.includes("sk-ant-oat");
 }

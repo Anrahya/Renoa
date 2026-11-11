@@ -17,10 +17,7 @@
     "test": "pnpm run build && node --test --test-reporter=spec dist/test/*.test.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.91.1",
-    "@earendil-works/pi-ai": "1.5.0",
-    "openai": "6.40.0",
-    "partial-json": "0.1.7"
+    "@earendil-works/pi-ai": "1.5.0"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

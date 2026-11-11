@@ -29,6 +29,22 @@ export interface CatalogEntry {
  */
 const UNCONSUMED_CATALOG_FIELDS = ["type", "inputLimits"] as const;
 
+/**
+ * Pi compat switches whose behaviour Renoa's contract cannot carry: one system
+ * prompt, one tool list and one effort per request, and no reply from a model
+ * other than the one bound. Mid-conversation effort markers would also be
+ * missing from replayed history, which carries no per-turn effort, so every
+ * replayed thinking block would fail its prefix check.
+ */
+const UNCARRIED_COMPAT_FIELDS = [
+  "supportsMidConvoEffort",
+  "supportsMidConvoSystemMessages",
+  "supportsMidConvoToolAdditions",
+  "supportsMidConvoToolChanges",
+  "supportsAdditionalTools",
+  "allowedFallbackModels",
+] as const;
+
 /** Pi's chat catalogs, keyed by model id, as the pinned package publishes them. */
 const PINNED_CATALOGS: Readonly<Record<ProviderId, Readonly<Record<string, object>>>> = {
   anthropic: ANTHROPIC_MODELS,
@@ -72,6 +88,13 @@ function withoutUnconsumedFields(entry: Record<string, unknown>): Record<string,
   const next = { ...entry };
   for (const field of UNCONSUMED_CATALOG_FIELDS) {
     delete next[field];
+  }
+  if (isRecord(next.compat)) {
+    const compat = { ...next.compat };
+    for (const field of UNCARRIED_COMPAT_FIELDS) {
+      delete compat[field];
+    }
+    next.compat = compat;
   }
   return next;
 }

@@ -82,7 +82,7 @@ advertises `off`, sent as `none`. No xAI model advertises `minimal`.
 The Host passes its durable Session UUID to the process adapter as
 `RENOA_MODEL_SESSION_ID`, outside model messages and runtime compatibility
 identity. Provider adapters use it for supported session cache routing;
-OpenCode Go receives `x-opencode-session` and Renoa's own user agent, and the
+OpenCode Go receives `x-opencode-session` (every provider gets Renoa's user agent), and the
 Responses transport uses the session as `prompt_cache_key`. A restarted process
 keeps the same key. Missing session context is cleared at the Host boundary,
 not inherited from the launcher. Time observations remain append-only user-turn

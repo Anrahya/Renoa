@@ -200,11 +200,15 @@ async function runAttempt(
       ? { headers: { "x-opencode-session": invocation.sessionId } }
       : {}),
     onPayload: async (payload: unknown) => {
+      // Only Anthropic's own API is known to take the binding field; a proxy
+      // such as OpenCode Go gets Pi's request unchanged.
+      const sent =
+        invocation.runtime.provider === "anthropic" ? withThinkingBinding(payload) : undefined;
       await invocation.emit({
         event: "provider_request",
-        payload: diagnosticValue(payload),
+        payload: diagnosticValue(sent ?? payload),
       });
-      return undefined;
+      return sent;
     },
     onResponse: async (response: { status: number; headers: Readonly<Record<string, string>> }) => {
       await invocation.emit({
@@ -305,5 +309,32 @@ function diagnosticFromFailure(error: ProviderFailure): WireErrorDiagnostic {
     ...(error.causeCode === undefined ? {} : { cause_code: error.causeCode }),
     ...(error.causeMessage === undefined ? {} : { cause_message: error.causeMessage }),
     ...(error.providerMessage === undefined ? {} : { provider_message: error.providerMessage }),
+  };
+}
+
+/**
+ * Anthropic checks that everything before a returned thinking block is
+ * unchanged, and on newer accounts refuses the request when it is not. Renoa
+ * edits history when it compacts and when an agent's documents change, so an
+ * adaptive-thinking request asks the API to drop such a block instead. Pi adds
+ * this only alongside mid-conversation effort markers, which Renoa turns off.
+ * Returns the payload to send, or `undefined` to send Pi's unchanged.
+ */
+export function withThinkingBinding(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null || !("thinking" in payload)) {
+    return undefined;
+  }
+  const thinking = (payload as { thinking?: unknown }).thinking;
+  if (
+    typeof thinking !== "object" ||
+    thinking === null ||
+    (thinking as { type?: unknown }).type !== "adaptive" ||
+    "block_binding" in thinking
+  ) {
+    return undefined;
+  }
+  return {
+    ...payload,
+    thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: "drop_block" } },
   };
 }

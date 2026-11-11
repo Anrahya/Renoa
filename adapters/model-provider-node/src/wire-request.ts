@@ -322,6 +322,14 @@ export function fromAssistant(message: AssistantMessage, contextWindow: number):
             redacted: content.redacted ?? false,
           };
         case "toolCall":
+          // Pi reports arguments it could not parse as `{}` beside an error.
+          // A call the kernel would run with them fails the turn instead.
+          if (content.argumentsError !== undefined && message.stopReason === "toolUse") {
+            throw Object.assign(
+              new Error(`${content.name} tool-call arguments are not valid JSON: ${content.argumentsError}`),
+              { categoryHint: "protocol" },
+            );
+          }
           return {
             type: "tool_call" as const,
             id: content.id,

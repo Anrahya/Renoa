@@ -287,7 +287,7 @@ mod tests {
                 .expect("DeepSeek with xAI"),
             vec![ModelProvider::DeepSeek, ModelProvider::Xai]
         );
-        for invalid in ["xai,xai", "xai", "xai,", "deepseek,anthropic"] {
+        for invalid in ["xai,xai", "xai", "xai,", "deepseek,openrouter"] {
             assert!(
                 parse_enabled_providers(ModelProvider::OpenCodeGo, Some(invalid)).is_err(),
                 "accepted invalid provider set {invalid}"

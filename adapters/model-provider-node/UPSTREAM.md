@@ -20,6 +20,25 @@ What Renoa sets on every request (`src/stream.ts`):
 - `identity`: `User-Agent: renoa/0.1.0` and no attribution headers; no Pi
   identity is sent.
 - `timeoutMs`: 30 minutes, because the Host owns the invocation deadline.
+- On Anthropic's own API, `thinking.block_binding.prefix_mismatch_behavior:
+  drop_block` on adaptive thinking, so a reasoning block from before a
+  compaction or a changed system prompt is dropped instead of refusing the turn.
+
+Compat switches Renoa's contract cannot carry are removed from every pinned
+catalog entry (`UNCARRIED_COMPAT_FIELDS` in `src/catalog.ts`): mid-conversation
+effort markers, system messages and tool changes, additional tools, and
+server-side fallback models. A request has one system prompt, one tool list,
+one effort, and an answer only from the bound model.
+
+Pi reports tool-call arguments it cannot parse as `{}` with `argumentsError`;
+when the reply asks to run that call, the turn fails as a protocol error
+instead (`src/wire-request.ts`). An Anthropic key containing `sk-ant-oat`, which
+Pi would send as Claude Code, is refused at enrolment and before any request.
+
+Pi 1.5.0 moved OpenCode Go to `/inference/go/openai/v1` and
+`/inference/go/anthropic`; Renoa still pins the earlier routes in
+`src/providers/opencode-go.ts`, which serve today. Anthropic Messages requests go
+to the SDK's `/v1/messages?beta=true` route.
 
 What Renoa keeps for itself: the wire contract and its mapping
 (`src/wire-request.ts`), the SQLite credential store, the advertised provider
@@ -28,8 +47,8 @@ transport table (`src/providers/opencode-go.ts`) and live discovery
 (`src/opencode-catalog.ts`), and failure classification (`src/errors.ts`).
 
 Pi's own model registry (`createModels`), credential store, telemetry, and
-image and classifier APIs are not used. The build scripts of Pi's optional
-`@google/genai` and `protobufjs` dependencies are refused in
+image and classifier APIs are not used. The build scripts of Pi's
+`@google/genai` dependency and its `protobufjs` are refused in
 `pnpm-workspace.yaml`; Renoa advertises no provider that uses them.
 
 ## models.dev
