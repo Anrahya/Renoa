@@ -6000,6 +6000,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre-apple",
  "iana-time-zone",
+ "libc",
  "lyon_tessellation",
  "md-5",
  "renoa-protocol",

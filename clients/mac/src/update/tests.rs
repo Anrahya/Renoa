@@ -185,6 +185,7 @@ fn an_update_must_be_renoa_at_its_version_signed_by_the_running_apps_key() {
 /// served, and a marker only the running copy has.
 async fn installed_and_served(
     scratch: &Path,
+    linked: bool,
     served: impl FnOnce(Vec<u8>) -> Vec<u8>,
 ) -> (std::path::PathBuf, String, Release) {
     let bundle = scratch.join("Applications/Renoa.app");
@@ -198,6 +199,29 @@ async fn installed_and_served(
         .status()
         .unwrap();
     assert!(zipped.success());
+    if linked {
+        // The same signed app elsewhere on disk, and a zip whose Renoa.app
+        // only links to it.
+        let elsewhere = scratch.join("elsewhere/Renoa.app");
+        let copied = std::process::Command::new("/usr/bin/ditto")
+            .arg(&bundle)
+            .arg(&elsewhere)
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        let pack = scratch.join("pack");
+        std::fs::create_dir(&pack).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, pack.join("Renoa.app")).unwrap();
+        std::fs::remove_file(&zip).unwrap();
+        let zipped = std::process::Command::new("/usr/bin/zip")
+            .args(["-q", "-y"])
+            .arg(&zip)
+            .arg("Renoa.app")
+            .current_dir(&pack)
+            .status()
+            .unwrap();
+        assert!(zipped.success());
+    }
     std::fs::write(bundle.join("running-copy"), b"").unwrap();
     let bytes = std::fs::read(&zip).unwrap();
     let release = Release {
@@ -220,7 +244,7 @@ fn leftovers(scratch: &Path) -> Vec<String> {
 #[tokio::test]
 async fn an_update_replaces_the_running_app_and_leaves_nothing_beside_it() {
     let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));
-    let (bundle, url, release) = installed_and_served(&scratch, |bytes| bytes).await;
+    let (bundle, url, release) = installed_and_served(&scratch, false, |bytes| bytes).await;
 
     super::install(&reqwest::Client::new(), &url, &release, &bundle)
         .await
@@ -238,7 +262,7 @@ async fn an_update_replaces_the_running_app_and_leaves_nothing_beside_it() {
 #[tokio::test]
 async fn an_update_that_does_not_match_its_description_changes_nothing() {
     let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));
-    let (bundle, url, release) = installed_and_served(&scratch, |mut bytes| {
+    let (bundle, url, release) = installed_and_served(&scratch, false, |mut bytes| {
         bytes[0] ^= 1;
         bytes
     })
@@ -254,6 +278,58 @@ async fn an_update_that_does_not_match_its_description_changes_nothing() {
         bundle.join("running-copy").exists(),
         "the running app is untouched"
     );
+    assert_eq!(leftovers(&scratch), ["Renoa.app"]);
+    std::fs::remove_dir_all(&scratch).unwrap();
+}
+
+#[tokio::test]
+async fn an_update_whose_app_is_a_link_is_refused() {
+    let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));
+    let (bundle, url, release) = installed_and_served(&scratch, true, |bytes| bytes).await;
+
+    let refused = super::install(&reqwest::Client::new(), &url, &release, &bundle).await;
+
+    assert_eq!(refused, Err("the update has no Renoa.app".to_owned()));
+    assert!(
+        bundle.join("running-copy").exists(),
+        "the running app is untouched"
+    );
+    assert_eq!(leftovers(&scratch), ["Renoa.app"]);
+    std::fs::remove_dir_all(&scratch).unwrap();
+}
+
+#[tokio::test]
+async fn a_renoa_live_that_stops_answering_frees_the_updater() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    // Accepts the connection and never answers.
+    let held = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        std::future::pending::<()>().await;
+        drop(stream);
+    });
+    let client = super::client_waiting(std::time::Duration::from_millis(200));
+
+    let checked = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        newer(&client, &super::description_url(&origin), "0.22.0"),
+    )
+    .await;
+
+    assert!(matches!(checked, Ok(Err(_))), "{checked:?}");
+    held.abort();
+}
+
+#[test]
+fn an_update_cut_short_is_cleared_by_the_next_launch() {
+    let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));
+    let bundle = scratch.join("Applications/Renoa.app");
+    unsigned_bundle(&bundle, "0.23.0");
+    let left = super::staging(&bundle).unwrap();
+    std::fs::create_dir_all(left.join("unpacked")).unwrap();
+
+    super::clear_leftovers(&bundle);
+
     assert_eq!(leftovers(&scratch), ["Renoa.app"]);
     std::fs::remove_dir_all(&scratch).unwrap();
 }

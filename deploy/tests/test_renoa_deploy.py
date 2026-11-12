@@ -417,6 +417,16 @@ class DeployTest(unittest.TestCase):
         )
         self.assertEqual((self.layout.control_room / "app/renoa-mac-0.2.0.zip").read_bytes(), b"mac-two")
 
+    def test_a_broken_served_app_stops_the_deploy_before_anything_switches(self):
+        self.install(release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"}), apps=self.app("v0.1.0", "0.1.0"))
+        (self.layout.control_room / "app/renoa-0.1.0.apk").unlink()
+
+        with self.assertRaises(deploy.DeployError):
+            self.install(release_archive(self.archives, "v0.2.0", {"renoa-node": b"h2"}))
+
+        self.assertEqual(self.layout.current.resolve().name, "v0.1.0")
+        self.assertFalse((self.layout.releases / "v0.2.0").exists(), "the staged release is removed")
+
     def test_an_app_published_after_its_release_was_installed_is_served_on_the_next_install(self):
         archive = release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"})
         self.install(archive)

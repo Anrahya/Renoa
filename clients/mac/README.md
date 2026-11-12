@@ -41,9 +41,12 @@ it and attaches it to the release; `renoa-deploy` then serves it at
 there at launch and whenever Settings opens. When a newer one is ready, a bar
 along the bottom of the window and Settings offer **Update and relaunch**: the
 app downloads the zip, checks its size and SHA-256 against `mac.json`, checks
-that the unzipped app is Renoa at that version signed by the key that signed
-the running app, swaps it into place and reopens. Any failure leaves the
-running app as it was (`src/update.rs`).
+that the unzipped app (a folder, not a link) is Renoa at that version signed
+by the key that signed the running app, swaps it into place in one step and
+reopens. Any failure leaves the running app as it was, and the downloaded files
+are removed; files an update left when Renoa quit or crashed mid-way are
+removed at the next launch (`src/update.rs`). A check or download that hears
+nothing from renoa.live for 30 seconds gives up.
 
 Only a published app updates. One built by `install-app.sh` or `cargo run`
 says it was built from source; install a published one once from

@@ -394,18 +394,28 @@ def place_apps(old: Path, new: Path, apps: dict[str, tuple[dict, Path]]) -> None
             info, file = apps[platform]
             serve_app(target, platform, info, file)
         elif (source / f"{platform}.json").is_file() and source.resolve() != target.resolve():
-            info = json.loads((source / f"{platform}.json").read_text())
-            serve_app(target, platform, info, source / info[key])
+            try:
+                info = json.loads((source / f"{platform}.json").read_text())
+                file = source / info[key]
+            except (ValueError, KeyError, TypeError) as error:
+                raise DeployError(f"the served {platform} app's description is unreadable ({error!r}); repair {source}") from None
+            if not file.is_file():
+                raise DeployError(f"the served {platform} app {file} is missing; repair {source}")
+            serve_app(target, platform, info, file)
 
 
 def serve_app(target: Path, platform: str, info: dict, file: Path) -> None:
     name = info[APPS[platform][0]]
-    if Path(name).name != name:
+    if not isinstance(name, str) or Path(name).name != name:
         raise DeployError(f"the {platform} app's file name {name!r} is not a plain name")
     target.mkdir(parents=True, exist_ok=True)
     target.chmod(0o755)
-    shutil.copyfile(file, target / name)
-    (target / name).chmod(0o644)
+    # Copied beside and renamed in, so a download already under way keeps the
+    # whole file it started on.
+    copied = target / f".{name}.new"
+    shutil.copyfile(file, copied)
+    copied.chmod(0o644)
+    os.replace(copied, target / name)
     described = target / f".{platform}.json.new"
     described.write_text(json.dumps(info, indent=2) + "\n")
     described.chmod(0o644)

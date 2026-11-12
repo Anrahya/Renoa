@@ -11,6 +11,7 @@ use std::{
     io::Write as _,
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 use ring::digest;
@@ -32,6 +33,23 @@ const MAX_APP_BYTES: u64 = 256 * 1024 * 1024;
 
 /// The bundle identifier `scripts/bundle-app.sh` gives the app.
 const BUNDLE_ID: &str = "live.renoa.mac";
+
+/// How long a check or download may wait on renoa.live for a connection or
+/// for its next bytes before it gives up, so a stalled link frees the updater.
+const IDLE: Duration = Duration::from_secs(30);
+
+/// The client the updater asks renoa.live with.
+pub fn client() -> reqwest::Client {
+    client_waiting(IDLE)
+}
+
+fn client_waiting(idle: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(idle)
+        .read_timeout(idle)
+        .build()
+        .unwrap_or_default()
+}
 
 /// The newest Mac app renoa.live serves, as `renoa-deploy` describes it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -137,37 +155,37 @@ pub fn running_bundle() -> Option<PathBuf> {
     (bundle.extension()? == "app").then(|| bundle.to_path_buf())
 }
 
+/// Where an update is unpacked: beside the app, so the swap stays on one
+/// volume. A fixed name, so an update cut short by a quit or crash is cleared
+/// by the next launch or the next update.
+fn staging(bundle: &Path) -> Option<PathBuf> {
+    Some(bundle.parent()?.join(".Renoa-update"))
+}
+
+/// Removes what an earlier update cut short left beside `bundle`.
+pub fn clear_leftovers(bundle: &Path) {
+    if let Some(staging) = staging(bundle) {
+        let _ = std::fs::remove_dir_all(staging);
+    }
+}
+
 /// Downloads `release` from beside the description at `url`, checks it, and
-/// puts it in place of `bundle`. Everything is checked before the swap, and
-/// any failure removes what was downloaded and leaves `bundle` as it was.
+/// swaps it with `bundle` in one step. Everything is checked before the swap,
+/// and on success or failure the downloaded files are removed; a failure
+/// leaves `bundle` as it was.
 pub async fn install(
     client: &reqwest::Client,
     url: &str,
     release: &Release,
     bundle: &Path,
 ) -> Result<(), String> {
-    let parent = bundle.parent().ok_or("the app has no folder")?;
-    // Beside the bundle, so the swap is two renames on one volume.
-    let staging = parent.join(format!(".renoa-update-{}", std::process::id()));
+    let staging = staging(bundle).ok_or("the app has no folder")?;
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir(&staging)
-        .map_err(|error| format!("can't prepare the update in {}: {error}", parent.display()))?;
+        .map_err(|error| format!("can't prepare the update in {}: {error}", staging.display()))?;
     let result = stage_and_swap(client, url, release, bundle, &staging).await;
-    if !matches!(result, Err(Swap::Stranded(_))) {
-        let _ = std::fs::remove_dir_all(&staging);
-    }
-    result.map_err(|failure| match failure {
-        Swap::Refused(reason) => reason,
-        Swap::Stranded(reason) => reason,
-    })
-}
-
-enum Swap {
-    /// Nothing changed.
-    Refused(String),
-    /// The app was moved aside and could not be put back; the staging folder
-    /// holds it.
-    Stranded(String),
+    let _ = std::fs::remove_dir_all(&staging);
+    result
 }
 
 async fn stage_and_swap(
@@ -176,35 +194,39 @@ async fn stage_and_swap(
     release: &Release,
     bundle: &Path,
     staging: &Path,
-) -> Result<(), Swap> {
+) -> Result<(), String> {
     let zip = staging.join(&release.zip);
-    download(client, &beside(url, &release.zip), release, &zip)
-        .await
-        .map_err(Swap::Refused)?;
+    download(client, &beside(url, &release.zip), release, &zip).await?;
     let unpacked = staging.join("unpacked");
     run(Command::new("/usr/bin/ditto")
         .arg("-x")
         .arg("-k")
         .arg(&zip)
-        .arg(&unpacked))
-    .map_err(Swap::Refused)?;
+        .arg(&unpacked))?;
     let staged = unpacked.join("Renoa.app");
-    check_bundle(&staged, &release.version_name, bundle).map_err(Swap::Refused)?;
-    let aside = staging.join("previous.app");
-    std::fs::rename(bundle, &aside)
-        .map_err(|error| Swap::Refused(format!("can't move the app aside: {error}")))?;
-    if let Err(error) = std::fs::rename(&staged, bundle) {
-        return match std::fs::rename(&aside, bundle) {
-            Ok(()) => Err(Swap::Refused(format!(
-                "can't put the update in place: {error}"
-            ))),
-            Err(_) => Err(Swap::Stranded(format!(
-                "can't put the update in place ({error}); the previous app is at {}",
-                aside.display()
-            ))),
-        };
+    // A link would have the checks below read some other app.
+    if !std::fs::symlink_metadata(&staged).is_ok_and(|found| found.is_dir()) {
+        return Err("the update has no Renoa.app".to_owned());
     }
-    Ok(())
+    check_bundle(&staged, &release.version_name, bundle)?;
+    // After the swap the staging folder holds the previous app, removed with it.
+    swap(&staged, bundle).map_err(|error| format!("can't put the update in place: {error}"))
+}
+
+/// Exchanges what is at `a` and `b` in one step, so the app's place is never
+/// empty: `renamex_np` with `RENAME_SWAP`.
+fn swap(a: &Path, b: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+    let a = CString::new(a.as_os_str().as_bytes())?;
+    let b = CString::new(b.as_os_str().as_bytes())?;
+    // SAFETY: both are NUL-terminated paths that live past the call, which
+    // only reads them.
+    let swapped = unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_SWAP) };
+    if swapped == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 /// The URL of `name` beside the description at `url`.

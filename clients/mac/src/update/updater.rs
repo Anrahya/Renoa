@@ -6,7 +6,10 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Task, div,
 };
 
-use super::{Release, VERSION, description_url, install, newer, relaunch, running_bundle};
+use super::{
+    Release, VERSION, clear_leftovers, client, description_url, install, newer, relaunch,
+    running_bundle,
+};
 use crate::{
     link,
     sheets::pill,
@@ -25,6 +28,9 @@ pub enum State {
     Available(Release),
     Installing(Release),
     InstallFailed(Release, String),
+    /// The new app is in place but could not be opened: the owner quits and
+    /// opens Renoa again.
+    Updated(Release, String),
 }
 
 pub struct Updater {
@@ -44,10 +50,13 @@ impl Updater {
     pub fn new(origin: &str, cx: &mut Context<Self>) -> Self {
         let mut updater = Self {
             url: description_url(origin),
-            client: reqwest::Client::new(),
+            client: client(),
             state: State::FromSource,
             _work: None,
         };
+        if let Some(bundle) = running_bundle() {
+            link::runtime().spawn_blocking(move || clear_leftovers(&bundle));
+        }
         updater.check(cx);
         updater
     }
@@ -62,7 +71,10 @@ impl Updater {
         let (Some(running), Some(_)) = (VERSION, running_bundle()) else {
             return;
         };
-        if matches!(self.state, State::Checking | State::Installing(_)) {
+        if matches!(
+            self.state,
+            State::Checking | State::Installing(_) | State::Updated(..)
+        ) {
             return;
         }
         self.state = State::Checking;
@@ -102,30 +114,37 @@ impl Updater {
             async move { install(&client, &url, &release, &bundle).await }
         });
         self._work = Some(cx.spawn(async move |this, cx| {
-            let done = installed
+            let installed = installed
                 .await
-                .unwrap_or_else(|error| Err(error.to_string()))
-                .and_then(|()| {
-                    relaunch(&bundle).map_err(|error| {
-                        format!("Renoa updated but couldn't reopen ({error}); open it again")
-                    })
-                });
-            match done {
-                Ok(()) => cx.update(|cx| cx.quit()),
-                Err(reason) => {
-                    eprintln!("renoa: {reason}");
-                    let _ = this.update(cx, |this, cx| {
-                        this.state = State::InstallFailed(release, reason);
-                        cx.notify();
-                    });
-                }
+                .unwrap_or_else(|error| Err(error.to_string()));
+            let next = match installed {
+                Err(reason) => State::InstallFailed(release, reason),
+                Ok(()) => match relaunch(&bundle) {
+                    Ok(()) => return cx.update(|cx| cx.quit()),
+                    Err(error) => State::Updated(release, format!("couldn't reopen it ({error})")),
+                },
+            };
+            if let State::InstallFailed(_, reason) | State::Updated(_, reason) = &next {
+                eprintln!("renoa: {reason}");
             }
+            let _ = this.update(cx, |this, cx| {
+                this.state = next;
+                cx.notify();
+            });
         }));
     }
 }
 
+/// What the owner reads when the new app is in place but did not reopen.
+pub fn updated(release: &Release, reason: &str) -> String {
+    format!(
+        "Renoa {} is installed, but {reason}. Quit Renoa and open it again.",
+        release.version_name
+    )
+}
+
 /// The bar along the bottom of the window while a newer app is ready, being
-/// installed, or failed to install.
+/// installed, failed to install, or waits to be opened again.
 pub fn bar(updates: &Entity<Updater>, palette: Palette, cx: &gpui_kit::App) -> Option<AnyElement> {
     let (said, action) = match updates.read(cx).state() {
         State::Available(release) => (
@@ -138,6 +157,7 @@ pub fn bar(updates: &Entity<Updater>, palette: Palette, cx: &gpui_kit::App) -> O
         State::InstallFailed(_, reason) => {
             (format!("Couldn't update: {reason}"), Some("Try again"))
         }
+        State::Updated(release, reason) => (updated(release, reason), None),
         _ => return None,
     };
     let updates = updates.clone();

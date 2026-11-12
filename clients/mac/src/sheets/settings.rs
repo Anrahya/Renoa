@@ -101,6 +101,7 @@ fn version_row(
             true,
             Some(("Try again", true)),
         ),
+        State::Updated(release, reason) => (update::updater::updated(release, reason), true, None),
     };
     let updates = updates.cloned();
     div()
