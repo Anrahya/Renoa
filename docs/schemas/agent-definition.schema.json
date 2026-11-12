@@ -245,7 +245,8 @@
         "xai",
         "opencode-go",
         "deepseek",
-        "openrouter"
+        "openrouter",
+        "google-vertex"
       ],
       "type": "string"
     },

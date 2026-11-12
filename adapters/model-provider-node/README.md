@@ -1,7 +1,7 @@
 # @renoa/model-provider
 
 Renoa-owned TypeScript process that maps the provider-neutral model contract to
-Anthropic, xAI, OpenCode Go, DeepSeek, and OpenRouter through Pi's model package
+Anthropic, xAI, OpenCode Go, DeepSeek, OpenRouter, and Google Vertex AI through Pi's model package
 ([`@earendil-works/pi-ai`](https://github.com/earendil-works/pi)). Architecture: [`docs/model-provider-v0.md`](../../docs/model-provider-v0.md).
 Upstream use and license: [`UPSTREAM.md`](UPSTREAM.md).
 
@@ -19,6 +19,7 @@ pnpm auth:xai            # SuperGrok device-code OAuth
 # printf '%s' "$DEEPSEEK_API_KEY" | pnpm auth:deepseek
 # printf '%s' "$ANTHROPIC_API_KEY" | pnpm auth:anthropic
 # printf '%s' "$OPENROUTER_API_KEY" | pnpm auth:openrouter
+# printf '%s' "$GOOGLE_CLOUD_API_KEY" | GOOGLE_CLOUD_PROJECT=my-project pnpm auth:google-vertex
 ```
 
 Auth CLIs print actionable errors and never print secrets.
@@ -40,7 +41,7 @@ Point Renoa at the compiled entrypoint:
 ```sh
 export RENOA_MODEL_BRIDGE="/absolute/path/to/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek, openrouter
+export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek, openrouter, google-vertex
 export RENOA_MODEL_PROVIDER=opencode-go
 export RENOA_MODEL=deepseek-v4-pro
 ```
