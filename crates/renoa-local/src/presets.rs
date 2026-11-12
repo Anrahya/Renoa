@@ -22,7 +22,7 @@ pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v5";
 /// The seed general purpose agents can use.
 pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 /// The seed for the everyday helpers people make in the app.
-pub(crate) const APP_PRESET_ID: &str = "renoa.app.v6";
+pub(crate) const APP_PRESET_ID: &str = "renoa.app.v7";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
@@ -33,11 +33,10 @@ const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
 
-// An everyday helper's one long chat compacts at 150,000 tokens, Anthropic's
-// default trigger for server-side compaction, down to its summary and the
-// newest messages within 40,000. A model whose dispatch limit is lower compacts
-// at that limit (see `runtime::compaction_settings`).
-const APP_COMPACTION_TRIGGER: u64 = 150_000;
+// An everyday helper's one long chat compacts at 400,000 tokens, down to its
+// summary and the newest messages within 40,000. A model whose dispatch limit
+// is lower compacts at that limit (see `runtime::compaction_settings`).
+const APP_COMPACTION_TRIGGER: u64 = 400_000;
 const APP_COMPACTION_TARGET: u64 = 40_000;
 
 const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
@@ -202,7 +201,7 @@ fn seeds() -> [AgentPreset; 4] {
         },
         AgentPreset {
             id: preset_id(APP_PRESET_ID),
-            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, no native file or shell tools, and its chat compacted at 150,000 tokens.",
+            description: "An everyday helper a person makes in the app: plain-spoken instructions, its own SOUL.md and the person's USER.md, no native file or shell tools, and its chat compacted at 400,000 tokens.",
             instructions: APP_INSTRUCTIONS,
             behavior: AgentBehavior {
                 workspace_instructions: WorkspaceInstructions::Off,
@@ -268,7 +267,7 @@ mod tests {
         ),
         (
             APP_PRESET_ID,
-            "301a7b1531fd16dcaa92120876bf0a44126bc59f78ed5d0cab92d5e53a2023f3",
+            "f2008bea4848986c0ea821e8cd6f4505370904dee21417825db8f68735a9be73",
         ),
         (
             ARCEE_PRESET_ID,

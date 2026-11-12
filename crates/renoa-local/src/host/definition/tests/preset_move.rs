@@ -303,6 +303,7 @@ async fn an_agent_on_a_retired_preset_id_moves_onto_its_successor() {
         ("renoa.app.v3", APP_PRESET_ID),
         ("renoa.app.v4", APP_PRESET_ID),
         ("renoa.app.v5", APP_PRESET_ID),
+        ("renoa.app.v6", APP_PRESET_ID),
         ("renoa.personal.arcee.v3", ARCEE_PRESET_ID),
         ("renoa.personal.arcee.v4", ARCEE_PRESET_ID),
     ] {

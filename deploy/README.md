@@ -1102,10 +1102,10 @@ remained loopback-only, and the proof used the tailnet-only port above.
 ## Shared Host schema readers
 
 The Arcee preset is now `renoa.personal.arcee.v5` and the app preset
-`renoa.app.v6`; the Host no longer creates agents from an earlier Arcee or app
+`renoa.app.v7`; the Host no longer creates agents from an earlier Arcee or app
 preset id. Existing agents keep their own snapshot until the owner runs
 `renoa-host <config> move-to-preset <agent-id> <preset-id>` for each one. An
-Android build that still sends `renoa.app.v5` gets "unknown preset" when it makes
+Android build that still sends `renoa.app.v6` gets "unknown preset" when it makes
 an agent, so the app and the Host ship together.
 
 This release puts `memory_note`, `memory_recall`, `memory_zoom` and
@@ -1119,11 +1119,11 @@ the model's own limit. `renoa.app.v5` asks for replies sized to the message inst
 of always short, and for a check of the agent's tools before it
 says it cannot do something. `renoa.app.v6` compacts the chat at 150,000 input
 tokens, Anthropic's default trigger for server-side compaction, instead of
-457,000. After the new Host passes its health checks, move
+457,000. `renoa.app.v7` compacts it at 400,000. After the new Host passes its health checks, move
 each app agent and each Arcee agent:
 
 ```sh
-renoa-host <config> move-to-preset <agent-id> renoa.app.v6
+renoa-host <config> move-to-preset <agent-id> renoa.app.v7
 renoa-host <config> move-to-preset <agent-id> renoa.personal.arcee.v5
 ```
 
