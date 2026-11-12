@@ -12,7 +12,7 @@ use gpui_kit::{
         input::{InputEvent, InputState},
         message_scroller::MessageScrollerState,
     },
-    div, px,
+    div,
 };
 use renoa_rcp_wire::{TargetSummary, TaskId};
 use tokio::sync::mpsc;
@@ -25,6 +25,8 @@ use crate::{
     link::{Command, Update, host_agent},
     theme::Palette,
 };
+
+use crate::theme::u;
 
 /// What a row of the conversation shows.
 struct Row {
@@ -421,7 +423,7 @@ impl Render for Chats {
             .capture_key_down(keys)
             .bg(palette.background)
             .text_color(palette.text)
-            .text_size(px(13.))
+            .text_size(u(13.))
             .child(sidebar)
             .child(main)
             .children(overlay)

@@ -7,7 +7,7 @@ use gpui_kit::{
     Animation, AnimationExt as _, AnyView, AppContext as _, Context, Entity, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    ease_out_quint, prelude::FluentBuilder as _, px,
+    ease_out_quint, prelude::FluentBuilder as _,
 };
 
 use renoa_rcp_wire::TaskId;
@@ -27,6 +27,8 @@ use crate::{
     },
     theme::Palette,
 };
+
+use crate::theme::u;
 
 /// How long a sheet takes to rise into place.
 const RISE: Duration = Duration::from_millis(280);
@@ -319,7 +321,7 @@ impl Chats {
             return Some(
                 scrim()
                     .items_start()
-                    .pt(px(110.))
+                    .pt(u(110.))
                     .child(card(jumping.jump.clone().into()))
                     .into_any_element(),
             );
@@ -331,10 +333,10 @@ impl Chats {
                 .child(
                     card(shown.view.clone())
                         .relative()
-                        .w(px(sheets::WIDTH))
-                        .h(px(sheets::HEIGHT))
+                        .w(u(sheets::WIDTH))
+                        .h(u(sheets::HEIGHT))
                         .max_h_full()
-                        .rounded(px(16.))
+                        .rounded(u(16.))
                         .bg(palette.card)
                         .border_1()
                         .border_color(palette.outline)
@@ -343,7 +345,7 @@ impl Chats {
                         .with_animation(
                             ("sheet", shown.opened),
                             Animation::new(RISE).with_easing(ease_out_quint()),
-                            |card, t| card.top(px(18. * (1. - t))).opacity(t),
+                            |card, t| card.top(u(18. * (1. - t))).opacity(t),
                         ),
                 )
                 .into_any_element(),
@@ -359,8 +361,8 @@ impl Chats {
         let up = self.sheet.as_ref().map(|shown| shown.up);
         div()
             .flex()
-            .gap(px(2.))
-            .p(px(6.))
+            .gap(u(2.))
+            .p(u(6.))
             .border_t_1()
             .border_color(palette.outline)
             .children(Page::ALL.map(|page| {
@@ -370,9 +372,9 @@ impl Chats {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(px(3.))
-                    .py(px(6.))
-                    .rounded(px(8.))
+                    .gap(u(3.))
+                    .py(u(6.))
+                    .rounded(u(8.))
                     .cursor_pointer()
                     .text_color(palette.secondary)
                     .hover(|button| button.bg(palette.selected).text_color(palette.text))
@@ -382,10 +384,10 @@ impl Chats {
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.open_sheet(page, window, cx)),
                     )
-                    .child(div().text_size(px(15.)).child(page.icon()))
+                    .child(div().text_size(u(15.)).child(page.icon()))
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(u(10.))
                             .font_weight(FontWeight::MEDIUM)
                             .child(page.title()),
                     )
@@ -400,14 +402,14 @@ impl Chats {
     ) -> impl IntoElement + use<> {
         div()
             .id("jump")
-            .mx(px(2.))
-            .mb(px(10.))
-            .h(px(30.))
-            .px(px(10.))
+            .mx(u(2.))
+            .mb(u(10.))
+            .h(u(30.))
+            .px(u(10.))
             .flex()
             .items_center()
-            .gap(px(8.))
-            .rounded(px(8.))
+            .gap(u(8.))
+            .rounded(u(8.))
             .bg(palette.selected)
             .text_color(palette.secondary)
             .cursor_pointer()
@@ -415,6 +417,6 @@ impl Chats {
             .on_click(cx.listener(|this, _, window, cx| this.open_jump(window, cx)))
             .child(gpui_kit::assets::IconName::Search)
             .child(div().flex_1().child("Jump to…"))
-            .child(div().text_size(px(11.)).child("⌘K"))
+            .child(div().text_size(u(11.)).child("⌘K"))
     }
 }

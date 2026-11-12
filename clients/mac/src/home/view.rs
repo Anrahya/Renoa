@@ -5,7 +5,7 @@ use chrono::Local;
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, StatefulInteractiveElement as _, Styled as _, assets::IconName, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use super::{Home, HomeEvent, feed::Item, feed::Kind};
@@ -16,6 +16,8 @@ use crate::{
     theme::Palette,
 };
 
+use crate::theme::u;
+
 /// The widest Home's column grows.
 const COLUMN: f32 = 720.;
 
@@ -23,13 +25,13 @@ pub(super) fn render(home: &Home, palette: Palette, cx: &mut Context<Home>) -> i
     let now = Local::now();
     let column = div()
         .w_full()
-        .max_w(px(COLUMN))
-        .px(px(32.))
-        .pt(px(48.))
-        .pb(px(32.))
+        .max_w(u(COLUMN))
+        .px(u(32.))
+        .pt(u(48.))
+        .pb(u(32.))
         .flex()
         .flex_col()
-        .gap(px(26.));
+        .gap(u(26.));
     let column = match &home.feed {
         Loaded::Ready(held) => {
             let asks = held.asks();
@@ -44,7 +46,7 @@ pub(super) fn render(home: &Home, palette: Palette, cx: &mut Context<Home>) -> i
                 .when_some(home.refused.clone(), |column, refused| {
                     column.child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(u(12.))
                             .text_color(palette.attention)
                             .child(refused),
                     )
@@ -76,7 +78,7 @@ pub(super) fn render(home: &Home, palette: Palette, cx: &mut Context<Home>) -> i
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.))
+                    .gap(u(10.))
                     .text_color(palette.secondary)
                     .child("Renoa couldn't be reached just now.")
                     .child(
@@ -101,17 +103,17 @@ fn top(date: &str, today: &str, palette: Palette) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(6.))
+        .gap(u(6.))
         .child(
             div()
-                .text_size(px(12.))
+                .text_size(u(12.))
                 .text_color(palette.secondary)
                 .child(date.to_owned()),
         )
         .child(
             div()
-                .text_size(px(20.))
-                .line_height(px(28.))
+                .text_size(u(20.))
+                .line_height(u(28.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(if today.is_empty() {
                     "Here's your day.".to_owned()
@@ -129,7 +131,7 @@ fn face(home: &Home, item: &Item, palette: Palette, size: f32) -> Face {
         member.and_then(|member| member.look),
         member.is_some_and(|member| member.primary),
         palette,
-        px(size),
+        u(size),
     )
 }
 
@@ -170,17 +172,17 @@ fn needs_you(
             .into_any_element()
         });
         div()
-            .p(px(14.))
-            .rounded(px(16.))
+            .p(u(14.))
+            .rounded(u(16.))
             .bg(palette.attention.opacity(0.12))
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(u(10.))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.))
+                    .gap(u(8.))
                     .child(face(home, ask, palette, 22.))
                     .child(
                         div()
@@ -190,30 +192,27 @@ fn needs_you(
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(u(11.))
                             .text_color(palette.secondary)
                             .child(stamp::short(ask.at_ms, &now)),
                     ),
             )
-            .child(div().line_height(px(19.)).child(ask.body.clone()))
+            .child(div().line_height(u(19.)).child(ask.body.clone()))
             .child(
                 div()
                     .flex()
                     .flex_wrap()
-                    .gap(px(8.))
+                    .gap(u(8.))
                     // Answering needs the agent's chat on this Mac.
                     .when(chat.is_some(), |row| row.children(answers))
                     .children(open)
                     .when(chat.is_none(), |row| {
-                        row.child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(palette.secondary)
-                                .child(format!(
-                                    "{} isn't online, so its chat can't open here yet.",
-                                    ask.agent.name
-                                )),
-                        )
+                        row.child(div().text_size(u(12.)).text_color(palette.secondary).child(
+                            format!(
+                                "{} isn't online, so its chat can't open here yet.",
+                                ask.agent.name
+                            ),
+                        ))
                     }),
             )
             .into_any_element()
@@ -221,15 +220,15 @@ fn needs_you(
     div()
         .flex()
         .flex_col()
-        .gap(px(8.))
+        .gap(u(8.))
         .child(
             div()
-                .text_size(px(11.))
+                .text_size(u(11.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(palette.attention)
                 .child("NEEDS YOU"),
         )
-        .child(div().grid().grid_cols(2).gap(px(12.)).children(cards))
+        .child(div().grid().grid_cols(2).gap(u(12.)).children(cards))
 }
 
 fn away(
@@ -245,9 +244,9 @@ fn away(
         div()
             .flex()
             .items_start()
-            .gap(px(12.))
-            .px(px(12.))
-            .py(px(10.))
+            .gap(u(12.))
+            .px(u(12.))
+            .py(u(10.))
             .child(face(home, note, palette, 24.))
             .child(
                 div()
@@ -255,12 +254,12 @@ fn away(
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
+                    .gap(u(2.))
                     .child(
                         div()
                             .flex()
                             .items_baseline()
-                            .gap(px(8.))
+                            .gap(u(8.))
                             .child(
                                 div()
                                     .font_weight(FontWeight::SEMIBOLD)
@@ -268,14 +267,14 @@ fn away(
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(u(11.))
                                     .text_color(palette.secondary)
                                     .child(stamp::short(note.at_ms, &now)),
                             ),
                     )
                     .child(
                         div()
-                            .line_height(px(19.))
+                            .line_height(u(19.))
                             .when(problem, |words| words.text_color(palette.danger))
                             .child(note.words().to_owned()),
                     ),
@@ -294,7 +293,7 @@ fn away(
             .child(
                 div()
                     .id(SharedString::from(format!("dismiss-{id}")))
-                    .size(px(26.))
+                    .size(u(26.))
                     .flex_none()
                     .rounded_full()
                     .flex()
@@ -312,7 +311,7 @@ fn away(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.))
+        .gap(u(6.))
         .child(section("While you were away", palette))
         .child(group(rows, palette))
 }
@@ -326,14 +325,14 @@ fn coming(home: &Home, palette: Palette, cx: &mut Context<Home>) -> impl IntoEle
         div()
             .flex()
             .items_center()
-            .gap(px(12.))
-            .px(px(12.))
-            .py(px(9.))
+            .gap(u(12.))
+            .px(u(12.))
+            .py(u(9.))
             .child(Face::new(
                 member.and_then(|member| member.look),
                 member.is_some_and(|member| member.primary),
                 palette,
-                px(20.),
+                u(20.),
             ))
             .child(
                 div()
@@ -341,7 +340,7 @@ fn coming(home: &Home, palette: Palette, cx: &mut Context<Home>) -> impl IntoEle
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(1.))
+                    .gap(u(1.))
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)
@@ -349,7 +348,7 @@ fn coming(home: &Home, palette: Palette, cx: &mut Context<Home>) -> impl IntoEle
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(u(12.))
                             .text_color(palette.secondary)
                             .truncate()
                             .child(format!("{words} · {next}")),
@@ -361,7 +360,7 @@ fn coming(home: &Home, palette: Palette, cx: &mut Context<Home>) -> impl IntoEle
     div()
         .flex()
         .flex_col()
-        .gap(px(6.))
+        .gap(u(6.))
         .child(
             div()
                 .flex()

@@ -63,8 +63,8 @@ code.
   Host holds up no message. The main agent is read with every agent list,
   every 30 seconds; a purpose or look is read until the Host gives it or says
   there is no such agent.
-- Agent lines show as Markdown, with the agent's face beside the last of a
-  run; a time goes between lines an hour or a midnight apart. An owner's line
+- Agent lines show as Markdown on the page itself, without a bubble, with the
+  agent's face beside the last of a run; a time goes between lines an hour or a midnight apart. An owner's line
   takes the time the agent began answering it. Lines new when they arrive
   come in with a motion; a replay of older ones does not.
 - Each agent's chat is the task every app derives from the agent's node and
@@ -78,6 +78,11 @@ code.
   unreachable, Enter leaves the text in the composer.
 - A message Renoa refuses returns to its chat's composer, ahead of anything
   typed since.
+
+View → Bigger (⌘=), Smaller (⌘−) and Actual Size (⌥⌘0) draw the whole app
+larger or smaller, as a browser zooms a page, from 75% to 250%. Every length is
+in the app's rem unit (`theme::u`), so the window's rem size scales it all; the
+choice is kept in `settings.json` for the next launch.
 
 ## Home
 

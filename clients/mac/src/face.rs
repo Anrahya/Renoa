@@ -11,7 +11,7 @@ use std::{f32::consts::TAU, time::Duration};
 
 use gpui_kit::{
     Animation, AnimationExt as _, AnyElement, App, Bounds, ElementId, Hsla, IntoElement,
-    ParentElement as _, PathBuilder, PathStyle, Pixels, RenderOnce, Rgba, SharedString,
+    ParentElement as _, PathBuilder, PathStyle, Pixels, Rems, RenderOnce, Rgba, SharedString,
     StrokeOptions, Styled as _, Transform, Window, canvas, div, rgb,
 };
 use look::{Cheeks, Eyes, HairBack, HairColour, HairFront, PLAIN, RENOA, Skin, Tile, Wear};
@@ -38,11 +38,11 @@ pub struct Face {
     mood: Mood,
     blinking: bool,
     palette: Palette,
-    size: Pixels,
+    size: Rems,
 }
 
 impl Face {
-    pub const fn new(look: Option<Look>, primary: bool, palette: Palette, size: Pixels) -> Self {
+    pub const fn new(look: Option<Look>, primary: bool, palette: Palette, size: Rems) -> Self {
         Self {
             look,
             primary,

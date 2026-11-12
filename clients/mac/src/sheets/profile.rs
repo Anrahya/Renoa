@@ -7,7 +7,7 @@ use chrono::Local;
 use gpui_kit::{
     AnyElement, Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    TestSupportExt as _, Window, assets::IconName, div, prelude::FluentBuilder as _, px,
+    TestSupportExt as _, Window, assets::IconName, div, prelude::FluentBuilder as _,
 };
 use serde::Deserialize;
 
@@ -25,6 +25,8 @@ use crate::{
     stamp,
     theme::Palette,
 };
+
+use crate::theme::u;
 
 /// How many of its latest notes the page shows.
 const LATELY: usize = 4;
@@ -205,34 +207,34 @@ impl Render for Profile {
             .relative()
             .flex()
             .items_center()
-            .gap(px(18.))
-            .px(px(28.))
-            .pt(px(28.))
-            .pb(px(18.))
-            .child(Face::new(member.look, member.primary, palette, px(72.)).alive("profile-face"))
+            .gap(u(18.))
+            .px(u(28.))
+            .pt(u(28.))
+            .pb(u(18.))
+            .child(Face::new(member.look, member.primary, palette, u(72.)).alive("profile-face"))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
+                    .gap(u(4.))
                     .child(
                         div()
-                            .text_size(px(24.))
+                            .text_size(u(24.))
                             .font_weight(FontWeight::BOLD)
                             .child(member.name.clone()),
                     )
                     .when(!line.is_empty(), |words| {
                         words.child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(u(12.))
                                 .text_color(palette.secondary)
                                 .child(line),
                         )
                     })
                     .when_some(self.purpose.clone(), |words, purpose| {
-                        words.child(div().pt(px(4.)).line_height(px(20.)).child(purpose))
+                        words.child(div().pt(u(4.)).line_height(u(20.)).child(purpose))
                     }),
             )
             .child(
@@ -244,9 +246,9 @@ impl Render for Profile {
                 div()
                     .id("close")
                     .absolute()
-                    .top(px(14.))
-                    .right(px(14.))
-                    .size(px(26.))
+                    .top(u(14.))
+                    .right(u(14.))
+                    .size(u(26.))
                     .rounded_full()
                     .flex()
                     .items_center()
@@ -345,16 +347,16 @@ impl Render for Profile {
                 .id("profile")
                 .flex_1()
                 .overflow_y_scroll()
-                .px(px(28.))
-                .pb(px(28.))
+                .px(u(28.))
+                .pb(u(28.))
                 .flex()
                 .flex_col()
-                .gap(px(20.))
+                .gap(u(20.))
                 .child(
                     div()
                         .grid()
                         .grid_cols(2)
-                        .gap(px(20.))
+                        .gap(u(20.))
                         .child(column(
                             "Routines",
                             pill("all-routines", "All routines", false, palette)
@@ -408,9 +410,9 @@ fn column(
 ) -> impl IntoElement {
     let rows = if rows.is_empty() {
         div()
-            .px(px(2.))
-            .text_size(px(13.))
-            .line_height(px(19.))
+            .px(u(2.))
+            .text_size(u(13.))
+            .line_height(u(19.))
             .text_color(palette.secondary)
             .child(empty)
     } else {
@@ -419,7 +421,7 @@ fn column(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.))
+        .gap(u(6.))
         .child(
             div()
                 .flex()
@@ -441,9 +443,9 @@ fn row(
     div()
         .flex()
         .items_center()
-        .gap(px(12.))
-        .px(px(14.))
-        .py(px(10.))
+        .gap(u(12.))
+        .px(u(14.))
+        .py(u(10.))
         .children(mark)
         .child(
             div()
@@ -451,7 +453,7 @@ fn row(
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(u(2.))
                 .child(
                     div()
                         .font_weight(FontWeight::MEDIUM)
@@ -461,7 +463,7 @@ fn row(
                 .when(!under.is_empty(), |words| {
                     words.child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(u(12.))
                             .text_color(palette.secondary)
                             .truncate()
                             .child(under),
@@ -472,7 +474,7 @@ fn row(
             row.child(
                 div()
                     .flex_none()
-                    .text_size(px(12.))
+                    .text_size(u(12.))
                     .text_color(palette.secondary)
                     .child(end),
             )

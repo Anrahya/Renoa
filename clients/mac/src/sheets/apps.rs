@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashSet};
 use gpui_kit::{
     Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 use renoa_rcp_wire::HostMethod;
 use serde::Deserialize;
@@ -17,6 +17,8 @@ use super::{
     Host, Loaded, Member, Page, SheetEvent, group, header, mark, not_ready, pill, schedule,
 };
 use crate::{face::Face, link::host::Answer, theme::Palette};
+
+use crate::theme::u;
 
 /// An app an agent can use: a connection on the Host, named by the plugin
 /// that serves it, if any. Switching it off keeps its sign-in.
@@ -270,10 +272,10 @@ impl Render for AppsSheet {
                             .id(SharedString::from(format!("{agent}-{connection}")))
                             .flex()
                             .items_center()
-                            .gap(px(6.))
-                            .pl(px(3.))
-                            .pr(px(10.))
-                            .py(px(3.))
+                            .gap(u(6.))
+                            .pl(u(3.))
+                            .pr(u(10.))
+                            .py(u(3.))
                             .rounded_full()
                             .border_1()
                             .cursor_pointer()
@@ -291,21 +293,21 @@ impl Render for AppsSheet {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set(agent, &connection, !on, cx)
                             }))
-                            .child(Face::new(member.look, member.primary, palette, px(18.)))
-                            .child(div().text_size(px(12.)).child(member.name.clone())),
+                            .child(Face::new(member.look, member.primary, palette, u(18.)))
+                            .child(div().text_size(u(12.)).child(member.name.clone())),
                     )
                 });
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(10.))
-                    .px(px(14.))
-                    .py(px(12.))
+                    .gap(u(10.))
+                    .px(u(14.))
+                    .py(u(12.))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(12.))
+                            .gap(u(12.))
                             .child(mark(&label(&app), palette))
                             .child(
                                 div()
@@ -313,13 +315,13 @@ impl Render for AppsSheet {
                                     .min_w_0()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(2.))
+                                    .gap(u(2.))
                                     .child(
                                         div().font_weight(FontWeight::SEMIBOLD).child(label(&app)),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(12.))
+                                            .text_size(u(12.))
                                             .text_color(palette.secondary)
                                             .truncate()
                                             .child(line),
@@ -328,10 +330,10 @@ impl Render for AppsSheet {
                     )
                     .child(
                         div()
-                            .pl(px(42.))
+                            .pl(u(42.))
                             .flex()
                             .flex_wrap()
-                            .gap(px(6.))
+                            .gap(u(6.))
                             .children(chips),
                     )
                     .into_any_element()
@@ -344,16 +346,16 @@ impl Render for AppsSheet {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(px(24.))
-                .pb(px(24.))
+                .px(u(24.))
+                .pb(u(24.))
                 .flex()
                 .flex_col()
-                .gap(px(10.))
+                .gap(u(10.))
                 .when(self.refused, |body| {
-                    body.child(div().text_size(px(12.)).text_color(palette.attention).child("Renoa couldn't confirm that. Here is how it stands now."))
+                    body.child(div().text_size(u(12.)).text_color(palette.attention).child("Renoa couldn't confirm that. Here is how it stands now."))
                 })
                 .when(empty, |body| {
-                    body.child(div().pt(px(40.)).flex().justify_center().text_color(palette.secondary).child(if self.members.is_empty() {
+                    body.child(div().pt(u(40.)).flex().justify_center().text_color(palette.secondary).child(if self.members.is_empty() {
                         "Your agents aren't online just now."
                     } else {
                         "No apps are connected yet."
@@ -362,7 +364,7 @@ impl Render for AppsSheet {
                 .when(!empty, |body| {
                     body.child(group(rows, palette)).child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(u(12.))
                             .text_color(palette.secondary)
                             .child("Turning an app off for an agent doesn't disconnect it. Turn it back on any time."),
                     )
@@ -371,10 +373,10 @@ impl Render for AppsSheet {
                     let task_id = main.task_id;
                     body.child(
                         div()
-                            .pt(px(8.))
+                            .pt(u(8.))
                             .flex()
                             .items_center()
-                            .gap(px(12.))
+                            .gap(u(12.))
                             .child(div().flex_1().text_color(palette.secondary).child(format!("To connect another app, ask {}.", main.name)))
                             .child(
                                 pill("ask", format!("Ask {}", main.name), true, palette)

@@ -9,7 +9,6 @@ use gpui_kit::{
     component::input::{Input, InputEvent, InputState},
     div,
     prelude::FluentBuilder as _,
-    px,
 };
 
 use renoa_rcp_wire::TaskId;
@@ -19,6 +18,8 @@ use crate::{
     sheets::Page,
     theme::Palette,
 };
+
+use crate::theme::u;
 
 /// Somewhere the box can go.
 #[derive(Debug, Clone, PartialEq)]
@@ -130,12 +131,12 @@ impl Render for Jump {
             let picked = place.clone();
             div()
                 .id(("place", at))
-                .h(px(40.))
-                .px(px(10.))
+                .h(u(40.))
+                .px(u(10.))
                 .flex()
                 .items_center()
-                .gap(px(10.))
-                .rounded(px(10.))
+                .gap(u(10.))
+                .rounded(u(10.))
                 .cursor_pointer()
                 .when(chosen, |row| row.bg(palette.selected))
                 .hover(|row| row.bg(palette.selected))
@@ -147,7 +148,7 @@ impl Render for Jump {
                         primary,
                         ..
                     } => row
-                        .child(Face::new(*look, *primary, palette, px(24.)))
+                        .child(Face::new(*look, *primary, palette, u(24.)))
                         .child(
                             div()
                                 .flex_1()
@@ -156,7 +157,7 @@ impl Render for Jump {
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(u(12.))
                                 .text_color(palette.secondary)
                                 .child("Chat"),
                         ),
@@ -167,10 +168,10 @@ impl Render for Jump {
                 })
         });
         div()
-            .w(px(520.))
+            .w(u(520.))
             .flex()
             .flex_col()
-            .rounded(px(14.))
+            .rounded(u(14.))
             .bg(palette.card)
             .border_1()
             .border_color(palette.outline)
@@ -180,9 +181,9 @@ impl Render for Jump {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .px(px(16.))
-                    .py(px(12.))
+                    .gap(u(10.))
+                    .px(u(16.))
+                    .py(u(12.))
                     .border_b_1()
                     .border_color(palette.divider)
                     .text_color(palette.secondary)
@@ -194,14 +195,14 @@ impl Render for Jump {
                             .child(Input::new(&self.query).appearance(false)),
                     ),
             )
-            .child(div().p(px(6.)).flex().flex_col().gap(px(2.)).children(rows))
+            .child(div().p(u(6.)).flex().flex_col().gap(u(2.)).children(rows))
             .child(
                 div()
-                    .px(px(16.))
-                    .py(px(8.))
+                    .px(u(16.))
+                    .py(u(8.))
                     .border_t_1()
                     .border_color(palette.divider)
-                    .text_size(px(11.))
+                    .text_size(u(11.))
                     .text_color(palette.secondary)
                     .child("↑↓ to choose · Return to open · Esc to close"),
             )
@@ -218,7 +219,7 @@ fn labelled(
 ) -> Stateful<Div> {
     row.child(
         div()
-            .size(px(24.))
+            .size(u(24.))
             .flex()
             .items_center()
             .justify_center()
@@ -228,7 +229,7 @@ fn labelled(
     .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(title))
     .child(
         div()
-            .text_size(px(12.))
+            .text_size(u(12.))
             .text_color(palette.secondary)
             .child(keys),
     )

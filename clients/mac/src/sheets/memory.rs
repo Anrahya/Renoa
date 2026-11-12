@@ -7,12 +7,14 @@ use chrono::{NaiveDate, NaiveDateTime};
 use gpui_kit::{
     Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, assets::IconName,
-    component::text::TextView, div, prelude::FluentBuilder as _, px,
+    component::text::TextView, div, prelude::FluentBuilder as _,
 };
 use serde::Deserialize;
 
 use super::{Host, Loaded, Member, Page, SheetEvent, group, header, not_ready, pill, section};
 use crate::{face::Face, link::host::Answer, stamp, theme::Palette};
+
+use crate::theme::u;
 
 /// The owner's profile: the `USER.md` every agent that talks to them reads.
 #[derive(Debug, Clone, Deserialize)]
@@ -178,18 +180,18 @@ impl Render for Memory {
                 .join(" · ");
                 div()
                     .flex()
-                    .gap(px(10.))
-                    .px(px(12.))
-                    .py(px(10.))
-                    .rounded(px(12.))
+                    .gap(u(10.))
+                    .px(u(12.))
+                    .py(u(10.))
+                    .rounded(u(12.))
                     .border_1()
                     .border_color(palette.divider)
                     .child(match member {
-                        Some(member) => Face::new(member.look, member.primary, palette, px(22.))
+                        Some(member) => Face::new(member.look, member.primary, palette, u(22.))
                             .into_any_element(),
                         // A note no agent signed, such as one the owner wrote.
                         None => div()
-                            .size(px(22.))
+                            .size(u(22.))
                             .flex_none()
                             .flex()
                             .items_center()
@@ -204,11 +206,11 @@ impl Render for Memory {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .gap(px(2.))
+                            .gap(u(2.))
                             .child(note.text.clone())
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(u(11.))
                                     .text_color(palette.secondary)
                                     .child(by),
                             ),
@@ -225,7 +227,7 @@ impl Render for Memory {
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .gap(px(6.))
+                    .gap(u(6.))
                     .text_color(palette.secondary)
                     .child(
                         div()
@@ -241,13 +243,13 @@ impl Render for Memory {
             .min_w_0()
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(u(6.))
             .child(section("About you", palette))
             .child(
                 div()
-                    .px(px(16.))
-                    .py(px(14.))
-                    .rounded(px(14.))
+                    .px(u(16.))
+                    .py(u(14.))
+                    .rounded(u(14.))
                     .bg(palette.group)
                     .map(|card| {
                         if about.is_empty() {
@@ -265,9 +267,9 @@ impl Render for Memory {
                         div()
                             .flex()
                             .justify_between()
-                            .gap(px(8.))
-                            .px(px(14.))
-                            .py(px(10.))
+                            .gap(u(8.))
+                            .px(u(14.))
+                            .py(u(10.))
                             .child(div().min_w_0().child(text))
                             .child(div().flex_none().text_color(palette.secondary).child(at))
                             .into_any_element()
@@ -280,14 +282,14 @@ impl Render for Memory {
             .min_w_0()
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(u(6.))
             .child(section("Newest notes", palette))
             .children(notes)
             .when(hidden, |right| {
                 right.child(
                     div()
-                        .pt(px(4.))
-                        .text_size(px(12.))
+                        .pt(u(4.))
+                        .text_size(u(12.))
                         .text_color(palette.secondary)
                         .child("Older notes aren't shown here. Ask about them in a chat."),
                 )
@@ -298,10 +300,10 @@ impl Render for Memory {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(px(24.))
-                .pb(px(24.))
+                .px(u(24.))
+                .pb(u(24.))
                 .flex()
-                .gap(px(20.))
+                .gap(u(20.))
                 .child(left)
                 .child(right),
         )
