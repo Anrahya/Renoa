@@ -6,7 +6,7 @@ use gpui_kit::{
     AnimationExt as _, AnyElement, App, ClickEvent, Div, ElementId, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, SharedString, SpringAnimation,
     SpringConfig, Stateful, StatefulInteractiveElement as _, Styled as _, Window, assets::IconName,
-    div, prelude::FluentBuilder as _, px,
+    div, prelude::FluentBuilder as _,
 };
 use renoa_protocol::TargetRef;
 use renoa_rcp_wire::{HostMethod, NodeId, TaskId};
@@ -22,6 +22,8 @@ use crate::{
     },
     theme::Palette,
 };
+
+use crate::theme::u;
 
 pub mod apps;
 pub mod memory;
@@ -166,26 +168,26 @@ pub fn header(
     div()
         .flex()
         .items_center()
-        .gap(px(12.))
-        .px(px(24.))
-        .pt(px(20.))
-        .pb(px(12.))
+        .gap(u(12.))
+        .px(u(24.))
+        .pt(u(20.))
+        .pb(u(12.))
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(u(2.))
                 .child(
                     div()
-                        .text_size(px(17.))
+                        .text_size(u(17.))
                         .font_weight(FontWeight::BOLD)
                         .child(page.title()),
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(u(12.))
                         .text_color(palette.secondary)
                         .child(line),
                 ),
@@ -194,12 +196,12 @@ pub fn header(
         .child(
             div()
                 .id("close")
-                .size(px(30.))
+                .size(u(30.))
                 .flex_none()
                 .rounded_full()
                 .bg(palette.chat_agent)
                 .text_color(palette.secondary)
-                .text_size(px(14.))
+                .text_size(u(14.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -213,9 +215,9 @@ pub fn header(
 /// The small capitals over a group of rows.
 pub fn section(title: impl Into<SharedString>, palette: Palette) -> Div {
     div()
-        .pt(px(6.))
-        .pb(px(2.))
-        .text_size(px(11.))
+        .pt(u(6.))
+        .pb(u(2.))
+        .text_size(u(11.))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(palette.secondary)
         .child(title.into().to_uppercase())
@@ -227,7 +229,7 @@ pub fn group(rows: impl IntoIterator<Item = AnyElement>, palette: Palette) -> Di
     let rows: Vec<AnyElement> = rows.into_iter().collect();
     let last = rows.len().saturating_sub(1);
     div()
-        .rounded(px(14.))
+        .rounded(u(14.))
         .bg(palette.group)
         .flex()
         .flex_col()
@@ -251,13 +253,13 @@ pub fn pill(
 ) -> Stateful<Div> {
     div()
         .id(id)
-        .h(px(28.))
-        .px(px(12.))
+        .h(u(28.))
+        .px(u(12.))
         .flex_none()
         .flex()
         .items_center()
         .rounded_full()
-        .text_size(px(12.))
+        .text_size(u(12.))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
         .map(|pill| {
@@ -281,8 +283,8 @@ pub fn switch(id: impl Into<ElementId>, on: bool, palette: Palette) -> Stateful<
     let id = id.into();
     div()
         .id(id.clone())
-        .w(px(34.))
-        .h(px(20.))
+        .w(u(34.))
+        .h(u(20.))
         .flex_none()
         .relative()
         .rounded_full()
@@ -291,13 +293,13 @@ pub fn switch(id: impl Into<ElementId>, on: bool, palette: Palette) -> Stateful<
         .child(
             div()
                 .absolute()
-                .top(px(2.))
-                .size(px(16.))
+                .top(u(2.))
+                .size(u(16.))
                 .rounded_full()
                 .bg(palette.background)
                 .with_spring(
                     id,
-                    SpringAnimation::new(SWITCH).to(px(if on { 16. } else { 2. })),
+                    SpringAnimation::new(SWITCH).to(u(if on { 16. } else { 2. })),
                     |knob, left| knob.left(left),
                 ),
         )
@@ -317,7 +319,7 @@ pub fn not_ready<T>(
             .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(10.))
+            .gap(u(10.))
             .text_color(palette.secondary)
             .child(line)
     };
@@ -339,9 +341,9 @@ pub fn mark(name: &str, palette: Palette) -> Div {
         .find(|c| c.is_alphanumeric())
         .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect());
     div()
-        .size(px(30.))
+        .size(u(30.))
         .flex_none()
-        .rounded(px(8.))
+        .rounded(u(8.))
         .bg(palette.chat_agent)
         .flex()
         .items_center()

@@ -11,7 +11,7 @@ use chrono::Local;
 use gpui_kit::{
     Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 use renoa_rcp_wire::HostMethod;
 use uuid::Uuid;
@@ -22,6 +22,8 @@ use super::{
 };
 use crate::{face::Face, link::host::Answer, theme::Palette};
 use held::{Automation, Enablement, Observation, last_run, merge, own, take};
+
+use crate::theme::u;
 
 pub(crate) mod held;
 
@@ -218,8 +220,8 @@ impl Render for Routines {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(24.))
-            .pb(px(24.));
+            .px(u(24.))
+            .pb(u(24.));
         if let Some(note) = not_ready(
             &self.loaded,
             "Reading your routines…",
@@ -250,15 +252,15 @@ impl Render for Routines {
             div()
                 .flex()
                 .items_center()
-                .gap(px(12.))
-                .px(px(14.))
-                .py(px(12.))
+                .gap(u(12.))
+                .px(u(14.))
+                .py(u(12.))
                 .when(!on, |row| row.opacity(0.6))
                 .child(Face::new(
                     member.and_then(|member| member.look),
                     member.is_some_and(|member| member.primary),
                     palette,
-                    px(28.),
+                    u(28.),
                 ))
                 .child(
                     div()
@@ -266,7 +268,7 @@ impl Render for Routines {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .gap(px(2.))
+                        .gap(u(2.))
                         .child(
                             div()
                                 .font_weight(FontWeight::SEMIBOLD)
@@ -275,7 +277,7 @@ impl Render for Routines {
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(u(12.))
                                 .text_color(palette.secondary)
                                 .truncate()
                                 .child(format!("{agent} · {when}")),
@@ -283,7 +285,7 @@ impl Render for Routines {
                         .when_some(last, |column, (line, trouble)| {
                             column.child(
                                 div()
-                                    .text_size(px(12.))
+                                    .text_size(u(12.))
                                     .truncate()
                                     .text_color(if trouble {
                                         palette.danger
@@ -300,10 +302,10 @@ impl Render for Routines {
                             .flex()
                             .flex_col()
                             .items_end()
-                            .gap(px(2.))
+                            .gap(u(2.))
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(u(11.))
                                     .text_color(palette.secondary)
                                     .child("Next"),
                             )
@@ -348,11 +350,11 @@ impl Render for Routines {
         div().size_full().flex().flex_col().child(top).child(
             body.flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(u(8.))
                 .when_some(self.refused.clone(), |body, refused| {
                     body.child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(u(12.))
                             .text_color(palette.attention)
                             .child(refused),
                     )
@@ -360,11 +362,11 @@ impl Render for Routines {
                 .when(empty, |body| {
                     body.child(
                         div()
-                            .pt(px(60.))
+                            .pt(u(60.))
                             .flex()
                             .flex_col()
                             .items_center()
-                            .gap(px(6.))
+                            .gap(u(6.))
                             .text_color(palette.secondary)
                             .child(
                                 div()

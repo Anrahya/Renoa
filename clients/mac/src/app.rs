@@ -5,7 +5,7 @@ use std::{process::Command, sync::Arc};
 
 use gpui_kit::{
     AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Task, Window, div, prelude::FluentBuilder as _, px,
+    SharedString, Styled as _, Task, Window, div, prelude::FluentBuilder as _,
 };
 use renoa_rcp_wire::{DeviceCode, DeviceCredentials};
 use tokio::sync::mpsc;
@@ -14,7 +14,7 @@ use crate::{
     chats::{Chats, SignedOut},
     key::MacKey,
     link::{self, Endpoints, SignInStep},
-    theme::{self, Palette},
+    theme::{self, Palette, u},
     vault,
 };
 
@@ -44,6 +44,7 @@ pub struct Renoa {
 
 impl Renoa {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.set_global(theme::kept_zoom());
         theme::apply(theme::kept_appearance(), window, cx);
         // The system's look matters while the owner leaves it to the system.
         cx.observe_window_appearance(window, |_, window, cx| {
@@ -161,13 +162,13 @@ impl Render for Renoa {
             Screen::Problem => centered(palette)
                 .child(
                     div()
-                        .text_size(px(20.))
+                        .text_size(u(20.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("Renoa can't start"),
                 )
                 .child(
                     div()
-                        .max_w(px(340.))
+                        .max_w(u(340.))
                         .text_center()
                         .text_color(palette.secondary)
                         .child(KEYCHAIN_PROBLEM),
@@ -180,25 +181,25 @@ impl Render for Renoa {
                 centered(palette)
                     .child(
                         div()
-                            .text_size(px(22.))
+                            .text_size(u(22.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Sign in to Renoa"),
                     )
                     .child(
                         div()
-                            .my(px(8.))
-                            .px(px(22.))
-                            .py(px(14.))
-                            .rounded(px(16.))
+                            .my(u(8.))
+                            .px(u(22.))
+                            .py(u(14.))
+                            .rounded(u(16.))
                             .bg(palette.chat_agent)
                             .font_family("SF Mono")
-                            .text_size(px(34.))
+                            .text_size(u(34.))
                             .font_weight(FontWeight::MEDIUM)
                             .child(shown),
                     )
                     .child(
                         div()
-                            .max_w(px(340.))
+                            .max_w(u(340.))
                             .text_center()
                             .text_color(palette.secondary)
                             .child("On your phone, open Renoa, go to Settings, tap Sign in a computer, and type this code."),
@@ -223,10 +224,10 @@ fn centered(palette: Palette) -> gpui_kit::Div {
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(px(12.))
+        .gap(u(12.))
         .bg(palette.background)
         .text_color(palette.text)
-        .text_size(px(13.))
+        .text_size(u(13.))
 }
 
 /// The code as two groups of four, the way it is easiest to read aloud.

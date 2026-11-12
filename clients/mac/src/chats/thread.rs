@@ -12,7 +12,7 @@ use gpui_kit::{
     component::{input::Input, message_scroller::MessageScroller, text::TextView},
     div, ease_out_quint, linear_color_stop, linear_gradient, point,
     prelude::FluentBuilder as _,
-    px, relative,
+    relative,
 };
 
 use super::{Chats, Row};
@@ -22,6 +22,8 @@ use crate::{
     stamp,
     theme::Palette,
 };
+
+use crate::theme::u;
 
 /// The widest the conversation runs.
 const COLUMN: f32 = 720.;
@@ -51,7 +53,7 @@ struct Agent {
 
 impl Agent {
     fn face(&self, palette: Palette, size: f32) -> Face {
-        Face::new(self.look, self.primary, palette, px(size)).blinking(self.blinking)
+        Face::new(self.look, self.primary, palette, u(size)).blinking(self.blinking)
     }
 }
 
@@ -120,28 +122,28 @@ impl Chats {
             .when_some(notice, |column, notice| {
                 column.child(centred(
                     div()
-                        .px(px(20.))
+                        .px(u(20.))
                         .text_color(palette.danger)
-                        .text_size(px(12.))
+                        .text_size(u(12.))
                         .child(notice),
                 ))
             })
             .child(centred(
                 div()
                     .w_full()
-                    .m(px(12.))
+                    .m(u(12.))
                     .flex()
                     .items_end()
-                    .gap(px(8.))
-                    .pl(px(16.))
-                    .pr(px(6.))
-                    .py(px(6.))
-                    .rounded(px(22.))
+                    .gap(u(8.))
+                    .pl(u(16.))
+                    .pr(u(6.))
+                    .py(u(6.))
+                    .rounded(u(22.))
                     .bg(palette.composer)
                     .border_1()
                     .border_color(palette.outline)
                     .child(
-                        div().flex_1().py(px(4.)).child(
+                        div().flex_1().py(u(4.)).child(
                             Input::new(&self.composer)
                                 .id("composer")
                                 .aria_label("Message")
@@ -158,17 +160,17 @@ impl Chats {
 
 /// Room at the top for the name the lines scroll under.
 fn padded(mut style: StyleRefinement) -> StyleRefinement {
-    style.padding.top = Some(px(HEADER).into());
-    style.padding.bottom = Some(px(8.).into());
+    style.padding.top = Some(u(HEADER).into());
+    style.padding.bottom = Some(u(8.).into());
     style
 }
 
 /// `content` in the middle of the conversation, no wider than [`COLUMN`].
 fn centred(content: impl IntoElement) -> gpui_kit::Div {
-    div().w_full().flex().justify_center().px(px(20.)).child(
+    div().w_full().flex().justify_center().px(u(20.)).child(
         div()
             .w_full()
-            .max_w(px(COLUMN))
+            .max_w(u(COLUMN))
             .flex()
             .justify_center()
             .child(content),
@@ -197,11 +199,11 @@ fn header(
         .top_0()
         .left_0()
         .right_0()
-        .h(px(HEADER))
+        .h(u(HEADER))
         .flex()
         .items_center()
         .justify_center()
-        .gap(px(8.))
+        .gap(u(8.))
         .bg(linear_gradient(
             180.,
             linear_color_stop(palette.background, 0.55),
@@ -212,11 +214,11 @@ fn header(
                 .id("about")
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .max_w(px(COLUMN * 0.8))
-                .pl(px(5.))
-                .pr(px(14.))
-                .py(px(4.))
+                .gap(u(8.))
+                .max_w(u(COLUMN * 0.8))
+                .pl(u(5.))
+                .pr(u(14.))
+                .py(u(4.))
                 .rounded_full()
                 .bg(palette.frosted)
                 .border_1()
@@ -248,7 +250,7 @@ fn header(
             header.child(
                 div()
                     .text_color(palette.attention)
-                    .text_size(px(12.))
+                    .text_size(u(12.))
                     .child("Reconnecting…"),
             )
         })
@@ -288,15 +290,15 @@ fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
         .w_full()
         .flex()
         .flex_col()
-        .pt(px(if turned { 10. } else { 2. }))
+        .pt(u(if turned { 10. } else { 2. }))
         .when_some(time, |column, time| {
             column.child(
                 div()
                     .w_full()
                     .flex()
                     .justify_center()
-                    .py(px(8.))
-                    .text_size(px(11.))
+                    .py(u(8.))
+                    .text_size(u(11.))
                     .text_color(palette.secondary)
                     .child(time),
             )
@@ -308,9 +310,9 @@ fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
 fn owner(index: usize, line: &Line, live: bool, palette: Palette) -> AnyElement {
     let bubble = div()
         .max_w(relative(0.72))
-        .px(px(14.))
-        .py(px(9.))
-        .rounded(px(18.))
+        .px(u(14.))
+        .py(u(9.))
+        .rounded(u(18.))
         .bg(palette.chat_user)
         .child(SharedString::from(line.text.clone()));
     let placed = div().w_full().flex().justify_end().child(bubble);
@@ -322,12 +324,13 @@ fn owner(index: usize, line: &Line, live: bool, palette: Palette) -> AnyElement 
         .with_animation(
             ("rise", index),
             Animation::new(RISE).with_easing(ease_out_quint()),
-            |placed, t| placed.top(px(22. * (1. - t))).opacity(t),
+            |placed, t| placed.top(u(22. * (1. - t))).opacity(t),
         )
         .into_any_element()
 }
 
-/// An agent's line, with its face beside the `last` line of a run.
+/// An agent's line, as plain text without a bubble, with its face beside the
+/// `last` line of a run.
 fn said_by_agent(
     index: usize,
     line: &Line,
@@ -336,32 +339,24 @@ fn said_by_agent(
     agent: &Agent,
     palette: Palette,
 ) -> AnyElement {
-    let bubble = div()
-        .max_w(relative(0.72))
-        .min_w_0()
-        .px(px(14.))
-        .py(px(9.))
-        .rounded(px(18.))
-        .bg(palette.chat_agent)
-        .map(|bubble| {
-            if line.failed {
-                bubble
-                    .text_color(palette.danger)
-                    .child(SharedString::from(line.text.clone()))
-            } else {
-                bubble.child(TextView::markdown(("said", index), line.text.clone()))
-            }
-        });
-    let face = div().w(px(24.)).flex_none().when(last, |slot| {
+    let text = div().max_w(relative(0.85)).min_w_0().py(u(2.)).map(|text| {
+        if line.failed {
+            text.text_color(palette.danger)
+                .child(SharedString::from(line.text.clone()))
+        } else {
+            text.child(TextView::markdown(("said", index), line.text.clone()))
+        }
+    });
+    let face = div().w(u(24.)).flex_none().when(last, |slot| {
         slot.child(agent.face(palette, 24.).alive(format!("said-{index}")))
     });
     let placed = div()
         .w_full()
         .flex()
         .items_end()
-        .gap(px(8.))
+        .gap(u(10.))
         .child(face)
-        .child(bubble);
+        .child(text);
     if !live {
         return placed.into_any_element();
     }
@@ -370,7 +365,7 @@ fn said_by_agent(
         .with_animation(
             ("settle", index),
             Animation::new(SETTLE).with_easing(ease_out_quint()),
-            |placed, t| placed.top(px(8. * (1. - t))).opacity(t),
+            |placed, t| placed.top(u(8. * (1. - t))).opacity(t),
         )
         .into_any_element()
 }
@@ -380,7 +375,7 @@ fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
     let dots = (0..3_u8).map(move |dot| {
         let offset = f32::from(dot) * 0.18;
         div()
-            .size(px(5.))
+            .size(u(5.))
             .rounded_full()
             .bg(palette.secondary)
             .with_animation(
@@ -395,10 +390,10 @@ fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
     });
     div()
         .w_full()
-        .pt(px(10.))
+        .pt(u(10.))
         .flex()
         .items_end()
-        .gap(px(8.))
+        .gap(u(8.))
         .child(
             agent
                 .face(palette, 24.)
@@ -409,14 +404,11 @@ fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .px(px(14.))
-                .py(px(9.))
-                .rounded(px(18.))
-                .bg(palette.chat_agent)
+                .gap(u(8.))
+                .py(u(2.))
                 .text_color(palette.secondary)
                 .child(format!("{} is working on it", agent.name))
-                .child(div().flex().gap(px(3.)).children(dots)),
+                .child(div().flex().gap(u(3.)).children(dots)),
         )
 }
 
@@ -429,7 +421,7 @@ fn send_button(sendable: bool, palette: Palette) -> gpui_kit::Stateful<gpui_kit:
     };
     div()
         .id("send")
-        .size(px(30.))
+        .size(u(30.))
         .flex_none()
         .rounded_full()
         .bg(fill)
@@ -441,9 +433,14 @@ fn send_button(sendable: bool, palette: Palette) -> gpui_kit::Stateful<gpui_kit:
             canvas(
                 |_, _, _| (),
                 move |bounds, (), window, _| {
-                    let at =
-                        |x: f32, y: f32| point(bounds.origin.x + px(x), bounds.origin.y + px(y));
-                    let mut up = PathBuilder::stroke(px(2.));
+                    let rem = window.rem_size();
+                    let at = |x: f32, y: f32| {
+                        point(
+                            bounds.origin.x + u(x).to_pixels(rem),
+                            bounds.origin.y + u(y).to_pixels(rem),
+                        )
+                    };
+                    let mut up = PathBuilder::stroke(u(2.).to_pixels(rem));
                     up.move_to(at(7., 12.5));
                     up.line_to(at(7., 2.));
                     up.move_to(at(2.5, 6.5));
@@ -454,6 +451,6 @@ fn send_button(sendable: bool, palette: Palette) -> gpui_kit::Stateful<gpui_kit:
                     }
                 },
             )
-            .size(px(14.)),
+            .size(u(14.)),
         )
 }

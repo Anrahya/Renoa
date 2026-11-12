@@ -19,6 +19,18 @@ Make it once in Keychain Access: Certificate Assistant → Create a
 Certificate…, name `Renoa Dev`, identity type Self Signed Root, certificate
 type Code Signing.
 
+To use it as an app, with its icon in the Dock and Launchpad:
+
+```sh
+scripts/install-app.sh
+```
+
+It builds in release, wraps the binary as `Renoa.app` with the icon drawn from
+`assets/icon.svg` (the Renoa mark on a Paper tile), signs it like `cargo run`
+does, and installs it in `/Applications`. The installed app stays the same
+binary until the next install, so once the Keychain is told to Always Allow it,
+it stops asking for the login password; each `cargo run` rebuild asks again.
+
 The first build takes a few minutes; `target/` grows to several GB, which `cargo clean`
 frees.
 
@@ -51,8 +63,8 @@ code.
   Host holds up no message. The main agent is read with every agent list,
   every 30 seconds; a purpose or look is read until the Host gives it or says
   there is no such agent.
-- Agent lines show as Markdown, with the agent's face beside the last of a
-  run; a time goes between lines an hour or a midnight apart. An owner's line
+- Agent lines show as Markdown on the page itself, without a bubble, with the
+  agent's face beside the last of a run; a time goes between lines an hour or a midnight apart. An owner's line
   takes the time the agent began answering it. Lines new when they arrive
   come in with a motion; a replay of older ones does not.
 - Each agent's chat is the task every app derives from the agent's node and
@@ -66,6 +78,11 @@ code.
   unreachable, Enter leaves the text in the composer.
 - A message Renoa refuses returns to its chat's composer, ahead of anything
   typed since.
+
+View → Bigger (⌘=), Smaller (⌘−) and Actual Size (⌥⌘0) draw the whole app
+larger or smaller, as a browser zooms a page, from 75% to 250%. Every length is
+in the app's rem unit (`theme::u`), so the window's rem size scales it all; the
+choice is kept in `settings.json` for the next launch.
 
 ## Home
 

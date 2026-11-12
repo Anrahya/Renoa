@@ -6,7 +6,7 @@ use gpui_kit::{
     AnimationExt as _, Context, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, SpringAnimation, SpringConfig,
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use super::Chats;
@@ -16,6 +16,8 @@ use crate::{
     stamp,
     theme::Palette,
 };
+
+use crate::theme::u;
 
 /// The width of the side.
 const WIDTH: f32 = 264.;
@@ -56,18 +58,18 @@ impl Chats {
             div()
                 .id(("agent", index))
                 .relative()
-                .h(px(ROW))
+                .h(u(ROW))
                 .flex()
                 .items_center()
-                .gap(px(10.))
-                .px(px(10.))
-                .rounded(px(10.))
+                .gap(u(10.))
+                .px(u(10.))
+                .rounded(u(10.))
                 .cursor_pointer()
                 .on_click(
                     cx.listener(move |this, _, window, cx| this.open_agent(index, window, cx)),
                 )
                 .child(
-                    Face::new(look, primary, palette, px(30.))
+                    Face::new(look, primary, palette, u(30.))
                         .blinking(self.blinking(task_id))
                         .mood(mood)
                         .alive(format!("side-{task_id}")),
@@ -78,12 +80,12 @@ impl Chats {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .gap(px(1.))
+                        .gap(u(1.))
                         .child(
                             div()
                                 .flex()
                                 .items_baseline()
-                                .gap(px(6.))
+                                .gap(u(6.))
                                 .child(
                                     div()
                                         .flex_1()
@@ -95,7 +97,7 @@ impl Chats {
                                 .when_some(at, |line, at| {
                                     line.child(
                                         div()
-                                            .text_size(px(11.))
+                                            .text_size(u(11.))
                                             .text_color(palette.secondary)
                                             .child(at),
                                     )
@@ -103,7 +105,7 @@ impl Chats {
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(u(12.))
                                 .text_color(palette.secondary)
                                 .truncate()
                                 .child(if working {
@@ -122,7 +124,7 @@ impl Chats {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(px(8.))
+                .px(u(8.))
                 .child(
                     div()
                         .relative()
@@ -132,7 +134,7 @@ impl Chats {
                         .children(rows),
                 )
                 .when(empty, |list| {
-                    list.child(div().px(px(10.)).text_color(palette.secondary).child(
+                    list.child(div().px(u(10.)).text_color(palette.secondary).child(
                         if self.linked {
                             "No agents yet. Make one in Renoa on your phone."
                         } else {
@@ -141,24 +143,24 @@ impl Chats {
                     ))
                 });
         div()
-            .w(px(WIDTH))
+            .w(u(WIDTH))
             .h_full()
             .flex_none()
             .flex()
             .flex_col()
             // Room for the window's traffic lights.
-            .pt(px(44.))
+            .pt(u(44.))
             .bg(palette.sidebar)
             .border_r_1()
             .border_color(palette.outline)
-            .child(div().px(px(8.)).child(self.jump_button(palette, cx)))
-            .child(div().pt(px(8.)).child(self.home_row(palette, cx)))
+            .child(div().px(u(8.)).child(self.jump_button(palette, cx)))
+            .child(div().pt(u(8.)).child(self.home_row(palette, cx)))
             .child(
                 div()
-                    .px(px(18.))
-                    .pt(px(10.))
-                    .pb(px(6.))
-                    .text_size(px(11.))
+                    .px(u(18.))
+                    .pt(u(10.))
+                    .pb(u(6.))
+                    .text_size(u(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.secondary)
                     .child("Agents"),
@@ -170,13 +172,13 @@ impl Chats {
 
 /// The open chat's highlight, behind the row at `index`.
 fn highlight(index: usize, palette: Palette) -> impl IntoElement {
-    let top = px(f32::from(u16::try_from(index).unwrap_or(u16::MAX)) * ROW);
+    let top = u(f32::from(u16::try_from(index).unwrap_or(u16::MAX)) * ROW);
     div()
         .absolute()
         .left_0()
         .right_0()
-        .h(px(ROW))
-        .rounded(px(10.))
+        .h(u(ROW))
+        .rounded(u(10.))
         .bg(palette.selected)
         .with_spring(
             "highlight",

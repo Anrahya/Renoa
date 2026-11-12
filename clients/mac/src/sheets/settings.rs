@@ -4,16 +4,16 @@
 use gpui_kit::{
     Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, assets::IconName,
-    div, prelude::FluentBuilder as _, px,
+    div, prelude::FluentBuilder as _,
 };
 
 use super::{Page, SheetEvent, group, header, pill, section};
-use crate::theme::{self, Appearance, Palette};
+use crate::theme::{self, Appearance, Palette, u};
 
 /// The keys that move around the app, as Settings lists them. The keys
 /// themselves are `chats::keys`; a test in `chats/tests.rs` presses each one
 /// listed here and checks it leads where its words say.
-pub const SHORTCUTS: [(&str, &str); 9] = [
+pub const SHORTCUTS: [(&str, &str); 12] = [
     ("Jump to an agent or page", "⌘K"),
     ("Home", "⌘0"),
     ("Open the first nine agents", "⌘1 – ⌘9"),
@@ -23,6 +23,9 @@ pub const SHORTCUTS: [(&str, &str); 9] = [
     ("Apps", "⌘⇧A"),
     ("Settings", "⌘,"),
     ("Close a sheet", "Esc"),
+    ("Bigger", "⌘="),
+    ("Smaller", "⌘−"),
+    ("Actual size", "⌥⌘0"),
 ];
 
 pub struct Settings {
@@ -65,12 +68,12 @@ impl Render for Settings {
             div()
                 .id(label)
                 .flex_1()
-                .h(px(30.))
+                .h(u(30.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .gap(px(6.))
-                .rounded(px(8.))
+                .gap(u(6.))
+                .rounded(u(8.))
                 .cursor_pointer()
                 .when(on, |choice| {
                     choice.bg(palette.card).font_weight(FontWeight::SEMIBOLD)
@@ -85,10 +88,10 @@ impl Render for Settings {
                 .child(label)
         };
         let looks = div()
-            .p(px(3.))
+            .p(u(3.))
             .flex()
-            .gap(px(3.))
-            .rounded(px(10.))
+            .gap(u(3.))
+            .rounded(u(10.))
             .bg(palette.group)
             .child(choice(Appearance::System, "System", None, cx))
             .child(choice(Appearance::Light, "Light", Some(IconName::Sun), cx))
@@ -97,15 +100,15 @@ impl Render for Settings {
             div()
                 .flex()
                 .justify_between()
-                .px(px(14.))
-                .py(px(9.))
+                .px(u(14.))
+                .py(u(9.))
                 .child(*what)
                 .child(
                     div()
-                        .px(px(8.))
-                        .rounded(px(6.))
+                        .px(u(8.))
+                        .rounded(u(6.))
                         .bg(palette.chat_agent)
-                        .text_size(px(12.))
+                        .text_size(u(12.))
                         .text_color(palette.secondary)
                         .child(*keys),
                 )
@@ -115,19 +118,19 @@ impl Render for Settings {
         let this_mac = div()
             .flex()
             .items_center()
-            .gap(px(12.))
-            .px(px(14.))
-            .py(px(12.))
+            .gap(u(12.))
+            .px(u(14.))
+            .py(u(12.))
             .child(
                 div()
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
+                    .gap(u(2.))
                     .child(format!("Signed in as {}", self.computer))
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(u(12.))
                             .text_color(if signing_out {
                                 palette.danger
                             } else {
@@ -175,21 +178,18 @@ impl Render for Settings {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(px(24.))
-                .pb(px(24.))
+                .px(u(24.))
+                .pb(u(24.))
                 .flex()
                 .flex_col()
-                .gap(px(6.))
+                .gap(u(6.))
                 .child(section("Appearance", palette))
                 .child(looks)
                 .when(self.unkept, |body| {
                     body.child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(palette.attention)
-                            .child(
-                                "Renoa looks this way until it quits; it couldn't keep the choice.",
-                            ),
+                        div().text_size(u(12.)).text_color(palette.attention).child(
+                            "Renoa looks this way until it quits; it couldn't keep the choice.",
+                        ),
                     )
                 })
                 .child(section("Keyboard", palette))
@@ -199,8 +199,8 @@ impl Render for Settings {
                 .child(section("Renoa", palette))
                 .child(group(
                     [div()
-                        .px(px(14.))
-                        .py(px(12.))
+                        .px(u(14.))
+                        .py(u(12.))
                         .child(format!("Renoa for Mac {}", env!("CARGO_PKG_VERSION")))
                         .into_any_element()],
                     palette,

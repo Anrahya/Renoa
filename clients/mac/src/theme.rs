@@ -7,7 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gpui_kit::{App, Global, Hsla, Window, WindowAppearance, component::Theme, rgb, rgba};
+use gpui_kit::{
+    App, Global, Hsla, Rems, Window, WindowAppearance, component::Theme, px, rems, rgb, rgba,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy)]
@@ -123,11 +125,64 @@ fn dark(window: &Window, cx: &App) -> bool {
     }
 }
 
+/// The size the app is drawn at, as a browser zooms a page: 1.0 is as
+/// designed. Every length the app sets is in [`u`], which scales with it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Zoom(f32);
+
+impl Global for Zoom {}
+
+/// The sizes ⌘= and ⌘- step through, as Safari's.
+const ZOOMS: [f32; 9] = [0.75, 0.85, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5];
+
+impl Default for Zoom {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+impl Zoom {
+    /// The next size up (`step` 1) or down (`step` -1), held at the ends.
+    #[must_use]
+    pub fn step(self, step: isize) -> Self {
+        let here = ZOOMS
+            .iter()
+            .position(|zoom| *zoom >= self.0 - f32::EPSILON)
+            .unwrap_or(ZOOMS.len() - 1);
+        let next = here.saturating_add_signed(step).min(ZOOMS.len() - 1);
+        Self(ZOOMS[next])
+    }
+
+    fn known(self) -> Self {
+        if ZOOMS.contains(&self.0) {
+            self
+        } else {
+            Self::default()
+        }
+    }
+}
+
+/// The app's unit of length: `v` points at the designed size, scaled by the
+/// owner's [`Zoom`] through the window's rem size.
+#[must_use]
+pub fn u(v: f32) -> Rems {
+    rems(v / DESIGN_REM)
+}
+
+/// The rem size the app is designed at, in points.
+const DESIGN_REM: f32 = 16.0;
+
+/// The kit's own text sizes at [`Zoom`] 1.0 (`gpui_kit::component::Theme`).
+const KIT_TEXT: f32 = 16.0;
+const KIT_MONO_TEXT: f32 = 13.0;
+
 /// What the app keeps of the owner's choices, beside the Keychain's secrets.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Kept {
     #[serde(default)]
     appearance: Appearance,
+    #[serde(default)]
+    zoom: Option<Zoom>,
 }
 
 fn kept_at() -> Option<PathBuf> {
@@ -138,29 +193,55 @@ fn kept_at() -> Option<PathBuf> {
 /// The appearance the owner chose last, or [`Appearance::System`] when none
 /// was kept or it does not read.
 pub fn kept_appearance() -> Appearance {
-    kept_at().map_or_else(Appearance::default, |path| read_kept(&path))
+    kept_at().map_or_else(Appearance::default, |path| read_kept(&path).appearance)
 }
 
-fn read_kept(path: &Path) -> Appearance {
+/// The size the owner chose last, or 1.0 when none was kept or it is not
+/// one of the sizes the keys step through.
+pub fn kept_zoom() -> Zoom {
+    kept_at()
+        .and_then(|path| read_kept(&path).zoom)
+        .map_or_else(Zoom::default, Zoom::known)
+}
+
+fn read_kept(path: &Path) -> Kept {
     fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Kept>(&bytes).ok())
-        .map(|kept| kept.appearance)
         .unwrap_or_default()
 }
 
-/// Keeps `appearance` for the next launch: written beside, then moved over,
-/// so a crash leaves the old choice or the new one.
+/// Keeps `appearance` for the next launch, beside the kept size.
 pub fn keep_appearance(appearance: Appearance) -> io::Result<()> {
     let path = kept_at().ok_or_else(|| io::Error::other("no home folder"))?;
-    keep(&path, appearance)
+    let kept = read_kept(&path);
+    keep(&path, &Kept { appearance, ..kept })
 }
 
-fn keep(path: &Path, appearance: Appearance) -> io::Result<()> {
+/// Keeps `zoom` for the next launch, beside the kept appearance.
+#[cfg_attr(
+    test,
+    expect(dead_code, reason = "tests leave the owner's kept choices alone")
+)]
+pub fn keep_zoom(zoom: Zoom) -> io::Result<()> {
+    let path = kept_at().ok_or_else(|| io::Error::other("no home folder"))?;
+    let kept = read_kept(&path);
+    keep(
+        &path,
+        &Kept {
+            zoom: Some(zoom),
+            ..kept
+        },
+    )
+}
+
+/// Written beside, then moved over, so a crash leaves the old choices or the
+/// new ones.
+fn keep(path: &Path, kept: &Kept) -> io::Result<()> {
     if let Some(folder) = path.parent() {
         fs::create_dir_all(folder)?;
     }
-    let json = serde_json::to_vec_pretty(&Kept { appearance }).map_err(io::Error::other)?;
+    let json = serde_json::to_vec_pretty(kept).map_err(io::Error::other)?;
     let beside = path.with_extension("json.new");
     fs::write(&beside, json)?;
     fs::rename(beside, path)
@@ -173,9 +254,18 @@ pub fn apply(appearance: Appearance, window: &mut Window, cx: &mut App) {
     sync(window, cx);
 }
 
-/// Brings the kit's components in line with the app's look, after the owner
-/// chose or the system changed.
+/// Draws the app at `zoom`: the window's rem size, which every [`u`] length
+/// follows, and the kit's text sizes.
+pub fn zoom(zoom: Zoom, window: &mut Window, cx: &mut App) {
+    cx.set_global(zoom);
+    sync(window, cx);
+}
+
+/// Brings the kit's components in line with the app's look and size, after
+/// the owner chose or the system changed.
 pub fn sync(window: &mut Window, cx: &mut App) {
+    let scale = cx.try_global::<Zoom>().copied().unwrap_or_default().0;
+    window.set_rem_size(px(DESIGN_REM * scale));
     let dark = dark(window, cx);
     let mode = if dark {
         gpui_kit::component::ThemeMode::Dark
@@ -185,33 +275,70 @@ pub fn sync(window: &mut Window, cx: &mut App) {
     if Theme::global(cx).mode != mode {
         Theme::change(mode, Some(window), cx);
     }
+    let theme = Theme::global_mut(cx);
+    theme.font_size = px(KIT_TEXT * scale);
+    theme.mono_font_size = px(KIT_MONO_TEXT * scale);
+    window.refresh();
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
 
-    use super::{Appearance, keep, read_kept};
+    use super::{Appearance, Kept, Zoom, keep, read_kept};
 
     #[test]
     fn a_kept_appearance_comes_back_and_anything_else_reads_as_the_system() {
         let folder = std::env::temp_dir().join(format!("renoa-mac-kept-{}", uuid::Uuid::new_v4()));
         let path = folder.join("settings.json");
-        assert_eq!(read_kept(&path), Appearance::System, "nothing kept yet");
-        keep(&path, Appearance::Dark).expect("kept");
-        assert_eq!(read_kept(&path), Appearance::Dark);
-        keep(&path, Appearance::Light).expect("kept again");
-        assert_eq!(read_kept(&path), Appearance::Light);
+        let appearance = |path| read_kept(path).appearance;
+        assert_eq!(appearance(&path), Appearance::System, "nothing kept yet");
+        keep(
+            &path,
+            &Kept {
+                appearance: Appearance::Dark,
+                zoom: None,
+            },
+        )
+        .expect("kept");
+        assert_eq!(appearance(&path), Appearance::Dark);
+        keep(
+            &path,
+            &Kept {
+                appearance: Appearance::Light,
+                zoom: Some(Zoom(1.25)),
+            },
+        )
+        .expect("kept again");
+        assert_eq!(appearance(&path), Appearance::Light);
+        assert_eq!(
+            read_kept(&path).zoom,
+            Some(Zoom(1.25)),
+            "the size is kept beside it"
+        );
         assert!(
             !path.with_extension("json.new").exists(),
             "the new choice was moved over the old"
         );
         fs::write(&path, b"{\"appearance\":\"sepia\"}").expect("written");
         assert_eq!(
-            read_kept(&path),
+            appearance(&path),
             Appearance::System,
             "a choice it does not know"
         );
         fs::remove_dir_all(folder).expect("cleaned up");
+    }
+
+    #[test]
+    fn the_keys_step_through_the_sizes_and_stop_at_the_ends() {
+        assert_eq!(Zoom::default().step(1), Zoom(1.1));
+        assert_eq!(Zoom(1.1).step(-1), Zoom(1.0));
+        assert_eq!(Zoom(0.75).step(-1), Zoom(0.75));
+        assert_eq!(Zoom(2.5).step(1), Zoom(2.5));
+        assert_eq!(
+            Zoom(1.3).known(),
+            Zoom::default(),
+            "a size the keys never reach"
+        );
     }
 }

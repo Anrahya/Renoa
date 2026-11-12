@@ -4,7 +4,7 @@
 use gpui_kit::{
     Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, assets::IconName,
-    div, prelude::FluentBuilder as _, px,
+    div, prelude::FluentBuilder as _,
 };
 
 use super::Chats;
@@ -12,6 +12,8 @@ use crate::{
     home::{Home, HomeEvent},
     theme::Palette,
 };
+
+use crate::theme::u;
 
 impl Chats {
     pub(super) fn home_pane(&self) -> impl IntoElement {
@@ -74,13 +76,13 @@ impl Chats {
         let waiting = self.home.read(cx).needing_you();
         div()
             .id("home-row")
-            .mx(px(8.))
-            .h(px(48.))
+            .mx(u(8.))
+            .h(u(48.))
             .flex()
             .items_center()
-            .gap(px(10.))
-            .px(px(10.))
-            .rounded(px(10.))
+            .gap(u(10.))
+            .px(u(10.))
+            .rounded(u(10.))
             .cursor_pointer()
             .when(self.on_home, |row| row.bg(palette.selected))
             .when(!self.on_home, |row| {
@@ -89,9 +91,9 @@ impl Chats {
             .on_click(cx.listener(|this, _, window, cx| this.go_home(window, cx)))
             .child(
                 div()
-                    .size(px(30.))
+                    .size(u(30.))
                     .flex_none()
-                    .rounded(px(9.))
+                    .rounded(u(9.))
                     .bg(palette.chat_agent)
                     .flex()
                     .items_center()
@@ -102,12 +104,12 @@ impl Chats {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(1.))
+                    .gap(u(1.))
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Home"))
                     .when_some(waiting, |words, waiting| {
                         words.child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(u(12.))
                                 .text_color(if waiting > 0 {
                                     palette.attention
                                 } else {

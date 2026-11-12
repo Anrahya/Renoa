@@ -621,6 +621,11 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
     };
     let chat = |name: &str| Some(name.to_owned());
     for (what, keys) in SHORTCUTS {
+        // The size keys are the View menu's, answered by the window around
+        // the chats: `menus.rs` presses them.
+        if matches!(what, "Bigger" | "Smaller" | "Actual size") {
+            continue;
+        }
         // From Chef's chat, ready to type; Esc from over a sheet.
         act(&|window, cx| window.click(("agent", 0usize), cx), cx);
         if what == "Close a sheet" {
