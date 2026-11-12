@@ -23,6 +23,7 @@ function ernie(overrides: Record<string, unknown> = {}): Record<string, unknown>
     top_provider: { context_length: 1_024_000, max_completion_tokens: 921_600 },
     supported_parameters: ["include_reasoning", "max_tokens", "reasoning", "reasoning_effort", "tools"],
     reasoning: { mandatory: true, default_enabled: true, supported_efforts: ["high"], default_effort: "high" },
+    endpoints: ["/api/v1/chat/completions", "/api/v1/completions", "/api/v1/messages", "/api/v1/responses"],
     ...overrides,
   };
 }
@@ -57,7 +58,13 @@ test("OpenRouter learns a tool-capable model Pi does not pin, at the efforts it 
   try {
     createStore(directory.path, KEY, "openrouter").close();
     const noTools = ernie({ id: "acme/chat-only", supported_parameters: ["max_tokens"] });
-    const models = await catalog(directory.path, listing(ernie(), noTools, { ...ernie(), id: PINNED }));
+    const batchOnly = ernie({ id: "acme/batch:batch", endpoints: ["/api/v1/batches"] });
+    // Entries Renoa cannot read are skipped, not fatal to the whole list.
+    const unreadable = [ernie({ id: "has space" }), ernie({ id: "acme/bad-price", pricing: { prompt: "1e999" } })];
+    const models = await catalog(
+      directory.path,
+      listing(ernie(), noTools, batchOnly, ...unreadable, { ...ernie(), id: PINNED }),
+    );
     const learned = models.find((model) => model.id === ERNIE);
     assert.ok(learned);
     assert.deepEqual(learned.reasoning_levels, ["high"]);
@@ -68,7 +75,9 @@ test("OpenRouter learns a tool-capable model Pi does not pin, at the efforts it 
     assert.equal(spec.maxTokens, 921_600);
     assert.deepEqual(spec.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
     assert.equal(spec.compat, undefined);
-    assert.equal(models.some((model) => model.id === "acme/chat-only"), false);
+    for (const skipped of ["acme/chat-only", "acme/batch:batch", "has space", "acme/bad-price"]) {
+      assert.equal(models.some((model) => model.id === skipped), false, skipped);
+    }
     // A pinned model keeps Pi's binding over the live listing.
     const pinned = models.find((model) => model.id === PINNED);
     assert.deepEqual(pinned?.model_spec, findCatalogModel("openrouter", PINNED)?.model);

@@ -92,26 +92,31 @@ function projectModels(
   const pinnedIds = new Set(pinned.map((entry) => entry.id));
   const ids = new Set<string>();
   const models: Model<Api>[] = [];
+  // One entry Renoa cannot read is skipped; it never discards the rest of the list.
   for (const value of data) {
     const id = isRecord(value) ? value.id : undefined;
-    if (!isRecord(value) || !OPENROUTER_SOURCE.isValidId(id) || !ids.add(id)) {
-      throw new Error("model list has an invalid or repeated model id");
-    }
-    if (pinnedIds.has(id)) {
+    if (!isRecord(value) || !OPENROUTER_SOURCE.isValidId(id) || !ids.add(id) || pinnedIds.has(id)) {
       continue;
     }
     const model = projectModel(id, value);
-    if (model !== undefined) {
+    if (model === undefined) {
+      continue;
+    }
+    try {
       models.push(validateModelSpec(model, "openrouter", id));
+    } catch {
+      continue;
     }
   }
   return { ids: [...ids].sort(), models };
 }
 
 /**
- * A chat model that reads and writes text and accepts tools, on Chat
- * Completions. Pi's OpenRouter request rules (reasoning object, roles, session
- * affinity) come from the provider and base URL, so no compat block is set.
+ * A chat model served on Chat Completions that reads and writes text and
+ * accepts tools; batch-only models are skipped. Pi derives OpenRouter's
+ * reasoning object, roles, and session affinity from the provider and base
+ * URL. Per-model compat flags that Pi's bundled entries carry, such as strict
+ * tool schemas, are not inferred.
  */
 function projectModel(id: string, value: Record<string, unknown>): Record<string, unknown> | undefined {
   const name = value.name;
@@ -119,6 +124,7 @@ function projectModel(id: string, value: Record<string, unknown>): Record<string
   const input = architecture?.input_modalities;
   const output = architecture?.output_modalities;
   const parameters = Array.isArray(value.supported_parameters) ? value.supported_parameters : [];
+  const endpoints = Array.isArray(value.endpoints) ? value.endpoints : [];
   const top = isRecord(value.top_provider) ? value.top_provider : undefined;
   const contextWindow = top?.context_length ?? value.context_length;
   const maxTokens = top?.max_completion_tokens;
@@ -131,6 +137,7 @@ function projectModel(id: string, value: Record<string, unknown>): Record<string
     !Array.isArray(output) ||
     !output.includes("text") ||
     !parameters.includes("tools") ||
+    !endpoints.includes("/api/v1/chat/completions") ||
     !isPositiveSafeInteger(contextWindow) ||
     !isPositiveSafeInteger(maxTokens)
   ) {

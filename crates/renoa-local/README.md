@@ -87,7 +87,7 @@ Then configure one model and run a turn:
 ```sh
 export RENOA_MODEL_BRIDGE='/absolute/path/to/adapters/model-provider-node/dist/src/main.js'
 export RENOA_MODEL_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
-export RENOA_MODEL_PROVIDER='xai' # or anthropic, opencode-go, deepseek
+export RENOA_MODEL_PROVIDER='xai' # or anthropic, opencode-go, deepseek, openrouter
 export RENOA_MODEL='grok-4.7'
 export RENOA_MODEL_REASONING='high' # optional: off|minimal|low|medium|high|xhigh|max
 export RENOA_MCP_ADAPTER='/absolute/path/to/adapters/mcp-client-node/dist/src/main.js'

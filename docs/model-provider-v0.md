@@ -63,8 +63,9 @@ edit, changes an existing runtime binding.
 
 OpenRouter works the same way from its public `/api/v1/models` list: Pi's
 bundled OpenRouter catalog is always advertised, and a model Pi does not pin
-is added when it reads and writes text, accepts tools, and states a context
-window and output cap. Its reasoning levels are the efforts OpenRouter lists,
+is added when it is served on Chat Completions, reads and writes text, accepts
+tools, and states a context window and output cap; an entry that does not read
+as one is skipped without discarding the rest. Its reasoning levels are the efforts OpenRouter lists,
 without `off` when reasoning is mandatory. The first binding learned for such a
 model is kept and cached; while the list cannot be fetched the cache stands in,
 and a model OpenRouter no longer lists is no longer advertised.

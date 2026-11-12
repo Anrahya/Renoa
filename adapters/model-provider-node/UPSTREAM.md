@@ -73,8 +73,10 @@ OpenCode source code is copied.
 
 OpenRouter discovery reads its public model list
 (`https://openrouter.ai/api/v1/models`, fields verified 2026-11-12) and adds the
-chat models Pi does not pin that read and write text, accept tools, and state a
-context window and output cap. Reasoning levels come from each model's
+chat models Pi does not pin that are served on `/api/v1/chat/completions`, read
+and write text, accept tools, and state a context window and output cap. An
+entry Renoa cannot read is skipped without discarding the rest of the list. Reasoning levels come from each model's
 `reasoning.supported_efforts`, without `off` when `reasoning.mandatory` is set.
-No compat block is written: Pi derives OpenRouter's request rules from the
-provider and base URL.
+No compat block is written: Pi derives OpenRouter's reasoning object, roles,
+and session affinity from the provider and base URL. Per-model flags that Pi's
+bundled entries carry, such as strict tool schemas, are not inferred.

@@ -103,7 +103,6 @@ export async function loadOpenCodeCatalog(
   return pinned;
 }
 
-
 async function fetchOfficialModelIds(
   fetcher: typeof globalThis.fetch,
   signal: AbortSignal,
@@ -315,9 +314,6 @@ function projectCost(value: unknown): ModelCost {
   }
   return cost;
 }
-
-
-
 
 function warnFetchFailures(
   options: OpenCodeCatalogOptions,
