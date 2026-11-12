@@ -36,10 +36,10 @@ The first concrete coding preset is Renoa Alpha v1, specified in
 Host execution type. Arcee is the first personal-operator preset, with stable
 identity `renoa.personal.arcee.v5`; Telegram is only its first surface. A
 caller-defined agent uses the explicit creation schema; `renoa.general.v1` is an optional general template.
-`renoa.app.v6` seeds the everyday helpers people make in the Android app: plain-spoken
+`renoa.app.v7` seeds the everyday helpers people make in the Android app: plain-spoken
 instructions, its own `SOUL.md` from a neutral default, the person's `USER.md`, no
 workspace instructions, no native file or shell tools, and automatic compaction of its
-one chat at 150,000 input tokens down to 40,000; Host plugins such as Git,
+one chat at 400,000 input tokens down to 40,000; Host plugins such as Git,
 skills and agent management stay available, as for every agent. Every agent is
 one durable, provider-neutral `AgentDefinition`: identity and creation provenance,
 an optional preset id (the creation preset, or the preset a later
@@ -536,7 +536,7 @@ its stable operation receipt after restart without another provider lookup.
 uncertain requests in tab storage and retries their exact operation ID and fields.
 The Android app makes the same calls over its RCP connection
 ([`call_host`](rcp-json-ws-v0.md#call-the-host)). It creates from
-`renoa.app.v6` with a name and, when the owner wrote one, a purpose. It then
+`renoa.app.v7` with a name and, when the owner wrote one, a purpose. It then
 waits up to thirty seconds for a node to advertise the `agent:<id>` target, and
 succeeds once that agent's chat is open. Otherwise the owner reads that Renoa could
 not be reached, although the agent may exist; saving the same fields again repeats
