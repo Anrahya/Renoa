@@ -281,12 +281,19 @@ impl Render for AppsSheet {
                             .cursor_pointer()
                             .map(|chip| {
                                 if on {
-                                    chip.bg(palette.text)
-                                        .text_color(palette.background)
-                                        .border_color(palette.text)
+                                    chip.bg(palette.selected)
+                                        .text_color(palette.text)
+                                        .border_color(palette.outline_strong)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .hover(|chip| chip.opacity(0.88))
                                 } else {
                                     chip.border_color(palette.outline)
                                         .text_color(palette.secondary)
+                                        .hover(|chip| {
+                                            chip.bg(palette.hover)
+                                                .border_color(palette.outline_strong)
+                                                .text_color(palette.text)
+                                        })
                                 }
                             })
                             .when(busy, |chip| chip.opacity(0.5))
@@ -294,7 +301,15 @@ impl Render for AppsSheet {
                                 this.set(agent, &connection, !on, cx)
                             }))
                             .child(Face::new(member.look, member.primary, palette, u(18.)))
-                            .child(div().text_size(u(12.)).child(member.name.clone())),
+                            .child(div().text_size(u(12.)).child(member.name.clone()))
+                            .when(on, |chip| {
+                                chip.child(
+                                    div()
+                                        .size(u(5.))
+                                        .rounded_full()
+                                        .bg(palette.text),
+                                )
+                            }),
                     )
                 });
                 div()

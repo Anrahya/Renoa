@@ -202,20 +202,52 @@ impl Screen {
         }
         let task_id = chat_task_id(node_id, &format!("agent:{RENOA}"));
         for event in [
-            said(task_id, 0, CommandInput::from_text("What's on today?")),
+            said(
+                task_id,
+                0,
+                CommandInput::from_text(
+                    "Morning brief — what's on today, and can we test the low-effort video script?",
+                ),
+            ),
             executed(task_id, 1, ExecutionEventKind::TurnStarted),
             executed(
                 task_id,
                 2,
                 ExecutionEventKind::AssistantMessage {
-                    text:
-                        "Gym at 7, then the sheets for the Mac app. Chef planned paneer for dinner."
-                            .to_owned(),
+                    text: concat!(
+                        "Gym at 7, then the Mac app visual pass. Chef planned paneer for dinner.\n\n",
+                        "**The low-effort pipeline (8 to 15 min video):**\n\n",
+                        "- **Script:** 1,500 to 2,200 words in calm narrator pacing.\n",
+                        "- **Visuals:** 15 to 20 stills batched cleanly, changing every 20 to 40 seconds.\n",
+                        "- **Assembly:** One Python + `ffmpeg` script adds slow zoom and soft captions.\n\n",
+                        "```bash\n",
+                        "ffmpeg -loop 1 -i frame.png -vf \"zoompan=z='min(zoom+0.0005,1.1)'\" -t 25 out.mp4\n",
+                        "```\n\n",
+                        "1. **Mystery deep-dives:** High search intent without custom character models.\n",
+                        "2. **Calm ambient lore:** Lowest effort, strong watch time."
+                    )
+                    .to_owned(),
                 },
             ),
             executed(
                 task_id,
                 3,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Completed,
+                },
+            ),
+            said(task_id, 4, CommandInput::from_text("Sounds good, start with #1.")),
+            executed(task_id, 5, ExecutionEventKind::TurnStarted),
+            executed(
+                task_id,
+                6,
+                ExecutionEventKind::AssistantMessage {
+                    text: "Queued for tonight's routine — I'll pull 3 folklore outlines before 6 PM.".to_owned(),
+                },
+            ),
+            executed(
+                task_id,
+                7,
                 ExecutionEventKind::ExecutionTerminated {
                     terminal: ExecutionTerminal::Completed,
                 },

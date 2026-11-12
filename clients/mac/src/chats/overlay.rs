@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyView, AppContext as _, Context, Entity, FontWeight,
+    Animation, AnimationExt as _, AnyElement, AnyView, AppContext as _, Context, Entity, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
     ease_out_quint, prelude::FluentBuilder as _,
@@ -30,8 +30,10 @@ use crate::{
 
 use crate::theme::u;
 
-/// How long a sheet takes to rise into place.
+/// How long a sheet or the jump box takes to rise into place.
 const RISE: Duration = Duration::from_millis(280);
+const JUMP_RISE: Duration = Duration::from_millis(180);
+const SCRIM_FADE: Duration = Duration::from_millis(180);
 
 /// What a sheet that is up shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub(super) struct Shown {
 /// The ⌘K box, while it is up.
 pub(super) struct Jumping {
     jump: Entity<Jump>,
+    opened: usize,
     _events: Subscription,
 }
 
@@ -245,8 +248,10 @@ impl Chats {
                 Place::Sheet(page) => this.open_sheet(*page, window, cx),
             }
         });
+        self.sheets_opened += 1;
         self.jumping = Some(Jumping {
             jump,
+            opened: self.sheets_opened,
             _events: events,
         });
         cx.notify();
@@ -299,19 +304,32 @@ impl Chats {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
-        let scrim = || {
+        let scrim = |opened: usize, center: bool, child: AnyElement| {
+            let scrim_color = palette.scrim;
             div()
                 .absolute()
                 .inset_0()
                 .flex()
                 .justify_center()
-                .bg(palette.scrim)
+                .map(|scrim| {
+                    if center {
+                        scrim.items_center()
+                    } else {
+                        scrim.items_start().pt(u(110.))
+                    }
+                })
                 // The chats behind see neither the pointer nor the wheel.
                 .occlude()
                 .track_focus(&self.focus)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| this.close(window, cx)),
+                )
+                .child(child)
+                .with_animation(
+                    ("scrim", opened),
+                    Animation::new(SCRIM_FADE).with_easing(ease_out_quint()),
+                    move |scrim, t| scrim.bg(scrim_color.opacity(t)),
                 )
         };
         let card = |content: AnyView| {
@@ -321,36 +339,45 @@ impl Chats {
         };
         if let Some(jumping) = &self.jumping {
             return Some(
-                scrim()
-                    .items_start()
-                    .pt(u(110.))
-                    .child(card(jumping.jump.clone().into()))
-                    .into_any_element(),
+                scrim(
+                    jumping.opened,
+                    false,
+                    card(jumping.jump.clone().into())
+                        .relative()
+                        .with_animation(
+                            ("jump", jumping.opened),
+                            Animation::new(JUMP_RISE).with_easing(ease_out_quint()),
+                            |card, t| card.top(u(-10. * (1. - t))).opacity(t),
+                        )
+                        .into_any_element(),
+                )
+                .into_any_element(),
             );
         }
         let shown = self.sheet.as_ref()?;
         Some(
-            scrim()
-                .items_center()
-                .child(
-                    card(shown.view.clone())
-                        .relative()
-                        .w(u(sheets::WIDTH))
-                        .h(u(sheets::HEIGHT))
-                        .max_h_full()
-                        .rounded(u(16.))
-                        .bg(palette.card)
-                        .border_1()
-                        .border_color(palette.outline)
-                        .shadow_2xl()
-                        .overflow_hidden()
-                        .with_animation(
-                            ("sheet", shown.opened),
-                            Animation::new(RISE).with_easing(ease_out_quint()),
-                            |card, t| card.top(u(18. * (1. - t))).opacity(t),
-                        ),
-                )
-                .into_any_element(),
+            scrim(
+                shown.opened,
+                true,
+                card(shown.view.clone())
+                    .relative()
+                    .w(u(sheets::WIDTH))
+                    .h(u(sheets::HEIGHT))
+                    .max_h_full()
+                    .rounded(u(16.))
+                    .bg(palette.card)
+                    .border_1()
+                    .border_color(palette.outline)
+                    .shadow_2xl()
+                    .overflow_hidden()
+                    .with_animation(
+                        ("sheet", shown.opened),
+                        Animation::new(RISE).with_easing(ease_out_quint()),
+                        |card, t| card.top(u(18. * (1. - t))).opacity(t),
+                    )
+                    .into_any_element(),
+            )
+            .into_any_element(),
         )
     }
 
@@ -379,7 +406,7 @@ impl Chats {
                     .rounded(u(8.))
                     .cursor_pointer()
                     .text_color(palette.secondary)
-                    .hover(|button| button.bg(palette.selected).text_color(palette.text))
+                    .hover(|button| button.bg(palette.hover).text_color(palette.text))
                     .when(up == Some(Up::Sheet(page)), |button| {
                         button.bg(palette.selected).text_color(palette.text)
                     })
@@ -406,19 +433,34 @@ impl Chats {
             .id("jump")
             .mx(u(2.))
             .mb(u(10.))
-            .h(u(30.))
+            .h(u(32.))
             .px(u(10.))
             .flex()
             .items_center()
             .gap(u(8.))
-            .rounded(u(8.))
-            .bg(palette.selected)
+            .rounded(u(9.))
+            .bg(palette.card)
+            .border_1()
+            .border_color(palette.outline)
+            .shadow_2xs()
             .text_color(palette.secondary)
             .cursor_pointer()
-            .hover(|button| button.text_color(palette.text))
+            .hover(|button| {
+                button
+                    .border_color(palette.outline_strong)
+                    .text_color(palette.text)
+            })
             .on_click(cx.listener(|this, _, window, cx| this.open_jump(window, cx)))
             .child(gpui_kit::assets::IconName::Search)
             .child(div().flex_1().child("Jump to…"))
-            .child(div().text_size(u(11.)).child("⌘K"))
+            .child(
+                div()
+                    .px(u(5.))
+                    .py(u(1.))
+                    .rounded(u(5.))
+                    .bg(palette.chat_agent)
+                    .text_size(u(10.5))
+                    .child("⌘K"),
+            )
     }
 }

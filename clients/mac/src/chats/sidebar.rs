@@ -55,6 +55,7 @@ impl Chats {
             } else {
                 Mood::Resting
             };
+            let is_open = open == Some(index);
             div()
                 .id(("agent", index))
                 .relative()
@@ -65,6 +66,7 @@ impl Chats {
                 .px(u(10.))
                 .rounded(u(10.))
                 .cursor_pointer()
+                .when(!is_open, |row| row.hover(|row| row.bg(palette.hover)))
                 .on_click(
                     cx.listener(move |this, _, window, cx| this.open_agent(index, window, cx)),
                 )

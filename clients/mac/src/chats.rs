@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    chat::{Line, Speaker, Transcript, chat_task_id},
+    chat::{Line, Transcript, chat_task_id},
     face::{Look, blink},
     home::Home,
     link::{Command, Update, host_agent},
@@ -33,8 +33,6 @@ struct Row {
     /// `None` past the last line: the agent at work.
     line: Option<Line>,
     before: Option<Line>,
-    /// Who says the next line, if anyone has.
-    after: Option<Speaker>,
     /// Whether it is coming in.
     live: bool,
 }
@@ -313,18 +311,12 @@ impl Chats {
     fn row(&self, index: usize) -> Row {
         let transcript = self.transcript();
         let lines = transcript.map_or(&[][..], Transcript::lines);
-        let working = transcript.is_some_and(Transcript::working);
         Row {
             line: lines.get(index).cloned(),
             before: index
                 .checked_sub(1)
                 .and_then(|before| lines.get(before))
                 .cloned(),
-            // The agent at work speaks after the last line.
-            after: lines
-                .get(index + 1)
-                .map(|after| after.speaker)
-                .or_else(|| (working && index + 1 == lines.len()).then_some(Speaker::Agent)),
             live: transcript.is_some_and(|transcript| transcript.coming_in(index)),
         }
     }
@@ -415,7 +407,7 @@ impl Render for Chats {
         let main = if self.on_home {
             self.home_pane().into_any_element()
         } else {
-            self.conversation(palette, cx).into_any_element()
+            self.conversation(palette, window, cx).into_any_element()
         };
         let overlay = self.overlay(palette, cx);
         let root = div().size_full().relative().flex();

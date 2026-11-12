@@ -1,6 +1,5 @@
-//! The Mac app's palette: Codync desktop's black-and-white theme, in light
-//! and dark (`licenses/README.md`). Colour comes only from what needs the
-//! owner (amber for attention, red for errors) and from the agents' tiles.
+//! The Mac app's palette: Renoa's Paper (light) and Graphite (dark) surfaces,
+//! ink as the accent, and the agents' tile pigments.
 
 use std::{
     fs, io,
@@ -17,27 +16,36 @@ pub struct Palette {
     pub background: Hsla,
     pub sidebar: Hsla,
     pub selected: Hsla,
+    pub hover: Hsla,
     pub text: Hsla,
+    pub text_soft: Hsla,
     pub secondary: Hsla,
     pub chat_agent: Hsla,
     pub chat_user: Hsla,
     pub composer: Hsla,
     pub outline: Hsla,
+    pub outline_strong: Hsla,
     pub frosted: Hsla,
     pub attention: Hsla,
+    pub attention_wash: Hsla,
+    pub attention_border: Hsla,
     pub danger: Hsla,
-    /// The tiles' colours: the landing page's clay, cobalt and ochre.
+    /// The tiles' colours: clay, cobalt and ochre.
     pub clay: Hsla,
     pub cobalt: Hsla,
     pub ochre: Hsla,
     /// What dims the chats behind a sheet.
     pub scrim: Hsla,
-    /// A sheet's own ground.
+    /// A sheet's or card's own ground.
     pub card: Hsla,
+    /// An active segment or lifted surface inside a card.
+    pub surface_raised: Hsla,
     /// The ground of a group of rows on a sheet.
     pub group: Hsla,
     /// The line between rows of a group.
     pub divider: Hsla,
+    /// Translucent text selection highlight.
+    pub selection: Hsla,
 }
 
 impl Palette {
@@ -53,49 +61,63 @@ impl Palette {
 
     fn light() -> Self {
         Self {
-            background: rgb(0xffffff).into(),
-            sidebar: rgb(0xf4f4f4).into(),
-            selected: rgb(0xececec).into(),
-            text: rgb(0x141414).into(),
-            secondary: rgb(0x6b6b6b).into(),
-            chat_agent: rgb(0xeeeeee).into(),
-            chat_user: rgb(0xe2e2e2).into(),
+            background: rgb(0xf5f6f3).into(),
+            sidebar: rgb(0xeceee9).into(),
+            selected: rgb(0xe1e4dd).into(),
+            hover: rgba(0x14161a0a).into(),
+            text: rgb(0x14161a).into(),
+            text_soft: rgb(0x343940).into(),
+            secondary: rgb(0x63686e).into(),
+            chat_agent: rgb(0xe8ebe5).into(),
+            chat_user: rgb(0xe9ece6).into(),
             composer: rgb(0xffffff).into(),
-            outline: rgba(0x1414142e).into(),
-            frosted: rgba(0xf4f4f4d1).into(),
-            attention: rgb(0x936000).into(),
-            danger: rgb(0xc23a2b).into(),
+            outline: rgba(0x14161a1f).into(),
+            outline_strong: rgba(0x14161a38).into(),
+            frosted: rgba(0xf5f6f3e8).into(),
+            attention: rgb(0x9e6814).into(),
+            attention_wash: rgba(0xb37b2214).into(),
+            attention_border: rgba(0xb37b2238).into(),
+            danger: rgb(0xb3321e).into(),
             clay: rgb(0xc4553f).into(),
             cobalt: rgb(0x3b61ac).into(),
             ochre: rgb(0xb37b22).into(),
-            scrim: rgba(0x00000066).into(),
+            scrim: rgba(0x14161a47).into(),
             card: rgb(0xffffff).into(),
-            group: rgba(0x1414140a).into(),
-            divider: rgb(0xe9e9e9).into(),
+            surface_raised: rgb(0xffffff).into(),
+            group: rgba(0x14161a07).into(),
+            divider: rgb(0xe2e4de).into(),
+            selection: rgba(0x3b61ac29).into(),
         }
     }
 
     fn dark() -> Self {
         Self {
-            background: rgb(0x070707).into(),
-            sidebar: rgb(0x070707).into(),
-            selected: rgb(0x292929).into(),
-            text: rgb(0xfafafa).into(),
-            secondary: rgb(0xa0a0a0).into(),
-            chat_agent: rgb(0x262626).into(),
-            chat_user: rgb(0x363636).into(),
-            composer: rgb(0x2f2f2f).into(),
-            outline: rgba(0xfafafa2e).into(),
-            frosted: rgba(0x232323d1).into(),
-            attention: rgb(0xecaf52).into(),
-            danger: rgb(0xf0a7a7).into(),
+            background: rgb(0x111312).into(),
+            sidebar: rgb(0x0c0e0d).into(),
+            selected: rgb(0x212523).into(),
+            hover: rgba(0xeceee90d).into(),
+            text: rgb(0xeceee9).into(),
+            text_soft: rgb(0xd0d4ce).into(),
+            secondary: rgb(0x8e948d).into(),
+            chat_agent: rgb(0x212523).into(),
+            chat_user: rgb(0x1d211f).into(),
+            composer: rgb(0x181b19).into(),
+            outline: rgba(0xeceee91c).into(),
+            outline_strong: rgba(0xeceee936).into(),
+            frosted: rgba(0x181b19eb).into(),
+            attention: rgb(0xe3a94d).into(),
+            attention_wash: rgba(0xd9a24b14).into(),
+            attention_border: rgba(0xd9a24b33).into(),
+            danger: rgb(0xec8379).into(),
             clay: rgb(0xe27b63).into(),
             cobalt: rgb(0x7298de).into(),
             ochre: rgb(0xd9a24b).into(),
-            scrim: rgba(0x00000099).into(),
-            card: rgb(0x161616).into(),
-            group: rgba(0xfafafa0d).into(),
-            divider: rgb(0x262626).into(),
+            scrim: rgba(0x00000088).into(),
+            card: rgb(0x181b19).into(),
+            surface_raised: rgb(0x252927).into(),
+            group: rgba(0xeceee909).into(),
+            divider: rgb(0x242825).into(),
+            selection: rgba(0x7298de38).into(),
         }
     }
 }
@@ -173,8 +195,8 @@ pub fn u(v: f32) -> Rems {
 const DESIGN_REM: f32 = 16.0;
 
 /// The kit's own text sizes at [`Zoom`] 1.0 (`gpui_kit::component::Theme`).
-const KIT_TEXT: f32 = 16.0;
-const KIT_MONO_TEXT: f32 = 13.0;
+const KIT_TEXT: f32 = 14.5;
+const KIT_MONO_TEXT: f32 = 12.5;
 
 /// What the app keeps of the owner's choices, beside the Keychain's secrets.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -267,6 +289,11 @@ pub fn sync(window: &mut Window, cx: &mut App) {
     let scale = cx.try_global::<Zoom>().copied().unwrap_or_default().0;
     window.set_rem_size(px(DESIGN_REM * scale));
     let dark = dark(window, cx);
+    let palette = if dark {
+        Palette::dark()
+    } else {
+        Palette::light()
+    };
     let mode = if dark {
         gpui_kit::component::ThemeMode::Dark
     } else {
@@ -275,9 +302,25 @@ pub fn sync(window: &mut Window, cx: &mut App) {
     if Theme::global(cx).mode != mode {
         Theme::change(mode, Some(window), cx);
     }
-    let theme = Theme::global_mut(cx);
-    theme.font_size = px(KIT_TEXT * scale);
-    theme.mono_font_size = px(KIT_MONO_TEXT * scale);
+    {
+        let theme = Theme::global_mut(cx);
+        theme.font_size = px(KIT_TEXT * scale);
+        theme.mono_font_size = px(KIT_MONO_TEXT * scale);
+        theme.colors.background = palette.background;
+        theme.colors.foreground = palette.text;
+        theme.colors.primary = palette.text;
+        theme.colors.secondary = palette.chat_agent;
+        theme.colors.muted = palette.card;
+        theme.colors.muted_foreground = palette.secondary;
+        theme.colors.accent = palette.selected;
+        theme.colors.border = palette.divider;
+        theme.colors.popover = palette.card;
+        theme.colors.link = palette.cobalt;
+        theme.colors.selection = palette.selection;
+        theme.colors.caret = palette.text;
+        theme.colors.scrollbar = palette.background;
+    }
+    Theme::sync_base(cx);
     window.refresh();
 }
 
