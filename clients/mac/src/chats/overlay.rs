@@ -100,7 +100,7 @@ impl Chats {
                 (AnyView::from(sheet), events)
             }
             Page::Settings => {
-                let sheet = cx.new(|_| Settings::new(self.computer.clone()));
+                let sheet = cx.new(|cx| Settings::new(self.computer.clone(), cx));
                 let events = cx.subscribe_in(&sheet, window, Self::on_sheet);
                 (AnyView::from(sheet), events)
             }
@@ -306,6 +306,8 @@ impl Chats {
                 .flex()
                 .justify_center()
                 .bg(palette.scrim)
+                // The chats behind see neither the pointer nor the wheel.
+                .occlude()
                 .track_focus(&self.focus)
                 .on_mouse_down(
                     MouseButton::Left,

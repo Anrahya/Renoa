@@ -360,23 +360,28 @@ class DeployTest(unittest.TestCase):
         assets = {path.name for path in (self.layout.control_room / "assets").iterdir()}
         self.assertEqual(assets, {"app-1.js", "app-2.js"})
 
-    def app_files(self, tag: str, version: str, apk: bytes = b"apk-bytes", **change) -> tuple[Path, Path]:
-        """The app files a release ships, as the publish script writes them."""
-        path = self.archives / f"renoa-{tag}-android.apk"
+    def app_files(self, tag: str, version: str, apk: bytes = b"apk-bytes", platform: str = "android", **change) -> tuple[Path, Path]:
+        """The app files a release ships, as the publish scripts write them."""
+        path = self.archives / f"renoa-{tag}-{platform}.{deploy.APPS[platform][0]}"
         path.write_bytes(apk)
-        described = self.archives / f"renoa-{tag}-android.json"
-        info = {"version_code": int(version.replace(".", "")), "version_name": version, "sha256": sha(apk), "size": len(apk), **change}
+        described = self.archives / f"renoa-{tag}-{platform}.json"
+        info = {"version_name": version, "sha256": sha(apk), "size": len(apk), **change}
+        if platform == "android":
+            info = {"version_code": int(version.replace(".", "")), **info}
         described.write_text(json.dumps(info))
         return described, path
 
     def app(self, tag: str, version: str, apk: bytes = b"apk-bytes"):
-        return deploy.read_app(*self.app_files(tag, version, apk), tag)
+        return {"android": deploy.read_app("android", *self.app_files(tag, version, apk), tag)}
 
-    def served_app(self) -> dict:
-        return json.loads((self.layout.control_room / "app/android.json").read_text())
+    def mac_app(self, tag: str, version: str, zipped: bytes = b"zip-bytes"):
+        return {"mac": deploy.read_app("mac", *self.app_files(tag, version, zipped, "mac"), tag)}
+
+    def served_app(self, platform: str = "android") -> dict:
+        return json.loads((self.layout.control_room / f"app/{platform}.json").read_text())
 
     def test_a_release_with_the_app_serves_it_and_one_without_keeps_serving_it(self):
-        self.assertEqual(self.install(release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"}), app=self.app("v0.1.0", "0.1.0")), 0)
+        self.assertEqual(self.install(release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"}), apps=self.app("v0.1.0", "0.1.0")), 0)
         self.assertEqual(self.served_app()["apk"], "renoa-0.1.0.apk")
         self.assertEqual((self.layout.control_room / "app/renoa-0.1.0.apk").read_bytes(), b"apk-bytes")
 
@@ -384,7 +389,7 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.served_app()["version_name"], "0.1.0", "the running app is kept")
         self.assertEqual((self.layout.control_room / "app/renoa-0.1.0.apk").read_bytes(), b"apk-bytes")
 
-        self.assertEqual(self.install(release_archive(self.archives, "v0.3.0", {"renoa-node": b"h3"}), app=self.app("v0.3.0", "0.3.0", b"newer")), 0)
+        self.assertEqual(self.install(release_archive(self.archives, "v0.3.0", {"renoa-node": b"h3"}), apps=self.app("v0.3.0", "0.3.0", b"newer")), 0)
         self.assertEqual(self.served_app(), {"version_code": 30, "version_name": "0.3.0", "apk": "renoa-0.3.0.apk", "sha256": sha(b"newer"), "size": 5})
         self.assertEqual({path.name for path in (self.layout.control_room / "app").iterdir()}, {"android.json", "renoa-0.3.0.apk"})
 
@@ -392,14 +397,42 @@ class DeployTest(unittest.TestCase):
         for change in ({"sha256": "0" * 64}, {"size": 1}, {"version_name": "../0.2.0"}, {"version_name": "0.3.0"},
                        {"version_name": "0.\u00b2.0"}, {"version_code": 0}, {"version_code": 2**31}, {"version_code": True}):
             with self.subTest(change=change), self.assertRaises(deploy.DeployError):
-                deploy.read_app(*self.app_files("v0.2.0", "0.2.0", **change), "v0.2.0")
+                deploy.read_app("android", *self.app_files("v0.2.0", "0.2.0", **change), "v0.2.0")
+        for change in ({"sha256": "0" * 64}, {"size": 1}, {"version_name": "../0.2.0"}, {"version_name": "0.3.0"}):
+            with self.subTest(mac=change), self.assertRaises(deploy.DeployError):
+                deploy.read_app("mac", *self.app_files("v0.2.0", "0.2.0", platform="mac", **change), "v0.2.0")
+
+    def test_each_platform_keeps_its_served_app_until_a_release_ships_a_newer_one(self):
+        self.install(release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"}), apps={**self.app("v0.1.0", "0.1.0"), **self.mac_app("v0.1.0", "0.1.0")})
+        self.assertEqual(self.served_app("mac"), {"version_name": "0.1.0", "zip": "renoa-mac-0.1.0.zip", "sha256": sha(b"zip-bytes"), "size": 9})
+
+        self.install(release_archive(self.archives, "v0.2.0", {"renoa-node": b"h2"}), apps=self.mac_app("v0.2.0", "0.2.0", b"mac-two"))
+        self.assertEqual(self.served_app("android")["version_name"], "0.1.0", "the Android app is kept")
+        self.assertEqual(self.served_app("mac")["version_name"], "0.2.0")
+
+        self.install(release_archive(self.archives, "v0.3.0", {"renoa-node": b"h3"}), apps=self.app("v0.3.0", "0.3.0"))
+        self.assertEqual(
+            {path.name for path in (self.layout.control_room / "app").iterdir()},
+            {"android.json", "renoa-0.3.0.apk", "mac.json", "renoa-mac-0.2.0.zip"},
+        )
+        self.assertEqual((self.layout.control_room / "app/renoa-mac-0.2.0.zip").read_bytes(), b"mac-two")
+
+    def test_a_broken_served_app_stops_the_deploy_before_anything_switches(self):
+        self.install(release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"}), apps=self.app("v0.1.0", "0.1.0"))
+        (self.layout.control_room / "app/renoa-0.1.0.apk").unlink()
+
+        with self.assertRaises(deploy.DeployError):
+            self.install(release_archive(self.archives, "v0.2.0", {"renoa-node": b"h2"}))
+
+        self.assertEqual(self.layout.current.resolve().name, "v0.1.0")
+        self.assertFalse((self.layout.releases / "v0.2.0").exists(), "the staged release is removed")
 
     def test_an_app_published_after_its_release_was_installed_is_served_on_the_next_install(self):
         archive = release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"})
         self.install(archive)
         self.host.commands.clear()
 
-        self.assertEqual(self.install(archive, app=self.app("v0.1.0", "0.1.0")), 0)
+        self.assertEqual(self.install(archive, apps=self.app("v0.1.0", "0.1.0")), 0)
 
         self.assertEqual(self.served_app()["version_name"], "0.1.0")
         self.assertEqual(self.host.restarted(), [], "placing the app restarts nothing")
@@ -407,7 +440,7 @@ class DeployTest(unittest.TestCase):
     def test_the_app_is_readable_by_the_coordinator_whatever_roots_umask(self):
         previous = deploy.os.umask(0o077)
         try:
-            self.install(release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"}), app=self.app("v0.1.0", "0.1.0"))
+            self.install(release_archive(self.archives, "v0.1.0", {"renoa-node": b"h1"}), apps=self.app("v0.1.0", "0.1.0"))
         finally:
             deploy.os.umask(previous)
         served = self.layout.control_room / "app"
@@ -431,10 +464,17 @@ class DeployTest(unittest.TestCase):
         downloads.mkdir()
         with mock.patch.object(self.host, "download", side_effect=download):
             served = published(assets)
-            self.assertIsNone(deploy.fetch(self.host, "v0.1.0", downloads)[1])
+            self.assertEqual(deploy.fetch(self.host, "v0.1.0", downloads)[1], {})
             served = published({**assets, described.name: described.read_bytes(), apk.name: apk.read_bytes()})
             fetched = deploy.fetch(self.host, "v0.1.0", downloads)[1]
-            self.assertEqual(fetched[1].read_bytes(), b"apk-bytes")
+            self.assertEqual(list(fetched), ["android"])
+            self.assertEqual(fetched["android"][1].read_bytes(), b"apk-bytes")
+            mac_described, zipped = self.app_files("v0.1.0", "0.1.0", b"zip-bytes", "mac")
+            served = published({**assets, mac_described.name: mac_described.read_bytes(), zipped.name: zipped.read_bytes()})
+            fetched = deploy.fetch(self.host, "v0.1.0", downloads)[1]
+            self.assertEqual(list(fetched), ["mac"])
+            self.assertEqual(fetched["mac"][0]["zip"], "renoa-mac-0.1.0.zip")
+            served = published({**assets, described.name: described.read_bytes(), apk.name: apk.read_bytes()})
             served[apk.name] = b"swapped"
             with self.assertRaises(deploy.DeployError):
                 deploy.fetch(self.host, "v0.1.0", downloads)

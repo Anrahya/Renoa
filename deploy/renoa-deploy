@@ -2,7 +2,7 @@
 """Install a Renoa release built by CI on this host.
 
     renoa-deploy install <tag>            download, verify and install a GitHub release
-    renoa-deploy install --archive FILE   install a local release archive, keeping the served app
+    renoa-deploy install --archive FILE   install a local release archive, keeping the served apps
     renoa-deploy status                   show the installed and previous release
 
 /opt/renoa/releases/<tag>/ holds one release. /opt/renoa/current points at the
@@ -12,11 +12,11 @@ The binaries in /usr/local/bin, /opt/renoa/adapters and /opt/renoa/control-room
 are symlinks through current, so switching releases is one rename. The first
 install adopts a hand-installed layout as releases/legacy.
 
-A release may also carry the Android app: renoa-<tag>-android.apk with
-renoa-<tag>-android.json, its version and digest, listed in SHA256SUMS. Both
-are verified and placed under the Control Room's app/, where renoa.live serves
-them to the app's update check. A release without them keeps the app the
-running release serves.
+A release may also carry the Android app, renoa-<tag>-android.apk, and the
+Mac app, renoa-<tag>-mac.zip, each with renoa-<tag>-<platform>.json, its
+version and digest, listed in SHA256SUMS. Each is verified and placed under the
+Control Room's app/, where renoa.live serves it to that app's update check. A
+release without one keeps serving the one the running release serves.
 
 Only services installed on this host are updated, and only those whose
 binaries, unit files, adapters or Control Room changed are restarted. A running
@@ -349,52 +349,77 @@ def carry_assets(old: Path, new: Path) -> None:
     (new / CARRIED).write_text("".join(f"{name}\n" for name in carried))
 
 
-# Where the Control Room serves the Android app, and the file naming its newest
-# release. The app reads it from https://renoa.live/app/android.json.
+# Where the Control Room serves the apps. Each platform's app reads
+# https://renoa.live/app/<platform>.json, which names its newest release: the
+# description's key for the file, and the file's name.
 APP = "app"
-APP_RELEASE = "android.json"
+APPS = {"android": ("apk", "renoa-{version}.apk"), "mac": ("zip", "renoa-mac-{version}.zip")}
 
 
 # The largest version code Android's int and the app's decoder hold.
 MAX_VERSION_CODE = 2**31 - 1
 
 
-def read_app(described: Path, apk: Path, tag: str) -> tuple[dict, Path]:
-    """The app release `tag` ships, as renoa.live describes it. Refuses one whose
-    description does not match the file or names another version."""
+def read_app(platform: str, described: Path, file: Path, tag: str) -> tuple[dict, Path]:
+    """The `platform` app release `tag` ships, as renoa.live describes it.
+    Refuses one whose description does not match the file or names another
+    version."""
     info = json.loads(described.read_text())
     version = info.get("version_name")
-    code = info.get("version_code")
     if not isinstance(version, str) or f"v{version}" != tag or not re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
-        raise DeployError(f"the app's version {version!r} is not this release's, {tag}")
-    if not (isinstance(code, int) and not isinstance(code, bool) and 0 < code <= MAX_VERSION_CODE):
-        raise DeployError(f"the app's version code {code!r} is not a positive 32-bit integer")
-    if info.get("sha256") != sha256(apk) or info.get("size") != apk.stat().st_size:
-        raise DeployError("the app does not match its description")
-    served = {"version_code": code, "version_name": version, "apk": f"renoa-{version}.apk", "sha256": info["sha256"], "size": info["size"]}
-    return served, apk
+        raise DeployError(f"the {platform} app's version {version!r} is not this release's, {tag}")
+    served: dict = {"version_name": version}
+    if platform == "android":
+        code = info.get("version_code")
+        if not (isinstance(code, int) and not isinstance(code, bool) and 0 < code <= MAX_VERSION_CODE):
+            raise DeployError(f"the app's version code {code!r} is not a positive 32-bit integer")
+        served["version_code"] = code
+    if info.get("sha256") != sha256(file) or info.get("size") != file.stat().st_size:
+        raise DeployError(f"the {platform} app does not match its description")
+    key, name = APPS[platform]
+    served |= {key: name.format(version=version), "sha256": info["sha256"], "size": info["size"]}
+    return served, file
 
 
-def place_app(old: Path, new: Path, app: tuple[dict, Path] | None) -> None:
-    """Puts the app the new release ships, or else the one the running release
-    serves, under the new release's Control Room, readable by the coordinator
-    whatever the umask. The description is written last and replaces the old one
-    in one rename, so it never names an app that is not there yet."""
+def place_apps(old: Path, new: Path, apps: dict[str, tuple[dict, Path]]) -> None:
+    """Puts each app the new release ships, and for every other platform the one
+    the running release serves, under the new release's Control Room, readable
+    by the coordinator whatever the umask. A description is written last and
+    replaces the old one in one rename, so it never names an app that is not
+    there yet."""
     target = new / "control-room" / APP
-    if app is None:
-        source = old / "control-room" / APP
-        if source.is_dir() and source.resolve() != target.resolve():
-            shutil.copytree(source, target, dirs_exist_ok=True)
-        return
-    info, apk = app
+    source = old / "control-room" / APP
+    for platform, (key, _) in APPS.items():
+        if platform in apps:
+            info, file = apps[platform]
+            serve_app(target, platform, info, file)
+        elif (source / f"{platform}.json").is_file() and source.resolve() != target.resolve():
+            try:
+                info = json.loads((source / f"{platform}.json").read_text())
+                file = source / info[key]
+            except (ValueError, KeyError, TypeError) as error:
+                raise DeployError(f"the served {platform} app's description is unreadable ({error!r}); repair {source}") from None
+            if not file.is_file():
+                raise DeployError(f"the served {platform} app {file} is missing; repair {source}")
+            serve_app(target, platform, info, file)
+
+
+def serve_app(target: Path, platform: str, info: dict, file: Path) -> None:
+    name = info[APPS[platform][0]]
+    if not isinstance(name, str) or Path(name).name != name:
+        raise DeployError(f"the {platform} app's file name {name!r} is not a plain name")
     target.mkdir(parents=True, exist_ok=True)
     target.chmod(0o755)
-    shutil.copyfile(apk, target / info["apk"])
-    (target / info["apk"]).chmod(0o644)
-    described = target / f".{APP_RELEASE}.new"
+    # Copied beside and renamed in, so a download already under way keeps the
+    # whole file it started on.
+    copied = target / f".{name}.new"
+    shutil.copyfile(file, copied)
+    copied.chmod(0o644)
+    os.replace(copied, target / name)
+    described = target / f".{platform}.json.new"
     described.write_text(json.dumps(info, indent=2) + "\n")
     described.chmod(0o644)
-    os.replace(described, target / APP_RELEASE)
+    os.replace(described, target / f"{platform}.json")
 
 
 def install_units(host: Host, layout: Layout, services: list[dict], release: Path) -> None:
@@ -453,7 +478,8 @@ def prune(layout: Layout, keep: list[Path]) -> None:
     shutil.rmtree(layout.old_backup, ignore_errors=True)
 
 
-def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT, app: tuple[dict, Path] | None = None) -> int:
+def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT, apps: dict[str, tuple[dict, Path]] | None = None) -> int:
+    apps = apps or {}
     layout = Layout(host)
     layout.releases.mkdir(parents=True, exist_ok=True)
     release = stage(host, layout, archive)
@@ -461,9 +487,9 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT, app
     services = manifest["services"]
     if layout.current.exists() and layout.current.resolve() == release.resolve():
         # An app published after its release was installed is placed now.
-        if app is not None:
-            place_app(release, release, app)
-            print(f"{manifest['tag']} is already installed; now serving its app {app[0]['version_name']}")
+        if apps:
+            place_apps(release, release, apps)
+            print(f"{manifest['tag']} is already installed; now serving its {' and '.join(apps)} app")
             return 0
         print(f"{manifest['tag']} is already installed")
         return 0
@@ -492,7 +518,7 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT, app
                 refuse_unfinished_turns(host, bool(running))
             snapshot(layout, old)
             carry_assets(old, release)
-            place_app(old, release, app)
+            place_apps(old, release, apps)
         except BaseException:
             # Nothing has switched yet: the running release stays as it was.
             shutil.rmtree(release)
@@ -536,10 +562,10 @@ def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT, app
     return 0
 
 
-def fetch(host: Host, tag: str, directory: Path) -> tuple[Path, tuple[dict, Path] | None]:
-    """Downloads a release's archive and, when SHA256SUMS lists it, its app:
-    each checked against SHA256SUMS, and the app against its description, before
-    anything is installed."""
+def fetch(host: Host, tag: str, directory: Path) -> tuple[Path, dict[str, tuple[dict, Path]]]:
+    """Downloads a release's archive and each app SHA256SUMS lists: each checked
+    against SHA256SUMS, and an app against its description, before anything is
+    installed."""
     base = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
     sums = directory / "SHA256SUMS"
     host.download(f"{base}/SHA256SUMS", sums)
@@ -553,10 +579,12 @@ def fetch(host: Host, tag: str, directory: Path) -> tuple[Path, tuple[dict, Path
         return path
 
     archive = verified(f"renoa-{tag}-linux-x86_64.tar.gz")
-    described = f"renoa-{tag}-android.json"
-    if described not in expected:
-        return archive, None
-    return archive, read_app(verified(described), verified(f"renoa-{tag}-android.apk"), tag)
+    apps = {}
+    for platform, (extension, _) in APPS.items():
+        described = f"renoa-{tag}-{platform}.json"
+        if described in expected:
+            apps[platform] = read_app(platform, verified(described), verified(f"renoa-{tag}-{platform}.{extension}"), tag)
+    return archive, apps
 
 
 def status(host: Host) -> int:
@@ -593,8 +621,8 @@ def main(argv: list[str], host: Host | None = None) -> int:
         shutil.rmtree(downloads, ignore_errors=True)
         downloads.mkdir()
         try:
-            archive, app = (arguments.archive, None) if arguments.archive else fetch(host, arguments.tag, downloads)
-            return install(host, archive, arguments.drain_timeout, app)
+            archive, apps = (arguments.archive, {}) if arguments.archive else fetch(host, arguments.tag, downloads)
+            return install(host, archive, arguments.drain_timeout, apps)
         finally:
             shutil.rmtree(downloads, ignore_errors=True)
 

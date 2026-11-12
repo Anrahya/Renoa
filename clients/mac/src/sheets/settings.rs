@@ -1,14 +1,17 @@
 //! The app's own settings: how it looks, the keys that move around it, this
-//! Mac's sign-in, and which version it is.
+//! Mac's sign-in, and which version it is and whether a newer one is ready.
 
 use gpui_kit::{
-    Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, assets::IconName,
-    div, prelude::FluentBuilder as _,
+    AnyElement, Context, Entity, EventEmitter, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
+    assets::IconName, div, prelude::FluentBuilder as _,
 };
 
 use super::{Page, SheetEvent, group, header, pill, section};
-use crate::theme::{self, Appearance, Palette, u};
+use crate::{
+    theme::{self, Appearance, Palette, u},
+    update::{self, Updater, Updates, updater::State},
+};
 
 /// The keys that move around the app, as Settings lists them. The keys
 /// themselves are `chats::keys`; a test in `chats/tests.rs` presses each one
@@ -35,18 +38,111 @@ pub struct Settings {
     signing_out: bool,
     /// Whether the last choice could not be kept for the next launch.
     unkept: bool,
+    updates: Option<Entity<Updater>>,
 }
 
 impl EventEmitter<SheetEvent> for Settings {}
 
 impl Settings {
-    pub fn new(computer: SharedString) -> Self {
+    /// Settings, checking again for an update unless one is already found.
+    pub fn new(computer: SharedString, cx: &mut Context<Self>) -> Self {
+        let updates = cx.try_global::<Updates>().map(|updates| updates.0.clone());
+        if let Some(updates) = &updates {
+            cx.observe(updates, |_, _, cx| cx.notify()).detach();
+            updates.update(cx, |updater, cx| {
+                if matches!(updater.state(), State::Current | State::CheckFailed(_)) {
+                    updater.check(cx);
+                }
+            });
+        }
         Self {
             computer,
             signing_out: false,
             unkept: false,
+            updates,
         }
     }
+}
+
+/// Which version this is, and its update.
+fn version_row(
+    updates: Option<&Entity<Updater>>,
+    palette: Palette,
+    cx: &gpui_kit::App,
+) -> AnyElement {
+    let state = updates.map_or(State::FromSource, |updates| {
+        updates.read(cx).state().clone()
+    });
+    let (said, problem, action) = match &state {
+        State::FromSource => (
+            "Built from source; it doesn't update itself.".to_owned(),
+            false,
+            None,
+        ),
+        State::Checking => ("Checking for updates…".to_owned(), false, None),
+        State::Current => ("Up to date".to_owned(), false, Some(("Check now", false))),
+        State::CheckFailed(_) => (
+            "Couldn't check for updates.".to_owned(),
+            true,
+            Some(("Check now", false)),
+        ),
+        State::Available(release) => (
+            format!("Renoa {} is ready.", release.version_name),
+            false,
+            Some(("Update and relaunch", true)),
+        ),
+        State::Installing(release) => (
+            format!("Updating to Renoa {}…", release.version_name),
+            false,
+            None,
+        ),
+        State::InstallFailed(_, reason) => (
+            format!("Couldn't update: {reason}"),
+            true,
+            Some(("Try again", true)),
+        ),
+        State::Updated(release, reason) => (update::updater::updated(release, reason), true, None),
+    };
+    let updates = updates.cloned();
+    div()
+        .flex()
+        .items_center()
+        .gap(u(12.))
+        .px(u(14.))
+        .py(u(12.))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(u(2.))
+                .child(format!(
+                    "Renoa for Mac {}",
+                    update::VERSION.unwrap_or(env!("CARGO_PKG_VERSION"))
+                ))
+                .child(
+                    div()
+                        .text_size(u(12.))
+                        .text_color(if problem {
+                            palette.attention
+                        } else {
+                            palette.secondary
+                        })
+                        .child(said),
+                ),
+        )
+        .children(action.zip(updates).map(|((label, filled), updates)| {
+            pill("update", label, filled, palette).on_click(move |_, _, cx| {
+                updates.update(cx, |updater, cx| {
+                    if filled {
+                        updater.install(cx);
+                    } else {
+                        updater.check(cx);
+                    }
+                });
+            })
+        }))
+        .into_any_element()
 }
 
 impl Render for Settings {
@@ -198,11 +294,7 @@ impl Render for Settings {
                 .child(group([this_mac], palette))
                 .child(section("Renoa", palette))
                 .child(group(
-                    [div()
-                        .px(u(14.))
-                        .py(u(12.))
-                        .child(format!("Renoa for Mac {}", env!("CARGO_PKG_VERSION")))
-                        .into_any_element()],
+                    [version_row(self.updates.as_ref(), palette, cx)],
                     palette,
                 )),
         )

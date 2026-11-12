@@ -52,6 +52,16 @@ It builds the app with its version taken from the tag (`0.2.0` is version code
 `renoa-<tag>-android.apk` and `renoa-<tag>-android.json` (version, digest and
 size) to the release and to its `SHA256SUMS`.
 
+The Mac app ships the same way, from the Mac holding the owner's `Renoa Dev`
+signing identity, which an installed app requires of its updates:
+
+```sh
+scripts/publish-mac-app v0.2.0
+```
+
+It adds `renoa-<tag>-mac.zip` and `renoa-<tag>-mac.json` (version, digest and
+size).
+
 `deploy/release.json` is the single definition of a release: the binaries to
 build, the Node adapters to ship, and each service with the binaries it runs,
 whether it runs the adapters, and its companion units. `deploy/package-release` builds the archive from it; the archive's own
@@ -85,13 +95,13 @@ Before switching, it snapshots the Host, coordinator, node and Discord SQLite
 databases with SQLite's backup API, and copies `config/`, into the release
 being replaced. It then carries that release's own hashed Control Room assets
 forward, so a browser holding the previous page still loads, installs changed
-unit files, and switches. When `SHA256SUMS` lists the release's Android app,
+unit files, and switches. For each app `SHA256SUMS` lists, Android or Mac,
 the deploy downloads it, checks it against `SHA256SUMS` and its own
-description, and places it in the Control Room's `app/` as
-`renoa-<version>.apk` with `android.json`; renoa.live then serves it to anyone,
-and the app's Settings offers it to an older app. A release without the app,
-or one installed with `--archive`, keeps serving the app the running release
-serves.
+description, and places it in the Control Room's `app/`: `renoa-<version>.apk`
+with `android.json`, or `renoa-mac-<version>.zip` with `mac.json`. renoa.live
+then serves it to anyone, and an older app offers it. A release without one of
+them, or one installed with `--archive`, keeps serving the one the running
+release serves.
 
 `/opt/renoa/current` points at the running release and `/opt/renoa/previous`
 at the one backup: the release it replaced, with its snapshot. The binaries in
