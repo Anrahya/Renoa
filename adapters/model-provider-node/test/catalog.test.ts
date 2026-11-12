@@ -12,7 +12,8 @@ import {
   toWireCatalog,
   validateModelSpec,
 } from "../src/catalog.js";
-import { readOpenCodeCatalogCache } from "../src/opencode-catalog-cache.js";
+import { readLiveCatalogCache } from "../src/live-catalog.js";
+import { OPENCODE_GO_SOURCE } from "../src/opencode-catalog.js";
 import { loadCatalog } from "../src/runtime.js";
 import {
   OPENCODE_GO_TRANSPORTS,
@@ -330,7 +331,7 @@ test("an OpenCode Go cache holding a now-pinned model keeps its other dynamic mo
         dynamic_models: [{ ...flash.model, name: "stale cached name" }, live],
       }),
     );
-    const cache = await readOpenCodeCatalogCache(cachePath, pinned);
+    const cache = await readLiveCatalogCache(cachePath, OPENCODE_GO_SOURCE, pinned);
     assert.ok(cache, "the cache must still load");
     assert.deepEqual(cache.available_model_ids, ["deepseek-v4.1-flash", LIVE_MODEL]);
     assert.deepEqual(

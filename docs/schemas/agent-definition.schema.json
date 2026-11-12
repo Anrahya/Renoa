@@ -244,7 +244,8 @@
         "anthropic",
         "xai",
         "opencode-go",
-        "deepseek"
+        "deepseek",
+        "openrouter"
       ],
       "type": "string"
     },

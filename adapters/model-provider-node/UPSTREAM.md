@@ -47,8 +47,10 @@ to the SDK's `/v1/messages?beta=true` route.
 What Renoa keeps for itself: the wire contract and its mapping
 (`src/wire-request.ts`), the SQLite credential store, the advertised provider
 list and trusted base URLs (`src/catalog.ts`), OpenCode Go's documented
-transport table (`src/providers/opencode-go.ts`) and live discovery
-(`src/opencode-catalog.ts`), and failure classification (`src/errors.ts`).
+transport table (`src/providers/opencode-go.ts`), live discovery for OpenCode
+Go and OpenRouter (`src/opencode-catalog.ts`, `src/openrouter-catalog.ts`, and
+their shared cache in `src/live-catalog.ts`), and failure classification
+(`src/errors.ts`). OpenRouter prices are converted with Pi's `openRouterCost`.
 
 Pi's own model registry (`createModels`), credential store, telemetry, and
 image and classifier APIs are not used. The build scripts of Pi's
@@ -66,3 +68,13 @@ official Go model endpoint (`https://opencode.ai/inference/go/v1/models`), and
 `OPENCODE_GO_TRANSPORTS` records the transport of each model in OpenCode's Go
 documentation (`https://opencode.ai/docs/go/`), both verified 2026-10-29. No
 OpenCode source code is copied.
+
+## OpenRouter
+
+OpenRouter discovery reads its public model list
+(`https://openrouter.ai/api/v1/models`, fields verified 2026-11-12) and adds the
+chat models Pi does not pin that read and write text, accept tools, and state a
+context window and output cap. Reasoning levels come from each model's
+`reasoning.supported_efforts`, without `off` when `reasoning.mandatory` is set.
+No compat block is written: Pi derives OpenRouter's request rules from the
+provider and base URL.

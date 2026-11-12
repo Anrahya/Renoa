@@ -4,7 +4,7 @@ import { SqliteCredentialStore } from "./credentials.js";
 import { ANTHROPIC_OAUTH_REFUSAL, isAnthropicOAuthToken } from "./runtime.js";
 
 /** Providers that authenticate with an API key piped on standard input. */
-export type ApiKeyProvider = Extract<ProviderId, "anthropic" | "opencode-go" | "deepseek">;
+export type ApiKeyProvider = Extract<ProviderId, "anthropic" | "opencode-go" | "deepseek" | "openrouter">;
 
 /** Stores the API key read from standard input; the key is never printed. */
 export function runApiKeyAuth(provider: ApiKeyProvider): void {

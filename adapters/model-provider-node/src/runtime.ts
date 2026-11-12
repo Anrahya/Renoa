@@ -17,6 +17,10 @@ import {
   loadOpenCodeCatalog,
   type OpenCodeCatalogOptions,
 } from "./opencode-catalog.js";
+import {
+  loadOpenRouterCatalog,
+  type OpenRouterCatalogOptions,
+} from "./openrouter-catalog.js";
 import { fromOauth, oauthCredential, xaiOAuth } from "./providers/xai.js";
 import {
   normalizeContext,
@@ -54,6 +58,7 @@ export interface LoadedRuntime {
 export interface CatalogLoadOptions {
   readonly credentialStore?: CredentialStoreOptions;
   readonly openCode?: OpenCodeCatalogOptions;
+  readonly openRouter?: OpenRouterCatalogOptions;
 }
 
 export async function loadCatalog(
@@ -71,7 +76,9 @@ export async function loadCatalog(
   const catalog =
     provider === "opencode-go"
       ? await loadOpenCodeCatalog(authStorePath, pinned, options.openCode)
-      : pinned;
+      : provider === "openrouter"
+        ? await loadOpenRouterCatalog(authStorePath, pinned, options.openRouter)
+        : pinned;
   return toWireCatalog(catalog);
 }
 
@@ -194,6 +201,9 @@ function requireCredential(
   }
   if (provider === "deepseek" && credential.type !== "api_key") {
     throw new Error("DeepSeek requires an API key");
+  }
+  if (provider === "openrouter" && credential.type !== "api_key") {
+    throw new Error("OpenRouter requires an API key");
   }
   return credential;
 }
