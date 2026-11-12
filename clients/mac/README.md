@@ -19,6 +19,18 @@ Make it once in Keychain Access: Certificate Assistant → Create a
 Certificate…, name `Renoa Dev`, identity type Self Signed Root, certificate
 type Code Signing.
 
+To use it as an app, with its icon in the Dock and Launchpad:
+
+```sh
+scripts/install-app.sh
+```
+
+It builds in release, wraps the binary as `Renoa.app` with the icon drawn from
+`assets/icon.svg` (the Renoa mark on a Paper tile), signs it like `cargo run`
+does, and installs it in `/Applications`. The installed app stays the same
+binary until the next install, so once the Keychain is told to Always Allow it,
+it stops asking for the login password; each `cargo run` rebuild asks again.
+
 The first build takes a few minutes; `target/` grows to several GB, which `cargo clean`
 frees.
 
