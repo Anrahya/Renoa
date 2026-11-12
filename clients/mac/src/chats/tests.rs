@@ -694,3 +694,87 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
     act(&|window, cx| window.click(("agent", 0usize), cx), cx);
     assert!(about(cx));
 }
+
+#[gpui_kit::test]
+fn the_wheel_over_a_sheet_leaves_the_chat_behind_it_alone(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent as _, MouseMoveEvent, ScrollDelta, ScrollEvent, point};
+
+    let (window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    updates
+        .send(Update::Agents(vec![agent(node_id, "Chef")]))
+        .unwrap();
+    // A chat long enough to scroll.
+    let task_id = chat_task_id(node_id, "chef");
+    for at in 0..40 {
+        updates
+            .send(Update::Event(Box::new(said(
+                task_id,
+                at,
+                CommandInput::from_text("A line long enough to take some room in the chat."),
+            ))))
+            .unwrap();
+    }
+    cx.run_until_parked();
+    let act = |act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App), cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    // The wheel turned over the middle of the chat, where a sheet sits.
+    let wheel = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+        let position = point(px(600.), px(300.));
+        window.dispatch_event(
+            MouseMoveEvent {
+                position,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+        let delta = ScrollDelta::Pixels(point(px(0.), px(300.)));
+        window.dispatch_event(
+            ScrollEvent {
+                position,
+                delta,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    };
+    let scrolled_up = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, cx| chats.scroller.read(cx).is_scrolled_up())
+    };
+    act(&|window, cx| window.click(("agent", 0usize), cx), cx);
+    act(&wheel, cx);
+    assert!(
+        scrolled_up(cx),
+        "with nothing over it, the wheel scrolls the chat"
+    );
+    act(
+        &|window, cx| {
+            chats.update(cx, |chats, cx| {
+                chats
+                    .scroller
+                    .update(cx, |scroller, cx| scroller.scroll_to_end(cx))
+            });
+            let _ = window;
+        },
+        cx,
+    );
+    assert!(!scrolled_up(cx));
+
+    act(&|window, cx| window.press("cmd-,", cx), cx);
+    act(&wheel, cx);
+
+    assert!(
+        !scrolled_up(cx),
+        "the sheet keeps the wheel from the chat behind it"
+    );
+}

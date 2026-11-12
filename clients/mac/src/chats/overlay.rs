@@ -306,6 +306,8 @@ impl Chats {
                 .flex()
                 .justify_center()
                 .bg(palette.scrim)
+                // The chats behind see neither the pointer nor the wheel.
+                .occlude()
                 .track_focus(&self.focus)
                 .on_mouse_down(
                     MouseButton::Left,
