@@ -16,6 +16,8 @@ pub enum ModelProvider {
     OpenCodeGo,
     #[serde(rename = "deepseek")]
     DeepSeek,
+    #[serde(rename = "openrouter")]
+    OpenRouter,
 }
 
 impl ModelProvider {
@@ -26,6 +28,7 @@ impl ModelProvider {
             "xai" => Some(Self::Xai),
             "opencode-go" => Some(Self::OpenCodeGo),
             "deepseek" => Some(Self::DeepSeek),
+            "openrouter" => Some(Self::OpenRouter),
             _ => None,
         }
     }
@@ -37,6 +40,7 @@ impl ModelProvider {
             Self::Xai => "xai",
             Self::OpenCodeGo => "opencode-go",
             Self::DeepSeek => "deepseek",
+            Self::OpenRouter => "openrouter",
         }
     }
 
@@ -47,6 +51,7 @@ impl ModelProvider {
             Self::Xai => "xAI",
             Self::OpenCodeGo => "OpenCode Go",
             Self::DeepSeek => "DeepSeek",
+            Self::OpenRouter => "OpenRouter",
         }
     }
 }
@@ -267,13 +272,15 @@ mod tests {
             ModelProvider::Xai,
             ModelProvider::OpenCodeGo,
             ModelProvider::DeepSeek,
+            ModelProvider::OpenRouter,
         ] {
             // A new variant must be added to this list: the match is exhaustive.
             match provider {
                 ModelProvider::Anthropic
                 | ModelProvider::Xai
                 | ModelProvider::OpenCodeGo
-                | ModelProvider::DeepSeek => {}
+                | ModelProvider::DeepSeek
+                | ModelProvider::OpenRouter => {}
             }
             assert_eq!(ModelProvider::from_id(provider.as_str()), Some(provider));
             assert_eq!(
@@ -291,6 +298,11 @@ mod tests {
             Some(ModelProvider::Anthropic)
         );
         assert_eq!(ModelProvider::Anthropic.name(), "Anthropic");
-        assert_eq!(ModelProvider::from_id("openrouter"), None);
+        assert_eq!(
+            ModelProvider::from_id("openrouter"),
+            Some(ModelProvider::OpenRouter)
+        );
+        assert_eq!(ModelProvider::OpenRouter.name(), "OpenRouter");
+        assert_eq!(ModelProvider::from_id("mistral"), None);
     }
 }

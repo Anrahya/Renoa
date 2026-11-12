@@ -1,8 +1,8 @@
 # Renoa model-provider adapter
 
 `@renoa/model-provider` is the Node process that translates Renoa's
-provider-neutral model contract into Anthropic, xAI, OpenCode Go, and DeepSeek
-API calls. The provider protocols and bundled catalogs come from Pi's published
+provider-neutral model contract into Anthropic, xAI, OpenCode Go, DeepSeek, and
+OpenRouter API calls. The provider protocols and bundled catalogs come from Pi's published
 `@earendil-works/pi-ai` package, pinned to an exact version; Renoa owns the
 contract mapping, credentials, retry, and request identity around it.
 
@@ -16,6 +16,7 @@ speaks the same stdin/stdout protocol and environment contract.
 - xAI/Grok over OAuth
 - OpenCode Go over its API key
 - DeepSeek over its API key
+- OpenRouter over its API key
 - OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages transports
 - one retry policy: Pi's own client retries are off (`maxRetries: 0`)
 - the request identity: `User-Agent: renoa/0.1.0` and no attribution headers
@@ -36,6 +37,7 @@ compaction, ACP, Waku, and RCP. The Rust host launches this process for
 | xAI | OAuth device flow | Responses, as advertised by the bundled catalog |
 | OpenCode Go | API key | Official Go transports only: Responses, Chat Completions, Anthropic Messages |
 | DeepSeek | API key | Chat Completions at `https://api.deepseek.com`, from the bundled catalog only |
+| OpenRouter | API key | Chat Completions at `https://openrouter.ai/api/v1`; Anthropic Messages at `https://openrouter.ai/api` for the bundled Claude entries |
 
 OpenCode availability comes from its official `/inference/go/v1/models` endpoint.
 Limits, modalities, tool support, costs, and reasoning levels come from the
@@ -58,6 +60,15 @@ Generative AI models, are not advertised. Bundled bindings always
 win, and the first validated binding learned for a new model is kept stable
 across automatic metadata refreshes. Code review, not an unannounced remote
 edit, changes an existing runtime binding.
+
+OpenRouter works the same way from its public `/api/v1/models` list: Pi's
+bundled OpenRouter catalog is always advertised, and a model Pi does not pin
+is added when it is served on Chat Completions, reads and writes text, accepts
+tools, and states a context window and output cap; an entry that does not read
+as one is skipped without discarding the rest. Its reasoning levels are the efforts OpenRouter lists,
+without `off` when reasoning is mandatory. The first binding learned for such a
+model is kept and cached; while the list cannot be fetched the cache stands in,
+and a model OpenRouter no longer lists is no longer advertised.
 
 Alpha refreshes the catalog when a session is created or loaded and immediately
 before selecting a different model in an open session. Configuration changes
@@ -159,14 +170,14 @@ pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scrip
 pnpm --dir adapters/model-provider-node build
 export RENOA_MODEL_BRIDGE="$PWD/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek
+export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek, openrouter
 export RENOA_MODEL_PROVIDER=opencode-go # default for new ACP sessions
 export RENOA_MODEL=deepseek-v4-pro
 export RENOA_MODEL_REASONING=high # optional
 ```
 
 Authenticate with `pnpm --dir adapters/model-provider-node auth:xai`,
-`auth:opencode-go`, or `auth:deepseek`; API keys are read from standard input. The RCP Pi node still uses `RENOA_PI_*` harness settings
+`auth:opencode-go`, `auth:deepseek`, `auth:anthropic`, or `auth:openrouter`; API keys are read from standard input. The RCP Pi node still uses `RENOA_PI_*` harness settings
 and is not this adapter.
 
 `renoa-agent` exposes enabled models as `provider/model` ACP identities. The

@@ -185,10 +185,10 @@ test("the bridge accepts deepseek and refuses an unknown provider without relabe
     () =>
       loadBridgeConfig({
         RENOA_MODEL_ACTION: "catalog",
-        RENOA_MODEL_PROVIDER: "openrouter",
+        RENOA_MODEL_PROVIDER: "mistral",
         RENOA_MODEL_AUTH_STORE: "/tmp/credentials.sqlite",
       }),
-    /RENOA_MODEL_PROVIDER must be one of anthropic, xai, opencode-go, deepseek/u,
+    /RENOA_MODEL_PROVIDER must be one of anthropic, xai, opencode-go, deepseek, openrouter/u,
   );
 
   const directory = tempDir();
@@ -208,7 +208,7 @@ test("the bridge accepts deepseek and refuses an unknown provider without relabe
     const unknown = await runBridge(
       {
         RENOA_MODEL_ACTION: "stream",
-        RENOA_MODEL_PROVIDER: "openrouter",
+        RENOA_MODEL_PROVIDER: "mistral",
         RENOA_MODEL: "claude",
         RENOA_MODEL_AUTH_STORE: authStore,
         RENOA_MODEL_MAX_OUTPUT_TOKENS: "128",

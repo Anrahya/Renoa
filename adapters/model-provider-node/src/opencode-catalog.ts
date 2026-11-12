@@ -3,17 +3,19 @@ import { dirname, join } from "node:path";
 import type { CatalogEntry } from "./catalog.js";
 import { validateModelSpec } from "./catalog.js";
 import {
-  isValidOpenCodeModelId,
-  MAX_CATALOG_MODELS,
-  readOpenCodeCatalogCache,
-  writeOpenCodeCatalogCache,
-} from "./opencode-catalog-cache.js";
+  mergeLearnedModels,
+  readBoundedJson,
+  readLiveCatalogCache,
+  requestSignal,
+  selectAvailableModels,
+  writeLiveCatalogCache,
+  type LiveCatalogSource,
+} from "./live-catalog.js";
 import {
   OPENCODE_GO_BASE_URL,
   opencodeGoTransport,
   type OpenCodeTransport,
 } from "./providers/opencode-go.js";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { Api, Model, ModelCost, ThinkingLevelMap } from "@earendil-works/pi-ai";
 
 const OFFICIAL_MODELS_URL = "https://opencode.ai/inference/go/v1/models";
@@ -22,6 +24,14 @@ const REQUEST_TIMEOUT_MS = 5_000;
 const MAX_OFFICIAL_BYTES = 256 * 1024;
 const MAX_MODELS_DEV_BYTES = 8 * 1024 * 1024;
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const MAX_CATALOG_MODELS = 512;
+
+export const OPENCODE_GO_SOURCE: LiveCatalogSource = {
+  provider: "opencode-go",
+  maxModels: MAX_CATALOG_MODELS,
+  isValidId: isValidOpenCodeModelId,
+};
 
 export interface OpenCodeCatalogOptions {
   readonly cachePath?: string;
@@ -42,9 +52,9 @@ export async function loadOpenCodeCatalog(
   options: OpenCodeCatalogOptions = {},
 ): Promise<readonly CatalogEntry[]> {
   const cachePath = options.cachePath ?? join(dirname(authStorePath), "opencode-go-catalog-v1.json");
-  const cached = await readOpenCodeCatalogCache(cachePath, pinned);
+  const cached = await readLiveCatalogCache(cachePath, OPENCODE_GO_SOURCE, pinned);
   const fetcher = options.fetch ?? globalThis.fetch;
-  const signal = requestSignal(options.signal, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  const signal = requestSignal(options.signal, options.timeoutMs ?? REQUEST_TIMEOUT_MS, "OpenCode Go");
   const [availabilityResult, metadataResult] = await Promise.allSettled([
     fetchOfficialModelIds(fetcher, signal),
     fetchModelsDev(fetcher, signal, cached?.models_dev_etag).then((result) =>
@@ -64,13 +74,7 @@ export async function loadOpenCodeCatalog(
   let dynamicModels = [...(cached?.dynamic_models ?? [])];
   let modelsDevEtag = cached?.models_dev_etag;
   if (metadataResult.status === "fulfilled" && metadataResult.value !== undefined) {
-    const existing = new Set(dynamicModels.map((model) => model.id));
-    for (const model of metadataResult.value.models) {
-      if (!existing.has(model.id)) {
-        existing.add(model.id);
-        dynamicModels.push(model);
-      }
-    }
+    dynamicModels = mergeLearnedModels(dynamicModels, metadataResult.value.models);
     modelsDevEtag = metadataResult.value.etag;
   }
 
@@ -84,7 +88,7 @@ export async function loadOpenCodeCatalog(
           dynamic_models: dynamicModels,
         };
         try {
-          await writeOpenCodeCatalogCache(cachePath, cache);
+          await writeLiveCatalogCache(cachePath, cache);
         } catch (error) {
           warn(options, `OpenCode Go catalog cache could not be updated: ${message(error)}`);
         }
@@ -97,22 +101,6 @@ export async function loadOpenCodeCatalog(
   warnFetchFailures(options, availabilityResult, metadataResult);
   warn(options, "OpenCode Go live catalog is unavailable; using Renoa's bundled catalog");
   return pinned;
-}
-
-function selectAvailableModels(
-  pinned: readonly CatalogEntry[],
-  dynamic: readonly Model<Api>[],
-  availableIds: readonly string[],
-): CatalogEntry[] {
-  const available = new Set(availableIds);
-  const byId = new Map(pinned.map((entry) => [entry.id, entry]));
-  for (const model of dynamic) {
-    if (available.has(model.id) && !byId.has(model.id)) {
-      byId.set(model.id, toEntry(model));
-    }
-  }
-  return [...byId.values()]
-    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 }
 
 async function fetchOfficialModelIds(
@@ -327,50 +315,6 @@ function projectCost(value: unknown): ModelCost {
   return cost;
 }
 
-async function readBoundedJson(response: Response, maximumBytes: number): Promise<unknown> {
-  const length = response.headers.get("content-length");
-  if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximumBytes)) {
-    throw new Error("catalog response exceeds its byte limit");
-  }
-  if (response.body === null) {
-    throw new Error("catalog response has no body");
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    bytes += value.byteLength;
-    if (bytes > maximumBytes) {
-      await reader.cancel();
-      throw new Error("catalog response exceeds its byte limit");
-    }
-    chunks.push(value);
-  }
-  const buffer = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), bytes);
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer)) as unknown;
-}
-
-function requestSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-    throw new Error("OpenCode Go catalog timeout must be a positive integer");
-  }
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return parent === undefined ? timeout : AbortSignal.any([parent, timeout]);
-}
-
-function toEntry(model: Model<Api>): CatalogEntry {
-  return {
-    id: model.id,
-    name: model.name,
-    reasoning_levels: getSupportedThinkingLevels(model),
-    model,
-  };
-}
-
 function warnFetchFailures(
   options: OpenCodeCatalogOptions,
   availability: PromiseSettledResult<string[]>,
@@ -405,4 +349,8 @@ function isPositiveSafeInteger(value: unknown): value is number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isValidOpenCodeModelId(value: unknown): value is string {
+  return typeof value === "string" && MODEL_ID.test(value);
 }

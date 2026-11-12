@@ -4,6 +4,7 @@ import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-work
 import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.models";
 import { DEEPSEEK_MODELS } from "@earendil-works/pi-ai/providers/deepseek.models";
 import { OPENCODE_GO_MODELS } from "@earendil-works/pi-ai/providers/opencode-go.models";
+import { OPENROUTER_MODELS } from "@earendil-works/pi-ai/providers/openrouter.models";
 import { XAI_MODELS } from "@earendil-works/pi-ai/providers/xai.models";
 
 import type { CatalogModel, ProviderId, ReasoningLevel } from "./contract.js";
@@ -14,6 +15,7 @@ import {
 } from "./providers/opencode-go.js";
 import { ANTHROPIC_BASE_URL } from "./providers/anthropic.js";
 import { DEEPSEEK_BASE_URL } from "./providers/deepseek.js";
+import { OPENROUTER_BASE_URL } from "./providers/openrouter.js";
 import { XAI_BASE_URL } from "./providers/xai.js";
 
 export interface CatalogEntry {
@@ -49,6 +51,7 @@ const PINNED_CATALOGS: Readonly<Record<ProviderId, Readonly<Record<string, objec
   xai: XAI_MODELS,
   "opencode-go": OPENCODE_GO_MODELS,
   deepseek: DEEPSEEK_MODELS,
+  openrouter: OPENROUTER_MODELS,
 };
 
 export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[] {
@@ -207,6 +210,8 @@ function supportsApi(provider: ProviderId, api: unknown): api is Api {
       return api === "openai-completions";
     case "opencode-go":
       return api === "anthropic-messages" || api === "openai-completions" || api === "openai-responses";
+    case "openrouter":
+      return api === "anthropic-messages" || api === "openai-completions";
   }
 }
 
@@ -230,6 +235,11 @@ function trustedBaseUrl(
   }
   if (provider === "deepseek") {
     return value === DEEPSEEK_BASE_URL;
+  }
+  if (provider === "openrouter") {
+    return typeof api === "string" && api in OPENROUTER_BASE_URL
+      ? value === OPENROUTER_BASE_URL[api as keyof typeof OPENROUTER_BASE_URL]
+      : false;
   }
   return typeof api === "string" && api in OPENCODE_GO_BASE_URL
     ? value === OPENCODE_GO_BASE_URL[api as OpenCodeTransport]

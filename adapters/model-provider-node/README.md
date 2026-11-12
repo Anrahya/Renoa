@@ -1,7 +1,7 @@
 # @renoa/model-provider
 
 Renoa-owned TypeScript process that maps the provider-neutral model contract to
-Anthropic, xAI, OpenCode Go, and DeepSeek through Pi's model package
+Anthropic, xAI, OpenCode Go, DeepSeek, and OpenRouter through Pi's model package
 ([`@earendil-works/pi-ai`](https://github.com/earendil-works/pi)). Architecture: [`docs/model-provider-v0.md`](../../docs/model-provider-v0.md).
 Upstream use and license: [`UPSTREAM.md`](UPSTREAM.md).
 
@@ -18,6 +18,7 @@ pnpm auth:xai            # SuperGrok device-code OAuth
 # printf '%s' "$OPENCODE_API_KEY" | pnpm auth:opencode-go
 # printf '%s' "$DEEPSEEK_API_KEY" | pnpm auth:deepseek
 # printf '%s' "$ANTHROPIC_API_KEY" | pnpm auth:anthropic
+# printf '%s' "$OPENROUTER_API_KEY" | pnpm auth:openrouter
 ```
 
 Auth CLIs print actionable errors and never print secrets.
@@ -39,7 +40,7 @@ Point Renoa at the compiled entrypoint:
 ```sh
 export RENOA_MODEL_BRIDGE="/absolute/path/to/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek
+export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek, openrouter
 export RENOA_MODEL_PROVIDER=opencode-go
 export RENOA_MODEL=deepseek-v4-pro
 ```
@@ -47,8 +48,9 @@ export RENOA_MODEL=deepseek-v4-pro
 ACP shows the combined catalog and stores the chosen provider and model with
 each session. `RENOA_MODEL_PROVIDER` and `RENOA_MODEL` only choose the default
 for a new session. Omit `RENOA_MODEL_PROVIDERS` to enable only that default
-provider. OpenCode Go availability refreshes at catalog discovery; Renoa keeps
-a validated last-known-good cache and the bundled catalog as offline fallbacks.
+provider. OpenCode Go and OpenRouter availability refreshes at catalog
+discovery; Renoa keeps a validated last-known-good cache and the bundled catalog
+as offline fallbacks.
 
 The process reads `RENOA_MODEL_ACTION` (`catalog` | `describe` | `stream`) from
 the Rust host. Do not set it by hand for normal Alpha use.

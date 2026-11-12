@@ -38,7 +38,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let provider = ModelProvider::from_id(&required_environment("RENOA_MODEL_PROVIDER")?)
         .ok_or_else(|| {
             io::Error::other(
-                "RENOA_MODEL_PROVIDER must be anthropic, xai, opencode-go, or deepseek",
+                "RENOA_MODEL_PROVIDER must be anthropic, xai, opencode-go, deepseek, or openrouter",
             )
         })?;
     let models = LocalModelConfiguration::new(
