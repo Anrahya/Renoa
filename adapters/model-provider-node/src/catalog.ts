@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.models";
 import { DEEPSEEK_MODELS } from "@earendil-works/pi-ai/providers/deepseek.models";
+import { GOOGLE_VERTEX_MODELS } from "@earendil-works/pi-ai/providers/google-vertex.models";
 import { OPENCODE_GO_MODELS } from "@earendil-works/pi-ai/providers/opencode-go.models";
 import { OPENROUTER_MODELS } from "@earendil-works/pi-ai/providers/openrouter.models";
 import { XAI_MODELS } from "@earendil-works/pi-ai/providers/xai.models";
@@ -16,6 +17,7 @@ import {
 import { ANTHROPIC_BASE_URL } from "./providers/anthropic.js";
 import { DEEPSEEK_BASE_URL } from "./providers/deepseek.js";
 import { OPENROUTER_BASE_URL } from "./providers/openrouter.js";
+import { GEMINI_4_HYDROGEN, VERTEX_TEMPLATE_BASE_URL } from "./providers/google-vertex.js";
 import { XAI_BASE_URL } from "./providers/xai.js";
 
 export interface CatalogEntry {
@@ -52,7 +54,18 @@ const PINNED_CATALOGS: Readonly<Record<ProviderId, Readonly<Record<string, objec
   "opencode-go": OPENCODE_GO_MODELS,
   deepseek: DEEPSEEK_MODELS,
   openrouter: OPENROUTER_MODELS,
+  "google-vertex": withEntry(GOOGLE_VERTEX_MODELS, GEMINI_4_HYDROGEN),
 };
+
+/** Adds a Renoa-pinned entry until Pi's own catalog lists that model. */
+function withEntry(
+  catalog: Readonly<Record<string, object>>,
+  entry: { readonly id: string },
+): Readonly<Record<string, object>> {
+  return Object.values(catalog).some((model) => (model as { id?: unknown }).id === entry.id)
+    ? catalog
+    : { ...catalog, [`chat:${entry.id}`]: entry };
+}
 
 export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[] {
   const discovered = Object.values(PINNED_CATALOGS[provider])
@@ -212,6 +225,8 @@ function supportsApi(provider: ProviderId, api: unknown): api is Api {
       return api === "anthropic-messages" || api === "openai-completions" || api === "openai-responses";
     case "openrouter":
       return api === "anthropic-messages" || api === "openai-completions";
+    case "google-vertex":
+      return api === "google-vertex";
   }
 }
 
@@ -235,6 +250,9 @@ function trustedBaseUrl(
   }
   if (provider === "deepseek") {
     return value === DEEPSEEK_BASE_URL;
+  }
+  if (provider === "google-vertex") {
+    return value === VERTEX_TEMPLATE_BASE_URL;
   }
   if (provider === "openrouter") {
     return typeof api === "string" && api in OPENROUTER_BASE_URL

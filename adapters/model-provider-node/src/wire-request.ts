@@ -49,11 +49,7 @@ function parseAssistantMessage(
     throw invalidRequest(`messages[${index}].stop_reason is malformed`);
   }
   const metadata = parseMetadata(value.metadata, `messages[${index}].metadata`);
-  if (
-    metadata.api !== "openai-completions" &&
-    metadata.api !== "openai-responses" &&
-    metadata.api !== "anthropic-messages"
-  ) {
+  if (!isReplayableApi(metadata.api)) {
     throw invalidRequest(`messages[${index}].metadata.api is malformed`);
   }
   if (metadata.provider == null || metadata.provider === "") {
@@ -367,7 +363,7 @@ function emptyUsage(): AssistantMessage["usage"] {
 
 function requiredApi(metadata: { api?: string | null }): Api {
   const value = requiredMetadata(metadata, "api");
-  if (value === "openai-completions" || value === "openai-responses" || value === "anthropic-messages") {
+  if (isReplayableApi(value)) {
     return value;
   }
   throw invalidRequest(`assistant history has unsupported api metadata: ${value}`);
@@ -412,4 +408,16 @@ function invalidRequest(message: string): Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The transports whose replies this adapter can replay as history. */
+const REPLAYABLE_APIS: ReadonlySet<string> = new Set<Api>([
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+  "google-vertex",
+]);
+
+function isReplayableApi(value: unknown): value is Api {
+  return typeof value === "string" && REPLAYABLE_APIS.has(value);
 }

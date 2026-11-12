@@ -6,7 +6,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export const PROVIDER_IDS = ["anthropic", "xai", "opencode-go", "deepseek", "openrouter"] as const;
+export const PROVIDER_IDS = ["anthropic", "xai", "opencode-go", "deepseek", "openrouter", "google-vertex"] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
@@ -199,6 +199,8 @@ export function providerDisplayName(provider: string): string {
       return "DeepSeek";
     case "openrouter":
       return "OpenRouter";
+    case "google-vertex":
+      return "Google Vertex AI";
     default:
       return provider;
   }

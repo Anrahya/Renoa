@@ -80,3 +80,14 @@ entry Renoa cannot read is skipped without discarding the rest of the list. Reas
 No compat block is written: Pi derives OpenRouter's reasoning object, roles,
 and session affinity from the provider and base URL. Per-model flags that Pi's
 bundled entries carry, such as strict tool schemas, are not inferred.
+
+## Google Vertex AI
+
+Pi's Vertex transport and catalog are used as published. Two things are
+Renoa's own (`src/providers/google-vertex.ts`): a Vertex API key bound to a
+service account reaches a model only under its project's path, so enrolment
+stores the project and location with the key and each request is routed there;
+and Gemini 4 Hydrogen, which Pi 1.5.2 does not list, is pinned by Renoa in the
+shape of Pi's Gemini 4 Argon entry until the pinned Pi package lists it. Pi's
+transport refuses a custom fetch, so Vertex failures are classified as possibly
+dispatched.

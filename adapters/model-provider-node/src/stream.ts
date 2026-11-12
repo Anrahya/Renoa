@@ -24,6 +24,7 @@ import {
   type LoadedRuntime,
 } from "./runtime.js";
 import { capturingFetch, errorFromAssistant, abortError, isAbortError, type HttpCapture } from "./http-capture.js";
+import { routedVertexModel } from "./providers/google-vertex.js";
 import { parseWireModelRequest, toContext } from "./wire-request.js";
 import { fromAssistant } from "./wire-response.js";
 import type { AssistantMessageEvent, ClientIdentity, Context } from "@earendil-works/pi-ai";
@@ -184,7 +185,14 @@ async function runAttempt(
     });
   }
   const apiKey = await resolveApiKey(invocation.runtime, signal);
-  const fetchImpl = capturingFetch(invocation.fetch ?? globalThis.fetch, capture);
+  // Pi's Vertex transport sends through Google's SDK and refuses a custom
+  // fetch, so Renoa cannot observe whether a Vertex request left the process:
+  // every Vertex failure is treated as possibly dispatched.
+  const vertex = invocation.runtime.model.api === "google-vertex";
+  const fetchImpl = vertex ? undefined : capturingFetch(invocation.fetch ?? globalThis.fetch, capture);
+  const model = vertex
+    ? routedVertexModel(invocation.runtime.model, requireStoredCredential(invocation.runtime))
+    : invocation.runtime.model;
   const options = {
     maxTokens: invocation.maxOutputTokens,
     // The Host owns the same total invocation deadline, including retries.
@@ -193,7 +201,7 @@ async function runAttempt(
     apiKey,
     signal,
     maxRetries: 0,
-    fetch: fetchImpl,
+    ...(fetchImpl === undefined ? {} : { fetch: fetchImpl }),
     ...(invocation.sessionId === undefined ? {} : { sessionId: invocation.sessionId }),
     // Every provider sees Renoa, never Pi, and no attribution headers.
     identity: RENOA_IDENTITY,
@@ -219,7 +227,10 @@ async function runAttempt(
       : { reasoning: invocation.runtime.reasoningLevel }),
   };
   const context = withReplayedEffort(toContext(invocation.request), invocation.runtime);
-  const stream = dispatchStream(invocation.runtime.model, context, options);
+  if (vertex) {
+    capture.dispatched = true;
+  }
+  const stream = dispatchStream(model, context, options);
   for await (const event of stream) {
     if (signal.aborted) {
       throw abortError();
@@ -337,4 +348,12 @@ export function withReplayedEffort(context: Context, runtime: LoadedRuntime): Co
         : message,
     ),
   };
+}
+
+function requireStoredCredential(runtime: LoadedRuntime) {
+  const credential = runtime.credentials.read(runtime.provider);
+  if (credential === undefined) {
+    throw new Error(`${runtime.provider} credentials are not configured`);
+  }
+  return credential;
 }

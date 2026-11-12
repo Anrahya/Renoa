@@ -32,6 +32,8 @@ import {
 import { streamSimple as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { streamSimple as streamOpenAiChat } from "@earendil-works/pi-ai/api/openai-completions";
 import { streamSimple as streamOpenAiResponses } from "@earendil-works/pi-ai/api/openai-responses";
+import { streamSimple as streamVertex } from "@earendil-works/pi-ai/api/google-vertex";
+import { vertexRouteEnv } from "./providers/google-vertex.js";
 
 const OAUTH_SKEW_MS = 5 * 60 * 1000;
 
@@ -156,6 +158,8 @@ export function dispatchStream(
       return streamOpenAiResponses(model as Model<"openai-responses">, transcript, options);
     case "anthropic-messages":
       return streamAnthropic(model as Model<"anthropic-messages">, transcript, options);
+    case "google-vertex":
+      return streamVertex(model as Model<"google-vertex">, transcript, options);
     default:
       throw new Error(`${model.provider}/${model.id} uses the unsupported ${model.api} API`);
   }
@@ -204,6 +208,12 @@ function requireCredential(
   }
   if (provider === "openrouter" && credential.type !== "api_key") {
     throw new Error("OpenRouter requires an API key");
+  }
+  if (provider === "google-vertex") {
+    if (credential.type !== "api_key") {
+      throw new Error("Google Vertex AI requires an API key");
+    }
+    vertexRouteEnv(credential);
   }
   return credential;
 }

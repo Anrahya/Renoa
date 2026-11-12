@@ -10,6 +10,7 @@
   "scripts": {
     "auth:anthropic": "pnpm run build && node dist/src/auth-anthropic.js",
     "auth:deepseek": "pnpm run build && node dist/src/auth-deepseek.js",
+    "auth:google-vertex": "pnpm run build && node dist/src/auth-google-vertex.js",
     "auth:opencode-go": "pnpm run build && node dist/src/auth-opencode-go.js",
     "auth:openrouter": "pnpm run build && node dist/src/auth-openrouter.js",
     "auth:xai": "pnpm run build && node --dns-result-order=ipv4first dist/src/auth-xai.js",
