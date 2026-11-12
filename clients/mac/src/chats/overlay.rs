@@ -100,7 +100,7 @@ impl Chats {
                 (AnyView::from(sheet), events)
             }
             Page::Settings => {
-                let sheet = cx.new(|_| Settings::new(self.computer.clone()));
+                let sheet = cx.new(|cx| Settings::new(self.computer.clone(), cx));
                 let events = cx.subscribe_in(&sheet, window, Self::on_sheet);
                 (AnyView::from(sheet), events)
             }

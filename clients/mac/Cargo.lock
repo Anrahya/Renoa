@@ -6005,6 +6005,7 @@ dependencies = [
  "renoa-protocol",
  "renoa-rcp-client",
  "renoa-rcp-wire",
+ "reqwest",
  "ring",
  "security-framework",
  "serde",

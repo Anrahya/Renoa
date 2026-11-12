@@ -15,6 +15,7 @@ use crate::{
     key::MacKey,
     link::{self, Endpoints, SignInStep},
     theme::{self, Palette, u},
+    update::{self, Updater, Updates},
     vault,
 };
 
@@ -37,6 +38,7 @@ enum Screen {
 
 pub struct Renoa {
     endpoints: Endpoints,
+    updates: Entity<Updater>,
     key: Option<Arc<MacKey>>,
     screen: Screen,
     _work: Option<Task<()>>,
@@ -52,8 +54,13 @@ impl Renoa {
             cx.notify();
         })
         .detach();
+        let endpoints = Endpoints::from_environment();
+        let updates = cx.new(|cx| Updater::new(&endpoints.origin, cx));
+        cx.observe(&updates, |_, _, cx| cx.notify()).detach();
+        cx.set_global(Updates(updates.clone()));
         let mut renoa = Self {
-            endpoints: Endpoints::from_environment(),
+            endpoints,
+            updates,
             key: None,
             screen: Screen::SigningIn {
                 code: None,
@@ -213,7 +220,15 @@ impl Render for Renoa {
                     })
             }
         };
-        crate::menus::window_items(screen)
+        let bar = update::updater::bar(&self.updates, palette, cx);
+        crate::menus::window_items(
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(div().flex_1().min_h_0().child(screen))
+                .children(bar),
+        )
     }
 }
 

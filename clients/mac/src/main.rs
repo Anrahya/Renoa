@@ -14,6 +14,7 @@ mod stamp;
 #[cfg(test)]
 mod test_events;
 mod theme;
+mod update;
 mod vault;
 
 use gpui_kit::{

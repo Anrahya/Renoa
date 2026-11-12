@@ -26,10 +26,29 @@ scripts/install-app.sh
 ```
 
 It builds in release, wraps the binary as `Renoa.app` with the icon drawn from
-`assets/icon.svg` (the Renoa mark on a Paper tile), signs it like `cargo run`
-does, and installs it in `/Applications`. The installed app stays the same
-binary until the next install, so once the Keychain is told to Always Allow it,
-it stops asking for the login password; each `cargo run` rebuild asks again.
+`assets/icon.svg` (the Renoa mark on a Paper tile, `scripts/bundle-app.sh`),
+signs it like `cargo run` does, and installs it in `/Applications`. The
+installed app stays the same binary until the next install, so once the
+Keychain is told to Always Allow it, it stops asking for the login password;
+each `cargo run` rebuild asks again.
+
+## Updates
+
+A release can carry the Mac app: `scripts/publish-mac-app <tag>`, run on the
+Mac holding the `Renoa Dev` identity, builds it with the tag's version, zips
+it and attaches it to the release; `renoa-deploy` then serves it at
+`https://renoa.live/app/mac.json` (`deploy/README.md`). A published app checks
+there at launch and whenever Settings opens. When a newer one is ready, a bar
+along the bottom of the window and Settings offer **Update and relaunch**: the
+app downloads the zip, checks its size and SHA-256 against `mac.json`, checks
+that the unzipped app is Renoa at that version signed by the key that signed
+the running app, swaps it into place and reopens. Any failure leaves the
+running app as it was (`src/update.rs`).
+
+Only a published app updates. One built by `install-app.sh` or `cargo run`
+says it was built from source; install a published one once from
+`https://renoa.live/app/renoa-mac-<version>.zip`. The Keychain may ask for the
+login password once after an update.
 
 The first build takes a few minutes; `target/` grows to several GB, which `cargo clean`
 frees.

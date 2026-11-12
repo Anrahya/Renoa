@@ -16,6 +16,8 @@ lyon_tessellation = "1.0.23"
 # The Mac's timezone by name, to say when a routine runs on another clock.
 iana-time-zone = "0.1.65"
 md-5 = "0.10"
+# Fetches the app's updates; already built for renoa-rcp-client.
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
 renoa-protocol = { path = "../../crates/renoa-protocol" }
 renoa-rcp-client = { path = "../../crates/renoa-rcp-client" }
 renoa-rcp-wire = { path = "../../crates/renoa-rcp-wire" }
