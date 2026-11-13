@@ -3,7 +3,7 @@
 //! The end-of-turn history projection repeats what was already recorded live,
 //! and a restarted node re-drives the same turn. Each event is therefore
 //! identified by what it reports: a tool start or finish by its call id, and an
-//! assistant message by its text. Occurrences are counted per identity, so a
+//! assistant message by its text as stored, after [`super::frame::fit`]. Occurrences are counted per identity, so a
 //! message the turn repeats is recorded twice while a re-driven turn's repeat
 //! of what it already recorded is not.
 
@@ -28,11 +28,11 @@ enum EventKey {
 
 impl EventKey {
     fn of(kind: &ExecutionEventKind) -> Result<Self, NodeStoreError> {
-        Ok(match kind {
-            ExecutionEventKind::ToolStarted { call_id, .. } => Self::ToolStarted(call_id.clone()),
-            ExecutionEventKind::ToolFinished { call_id, .. } => Self::ToolFinished(call_id.clone()),
-            ExecutionEventKind::AssistantMessage { text } => Self::Message(text.clone()),
-            other => Self::Other(serde_json::to_string(other)?),
+        Ok(match super::frame::fit(kind.clone())? {
+            ExecutionEventKind::ToolStarted { call_id, .. } => Self::ToolStarted(call_id),
+            ExecutionEventKind::ToolFinished { call_id, .. } => Self::ToolFinished(call_id),
+            ExecutionEventKind::AssistantMessage { text } => Self::Message(text),
+            other => Self::Other(serde_json::to_string(&other)?),
         })
     }
 }

@@ -11,12 +11,14 @@ use uuid::Uuid;
 
 mod delivery;
 mod forgetting;
+mod frame;
 mod progress;
 mod records;
 mod schema;
 mod stops;
 
 pub(crate) use delivery::CommandOutcome;
+pub(crate) use frame::fits_one_message;
 pub(crate) use progress::LiveLedger;
 pub(crate) use stops::StopRecord;
 
