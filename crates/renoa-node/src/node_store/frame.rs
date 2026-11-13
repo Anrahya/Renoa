@@ -33,11 +33,45 @@ pub(crate) fn fits_one_message(
 /// `kind`, or a bounded copy of it when it cannot fit one message alone. A
 /// tool's arguments or output that do not fit are left out with a note of
 /// their size: no surface shows them. A message or a terminal reason is cut
-/// to the longest beginning that fits.
+/// to the longest beginning that fits. A tool's call id or name still too
+/// long after that is left out the same way, so every result fits.
 pub(crate) fn fit(kind: ExecutionEventKind) -> Result<ExecutionEventKind, serde_json::Error> {
     if fits_alone(&kind)? {
         return Ok(kind);
     }
+    let fitted = fit_payload(kind)?;
+    if fits_alone(&fitted)? {
+        return Ok(fitted);
+    }
+    // Only a tool's call id and name, which come from the model, are left.
+    Ok(match fitted {
+        ExecutionEventKind::ToolStarted {
+            call_id,
+            name,
+            arguments,
+        } => ExecutionEventKind::ToolStarted {
+            call_id: left_out(call_id.len()),
+            name: left_out(name.len()),
+            arguments,
+        },
+        ExecutionEventKind::ToolFinished {
+            call_id,
+            output,
+            is_error,
+        } => ExecutionEventKind::ToolFinished {
+            call_id: left_out(call_id.len()),
+            output,
+            is_error,
+        },
+        kind @ (ExecutionEventKind::ExecutionStarted
+        | ExecutionEventKind::TurnStarted
+        | ExecutionEventKind::AssistantMessage { .. }
+        | ExecutionEventKind::ExecutionTerminated { .. }) => kind,
+    })
+}
+
+/// `kind` with its tool payload left out, or its text cut to fit.
+fn fit_payload(kind: ExecutionEventKind) -> Result<ExecutionEventKind, serde_json::Error> {
     Ok(match kind {
         ExecutionEventKind::ToolStarted {
             call_id,
@@ -203,6 +237,53 @@ mod tests {
             fitted,
             "fitting is stable"
         );
+    }
+
+    #[test]
+    fn a_tool_call_id_too_long_for_one_message_is_left_out_on_both_events() {
+        let call_id = "c".repeat(MAX_APPLICATION_MESSAGE_BYTES);
+        let started = fit(ExecutionEventKind::ToolStarted {
+            call_id: call_id.clone(),
+            name: "read_file".to_owned(),
+            arguments: serde_json::json!({}),
+        })
+        .expect("fit");
+        let finished = fit(ExecutionEventKind::ToolFinished {
+            call_id: call_id.clone(),
+            output: "done".to_owned(),
+            is_error: false,
+        })
+        .expect("fit");
+        assert!(fits(&started) && fits(&finished));
+        let (
+            ExecutionEventKind::ToolStarted { call_id: start, .. },
+            ExecutionEventKind::ToolFinished {
+                call_id: finish, ..
+            },
+        ) = (&started, &finished)
+        else {
+            panic!("tool events stay tool events");
+        };
+        assert_eq!(start, &left_out(call_id.len()));
+        assert_eq!(start, finish, "a call's start and finish still pair up");
+        assert_eq!(fit(started.clone()).expect("refit"), started);
+    }
+
+    #[test]
+    fn a_long_cancellation_reason_is_cut_to_fit() {
+        let fitted = fit(ExecutionEventKind::ExecutionTerminated {
+            terminal: ExecutionTerminal::Cancelled {
+                reason: "r".repeat(MAX_APPLICATION_MESSAGE_BYTES),
+            },
+        })
+        .expect("fit");
+        assert!(fits(&fitted));
+        assert!(matches!(
+            &fitted,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Cancelled { reason },
+            } if reason.ends_with(CUT_MARK)
+        ));
     }
 
     #[test]
