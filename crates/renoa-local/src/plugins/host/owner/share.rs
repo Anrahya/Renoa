@@ -43,7 +43,7 @@ pub(super) fn spec(kind: Kind) -> ToolSpec {
         Kind::Share => ToolSpec {
             name: SHARE.to_owned(),
             description: format!(
-                "Share a file from your workspace with the person you are talking to, such as a page, picture or document you made. Returns a link to put in your reply exactly as given; only they can open it, on their phone or signed in to Renoa in a browser. The link shows the file as it is when they open it, and stops working once the file is gone. A file up to {} can be shared. Do not start a server to show a file.",
+                "Share a file from your workspace with the person you are talking to, such as a page, picture or document you made. Returns a link to put in your reply exactly as given; only they can open it, in the Renoa app. The link shows the file as it is when they open it, and stops working once the file is gone. A file up to {} can be shared. Prefer this to starting a server: a server you start has no sign-in, nothing stops it, and it can expose your whole workspace. Start one only when the person asks for it.",
                 shown_size(usize::try_from(MAX_SHARE_BYTES).unwrap_or(usize::MAX))
             ),
             input_schema: path,
