@@ -16,7 +16,7 @@ use crate::{
 /// The keys that move around the app, as Settings lists them. The keys
 /// themselves are `chats::keys`; a test in `chats/tests.rs` presses each one
 /// listed here and checks it leads where its words say.
-pub const SHORTCUTS: [(&str, &str); 12] = [
+pub const SHORTCUTS: [(&str, &str); 13] = [
     ("Jump to an agent or page", "⌘K"),
     ("Home", "⌘0"),
     ("Open the first nine agents", "⌘1 – ⌘9"),
@@ -26,6 +26,7 @@ pub const SHORTCUTS: [(&str, &str); 12] = [
     ("Apps", "⌘⇧A"),
     ("Settings", "⌘,"),
     ("Close a sheet", "Esc"),
+    ("Show or hide sidebar", "⌘B"),
     ("Bigger", "⌘="),
     ("Smaller", "⌘−"),
     ("Actual size", "⌥⌘0"),
@@ -172,9 +173,18 @@ impl Render for Settings {
                 .rounded(u(8.))
                 .cursor_pointer()
                 .when(on, |choice| {
-                    choice.bg(palette.card).font_weight(FontWeight::SEMIBOLD)
+                    choice
+                        .bg(palette.surface_raised)
+                        .border_1()
+                        .border_color(palette.outline)
+                        .shadow_2xs()
+                        .font_weight(FontWeight::SEMIBOLD)
                 })
-                .when(!on, |choice| choice.text_color(palette.secondary))
+                .when(!on, |choice| {
+                    choice
+                        .text_color(palette.secondary)
+                        .hover(|choice| choice.text_color(palette.text))
+                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     theme::apply(appearance, window, cx);
                     this.unkept = theme::keep_appearance(appearance).is_err();
@@ -184,17 +194,21 @@ impl Render for Settings {
                 .child(label)
         };
         let looks = div()
+            .flex_none()
             .p(u(3.))
             .flex()
             .gap(u(3.))
             .rounded(u(10.))
             .bg(palette.group)
+            .border_1()
+            .border_color(palette.outline)
             .child(choice(Appearance::System, "System", None, cx))
             .child(choice(Appearance::Light, "Light", Some(IconName::Sun), cx))
             .child(choice(Appearance::Dark, "Dark", Some(IconName::Moon), cx));
         let keys = SHORTCUTS.iter().map(|(what, keys)| {
             div()
                 .flex()
+                .items_center()
                 .justify_between()
                 .px(u(14.))
                 .py(u(9.))
@@ -202,9 +216,12 @@ impl Render for Settings {
                 .child(
                     div()
                         .px(u(8.))
+                        .py(u(2.))
                         .rounded(u(6.))
                         .bg(palette.chat_agent)
-                        .text_size(u(12.))
+                        .border_1()
+                        .border_color(palette.outline)
+                        .text_size(u(11.5))
                         .text_color(palette.secondary)
                         .child(*keys),
                 )

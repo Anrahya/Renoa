@@ -172,9 +172,12 @@ fn needs_you(
             .into_any_element()
         });
         div()
-            .p(u(14.))
+            .p(u(15.))
             .rounded(u(16.))
-            .bg(palette.attention.opacity(0.12))
+            .bg(palette.attention_wash)
+            .border_1()
+            .border_color(palette.attention_border)
+            .shadow_2xs()
             .flex()
             .flex_col()
             .gap(u(10.))
@@ -197,7 +200,13 @@ fn needs_you(
                             .child(stamp::short(ask.at_ms, &now)),
                     ),
             )
-            .child(div().line_height(u(19.)).child(ask.body.clone()))
+            .child(
+                div()
+                    .text_size(u(13.5))
+                    .line_height(u(20.))
+                    .text_color(palette.text_soft)
+                    .child(ask.body.clone()),
+            )
             .child(
                 div()
                     .flex()
@@ -245,8 +254,9 @@ fn away(
             .flex()
             .items_start()
             .gap(u(12.))
-            .px(u(12.))
-            .py(u(10.))
+            .px(u(14.))
+            .py(u(11.))
+            .hover(|row| row.bg(palette.hover))
             .child(face(home, note, palette, 24.))
             .child(
                 div()

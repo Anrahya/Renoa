@@ -11,6 +11,7 @@ use crate::theme;
 
 use crate::chats::keys::{
     self, AboutAgent, GoHome, JumpTo, OpenApps, OpenMemory, OpenRoutines, OpenSettings,
+    ToggleSidebar,
 };
 
 actions!(
@@ -96,6 +97,8 @@ fn menus() -> Vec<Menu> {
             MenuItem::os_action("Select All", input::SelectAll, OsAction::SelectAll),
         ]),
         Menu::new("View").items([
+            MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::separator(),
             MenuItem::action("Bigger", Bigger),
             MenuItem::action("Smaller", Smaller),
             MenuItem::action("Actual Size", ActualSize),

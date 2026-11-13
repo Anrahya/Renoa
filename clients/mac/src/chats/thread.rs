@@ -1,50 +1,36 @@
 //! The open conversation: its agent's name over a fade, the lines with the
 //! time between those far apart, the agent at work, and the composer.
 
-use std::time::Duration;
+mod prose;
 
 use chrono::Local;
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, App, ClickEvent, Context, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled as _, TestSupportExt as _, Window,
-    canvas,
-    component::{input::Input, message_scroller::MessageScroller, text::TextView},
-    div, ease_out_quint, linear_color_stop, linear_gradient, point,
+    AnyElement, App, ClickEvent, Context, Focusable as _, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, PathBuilder, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled as _, TestSupportExt as _, Window, canvas,
+    component::{input::Input, message_scroller::MessageScroller},
+    div, linear_color_stop, linear_gradient, point,
     prelude::FluentBuilder as _,
-    relative,
 };
 
 use super::{Chats, Row};
 use crate::{
-    chat::{Line, Speaker, Transcript, chat_task_id},
+    chat::{Speaker, Transcript, chat_task_id},
     face::{Face, Look, Mood},
     stamp,
-    theme::Palette,
+    theme::{Palette, u},
 };
 
-use crate::theme::u;
-
 /// The widest the conversation runs.
-const COLUMN: f32 = 720.;
+const COLUMN: f32 = 680.;
 
 /// The height of the name over the conversation, which the lines scroll under.
-const HEADER: f32 = 64.;
-
-/// An owner's new line rises into place; an agent's settles.
-const RISE: Duration = Duration::from_millis(420);
-const SETTLE: Duration = Duration::from_millis(500);
-
-/// One beat of the working dots.
-const DOTS: Duration = Duration::from_millis(1100);
-
-/// The dots need no more frames than this a second.
-const DOT_FPS: f32 = 30.;
+const HEADER: f32 = 76.;
 
 /// Who is talking in the open chat, as each row draws them.
 #[derive(Clone)]
-struct Agent {
-    name: SharedString,
+pub(super) struct Agent {
+    pub(super) name: SharedString,
     look: Option<Look>,
     primary: bool,
     /// Whether its eyes are shut just now.
@@ -52,7 +38,7 @@ struct Agent {
 }
 
 impl Agent {
-    fn face(&self, palette: Palette, size: f32) -> Face {
+    pub(super) fn face(&self, palette: Palette, size: f32) -> Face {
         Face::new(self.look, self.primary, palette, u(size)).blinking(self.blinking)
     }
 }
@@ -61,6 +47,7 @@ impl Chats {
     pub(super) fn conversation(
         &self,
         palette: Palette,
+        window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         let chosen = self.chosen.as_ref();
@@ -79,12 +66,16 @@ impl Chats {
         };
         let purpose = task_id.and_then(|task_id| self.purposes.get(&task_id).cloned());
         let working = self.transcript().is_some_and(Transcript::working);
+        let empty = chosen.is_some() && self.rows() == 0 && !working;
         let notice = task_id
             .filter(|task_id| self.unsent.contains(task_id))
             .map(|_| "Your message didn't send. Try again.");
         // Rows read the chat as they are drawn; only the visible ones are.
         let chats = cx.entity().downgrade();
         let speaking = agent.clone();
+        let card_bg = palette.card;
+        let card_border = palette.outline;
+        let card_text = palette.text;
         let thread = MessageScroller::new("thread", self.scroller.clone(), move |index, _, cx| {
             chats.upgrade().map_or_else(
                 || div().into_any_element(),
@@ -94,8 +85,17 @@ impl Chats {
         .with_list_style(padded(StyleRefinement::default()))
         // Each row owns the space above it.
         .with_row_style(StyleRefinement::default().pb_0().px_0())
+        .with_bottom_fade(palette.background)
+        .with_jump_button_renderer(move |button| {
+            button
+                .bg(card_bg)
+                .border_color(card_border)
+                .text_color(card_text)
+                .shadow_md()
+        })
         .flex_1();
         let sendable = self.linked && !self.composer.read(cx).value().trim().is_empty();
+        let focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
         div()
             .flex_1()
             .min_w_0()
@@ -104,6 +104,9 @@ impl Chats {
             .flex()
             .flex_col()
             .child(thread)
+            .when(empty, |column| {
+                column.child(empty_chat(&agent, purpose.clone(), palette))
+            })
             .when(chosen.is_some(), |column| {
                 let about = self.profile_task().map(|task_id| {
                     cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
@@ -123,6 +126,7 @@ impl Chats {
                 column.child(centred(
                     div()
                         .px(u(20.))
+                        .pb(u(4.))
                         .text_color(palette.danger)
                         .text_size(u(12.))
                         .child(notice),
@@ -131,19 +135,25 @@ impl Chats {
             .child(centred(
                 div()
                     .w_full()
-                    .m(u(12.))
+                    .mt(u(6.))
+                    .mb(u(16.))
                     .flex()
                     .items_end()
                     .gap(u(8.))
                     .pl(u(16.))
-                    .pr(u(6.))
-                    .py(u(6.))
+                    .pr(u(7.))
+                    .py(u(7.))
                     .rounded(u(22.))
                     .bg(palette.composer)
                     .border_1()
-                    .border_color(palette.outline)
+                    .border_color(if focused {
+                        palette.outline_strong
+                    } else {
+                        palette.outline
+                    })
+                    .shadow_md()
                     .child(
-                        div().flex_1().py(u(4.)).child(
+                        div().flex_1().py(u(3.)).child(
                             Input::new(&self.composer)
                                 .id("composer")
                                 .aria_label("Message")
@@ -158,16 +168,50 @@ impl Chats {
     }
 }
 
-/// Room at the top for the name the lines scroll under.
+/// Shown when a chat has no messages yet so a fresh agent feels welcoming.
+fn empty_chat(agent: &Agent, purpose: Option<SharedString>, palette: Palette) -> impl IntoElement {
+    div()
+        .absolute()
+        .inset_0()
+        .pb(u(64.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(u(10.))
+        .px(u(24.))
+        .child(agent.face(palette, 48.).alive("empty-face"))
+        .child(
+            div()
+                .text_size(u(19.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(palette.text)
+                .child(agent.name.clone()),
+        )
+        .when_some(purpose, |box_, purpose| {
+            box_.child(
+                div()
+                    .max_w(u(380.))
+                    .text_center()
+                    .text_size(u(13.5))
+                    .line_height(u(20.))
+                    .text_color(palette.secondary)
+                    .child(purpose),
+            )
+        })
+}
+
+/// Room at the top for the name the lines scroll under, and breathing space above
+/// the composer at the bottom.
 fn padded(mut style: StyleRefinement) -> StyleRefinement {
     style.padding.top = Some(u(HEADER).into());
-    style.padding.bottom = Some(u(8.).into());
+    style.padding.bottom = Some(u(20.).into());
     style
 }
 
 /// `content` in the middle of the conversation, no wider than [`COLUMN`].
 fn centred(content: impl IntoElement) -> gpui_kit::Div {
-    div().w_full().flex().justify_center().px(u(20.)).child(
+    div().w_full().flex().justify_center().px(u(24.)).child(
         div()
             .w_full()
             .max_w(u(COLUMN))
@@ -200,13 +244,14 @@ fn header(
         .left_0()
         .right_0()
         .h(u(HEADER))
+        .pt(u(14.))
         .flex()
-        .items_center()
+        .items_start()
         .justify_center()
         .gap(u(8.))
         .bg(linear_gradient(
             180.,
-            linear_color_stop(palette.background, 0.55),
+            linear_color_stop(palette.background, 0.5),
             linear_color_stop(clear, 1.),
         ))
         .child(
@@ -215,24 +260,26 @@ fn header(
                 .flex()
                 .items_center()
                 .gap(u(8.))
-                .max_w(u(COLUMN * 0.8))
-                .pl(u(5.))
+                .max_w(u(COLUMN * 0.82))
+                .pl(u(6.))
                 .pr(u(14.))
-                .py(u(4.))
+                .py(u(5.))
                 .rounded_full()
                 .bg(palette.frosted)
                 .border_1()
                 .border_color(palette.outline)
+                .shadow_xs()
                 .when_some(about, |pill, about| {
                     pill.cursor_pointer()
-                        .hover(|pill| pill.bg(palette.selected))
+                        .hover(|pill| pill.bg(palette.selected).border_color(palette.outline_strong))
                         .on_click(about)
                 })
                 .test_support()
-                .child(agent.face(palette, 26.).mood(mood).alive("header-face"))
+                .child(agent.face(palette, 24.).mood(mood).alive("header-face"))
                 .child(
                     div()
                         .flex_none()
+                        .text_size(u(13.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(agent.name.clone()),
                 )
@@ -241,6 +288,7 @@ fn header(
                         div()
                             .min_w_0()
                             .truncate()
+                            .text_size(u(12.5))
                             .text_color(palette.secondary)
                             .child(purpose),
                     )
@@ -249,8 +297,15 @@ fn header(
         .when(!linked, |header| {
             header.child(
                 div()
+                    .px(u(10.))
+                    .py(u(5.))
+                    .rounded_full()
+                    .bg(palette.attention_wash)
+                    .border_1()
+                    .border_color(palette.attention_border)
                     .text_color(palette.attention)
                     .text_size(u(12.))
+                    .font_weight(FontWeight::MEDIUM)
                     .child("Reconnecting…"),
             )
         })
@@ -260,7 +315,7 @@ fn header(
 /// goes there; past the last line, the agent at work.
 fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
     let Some(line) = row.line else {
-        return centred(working(agent, palette)).into_any_element();
+        return centred(prose::working(agent, palette)).into_any_element();
     };
     let at = line.at_ms;
     let time = stamp::separates(
@@ -270,165 +325,65 @@ fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
     )
     .then(|| at.map(|at_ms| stamp::long(at_ms, &Local::now())))
     .flatten();
-    // A new speaker starts a little further down than the same one going on.
     let turned = row
         .before
         .as_ref()
         .is_none_or(|before| before.speaker != line.speaker);
+    let show_header = turned || time.is_some();
+    let top_pad = prose::row_top_padding(row.before.as_ref().map(|b| b.speaker), line.speaker);
     let said = match line.speaker {
-        Speaker::Owner => owner(index, &line, row.live, palette),
-        Speaker::Agent => said_by_agent(
-            index,
-            &line,
-            row.after != Some(Speaker::Agent),
-            row.live,
-            agent,
-            palette,
-        ),
+        Speaker::Owner => prose::owner(index, &line, row.live, palette),
+        Speaker::Agent => prose::agent_line(index, &line, show_header, row.live, agent, palette),
     };
     div()
         .w_full()
         .flex()
         .flex_col()
-        .pt(u(if turned { 10. } else { 2. }))
+        .pt(u(top_pad))
         .when_some(time, |column, time| {
-            column.child(
+            column.child(centred(
                 div()
                     .w_full()
                     .flex()
-                    .justify_center()
-                    .py(u(8.))
-                    .text_size(u(11.))
-                    .text_color(palette.secondary)
-                    .child(time),
-            )
+                    .items_center()
+                    .gap(u(12.))
+                    .py(u(10.))
+                    .child(div().flex_1().h(u(1.)).bg(palette.divider))
+                    .child(
+                        div()
+                            .text_size(u(11.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.secondary)
+                            .child(time),
+                    )
+                    .child(div().flex_1().h(u(1.)).bg(palette.divider)),
+            ))
         })
         .child(centred(said))
         .into_any_element()
 }
 
-fn owner(index: usize, line: &Line, live: bool, palette: Palette) -> AnyElement {
-    let bubble = div()
-        .max_w(relative(0.72))
-        .px(u(14.))
-        .py(u(9.))
-        .rounded(u(18.))
-        .bg(palette.chat_user)
-        .child(SharedString::from(line.text.clone()));
-    let placed = div().w_full().flex().justify_end().child(bubble);
-    if !live {
-        return placed.into_any_element();
-    }
-    placed
-        .relative()
-        .with_animation(
-            ("rise", index),
-            Animation::new(RISE).with_easing(ease_out_quint()),
-            |placed, t| placed.top(u(22. * (1. - t))).opacity(t),
-        )
-        .into_any_element()
-}
-
-/// An agent's line, as plain text without a bubble, with its face beside the
-/// `last` line of a run.
-fn said_by_agent(
-    index: usize,
-    line: &Line,
-    last: bool,
-    live: bool,
-    agent: &Agent,
-    palette: Palette,
-) -> AnyElement {
-    let text = div().max_w(relative(0.85)).min_w_0().py(u(2.)).map(|text| {
-        if line.failed {
-            text.text_color(palette.danger)
-                .child(SharedString::from(line.text.clone()))
-        } else {
-            text.child(TextView::markdown(("said", index), line.text.clone()))
-        }
-    });
-    let face = div().w(u(24.)).flex_none().when(last, |slot| {
-        slot.child(agent.face(palette, 24.).alive(format!("said-{index}")))
-    });
-    let placed = div()
-        .w_full()
-        .flex()
-        .items_end()
-        .gap(u(10.))
-        .child(face)
-        .child(text);
-    if !live {
-        return placed.into_any_element();
-    }
-    placed
-        .relative()
-        .with_animation(
-            ("settle", index),
-            Animation::new(SETTLE).with_easing(ease_out_quint()),
-            |placed, t| placed.top(u(8. * (1. - t))).opacity(t),
-        )
-        .into_any_element()
-}
-
-/// The agent at work: its face bobbing, and dots that come and go in turn.
-fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
-    let dots = (0..3_u8).map(move |dot| {
-        let offset = f32::from(dot) * 0.18;
-        div()
-            .size(u(5.))
-            .rounded_full()
-            .bg(palette.secondary)
-            .with_animation(
-                ("dot", usize::from(dot)),
-                Animation::new(DOTS).repeat().with_max_fps(DOT_FPS),
-                move |dot, t| {
-                    // Bright at its moment in the beat, faint the rest.
-                    let at = (t - offset).rem_euclid(1.);
-                    dot.opacity(0.3 + 0.7 * (1. - (at * 2. - 0.5).abs().min(1.)))
-                },
-            )
-    });
-    div()
-        .w_full()
-        .pt(u(10.))
-        .flex()
-        .items_end()
-        .gap(u(8.))
-        .child(
-            agent
-                .face(palette, 24.)
-                .mood(Mood::Working)
-                .alive("working-face"),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(u(8.))
-                .py(u(2.))
-                .text_color(palette.secondary)
-                .child(format!("{} is working on it", agent.name))
-                .child(div().flex().gap(u(3.)).children(dots)),
-        )
-}
-
-/// The round send button: ink when there is something to send, faint when not.
+/// The round send button: ink when there is something to send, muted when not.
 fn send_button(sendable: bool, palette: Palette) -> gpui_kit::Stateful<gpui_kit::Div> {
     let (fill, arrow) = if sendable {
         (palette.text, palette.background)
     } else {
-        (palette.outline, palette.background)
+        (palette.chat_agent, palette.secondary.opacity(0.6))
     };
     div()
         .id("send")
-        .size(u(30.))
+        .size(u(32.))
         .flex_none()
         .rounded_full()
         .bg(fill)
         .flex()
         .items_center()
         .justify_center()
-        .when(sendable, |button| button.cursor_pointer())
+        .when(sendable, |button| {
+            button
+                .cursor_pointer()
+                .hover(|button| button.opacity(0.84))
+        })
         .child(
             canvas(
                 |_, _, _| (),

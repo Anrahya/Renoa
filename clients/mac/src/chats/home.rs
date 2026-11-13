@@ -86,7 +86,7 @@ impl Chats {
             .cursor_pointer()
             .when(self.on_home, |row| row.bg(palette.selected))
             .when(!self.on_home, |row| {
-                row.hover(|row| row.bg(palette.selected))
+                row.hover(|row| row.bg(palette.hover))
             })
             .on_click(cx.listener(|this, _, window, cx| this.go_home(window, cx)))
             .child(
@@ -94,7 +94,9 @@ impl Chats {
                     .size(u(30.))
                     .flex_none()
                     .rounded(u(9.))
-                    .bg(palette.chat_agent)
+                    .bg(palette.card)
+                    .border_1()
+                    .border_color(palette.outline)
                     .flex()
                     .items_center()
                     .justify_center()

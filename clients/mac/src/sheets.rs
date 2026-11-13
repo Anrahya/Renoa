@@ -171,7 +171,9 @@ pub fn header(
         .gap(u(12.))
         .px(u(24.))
         .pt(u(20.))
-        .pb(u(12.))
+        .pb(u(14.))
+        .border_b_1()
+        .border_color(palette.divider)
         .child(
             div()
                 .flex_1()
@@ -206,7 +208,7 @@ pub fn header(
                 .items_center()
                 .justify_center()
                 .cursor_pointer()
-                .hover(|close| close.text_color(palette.text))
+                .hover(|close| close.bg(palette.selected).text_color(palette.text))
                 .on_click(close)
                 .child(IconName::Close),
         )
@@ -215,6 +217,7 @@ pub fn header(
 /// The small capitals over a group of rows.
 pub fn section(title: impl Into<SharedString>, palette: Palette) -> Div {
     div()
+        .flex_none()
         .pt(u(6.))
         .pb(u(2.))
         .text_size(u(11.))
@@ -229,8 +232,12 @@ pub fn group(rows: impl IntoIterator<Item = AnyElement>, palette: Palette) -> Di
     let rows: Vec<AnyElement> = rows.into_iter().collect();
     let last = rows.len().saturating_sub(1);
     div()
+        .flex_none()
         .rounded(u(14.))
-        .bg(palette.group)
+        .bg(palette.card)
+        .border_1()
+        .border_color(palette.outline)
+        .overflow_hidden()
         .flex()
         .flex_col()
         .children(rows.into_iter().enumerate().map(move |(index, row)| {
@@ -264,12 +271,14 @@ pub fn pill(
         .cursor_pointer()
         .map(|pill| {
             if filled {
-                pill.bg(palette.text).text_color(palette.background)
+                pill.bg(palette.text)
+                    .text_color(palette.background)
+                    .hover(|pill| pill.opacity(0.86))
             } else {
                 pill.border_1()
                     .border_color(palette.outline)
                     .bg(palette.card)
-                    .hover(|pill| pill.bg(palette.chat_agent))
+                    .hover(|pill| pill.bg(palette.hover).border_color(palette.outline_strong))
             }
         })
         .child(label.into())
@@ -345,6 +354,8 @@ pub fn mark(name: &str, palette: Palette) -> Div {
         .flex_none()
         .rounded(u(8.))
         .bg(palette.chat_agent)
+        .border_1()
+        .border_color(palette.outline)
         .flex()
         .items_center()
         .justify_center()

@@ -47,6 +47,8 @@ mod tests {
             IconName::Close,
             IconName::Sun,
             IconName::Moon,
+            IconName::PanelLeft,
+            IconName::PanelLeftOpen,
         ] {
             let path = icon.path();
             assert!(
