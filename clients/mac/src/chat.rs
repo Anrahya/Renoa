@@ -1,12 +1,16 @@
 //! The one chat the app keeps with each agent, and the lines it shows.
 
 use std::{
+    collections::HashSet,
     ops::Range,
     time::{Duration, Instant},
 };
 
 use md5::{Digest as _, Md5};
-use renoa_protocol::{CommandInput, ExecutionEventKind, ExecutionTerminal};
+use renoa_protocol::{
+    CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, LiveActivity,
+    normalize_activity,
+};
 use renoa_rcp_wire::{NodeId, TaskEvent, TaskEventKind, TaskId};
 use uuid::Builder;
 
@@ -54,6 +58,9 @@ pub struct Transcript {
     arrived: Vec<Option<Instant>>,
     through: Option<u64>,
     working: bool,
+    doing: Option<String>,
+    latest_command: Option<CommandId>,
+    terminated: HashSet<CommandId>,
 }
 
 impl Transcript {
@@ -69,6 +76,11 @@ impl Transcript {
     /// Whether the agent is answering.
     pub const fn working(&self) -> bool {
         self.working
+    }
+
+    /// Plain-text one-line summary of what the agent is currently doing, if any.
+    pub fn doing(&self) -> Option<&str> {
+        self.doing.as_deref()
     }
 
     /// Whether the line at `index` is still coming in: it was new when it
@@ -102,6 +114,8 @@ impl Transcript {
                     author,
                     ..
                 } = &command.input;
+                self.latest_command = Some(command.command_id);
+                self.doing = None;
                 // Another agent's message and a quiet command are not the owner speaking.
                 if !quiet && author.is_principal() && command.origin.is_none() {
                     // New until its time says otherwise.
@@ -109,7 +123,7 @@ impl Transcript {
                 }
                 None
             }
-            TaskEventKind::ExecutionEvent { event, .. } => {
+            TaskEventKind::ExecutionEvent { command_id, event } => {
                 let at_ms = Some(event.recorded_at_ms);
                 let fresh = now_ms - event.recorded_at_ms < FRESH_FOR_MS;
                 let untimed = self
@@ -131,23 +145,58 @@ impl Transcript {
                 match &event.kind {
                     ExecutionEventKind::TurnStarted | ExecutionEventKind::ExecutionStarted => {
                         self.working = true;
+                        self.latest_command = Some(*command_id);
                     }
                     ExecutionEventKind::AssistantMessage { text } => {
+                        self.doing = None;
                         self.say(Speaker::Agent, text, false, at_ms, fresh);
                     }
                     ExecutionEventKind::ExecutionTerminated { terminal } => {
+                        self.terminated.insert(*command_id);
                         self.working = false;
+                        self.doing = None;
                         if let ExecutionTerminal::Failed { .. } = terminal {
                             let text = "Something went wrong with that one.";
                             self.say(Speaker::Agent, text, true, at_ms, fresh);
                         }
                     }
-                    ExecutionEventKind::ToolStarted { .. }
-                    | ExecutionEventKind::ToolFinished { .. } => {}
+                    ExecutionEventKind::ToolStarted { activity, .. } => {
+                        self.working = true;
+                        self.doing = activity.as_deref().and_then(normalize_activity);
+                    }
+                    ExecutionEventKind::ToolFinished { .. } => {}
                 }
                 (!took.is_empty()).then_some(took)
             }
         }
+    }
+
+    /// Applies one ephemeral live activity frame, returning whether `doing` changed.
+    pub fn apply_live(&mut self, command_id: CommandId, activity: &LiveActivity) -> bool {
+        if self.terminated.contains(&command_id)
+            || self
+                .latest_command
+                .is_some_and(|latest| latest != command_id)
+        {
+            return false;
+        }
+        match activity {
+            LiveActivity::Activity { text } => {
+                let next = normalize_activity(text);
+                if next == self.doing {
+                    return false;
+                }
+                self.doing = next;
+                true
+            }
+            LiveActivity::TextReset => self.doing.take().is_some(),
+            LiveActivity::TextDelta { .. } => false,
+        }
+    }
+
+    /// Clears transient live activity after the coordinator link drops.
+    pub fn clear_live(&mut self) {
+        self.doing = None;
     }
 
     fn say(&mut self, speaker: Speaker, text: &str, failed: bool, at_ms: Option<i64>, fresh: bool) {

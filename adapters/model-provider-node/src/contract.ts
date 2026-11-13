@@ -125,7 +125,7 @@ export type WireAssistantContent =
 
 export type WireStreamDelta =
   | { readonly type: "text"; readonly text: string }
-  | { readonly type: "reasoning"; readonly text: string }
+  | { readonly type: "reasoning"; readonly text: string; readonly summarized?: boolean }
   | { readonly type: "tool_call_start"; readonly id: string; readonly name: string }
   | { readonly type: "tool_call_arguments"; readonly json_delta: string };
 

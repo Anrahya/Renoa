@@ -129,7 +129,7 @@ test("a live callback that throws or rejects neither ends the connection nor los
         delivered.resolve();
         return undefined;
       }
-      if (activity.sequence === 0) {
+      if (activity.type === "text_delta" && activity.sequence === 0) {
         throw new Error("the draft failed to draw");
       }
       return Promise.reject(new Error("the draft failed to draw later"));

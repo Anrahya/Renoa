@@ -75,4 +75,18 @@ class TalksTest {
         val ability = Note("a", "optimus", NoteKind.Ability, "Turned on Maps", "It added this to its own abilities. You can turn it off.", evening)
         assertEquals("Turned on Maps", talks(roster, Feed("", listOf(ability))).talking.first { it.agent.id == "optimus" }.line)
     }
+
+    @Test
+    fun workingLineNormalizesTrailingEllipsisAndBlankDoing() {
+        val dotted = listOf(
+            agent("renoa", primary = true),
+            agent("kaisa", AgentState.Working, Glance(doing = "Reading Cargo.toml...")),
+        )
+        assertEquals("Reading Cargo.toml…", talks(dotted, Feed("", emptyList())).talking.single().line)
+        val blank = listOf(
+            agent("renoa", primary = true),
+            agent("kaisa", AgentState.Working, Glance(doing = "   ")),
+        )
+        assertEquals("Working on it…", talks(blank, Feed("", emptyList())).talking.single().line)
+    }
 }

@@ -14,7 +14,7 @@ mod turn_timing;
 pub use code_mode::{
     CodePluginCall, CodeStep, CodeStepOutput, CodeStepRequest, MAX_CODE_CALLS_PER_WAVE,
     MAX_CODE_PLUGIN_ARGUMENT_BYTES, MAX_CODE_PLUGIN_REFERENCE_BYTES, MAX_CODE_RESULT_BYTES,
-    MAX_CODE_SNAPSHOT_BYTES,
+    MAX_CODE_SNAPSHOT_BYTES, spec as code_mode_spec,
 };
 pub use compaction::{
     CompactingContextStrategy, CompactionCheckpoint, CompactionLimits, CompactionLimitsError,

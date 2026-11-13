@@ -4,9 +4,11 @@
 //! Complete events (tool calls and intermediate assistant messages) are
 //! recorded durably, and the end-of-turn projection records whatever is still
 //! missing. Visible text deltas are ephemeral: they are sent to the session
-//! loop as live frames and never stored. Reasoning never leaves the Host.
+//! loop as live frames and never stored. Raw reasoning never leaves the Host;
+//! summarized reasoning may emit a bounded one-line plain-text `activity`.
 
 use std::{
+    collections::HashSet,
     sync::{Arc, Mutex, PoisonError},
     time::Instant,
 };
@@ -20,7 +22,7 @@ use crate::{
     live_text::LiveText,
     node_log,
     node_store::{LiveLedger, NodeStoreError},
-    projection::project_tool_result,
+    projection::{project_tool_result, project_tool_start},
 };
 
 /// One piece of ephemeral live activity, on its way to the coordinator.
@@ -39,6 +41,9 @@ pub(crate) struct LiveEvents {
     ledger: Mutex<LiveLedger>,
     /// Held only to coalesce a delta, never across an await.
     text: Mutex<LiveText>,
+    /// Tool names configured for the session whose schemas use Renoa's
+    /// injected synthetic `activity` property.
+    synthetic_activity_tools: HashSet<String>,
     inner: Arc<dyn AgentEventSink>,
 }
 
@@ -47,6 +52,7 @@ impl LiveEvents {
         runtime: Arc<NodeRuntime>,
         task_id: TaskId,
         command_id: CommandId,
+        synthetic_activity_tools: HashSet<String>,
         inner: Arc<dyn AgentEventSink>,
     ) -> Result<Self, NodeStoreError> {
         let ledger = runtime.state.live_ledger(command_id).await?;
@@ -56,8 +62,13 @@ impl LiveEvents {
             command_id,
             ledger: Mutex::new(ledger),
             text: Mutex::new(LiveText::default()),
+            synthetic_activity_tools,
             inner,
         })
+    }
+
+    fn uses_synthetic_activity(&self, tool_name: &str) -> bool {
+        self.synthetic_activity_tools.contains(tool_name)
     }
 
     /// No receiver is a node with no coordinator session, which drops the
@@ -97,11 +108,12 @@ impl LiveEvents {
                     })
                     .collect()
             }
-            AgentEvent::ToolExecutionStart { call } => vec![ExecutionEventKind::ToolStarted {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            }],
+            AgentEvent::ToolExecutionStart { call } => {
+                vec![project_tool_start(
+                    call,
+                    self.uses_synthetic_activity(&call.name),
+                )]
+            }
             AgentEvent::ToolExecutionEnd { result, .. } => {
                 match project_tool_result(result.clone()) {
                     Ok(finished) => vec![finished],

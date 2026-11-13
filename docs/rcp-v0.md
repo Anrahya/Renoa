@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 18 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 19 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -158,12 +158,18 @@ These decisions define RCP and are not ordinary implementation details:
     terminal record is the outcome, `cancelled` when the stop reached the
     execution first, so a stop never reaches another command of the task.
 25. Live activity is ephemeral and advisory. A node may relay the visible text
-    of a running turn, and the coordinator forwards it only from the task's own
+    of a running turn and short, one-line plain-text `activity` status phrases
+    (at most 120 UTF-8 bytes, normalized and free of control or Unicode format
+    characters), and the coordinator forwards them only from the task's own
     node and only to surfaces attached to that task that asked for it. It is
     never stored, replayed, or counted in the journal, and a surface that
-    misses it loses nothing, because the same text is a complete durable
-    assistant message. Reasoning and tool-call arguments are never live
-    activity. A frame never waits for room: it travels on a buffer apart from
+    misses it loses nothing: visible text is also recorded in a complete
+    durable assistant message. Raw chain-of-thought reasoning and live
+    tool-call argument fragments never leave the node; only a normalized
+    one-line `activity` status distilled from provider-summarized reasoning
+    (never raw thought text) or an explicit tool-call status may be emitted,
+    amending the earlier ban on all reasoning-derived live text. A frame never
+    waits for room: it travels on a buffer apart from
     the journal's, and a connection whose queue is full drops it, so a surface
     that stops reading holds at most one queue of frames. Frames and journal
     records do share that queue, and a surface too slow to take the journal's
@@ -419,15 +425,21 @@ and the stop changes nothing.
 A surface may ask, when it attaches, to receive live activity. While a turn
 runs, its node relays the visible assistant text as `text_delta` frames,
 numbered from zero for each message and coalesced to at most one frame per
-50 milliseconds, and a `text_reset` when a message the surface was shown is
-abandoned. The 50 milliseconds are a rate, not a delay bound: text that arrives
-inside the interval is sent with the message's next fragment of any kind once
-the interval has passed, and a model that stalls leaves that text unsent until
-its next fragment or the durable message. Frames are not journal records. They
-carry no task sequence, are not replayed, and are dropped when no surface wants
-them, when a surface is too slow to take them, or when the node's link is down.
-The durable `assistant_message` that completes the same text supersedes them.
-Reasoning and tool-call arguments never leave the node.
+50 milliseconds, a `text_reset` when a message the surface was shown is
+abandoned, and `activity` frames carrying one normalized plain-text status line
+(at most 120 UTF-8 bytes, with Unicode format chars stripped and control chars or
+oversized values dropped) distilled from provider-summarized reasoning titles
+(never raw thought text) or tool status. The 50 milliseconds are a rate, not a
+delay bound: text that arrives inside the interval is sent with the message's
+next fragment of any kind once the interval has passed, and a model that stalls
+leaves that text unsent until its next fragment or the durable message. Frames
+are not journal records. They carry no task sequence, are not replayed, and are
+dropped when no surface wants them, when a surface is too slow to take them, or
+when the node's link is down. The durable `assistant_message` that completes the
+same text supersedes `text_delta` frames. Raw chain-of-thought reasoning and
+live tool-call argument fragments never leave the node (synthetic tool
+`activity` fields are recorded in durable `tool_started.activity` and stripped
+from `tool_started.arguments` before dispatch).
 
 The coordinator accepts a frame only from the task's own node and forwards it
 only to surfaces that attached with live activity requested. Frames use a
@@ -924,16 +936,18 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 18 JSON/WebSocket shape with binding-level conformance
+- a documented version 19 JSON/WebSocket shape with binding-level conformance
   assertions;
 - a command-scoped stop that is durable before it is answered, delivered to the
   node until acknowledged across reconnects and coordinator restart, accepted
   while the node is offline, and ends a running or redriven Host turn
   `cancelled` while the task's next command runs unaffected;
-- ephemeral live text from a running Host turn to surfaces that asked for it,
-  from the task's own node only, never stored, with reasoning kept on the node,
-  frames that never wait behind a surface that stopped reading, and a frame
-  reaching the surface before a record published after it;
+- ephemeral live text and one-line plain-text `activity` phrases from a
+  running Host turn to surfaces that asked for them, from the task's own node
+  only, never stored, with raw reasoning kept on the node (emitting only
+  bounded titles from provider-summarized reasoning), frames that never wait
+  behind a surface that stopped reading, and a frame reaching the surface before
+  a record published after it;
 - a per-task status in the directory derived from the latest command, and the
   task's last committed sequence beside it;
 - content-free push wakes: a device registers an opaque token, the transaction
@@ -1064,9 +1078,10 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
 4. The shared activity profile carries complete durable events. Visible text
-   is relayed only as ephemeral live activity: there is no live reasoning or
-   tool-argument stream and no general streaming UI protocol, and the Pi node
-   publishes no live activity.
+   and one-line normalized `activity` status phrases are relayed only as
+   ephemeral live activity (with optional `activity` also carried on durable
+   `tool_started`): there is no live raw-reasoning or tool-argument stream and
+   no general streaming UI protocol, and the Pi node publishes no live activity.
 5. A signed-in app approves a computer's sign-in by the code it shows.
    Approval for headless node enrollment, recovery, passkey administration,
    and credential rotation are designed boundaries but are not implemented.
@@ -1158,8 +1173,9 @@ RCP v0 is not proven until deterministic tests cover at least:
     skips frames without asking the surface to replay, a surface that stops
     reading holds at most one queue of frames so no record waits behind more
     than that, and a frame published before a record reaches the surface before
-    it. The reasoning of a streamed turn appears in neither a live frame nor the
-    journal.
+    it. Raw reasoning of a streamed turn appears in neither a live frame nor the
+    journal, while provider-summarized reasoning emits at most a bounded
+    one-line `activity` frame.
 19. The directory reports each task's status from its latest command exactly
     as the journal defines it, and reading the directory writes nothing.
 20. An app signs in with a passkey and a device key, and connects only with both

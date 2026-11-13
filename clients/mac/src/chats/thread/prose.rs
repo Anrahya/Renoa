@@ -161,7 +161,7 @@ pub(super) fn agent_line(index: usize, line: &Line, live: bool, palette: Palette
 }
 
 /// The agent at work: its face bobbing, and dots that come and go in turn.
-pub(super) fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
+pub(super) fn working(agent: &Agent, doing: Option<&str>, palette: Palette) -> impl IntoElement {
     let dots = (0..3_u8).map(move |dot| {
         let offset = f32::from(dot) * 0.18;
         div()
@@ -192,14 +192,20 @@ pub(super) fn working(agent: &Agent, palette: Palette) -> impl IntoElement {
         )
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .flex()
                 .items_center()
                 .gap(u(7.))
                 .text_size(u(13.))
                 .text_color(palette.secondary)
-                .child(format!("{} is working on it", agent.name))
-                .child(div().flex().gap(u(3.)).children(dots)),
+                .child(div().min_w_0().truncate().child(working_label(doing)))
+                .child(div().flex_none().flex().gap(u(3.)).children(dots)),
         )
+}
+
+fn working_label(doing: Option<&str>) -> String {
+    doing.unwrap_or("Thinking…").to_owned()
 }
 
 /// Escapes CommonMark syntax in owner messages so plain text renders literally
@@ -257,13 +263,22 @@ pub(super) fn row_top_padding(before: Option<Speaker>, current: Speaker) -> f32 
 
 #[cfg(test)]
 mod tests {
-    use super::escape_markdown;
+    use super::{escape_markdown, working_label};
 
     #[test]
     fn escape_markdown_preserves_plain_text_and_line_breaks() {
         assert_eq!(
             escape_markdown("1. save *this* `code`\nnext line\n\npara 2"),
             "1\\. save \\*this\\* \\`code\\`  \nnext line\n\npara 2"
+        );
+    }
+
+    #[test]
+    fn working_label_shows_doing_or_fallback() {
+        assert_eq!(working_label(None), "Thinking…");
+        assert_eq!(
+            working_label(Some("Checking workspace files")),
+            "Checking workspace files"
         );
     }
 }

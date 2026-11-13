@@ -22,6 +22,18 @@ pub struct ToolSpec {
     pub input_schema: Value,
 }
 
+impl ToolSpec {
+    /// Returns a copy of this specification with an optional `activity` field.
+    #[must_use]
+    pub fn with_activity_field(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            input_schema: crate::activity::inject_activity_field(&self.input_schema),
+        }
+    }
+}
+
 /// One model-requested tool invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {

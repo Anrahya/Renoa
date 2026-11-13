@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `18`.
+first implemented transport binding. The current binding version is `19`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -58,14 +58,18 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `18` with `version_mismatch` and ends the session.
+rejects any value other than `19` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `18` supersedes version `17` by adding text input's `attachments`. A
+Version `19` supersedes version `18` by adding optional `activity` to
+`tool_started` records and an `activity` variant to `live_activity`. A version
+`18` peer is rejected at authentication.
+
+Version `18` superseded version `17` by adding text input's `attachments`. A
 version `17` peer is rejected at authentication. A signed-in app's
 [`share_link`](#open-a-shared-file), answered by `share_link_issued`, is a
 compatible addition to version `18`: a peer that never sends it sees no
@@ -142,7 +146,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 18,
+  "version": 19,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -152,7 +156,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 18,
+  "version": 19,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -165,7 +169,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 18,
+  "version": 19,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -178,7 +182,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 18,
+  "version": 19,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -194,7 +198,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 18
+  "version": 19
 }
 ```
 
@@ -727,6 +731,18 @@ surface showed for the message in progress:
   "task_id": "00000000-0000-0000-0000-000000000010",
   "command_id": "00000000-0000-0000-0000-000000000020",
   "activity": { "type": "text_reset" }
+}
+```
+
+And this frame carries one normalized, single-line activity string derived from
+a provider that returns summarized reasoning:
+
+```json
+{
+  "type": "live_activity",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "activity": { "type": "activity", "text": "Inspecting Cargo.toml" }
 }
 ```
 
@@ -1351,5 +1367,5 @@ round.
 The binding defines no task-list pagination, live directory or target updates,
 application heartbeat or presence, steering, approval, artifact, binary-frame,
 compression, HTTP/SSE, webhook, or public TLS deployment contract, and no live
-activity beyond visible text. Adding any of those requires an operation contract first, then a
+activity beyond visible text and single-line activity summaries. Adding any of those requires an operation contract first, then a
 binding and tests. The transport `ping` above is not an application heartbeat.

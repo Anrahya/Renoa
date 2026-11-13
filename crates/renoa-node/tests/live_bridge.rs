@@ -54,7 +54,7 @@ async fn real_alpha_tool_turn_crosses_the_durable_rcp_bridge() {
             matches!(kind, ExecutionEventKind::TurnStarted)
         });
         assert_execution_event(&events, command_id, |kind| {
-            matches!(kind, ExecutionEventKind::ToolStarted { call_id, name, arguments }
+            matches!(kind, ExecutionEventKind::ToolStarted { call_id, name, arguments, .. }
                 if call_id == "read-proof"
                     && name == "read_file"
                     && arguments["path"] == "proof.txt")

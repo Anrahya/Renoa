@@ -4,16 +4,18 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use renoa_control::{Coordinator, PeerIdentity};
 use renoa_protocol::{
     CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
-    ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
+    ExecutionTerminal, LiveActivity, PrincipalId, SurfaceRef, TargetRef,
 };
-use renoa_rcp_client::{ClientError, Connection, Events};
+use renoa_rcp_client::{ClientError, Connection, Events, SurfaceEvent};
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredentials, DeviceId, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
-    TaskEvent, TaskEventKind, TaskId,
+    ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, JSON_WS_VERSION,
+    NodeId, ServerMessage, TaskEvent, TaskEventKind, TaskId,
 };
 use tempfile::TempDir;
 use tokio::{net::TcpListener, time::timeout};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, accept_async, connect_async, tungstenite::Message,
+};
 use tokio_util::sync::CancellationToken;
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -118,6 +120,179 @@ async fn a_closed_connection_ends_events_and_fails_later_requests() {
         Err(ClientError::Transport(_))
     ));
     system.stop().await;
+}
+
+#[tokio::test]
+async fn attach_live_delivers_live_activity_alongside_task_events() {
+    let system = System::start().await;
+    let mut node = system.node().await;
+    let (surface, mut events) = system.surface().await;
+    let task_id = system.open(&surface).await;
+
+    assert_eq!(surface.attach_live(task_id, None).await, Ok(None));
+    let command_id = CommandId::new();
+    surface
+        .submit(
+            task_id,
+            command_id,
+            CommandInput::from_text("Check status."),
+        )
+        .await
+        .expect("submit command");
+
+    let ServerMessage::Execute { command, .. } = receive(&mut node).await else {
+        panic!("node should receive execute");
+    };
+    assert_eq!(command.command_id, command_id);
+    send(
+        &mut node,
+        &ClientMessage::AcknowledgeExecution {
+            task_id,
+            command_id,
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut node).await,
+        ServerMessage::ExecutionAcknowledged { command_id }
+    );
+    send(
+        &mut node,
+        &ClientMessage::PublishLiveActivity {
+            task_id,
+            command_id,
+            activity: LiveActivity::Activity {
+                text: "Scanning workspace".to_owned(),
+            },
+        },
+    )
+    .await;
+    publish_events(
+        &mut node,
+        task_id,
+        command_id,
+        vec![
+            ExecutionEventKind::ExecutionStarted,
+            ExecutionEventKind::ToolStarted {
+                call_id: "c1".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: serde_json::json!({ "path": "Cargo.toml" }),
+                activity: Some("Reading cargo manifest".to_owned()),
+            },
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            },
+        ],
+    )
+    .await;
+
+    let mut saw_live_activity = false;
+    let mut saw_tool_activity = false;
+    let mut saw_terminal = false;
+    for _ in 0..10 {
+        let item = timeout(Duration::from_secs(5), events.next_event())
+            .await
+            .expect("surface event arrives")
+            .expect("stream open")
+            .expect("no client error");
+        match item {
+            SurfaceEvent::Live {
+                task_id: live_task,
+                command_id: live_cmd,
+                activity: LiveActivity::Activity { text },
+            } => {
+                assert_eq!(live_task, task_id);
+                assert_eq!(live_cmd, command_id);
+                assert_eq!(text, "Scanning workspace");
+                saw_live_activity = true;
+            }
+            SurfaceEvent::Live { .. } => {}
+            SurfaceEvent::Task(event) => match event.kind {
+                TaskEventKind::ExecutionEvent { event, .. } => match event.kind {
+                    ExecutionEventKind::ToolStarted { activity, .. } => {
+                        assert_eq!(activity.as_deref(), Some("Reading cargo manifest"));
+                        saw_tool_activity = true;
+                    }
+                    ExecutionEventKind::ExecutionTerminated { .. } => {
+                        saw_terminal = true;
+                        break;
+                    }
+                    _ => {}
+                },
+                TaskEventKind::CommandSubmitted { .. } => {}
+            },
+        }
+    }
+    assert!(saw_live_activity && saw_tool_activity && saw_terminal);
+    system.stop().await;
+}
+
+#[tokio::test]
+async fn unsolicited_live_activity_without_attach_live_fails_with_protocol_error() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake coordinator");
+    let url = format!("ws://{}/connect", listener.local_addr().expect("addr"));
+    let task_id = TaskId::new();
+    let command_id = CommandId::new();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept ws");
+        let mut ws = accept_async(stream).await.expect("ws handshake");
+        let _ = ws.next().await;
+        let auth = serde_json::to_string(&ServerMessage::Authenticated {
+            version: JSON_WS_VERSION,
+        })
+        .unwrap();
+        ws.send(Message::Text(auth.into())).await.unwrap();
+
+        let attach_raw = match ws.next().await.unwrap().unwrap() {
+            Message::Text(text) => text,
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        let ClientMessage::Attach {
+            request_id, live, ..
+        } = serde_json::from_str(&attach_raw).unwrap()
+        else {
+            panic!("expected attach");
+        };
+        assert!(!live);
+        let attached = serde_json::to_string(&ServerMessage::Attached {
+            request_id,
+            task_id,
+            through_sequence: None,
+        })
+        .unwrap();
+        ws.send(Message::Text(attached.into())).await.unwrap();
+
+        let live_msg = serde_json::to_string(&ServerMessage::LiveActivity {
+            task_id,
+            command_id,
+            activity: LiveActivity::Activity {
+                text: "Unsolicited".to_owned(),
+            },
+        })
+        .unwrap();
+        ws.send(Message::Text(live_msg.into())).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+
+    let credentials = DeviceCredentials {
+        device_id: DeviceId::new(),
+        credential: DeviceCredential::new("secret"),
+    };
+    let (connection, mut events) = renoa_rcp_client::connect(&url, credentials)
+        .await
+        .expect("connect surface");
+    assert_eq!(connection.attach(task_id, None).await, Ok(None));
+
+    let err = timeout(Duration::from_secs(5), events.next_event())
+        .await
+        .expect("protocol error arrives")
+        .expect("stream item")
+        .expect_err("unsolicited live activity must error");
+    assert!(matches!(err, ClientError::Protocol(_)), "{err:?}");
+    server.await.expect("fake coordinator finished");
 }
 
 struct System {
@@ -257,28 +432,43 @@ async fn execute(node: &mut Socket, task_id: TaskId, command_id: CommandId) {
         receive(node).await,
         ServerMessage::ExecutionAcknowledged { command_id }
     );
+    publish_events(
+        node,
+        task_id,
+        command_id,
+        vec![
+            ExecutionEventKind::ExecutionStarted,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            },
+        ],
+    )
+    .await;
+}
+
+async fn publish_events(
+    node: &mut Socket,
+    task_id: TaskId,
+    command_id: CommandId,
+    kinds: Vec<ExecutionEventKind>,
+) {
     let execution_id = ExecutionId::new();
     send(
         node,
         &ClientMessage::PublishExecutionEvents {
             task_id,
             command_id,
-            events: [
-                ExecutionEventKind::ExecutionStarted,
-                ExecutionEventKind::ExecutionTerminated {
-                    terminal: ExecutionTerminal::Completed,
-                },
-            ]
-            .into_iter()
-            .zip(0..)
-            .map(|(kind, sequence)| ExecutionEvent {
-                event_id: ExecutionEventId::new(),
-                execution_id,
-                sequence,
-                recorded_at_ms: 0,
-                kind,
-            })
-            .collect(),
+            events: kinds
+                .into_iter()
+                .zip(0..)
+                .map(|(kind, sequence)| ExecutionEvent {
+                    event_id: ExecutionEventId::new(),
+                    execution_id,
+                    sequence,
+                    recorded_at_ms: 0,
+                    kind,
+                })
+                .collect(),
         },
     )
     .await;

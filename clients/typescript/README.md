@@ -6,7 +6,7 @@ stable public SDK and not an agent harness.
 
 It currently owns the surface-side continuity mechanics:
 
-- version 18 device or one-use browser-ticket authentication and task discovery,
+- version 19 device or one-use browser-ticket authentication and task discovery,
   with each task's status and last committed sequence;
 - replay followed by live task events;
 - a caller-owned durable cursor committed only after the surface callback succeeds;
@@ -14,8 +14,9 @@ It currently owns the surface-side continuity mechanics:
 - exact command retry after an uncertain acknowledgement;
 - fully decoded baseline task activity with stable command-to-execution
   causation;
-- optional live activity: the visible text a running turn is producing, which
-  is advisory and never stored or replayed;
+- optional live activity: visible assistant text (`text_delta` / `text_reset`)
+  and normalized one-line `activity` status phrases (<= 120 UTF-8 bytes) from a
+  running turn, which are advisory and never stored or replayed;
 - stopping one command, safe to repeat after an uncertain reply;
 - typed RCP errors and observable disconnect reasons;
 - reattachment of completed in-memory subscriptions after a host-triggered
@@ -63,6 +64,8 @@ await client.attach(
   (commandId, activity) => {
     if (activity.type === "text_delta") {
       draft.append(commandId, activity.sequence, activity.text);
+    } else if (activity.type === "activity") {
+      status.show(commandId, activity.text);
     } else {
       draft.discard(commandId);
     }
@@ -78,7 +81,7 @@ frame the node published before an event before it applies that event; a frame
 published just after it may come first. A `text_delta` with `sequence` 0 starts
 the next message, so one that comes before the previous message's
 `assistant_message` begins a new draft that the record must not replace.
-Reasoning is never sent. The client does not wait for the callback and ignores
+Raw chain-of-thought reasoning never leaves the node. The client does not wait for the callback and ignores
 what it throws or rejects with, so a failure drawing a draft ends neither the
 connection nor the delivery of task events. An async surface that must keep
 drafts and task events in order queues both callbacks' work on one queue of its

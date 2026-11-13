@@ -42,6 +42,28 @@ const STREAMED_TURN: &str = r#" else if (prompt === "Stream an answer.") {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   content = [{ type: "text", text: "Hello world" }];
+} else if (prompt === "Stream summarized activity and tool." && toolResults.length === 0) {
+  const record = value => process.stdout.write(JSON.stringify(value) + "\n");
+  record({
+    event: "content_delta",
+    content_index: 0,
+    delta: { type: "reasoning", text: "**Inspecting proof file**\n\nReading the workspace file now.\n", summarized: true }
+  });
+  await new Promise(resolve => setTimeout(resolve, 80));
+  content = [{
+    type: "tool_call",
+    id: "read-proof-activity",
+    name: "read_file",
+    arguments: { path: "proof.txt", activity: "  Reading proof.txt  " }
+  }];
+  stopReason = "tool_use";
+} else if (prompt === "Stream summarized activity and tool.") {
+  process.stdout.write(JSON.stringify({
+    event: "content_delta",
+    content_index: 0,
+    delta: { type: "text", text: "Done." }
+  }) + "\n");
+  content = [{ type: "text", text: "Done." }];
 }"#;
 
 /// Creates a paused automation through the Host plugin, discovering its

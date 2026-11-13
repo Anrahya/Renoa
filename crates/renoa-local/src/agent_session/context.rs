@@ -2,7 +2,7 @@
 //! system prompt carries, the runtime it resolves with, and the trace of
 //! contributors a point left out.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use renoa_agent::AgentEventSink;
 use renoa_kernel::{CommandId, Runtime};
@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::AgentSession;
 use crate::{
     LocalHostError, LocalWorkspace, ModelChoice,
-    host::{RuntimeRequest, resolve_runtime},
+    host::{RuntimeRequest, resolve_runtime, synthetic_activity_tools_for_definition},
     plugins::host::{
         Skipped,
         session_context::{self, ContextRequest, SessionContext},
@@ -86,6 +86,23 @@ impl AgentSession {
         )
         .await?;
         Ok((runtime, context_skipped))
+    }
+
+    /// Returns the tool names configured for this session that receive Renoa's
+    /// synthetic `activity` property in their model-visible schemas.
+    ///
+    /// # Errors
+    ///
+    /// Returns workspace or agent-definition loading failures.
+    pub async fn synthetic_activity_tools(&self) -> Result<HashSet<String>, LocalHostError> {
+        let workspace = LocalWorkspace::open(&self.workspace)?;
+        let definition = self.definition().await?;
+        synthetic_activity_tools_for_definition(
+            &self.host,
+            &definition,
+            &workspace,
+            renoa_kernel::SessionId::from_uuid(self.id),
+        )
     }
 }
 

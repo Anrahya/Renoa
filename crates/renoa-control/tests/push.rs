@@ -1205,6 +1205,7 @@ async fn a_failed_run_wakes_the_phone_and_a_quiet_or_cancelled_run_does_not() {
                 call_id: "call-1".to_owned(),
                 name: "search".to_owned(),
                 arguments: json!({}),
+                activity: None,
             },
             ExecutionEventKind::ToolFinished {
                 call_id: "call-1".to_owned(),

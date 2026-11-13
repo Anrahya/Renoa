@@ -61,13 +61,14 @@ impl NodeRuntime {
                 "session_id": record.binding.session_id,
             }),
         );
-        let (session, content) = match self.prepare(&record, agent_id, request).await {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.finish_failed(command_id, error).await?;
-                return Ok(());
-            }
-        };
+        let (session, content, synthetic_tools) =
+            match self.prepare(&record, agent_id, request).await {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    self.finish_failed(command_id, error).await?;
+                    return Ok(());
+                }
+            };
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
         let setup = Arc::new(SetupLinks::open(
@@ -78,9 +79,24 @@ impl NodeRuntime {
             cancellation.clone(),
         ));
         let events = Arc::new(
-            LiveEvents::start(Arc::clone(&self), record.task_id, command_id, setup.clone()).await?,
+            LiveEvents::start(
+                Arc::clone(&self),
+                record.task_id,
+                command_id,
+                synthetic_tools.clone(),
+                setup.clone(),
+            )
+            .await?,
         );
-        let result = run_request(request, content, &record, &session, events, cancellation).await?;
+        let result = run_request(
+            request,
+            content,
+            &record,
+            &session,
+            Arc::clone(&events),
+            cancellation,
+        )
+        .await?;
         // A setup link that could not be delivered stopped the turn; its
         // reason is the command's outcome. The turn has settled (a tool runs
         // to its end even when cancelled), so every setup its calls saved is
@@ -96,12 +112,12 @@ impl NodeRuntime {
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
-                self.finish_session_error(command_id, &session, &error)
+                self.finish_session_error(command_id, &session, &synthetic_tools, &error)
                     .await?;
                 return Ok(());
             }
         };
-        let mut events = session_events(&session, command_id)?;
+        let mut events = session_events(&session, command_id, &synthetic_tools)?;
         match setup_failure {
             Some(error) => events.push(ExecutionEventKind::ExecutionTerminated {
                 terminal: ExecutionTerminal::Failed { error },
@@ -122,7 +138,7 @@ impl NodeRuntime {
         record: &ExecutionRecord,
         agent_id: AgentId,
         request: Request,
-    ) -> Result<(Arc<AgentSession>, Vec<ContentBlock>), String> {
+    ) -> Result<(Arc<AgentSession>, Vec<ContentBlock>, HashSet<String>), String> {
         let workspace = self
             .host
             .agent_workspace(agent_id)
@@ -137,6 +153,10 @@ impl NodeRuntime {
             )
             .await
             .map_err(|error| error.to_string())?;
+        let synthetic_tools = session
+            .synthetic_activity_tools()
+            .await
+            .map_err(|error| error.to_string())?;
         let content = match request {
             Request::Turn => turn_content(&self.host, &record.command, &workspace)
                 .await
@@ -145,16 +165,17 @@ impl NodeRuntime {
                 })?,
             Request::Compact => Vec::new(),
         };
-        Ok((session, content))
+        Ok((session, content, synthetic_tools))
     }
 
     async fn finish_session_error(
         &self,
         command_id: CommandId,
         session: &AgentSession,
+        synthetic_activity_tools: &HashSet<String>,
         error: &LocalHostError,
     ) -> Result<(), NodeError> {
-        let mut events = session_events(session, command_id)?;
+        let mut events = session_events(session, command_id, synthetic_activity_tools)?;
         events.push(ExecutionEventKind::ExecutionTerminated {
             terminal: ExecutionTerminal::Failed {
                 error: error.to_string(),
@@ -263,6 +284,7 @@ async fn run_request(
 fn session_events(
     session: &AgentSession,
     command_id: CommandId,
+    synthetic_activity_tools: &HashSet<String>,
 ) -> Result<Vec<ExecutionEventKind>, NodeError> {
     let history = session
         .history()
@@ -273,6 +295,7 @@ fn session_events(
             .into_iter()
             .filter(|entry| entry.command_id == kernel_command)
             .map(|entry| entry.message),
+        synthetic_activity_tools,
     )
 }
 

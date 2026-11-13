@@ -362,4 +362,62 @@ mod tests {
             Vec::new(),
         )
     }
+
+    #[test]
+    fn activity_schema_token_cost_is_measured_per_tool_and_on_full_turn() {
+        let (system_prompt, base_tools) = arcee_request_shape();
+        let with_activity: Vec<ToolSpec> = base_tools
+            .iter()
+            .map(ToolSpec::with_activity_field)
+            .collect();
+        let existing_props_tool = ToolSpec {
+            name: "read_file".to_owned(),
+            description: "Read a workspace file.".to_owned(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }),
+        };
+        let one_before = serde_json::to_vec(&existing_props_tool.input_schema)
+            .expect("json")
+            .len();
+        let one_after = serde_json::to_vec(&existing_props_tool.with_activity_field().input_schema)
+            .expect("json")
+            .len();
+        let single_tokens_before =
+            estimate_input_tokens(&request(Vec::new(), vec![existing_props_tool.clone()]));
+        let single_tokens_after = estimate_input_tokens(&request(
+            Vec::new(),
+            vec![existing_props_tool.with_activity_field()],
+        ));
+        let bytes_without: usize = base_tools
+            .iter()
+            .map(|t| serde_json::to_vec(&t.input_schema).expect("json").len())
+            .sum();
+        let bytes_with: usize = with_activity
+            .iter()
+            .map(|t| serde_json::to_vec(&t.input_schema).expect("json").len())
+            .sum();
+        let tokens_without = estimate_input_tokens(&ModelRequest {
+            system_prompt: system_prompt.clone(),
+            messages: vec![Message::User {
+                content: vec![ContentBlock::text("Check the repo")],
+            }],
+            tools: base_tools,
+        });
+        let tokens_with = estimate_input_tokens(&ModelRequest {
+            system_prompt,
+            messages: vec![Message::User {
+                content: vec![ContentBlock::text("Check the repo")],
+            }],
+            tools: with_activity,
+        });
+        let delta_bytes = bytes_with - bytes_without;
+        let delta_tokens = tokens_with - tokens_without;
+        assert!(one_after > one_before);
+        assert!(delta_bytes > 0);
+        assert!(delta_tokens > 0 && delta_tokens <= 19 * 45);
+        assert!(single_tokens_after > single_tokens_before);
+    }
 }

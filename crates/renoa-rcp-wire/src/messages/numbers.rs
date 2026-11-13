@@ -162,7 +162,7 @@ impl ServerMessage {
 fn live_activity_has_interoperable_numbers(activity: &LiveActivity) -> bool {
     match activity {
         LiveActivity::TextDelta { sequence, .. } => interoperable(*sequence),
-        LiveActivity::TextReset => true,
+        LiveActivity::TextReset | LiveActivity::Activity { .. } => true,
     }
 }
 

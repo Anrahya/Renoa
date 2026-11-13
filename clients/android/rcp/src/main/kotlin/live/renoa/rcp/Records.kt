@@ -99,6 +99,11 @@ sealed interface LiveActivity {
     @Serializable
     @SerialName("text_reset")
     data object TextReset : LiveActivity
+
+    /** One normalized single-line plain-text summary of what the agent is doing. */
+    @Serializable
+    @SerialName("activity")
+    data class Activity(val text: String) : LiveActivity
 }
 
 @Serializable
@@ -221,6 +226,7 @@ sealed interface ExecutionEventKind {
         @SerialName("call_id") val callId: String,
         val name: String,
         val arguments: JsonElement,
+        val activity: String? = null,
     ) : ExecutionEventKind
 
     @Serializable

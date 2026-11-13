@@ -14,8 +14,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v18_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 18);
+fn json_websocket_v19_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 19);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -28,7 +28,7 @@ fn json_websocket_v18_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 18,
+            "version": 19,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -196,7 +196,7 @@ fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_pr
 }
 
 #[test]
-fn json_websocket_v18_text_input_carries_at_most_ten_attachments() {
+fn json_websocket_v19_text_input_carries_at_most_ten_attachments() {
     let attachment = json!({
         "uploadId": "00000000-0000-0000-0000-000000000003",
         "name": "fridge.jpg",
@@ -1082,7 +1082,7 @@ fn the_binding_document_states_the_notice_bounds() {
 
 /// `share_link` and its answer, as `rcp-json-ws-v0.md` shows them.
 #[test]
-fn json_websocket_v18_encodes_share_links() {
+fn json_websocket_v19_encodes_share_links() {
     let share_id = Uuid::from_u128(0x92);
     let ask = ClientMessage::ShareLink {
         request_id: 47,
@@ -1111,5 +1111,68 @@ fn json_websocket_v18_encodes_share_links() {
     assert!(
         !format!("{issued:?}").contains("4f4f"),
         "a link's ticket is never printed"
+    );
+}
+
+#[test]
+fn json_websocket_v19_encodes_live_activity_and_tool_started_activity() {
+    use renoa_protocol::{ExecutionEventKind, LiveActivity};
+
+    let live = ServerMessage::LiveActivity {
+        task_id: TaskId::from_uuid(Uuid::from_u128(0x10)),
+        command_id: CommandId::from_uuid(Uuid::from_u128(0x20)),
+        activity: LiveActivity::Activity {
+            text: "Inspecting Cargo.toml".to_owned(),
+        },
+    };
+    let live_json = json!({
+        "type": "live_activity",
+        "task_id": "00000000-0000-0000-0000-000000000010",
+        "command_id": "00000000-0000-0000-0000-000000000020",
+        "activity": {
+            "type": "activity",
+            "text": "Inspecting Cargo.toml"
+        }
+    });
+    assert_eq!(serde_json::to_value(&live).expect("serialize"), live_json);
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(live_json).expect("deserialize"),
+        live
+    );
+
+    let legacy_tool_started: ExecutionEventKind = serde_json::from_value(json!({
+        "type": "tool_started",
+        "call_id": "c1",
+        "name": "read_file",
+        "arguments": {"path": "Cargo.toml"}
+    }))
+    .expect("legacy tool_started without activity must decode");
+    assert_eq!(
+        legacy_tool_started,
+        ExecutionEventKind::ToolStarted {
+            call_id: "c1".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: json!({"path": "Cargo.toml"}),
+            activity: None,
+        }
+    );
+    assert!(
+        serde_json::to_value(&legacy_tool_started)
+            .expect("serialize")
+            .get("activity")
+            .is_none()
+    );
+
+    let with_activity = ExecutionEventKind::ToolStarted {
+        call_id: "c2".to_owned(),
+        name: "read_file".to_owned(),
+        arguments: json!({"path": "Cargo.toml"}),
+        activity: Some("Reading Cargo.toml".to_owned()),
+    };
+    let with_activity_json = serde_json::to_value(&with_activity).expect("serialize");
+    assert_eq!(with_activity_json["activity"], json!("Reading Cargo.toml"));
+    assert_eq!(
+        serde_json::from_value::<ExecutionEventKind>(with_activity_json).expect("deserialize"),
+        with_activity
     );
 }

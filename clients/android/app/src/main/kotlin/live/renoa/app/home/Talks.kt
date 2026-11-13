@@ -67,4 +67,7 @@ private fun talk(agent: AgentSummary, feed: Feed, today: String?, partner: Agent
 
 /** What a working agent's line says: who it works with and what it is doing. */
 private fun working(doing: String?, partner: AgentSummary?): String =
-    listOfNotNull(partner?.let { "With ${it.name}" }, doing?.let { "$it…" }).joinToString(" · ").ifEmpty { "Working on it…" }
+    listOfNotNull(
+        partner?.let { "With ${it.name}" },
+        doing?.trim()?.trimEnd('.', '…')?.takeIf { it.isNotEmpty() }?.let { "$it…" },
+    ).joinToString(" · ").ifEmpty { "Working on it…" }

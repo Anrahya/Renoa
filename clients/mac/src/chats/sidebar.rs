@@ -10,11 +10,13 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, assets::IconName, div,
     ease_out_quint, prelude::FluentBuilder as _,
 };
+use renoa_rcp_wire::{TargetSummary, TaskId};
 
 use super::Chats;
 use crate::{
     chat::{Transcript, chat_task_id},
-    face::{self, Face, Mood},
+    face::{self, Face, Look, Mood, blink},
+    link::host_agent,
     stamp,
     theme::Palette,
 };
@@ -55,6 +57,9 @@ impl Chats {
             let task_id = chat_task_id(agent.node_id, agent.target.as_str());
             let transcript = self.transcripts.get(&task_id);
             let working = transcript.is_some_and(Transcript::working);
+            let doing = transcript
+                .and_then(|transcript| transcript.doing())
+                .map(str::to_owned);
             let at = transcript
                 .and_then(|transcript| transcript.lines().iter().rev().find_map(|line| line.at_ms))
                 .map(|at_ms| SharedString::from(stamp::short(at_ms, &now)));
@@ -140,7 +145,9 @@ impl Chats {
                                 .text_color(palette.secondary)
                                 .truncate()
                                 .child(if working {
-                                    SharedString::from("Working on it…")
+                                    doing
+                                        .map(SharedString::from)
+                                        .unwrap_or_else(|| SharedString::from("Working on it…"))
                                 } else {
                                     self.preview(task_id)
                                 }),
@@ -288,6 +295,54 @@ impl Chats {
             Animation::new(SLIDE).with_easing(ease_out_quint()),
             |button, t| button.opacity(t),
         )
+    }
+
+    /// What a chat's row says under its name: the last thing said, or
+    /// before anything is, what the agent is for.
+    pub(super) fn preview(&self, task_id: TaskId) -> SharedString {
+        self.transcripts
+            .get(&task_id)
+            .and_then(|transcript| transcript.lines().last())
+            .map(|line| line.text.clone().into())
+            .or_else(|| self.purposes.get(&task_id).cloned())
+            .unwrap_or_default()
+    }
+
+    /// Whether the agent of `task_id`'s chat has its eyes shut just now.
+    pub(super) fn blinking(&self, task_id: TaskId) -> bool {
+        blink::shut(task_id.as_uuid().as_u128(), self.blink_clock())
+    }
+
+    fn blink_clock(&self) -> u64 {
+        u64::try_from(self.opened.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// How long until any listed agent's eyes open or shut.
+    pub(super) fn next_blink(&self) -> Duration {
+        let seeds = self.agents.iter().map(|agent| {
+            chat_task_id(agent.node_id, agent.target.as_str())
+                .as_uuid()
+                .as_u128()
+        });
+        blink::next_change(seeds, self.blink_clock())
+    }
+
+    /// How the agent of `agent` looks, and whether it is the main agent: the
+    /// one the Host names, or while it names none that is listed, the first
+    /// listed, as on the phone (`mainAgent` in the Android app's `Badge.kt`).
+    pub(super) fn face(&self, agent: &TargetSummary) -> (Option<Look>, bool) {
+        let task_id = chat_task_id(agent.node_id, agent.target.as_str());
+        let named = |agent: &TargetSummary| {
+            host_agent(agent.target.as_str()).is_some_and(|id| Some(id) == self.main)
+        };
+        let main = self
+            .agents
+            .iter()
+            .find(|listed| named(listed))
+            .or_else(|| self.agents.first());
+        let primary =
+            main.is_some_and(|main| main.node_id == agent.node_id && main.target == agent.target);
+        (self.looks.get(&task_id).copied(), primary)
     }
 }
 

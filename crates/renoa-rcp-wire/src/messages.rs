@@ -13,7 +13,7 @@ use crate::{
     ShareLink, StopOutcome, TargetSummary, TaskEvent, TaskId, TaskSummary, WakeUrgency,
 };
 
-pub const JSON_WS_VERSION: u32 = 18;
+pub const JSON_WS_VERSION: u32 = 19;
 
 /// The binding's largest reassembled application message.
 pub const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;

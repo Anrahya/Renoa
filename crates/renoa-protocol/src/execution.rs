@@ -25,6 +25,8 @@ pub enum ExecutionEventKind {
         call_id: String,
         name: String,
         arguments: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activity: Option<String>,
     },
     ToolFinished {
         call_id: String,

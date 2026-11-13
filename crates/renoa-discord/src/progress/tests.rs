@@ -123,6 +123,7 @@ fn a_tool_record_is_named_by_the_plugin_tool_it_runs() {
                 arguments: serde_json::json!({
                     "reference": format!("mcp:exa:{}:web_search_exa", "a".repeat(64)),
                 }),
+                activity: None,
             },
         },
     };

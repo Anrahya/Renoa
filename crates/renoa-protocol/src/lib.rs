@@ -13,4 +13,4 @@ pub use command::{
 };
 pub use execution::{ExecutionEvent, ExecutionEventKind, ExecutionTerminal};
 pub use ids::{CommandId, ExecutionEventId, ExecutionId, PrincipalId};
-pub use live::LiveActivity;
+pub use live::{LiveActivity, MAX_ACTIVITY_BYTES, normalize_activity, strip_format_chars};

@@ -150,3 +150,60 @@ test("a dropped Vertex connection may have reached Google, so its outcome is unk
     directory.close();
   }
 });
+
+test("Vertex thought summaries emit reasoning deltas tagged summarized", async () => {
+  const directory = tempDir();
+  const server = await startFakeServer();
+  server.enqueue({
+    sse: [
+      `data: ${JSON.stringify({
+        candidates: [
+          {
+            content: {
+              role: "model",
+              parts: [
+                { text: "**Checking workspace**\n\nLooking around.", thought: true },
+                { text: "done" },
+              ],
+            },
+            finishReason: "STOP",
+          },
+        ],
+        usageMetadata: { promptTokenCount: 9, candidatesTokenCount: 4, totalTokenCount: 13 },
+        modelVersion: HYDROGEN,
+      })}`,
+    ],
+  });
+  createStore(directory.path, KEY, "google-vertex").close();
+  const spec = findCatalogModel("google-vertex", HYDROGEN)?.model;
+  assert.ok(spec);
+  const runtime = loadRuntime({
+    provider: "google-vertex",
+    modelId: HYDROGEN,
+    authStorePath: join(directory.path, "credentials.sqlite"),
+    modelSpec: { ...spec, baseUrl: `${server.origin}/v1/projects/renoa-test-project/locations/global` },
+    reasoningLevel: "medium",
+    allowLoopback: true,
+  });
+  const reasoning: Array<{ text: string; summarized: boolean | undefined }> = [];
+  try {
+    await streamModel({
+      runtime,
+      request: userRequest(),
+      maxOutputTokens: 128,
+      signal: new AbortController().signal,
+      emit: (record) => {
+        if (record.event === "content_delta" && record.delta.type === "reasoning") {
+          reasoning.push({ text: record.delta.text, summarized: record.delta.summarized });
+        }
+      },
+    });
+    assert.deepEqual(reasoning, [
+      { text: "**Checking workspace**\n\nLooking around.", summarized: true },
+    ]);
+  } finally {
+    runtime.close();
+    await server.close();
+    directory.close();
+  }
+});

@@ -411,6 +411,7 @@ async fn scripted_node(mut node: Socket, executions: Arc<Mutex<usize>>, tools: b
                     call_id: "search".to_owned(),
                     name: "plugin_search".to_owned(),
                     arguments: serde_json::json!({}),
+                    activity: None,
                 },
                 ExecutionEventKind::ToolFinished {
                     call_id: "search".to_owned(),
