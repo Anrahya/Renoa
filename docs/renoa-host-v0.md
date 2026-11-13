@@ -54,8 +54,9 @@ The operational document may carry a `purpose` (what the agent is for, in the
 words of whoever made it, the owner or a parent agent: 1 to 1,024 bytes, not
 blank, with no control character but newline; an app shows it where a browser
 shows the instructions) and an optional `job` (job rules layered after
-`<purpose>` without replacing the preset base `instructions`: 1 to 8,192 bytes,
-same plain-text rules). An agent without either key omits it, so its stored
+`<purpose>` without replacing the preset base `instructions`: 1 to `MAX_JOB_BYTES`
+bytes derived from `renoa.app.v7`'s post-compaction tail budget, same plain-text
+rules, and rejecting `</job` case-insensitively). An agent without either key omits it, so its stored
 creation request replays unchanged.
 
 Each turn composes the system prompt from the stored definition in this order:

@@ -105,9 +105,15 @@ impl LocalHost {
                     });
                 }
                 store::update_root(&transaction, &moved)?;
+                let source_plugins_off = current
+                    .preset_id
+                    .as_ref()
+                    .and_then(|id| presets::preset(id).ok())
+                    .map_or(&[][..], |source| source.host_plugins_off());
                 crate::plugins::host::state::apply_preset_defaults(
                     &transaction,
                     agent,
+                    source_plugins_off,
                     target_plugins_off,
                 )
                 .map_err(catalog_error)?;

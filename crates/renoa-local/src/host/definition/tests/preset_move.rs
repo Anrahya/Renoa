@@ -501,6 +501,90 @@ async fn moving_an_alpha_agent_to_app_enables_renoa_time() {
 }
 
 #[tokio::test]
+async fn moving_preserves_agent_plugin_choices() {
+    use crate::plugins::host::{HostPluginId, state};
+
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let app_agent = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), app(), "AppWithMemoryOff"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create app agent");
+    state::change(
+        &host.config.database,
+        app_agent.id,
+        HostPluginId::Memory,
+        false,
+        "turn-off-memory",
+    )
+    .expect("disable memory plugin");
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Memory)
+            .expect("memory off before move"),
+        "memory must start disabled"
+    );
+
+    let alpha_id = AgentPresetId::new(ALPHA_PRESET_ID).expect("alpha id");
+    let moved = host
+        .move_agent_to_preset(app_agent.id, alpha_id)
+        .await
+        .expect("move app to alpha");
+    assert!(moved.changed);
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Memory)
+            .expect("memory state after move to alpha"),
+        "agent choice disabling renoa.memory must survive move to another preset"
+    );
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Time)
+            .expect("time state after move to alpha"),
+        "target preset off-list still turns renoa.time off"
+    );
+
+    // Simulate an unknown/retired source preset on the moved agent, with an extra user-disabled
+    // plugin (`Skills`), then move back to `app`: target defaults apply without touching `Memory`
+    // or `Skills`, and retired-source `Time` stays as its row unless turned off by target.
+    state::change(
+        &host.config.database,
+        app_agent.id,
+        HostPluginId::Skills,
+        false,
+        "turn-off-skills",
+    )
+    .expect("disable skills plugin");
+    rusqlite::Connection::open(&host.config.database)
+        .expect("catalog")
+        .execute(
+            "UPDATE host_agents SET preset_id = 'renoa.coding.alpha.v2' WHERE agent_id = ?1",
+            rusqlite::params![app_agent.id.to_string()],
+        )
+        .expect("rewrite retired preset id");
+
+    let moved_back = host
+        .move_agent_to_preset(app_agent.id, app())
+        .await
+        .expect("move retired source back to app");
+    assert!(moved_back.changed);
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Memory)
+            .expect("memory stays off after retired-source move"),
+    );
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Skills)
+            .expect("skills stays off after retired-source move"),
+    );
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Time)
+            .expect("retired/unknown source does not re-enable previously off plugins"),
+    );
+}
+
+#[tokio::test]
 async fn moving_with_job_and_custom_instructions_refuses_without_loss() {
     let (directory, host) = fixture();
     let (creator, origin) = system("test");
