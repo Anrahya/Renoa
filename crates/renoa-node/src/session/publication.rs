@@ -5,14 +5,14 @@
 use std::collections::{HashMap, HashSet};
 
 use renoa_protocol::{CommandId, ExecutionEvent};
-use renoa_rcp_wire::{ClientMessage, MAX_APPLICATION_MESSAGE_BYTES, TaskId};
+use renoa_rcp_wire::{ClientMessage, TaskId};
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
 use super::{Socket, send_client};
 use crate::{
     bridge::{LIVE_FRAME_CAPACITY, NodeError, NodeRuntime},
     live::LiveFrame,
-    node_store::{ExecutionRecord, NodeStore},
+    node_store::{ExecutionRecord, NodeStore, fits_one_message},
 };
 
 pub(super) struct Publication {
@@ -161,12 +161,7 @@ pub(super) fn publication_batch(
     let mut batch = Vec::new();
     for event in events {
         batch.push(event);
-        let message = ClientMessage::PublishExecutionEvents {
-            task_id,
-            command_id,
-            events: batch.clone(),
-        };
-        if serde_json::to_vec(&message)?.len() > MAX_APPLICATION_MESSAGE_BYTES {
+        if !fits_one_message(task_id, command_id, &batch)? {
             let oversized = batch.pop().ok_or_else(|| {
                 NodeError::Protocol("publication batch lost its candidate event".to_owned())
             })?;

@@ -387,3 +387,67 @@ async fn forgetting_a_task_forgets_its_stops_and_only_its_stops() {
     assert!(!store.stop_requested(forgotten_command).await.expect("read"));
     assert!(store.stop_requested(kept_command).await.expect("read"));
 }
+
+#[tokio::test]
+async fn oversized_events_are_stored_to_fit_one_message_and_recorded_once() {
+    use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
+    use renoa_rcp_wire::MAX_APPLICATION_MESSAGE_BYTES;
+
+    let files = tempfile::tempdir().expect("temporary directory");
+    let store = NodeStore::open(files.path().join("node.sqlite")).expect("open node ledger");
+    let task_id = TaskId::from_uuid(Uuid::from_u128(3));
+    let command_id = store
+        .admit(task_id, command(10), proposal(100))
+        .await
+        .expect("admit the command")
+        .command
+        .command_id;
+    let image = ExecutionEventKind::ToolFinished {
+        call_id: "read".to_owned(),
+        output: format!(
+            "[{{\"type\":\"image\",\"data\":\"{}\"}}]",
+            "A".repeat(MAX_APPLICATION_MESSAGE_BYTES)
+        ),
+        is_error: false,
+    };
+    let long = ExecutionEventKind::AssistantMessage {
+        text: "\"".repeat(MAX_APPLICATION_MESSAGE_BYTES),
+    };
+
+    let mut ledger = store.live_ledger(command_id).await.expect("ledger");
+    for kind in [long.clone(), image.clone()] {
+        assert!(report(&store, &mut ledger, command_id, kind).await);
+    }
+    let mut redriven = store.live_ledger(command_id).await.expect("ledger");
+    assert!(
+        !report(&store, &mut redriven, command_id, image.clone()).await,
+        "a re-driven turn does not record the oversized output again"
+    );
+    store
+        .finish(
+            command_id,
+            vec![
+                long,
+                image,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Completed,
+                },
+            ],
+        )
+        .await
+        .expect("finish");
+
+    let events = store
+        .load_events_after(command_id, None)
+        .await
+        .expect("events");
+    assert_eq!(events.len(), 4, "started, message, output, terminal");
+    for event in &events {
+        assert!(
+            super::fits_one_message(task_id, command_id, std::slice::from_ref(event))
+                .expect("encode"),
+            "event {} fits one message",
+            event.sequence
+        );
+    }
+}

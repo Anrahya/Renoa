@@ -167,7 +167,7 @@ pub(super) fn insert_event(
         execution_id,
         sequence,
         recorded_at_ms: now_ms()?,
-        kind,
+        kind: super::frame::fit(kind)?,
     };
     transaction.execute(
         "INSERT INTO host_node_events (command_id, sequence, event_json)
