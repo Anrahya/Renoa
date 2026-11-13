@@ -1269,11 +1269,12 @@ with optional `instructions`, `tools`, `connections`, and `automation`. `agent-t
 applies one revision-checked capability edit. `rename-agent` applies one
 expected-current-name-checked display-name edit with an explicit operation id.
 `move-to-preset` gives an existing agent a preset's current instructions,
-behavior, and documents, and records that preset id on the live definition; the
-creation receipt keeps the definition the agent was created with. When the
-agent's current `instructions` differ from its current or retired preset's seed (or it has
-no recognized current preset) and `job` is not yet set, those `instructions`
-move into `job` before applying the target seed. It keeps the
+behavior, documents, and built-in plugin defaults, and records that preset id
+on the live definition; the creation receipt keeps the definition the agent was
+created with. When the agent's current `instructions` differ from every shipped
+preset seed and `job` is not yet set, those `instructions` move into `job`
+before applying the target seed; if `job` is already set alongside custom
+`instructions`, the move refuses without changing anything. It keeps the
 agent's identity, name, purpose, existing job, tools, connections, model, sessions, and
 history, publishes the preset's default `SOUL.md` only when the agent has none,
 and never replaces an existing one. It refuses to run as anyone but the owner

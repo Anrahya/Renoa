@@ -105,6 +105,23 @@ pub(crate) fn turn_off(
     .map(drop)
 }
 
+/// Applies a preset's built-in plugin defaults: any plugin not listed in
+/// `host_plugins_off` reverts to default enabled, and listed ones turn off.
+pub(crate) fn apply_preset_defaults(
+    tx: &rusqlite::Transaction<'_>,
+    agent: AgentId,
+    host_plugins_off: &[HostPluginId],
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "DELETE FROM host_agent_builtin_plugins WHERE agent_id = ?1",
+        params![agent.to_string()],
+    )?;
+    for plugin in host_plugins_off {
+        turn_off(tx, agent, *plugin)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn change(
     path: &Path,
     agent: AgentId,

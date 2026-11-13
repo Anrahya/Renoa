@@ -28,8 +28,8 @@ pub(crate) const APP_PRESET_ID: &str = "renoa.app.v7";
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
 const ARCEE_SOUL: &str = include_str!("../prompts/arcee-v1/SOUL.md");
-const APP_INSTRUCTIONS: &str = include_str!("../prompts/app-v1/system.md");
-const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
+pub(crate) const APP_INSTRUCTIONS: &str = include_str!("../prompts/app-v1/system.md");
+pub(crate) const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
 
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
@@ -38,7 +38,7 @@ const ARCEE_COMPACTION_TARGET: u64 = 40_000;
 // summary and the newest messages within 40,000. A model whose dispatch limit
 // is lower compacts at that limit (see `runtime::compaction_settings`).
 const APP_COMPACTION_TRIGGER: u64 = 400_000;
-const APP_COMPACTION_TARGET: u64 = 40_000;
+pub(crate) const APP_COMPACTION_TARGET: u64 = 40_000;
 
 const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::ReadFile,
@@ -240,94 +240,42 @@ pub(crate) fn preset(id: &AgentPresetId) -> Result<&'static AgentPreset, AgentDe
         })
 }
 
-/// SHA-256 digests of `instructions` shipped with retired preset ids so
-/// `move_agent_to_preset` does not mistake an unmodified retired preset base for
-/// custom job rules.
-const RETIRED_SEED_INSTRUCTION_DIGESTS: &[(&str, &str)] = &[
-    (
-        "renoa.app.v1",
-        "49477e4b21977d03354ef003e65920649bb4237919d2f4ead4205990adeea7b3",
-    ),
-    (
-        "renoa.app.v1",
-        "4493f36d0aa84775a12ad52dd86d765903485f816dccdb16f0a64c5babd63e80",
-    ),
-    (
-        "renoa.app.v1",
-        "ebf93c935ba357aff3626ce2078e83601b3e97f96bbd94153d6c8dcc6039c554",
-    ),
-    (
-        "renoa.app.v2",
-        "f2cf6e459d31702c367748735c42178f0d856ffcbf507a49347a2db4bf56e950",
-    ),
-    (
-        "renoa.app.v3",
-        "8af0eb9324f528a8976acf82216d120282f13783d40b2b075f3893ff03bd53cb",
-    ),
-    (
-        "renoa.app.v4",
-        "8af0eb9324f528a8976acf82216d120282f13783d40b2b075f3893ff03bd53cb",
-    ),
-    (
-        "renoa.app.v5",
-        "a181a4a31001f7a93a486ac91721970eed18df245cc767cebe37bd9bc3db3be6",
-    ),
-    (
-        "renoa.app.v5",
-        "c66e52eb8a09c7b67ce904edb591ef3aed2300eaed8cb48635e9976e004a910c",
-    ),
-    (
-        "renoa.app.v6",
-        "c66e52eb8a09c7b67ce904edb591ef3aed2300eaed8cb48635e9976e004a910c",
-    ),
-    (
-        "renoa.coding.alpha.v1",
-        "6dffe8edd7c94fcf6fb7bcda351714d671badda5533495f80251b4c68edb3194",
-    ),
-    (
-        "renoa.coding.alpha.v2",
-        "6dffe8edd7c94fcf6fb7bcda351714d671badda5533495f80251b4c68edb3194",
-    ),
-    (
-        "renoa.personal.arcee.v1",
-        "fdd6add5d1f2f3a291eb4fd63a35254550fa2c2b8c5b1a5b3a6f691f24e70b72",
-    ),
-    (
-        "renoa.personal.arcee.v1",
-        "b7205eac0c49c059e5344b8c926d243f6485b74f4d12d3a25bcb5c33bff8e3fe",
-    ),
-    (
-        "renoa.personal.arcee.v2",
-        "b7205eac0c49c059e5344b8c926d243f6485b74f4d12d3a25bcb5c33bff8e3fe",
-    ),
-    (
-        "renoa.personal.arcee.v3",
-        "b7205eac0c49c059e5344b8c926d243f6485b74f4d12d3a25bcb5c33bff8e3fe",
-    ),
-    (
-        "renoa.personal.arcee.v3",
-        "c5c67ca799cb3d199459f95f87563e4a1fb06ee22dee664854203bdd854f608f",
-    ),
-    (
-        "renoa.personal.arcee.v3",
-        "48462133177f6d68525cb7ba700cc3cfb6b0ffdcf87f9773c2040c2da98a0a58",
-    ),
-    (
-        "renoa.personal.arcee.v4",
-        "fdff6b6416043ffca093355e5a9c8a20fb73d19954891f2034bf281b70f2c983",
-    ),
+/// Append-only SHA-256 digests of every instruction string ever shipped with a
+/// preset (`alpha`, `arcee`, `general`, `app`). Matched by digest rather than
+/// preset id, and a test ensures every active preset's instructions stay listed
+/// here so changing a seed without recording it fails immediately.
+const SHIPPED_SEED_INSTRUCTION_DIGESTS: &[&str] = &[
+    // renoa.app.v1
+    "49477e4b21977d03354ef003e65920649bb4237919d2f4ead4205990adeea7b3",
+    "4493f36d0aa84775a12ad52dd86d765903485f816dccdb16f0a64c5babd63e80",
+    "ebf93c935ba357aff3626ce2078e83601b3e97f96bbd94153d6c8dcc6039c554",
+    // renoa.app.v2
+    "f2cf6e459d31702c367748735c42178f0d856ffcbf507a49347a2db4bf56e950",
+    // renoa.app.v3 / v4
+    "8af0eb9324f528a8976acf82216d120282f13783d40b2b075f3893ff03bd53cb",
+    // renoa.app.v5
+    "a181a4a31001f7a93a486ac91721970eed18df245cc767cebe37bd9bc3db3be6",
+    // renoa.app.v5 / v6 / v7
+    "c66e52eb8a09c7b67ce904edb591ef3aed2300eaed8cb48635e9976e004a910c",
+    // renoa.coding.alpha.v1 / v2 / v3
+    "6dffe8edd7c94fcf6fb7bcda351714d671badda5533495f80251b4c68edb3194",
+    // renoa.general.v1
+    "55afe297f8f3a3c970d10ef4e66c0f7055978f530a6e89cc21082b560e443cb3",
+    // renoa.personal.arcee early / v1..v5
+    "ca712ba95fa0cb4c6401ceaa76e43f6f9e40c0884c9721240c13ac6b561ff4f1",
+    "df6219cd051d000b131d3c6b1db4f7fd89d9474ff9a6f25cf6867f1ebc7c93b1",
+    "fdd6add5d1f2f3a291eb4fd63a35254550fa2c2b8c5b1a5b3a6f691f24e70b72",
+    "b7205eac0c49c059e5344b8c926d243f6485b74f4d12d3a25bcb5c33bff8e3fe",
+    "c5c67ca799cb3d199459f95f87563e4a1fb06ee22dee664854203bdd854f608f",
+    "48462133177f6d68525cb7ba700cc3cfb6b0ffdcf87f9773c2040c2da98a0a58",
+    "fdff6b6416043ffca093355e5a9c8a20fb73d19954891f2034bf281b70f2c983",
+    "eec297928269f8d79f6eb7a8e613758499a0e06944609a0b9b2c8bd639c19976",
 ];
 
-/// Returns `true` when `instructions` matches a known stock seed for `id`
-/// (either an active preset or a retired historical preset).
-pub(crate) fn is_seed_instructions(id: &AgentPresetId, instructions: &str) -> bool {
-    if let Ok(preset) = preset(id) {
-        return preset.instructions == instructions;
-    }
+/// Returns `true` when `instructions` matches any shipped preset seed by digest.
+pub(crate) fn is_seed_instructions(instructions: &str) -> bool {
     let digest = sha256_hex(instructions.as_bytes());
-    RETIRED_SEED_INSTRUCTION_DIGESTS
-        .iter()
-        .any(|(retired_id, known)| *retired_id == id.as_str() && *known == digest)
+    SHIPPED_SEED_INSTRUCTION_DIGESTS.contains(&digest.as_str())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

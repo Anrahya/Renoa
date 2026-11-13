@@ -1,6 +1,8 @@
+use std::collections::BTreeSet;
+
 use super::{
     ALPHA_PRESET_ID, APP_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, PRESETS,
-    is_seed_instructions, preset, seeds, sha256_hex,
+    SHIPPED_SEED_INSTRUCTION_DIGESTS, is_seed_instructions, preset, seeds, sha256_hex,
 };
 use crate::{AgentDefinitionError, AgentPresetId};
 
@@ -160,21 +162,37 @@ fn the_general_template_has_no_native_tools_or_documents() {
 }
 
 #[test]
+fn every_active_preset_seed_is_in_shipped_digests_without_duplicates() {
+    let unique: BTreeSet<&str> = SHIPPED_SEED_INSTRUCTION_DIGESTS.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        SHIPPED_SEED_INSTRUCTION_DIGESTS.len(),
+        "duplicate digest in SHIPPED_SEED_INSTRUCTION_DIGESTS"
+    );
+    for entry in super::catalog() {
+        let digest = sha256_hex(entry.seed().instructions.as_bytes());
+        assert!(
+            unique.contains(digest.as_str()),
+            "preset {} seed digest {digest} is missing from SHIPPED_SEED_INSTRUCTION_DIGESTS",
+            entry.id()
+        );
+        assert!(is_seed_instructions(entry.seed().instructions));
+    }
+}
+
+#[test]
 fn seed_recognition_distinguishes_active_and_retired_seeds_from_custom_text() {
-    let current_app = AgentPresetId::new(APP_PRESET_ID).expect("preset id");
-    let current_seed = preset(&current_app).expect("preset").seed().instructions;
-    assert!(is_seed_instructions(&current_app, current_seed));
-    assert!(!is_seed_instructions(&current_app, "Custom job text."));
+    let current_app = preset(&AgentPresetId::new(APP_PRESET_ID).expect("preset id"))
+        .expect("preset")
+        .seed()
+        .instructions;
+    assert!(is_seed_instructions(current_app));
+    assert!(!is_seed_instructions("Custom job text."));
 
-    let retired_app = AgentPresetId::new("renoa.app.v6").expect("retired id");
-    assert!(is_seed_instructions(&retired_app, current_seed));
-    assert!(!is_seed_instructions(&retired_app, "Custom v6 text."));
-
-    let retired_alpha = AgentPresetId::new("renoa.coding.alpha.v2").expect("retired id");
     let current_alpha = preset(&AgentPresetId::new(ALPHA_PRESET_ID).expect("preset id"))
         .expect("preset")
         .seed()
         .instructions;
-    assert!(is_seed_instructions(&retired_alpha, current_alpha));
-    assert!(!is_seed_instructions(&retired_alpha, "Custom alpha text."));
+    assert!(is_seed_instructions(current_alpha));
+    assert!(!is_seed_instructions("Custom alpha text."));
 }

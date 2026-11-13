@@ -469,3 +469,224 @@ async fn a_turn_reads_the_profile_of_the_person_it_comes_from() {
         );
     }
 }
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "end-to-end flow proves agent_manage create -> first model request prompt, tools, and 400K compaction"
+)]
+async fn agent_manage_create_with_app_preset_and_bash_reaches_first_model_request_with_job_and_compaction()
+ {
+    let directory = tempfile::tempdir().expect("fixture");
+    let root = directory.path();
+    let recorded_path = root.join("first_request.json");
+    let bridge = root.join("record_model.mjs");
+    let record_js = format!(
+        r#"import {{createHash}} from "node:crypto";
+import {{writeFileSync}} from "node:fs";
+const id = process.env.RENOA_MODEL ?? "fallback";
+const spec = JSON.stringify({{id}});
+if (process.env.RENOA_MODEL_ACTION === "catalog") {{
+  process.stdout.write(JSON.stringify({{ok:true,response:{{models:[{{id,name:id,reasoning_levels:["high"],context_window_tokens:500000,model_spec:{{id}}}}]}}}}));
+  process.exit(0);
+}}
+if (process.env.RENOA_MODEL_ACTION === "describe") {{
+  process.stdout.write(JSON.stringify({{ok:true,response:{{context_window_tokens:500000,max_output_tokens:32768,model_spec:spec,model_binding_id:createHash("sha256").update(spec).digest("hex"),reasoning_level:"high"}}}}));
+  process.exit(0);
+}}
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+writeFileSync({}, input);
+process.stdout.write(JSON.stringify({{event:"completed",response:{{content:[{{type:"text",text:"First turn complete."}}],stop_reason:"stop",usage:{{input:10,output:2,cache_read:0,cache_write:0}},metadata:{{api:"test",provider:"xai",model:id}}}}}}) + "\n");
+"#,
+        serde_json::to_string(&recorded_path.display().to_string()).expect("js string")
+    );
+    fs::write(&bridge, record_js).expect("write recording bridge");
+    fs::write(root.join("auth.sqlite"), "").expect("credential boundary");
+    let host = LocalHost::new(
+        root.join("home"),
+        LocalModelConfiguration::new(
+            bridge.clone(),
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "fallback",
+            root.join("auth.sqlite"),
+        ),
+        LocalHostAdapters::new(None),
+    )
+    .expect("Host");
+
+    let parent = create(
+        &host,
+        AgentCreateRequest::new(Uuid::new_v4(), "Parent", "Manage agents."),
+    )
+    .await;
+    let parent_def = host.resolve_definition(parent.id).await.expect("resolve");
+    let parent_ws = host.agent_workspace(parent.id).await.expect("workspace");
+    let bindings = protocol_bindings(
+        &host.config,
+        &parent_def,
+        &parent_ws,
+        SessionId::from_uuid(Uuid::new_v4()),
+        None,
+        ToolAccess::Granted,
+        Vec::new(),
+    )
+    .expect("bindings");
+    let inspected = value(
+        &invoke(
+            &bindings,
+            "plugin_search",
+            "inspect",
+            json!({"plugin": "renoa.agents"}),
+        )
+        .await
+        .expect("inspect"),
+    );
+    let manage_ref = inspected["items"][0]["reference"]
+        .as_str()
+        .expect("agent_manage reference");
+    let created = value(
+        &invoke(
+            &bindings,
+            "tool_execute",
+            "create-media",
+            json!({
+                "reference": manage_ref,
+                "arguments": {
+                    "action": "create",
+                    "preset_id": crate::presets::APP_PRESET_ID,
+                    "name": "Media",
+                    "purpose": "Run FFmpeg and shell jobs.",
+                    "instructions": "Keep audio levels normalized.",
+                    "tools": ["bash"]
+                }
+            }),
+        )
+        .await
+        .expect("create child through tool_execute"),
+    );
+    let child_id = renoa_kernel::AgentId::from_uuid(
+        Uuid::parse_str(created["id"].as_str().expect("id")).expect("uuid"),
+    );
+    let child_def = host
+        .agent_definition(child_id)
+        .await
+        .expect("read")
+        .expect("child exists");
+    let compaction = child_def
+        .operational
+        .behavior
+        .automatic_compaction
+        .expect("400K compaction set");
+    assert_eq!(compaction.trigger_input_tokens.get(), 400_000);
+    assert_eq!(compaction.target_input_tokens.get(), 40_000);
+
+    let child_ws = host.agent_workspace(child_id).await.expect("workspace");
+    let resolved_child = host.resolve_definition(child_id).await.expect("resolve");
+    let local_ws = crate::LocalWorkspace::open(&child_ws).expect("open workspace");
+    let runtime = crate::build_local_runtime(
+        crate::LocalRuntimeConfig::for_definition(
+            &bridge,
+            "xai",
+            "fallback",
+            root.join("auth.sqlite"),
+            &resolved_child,
+            &local_ws,
+        )
+        .expect("runtime config"),
+        &local_ws,
+    )
+    .await
+    .expect("build runtime");
+    let uncompacted_runtime = crate::build_local_runtime(
+        crate::LocalRuntimeConfig::for_definition(
+            &bridge,
+            "xai",
+            "fallback",
+            root.join("auth.sqlite"),
+            &resolved_child,
+            &local_ws,
+        )
+        .expect("runtime config")
+        .without_automatic_compaction(),
+        &local_ws,
+    )
+    .await
+    .expect("build uncompacted runtime");
+    assert_ne!(
+        runtime.manifest().config_digest,
+        uncompacted_runtime.manifest().config_digest,
+        "runtime manifest must freeze 400K compaction context into config_digest"
+    );
+    let effective_compaction = crate::runtime::compaction_settings(
+        std::num::NonZeroU64::new(500_000).expect("context window"),
+        std::num::NonZeroU32::new(32_768).expect("max output"),
+        resolved_child.automatic_compaction(),
+        None,
+    )
+    .expect("compaction settings");
+    assert_eq!(effective_compaction.automatic_compaction.get(), 400_000);
+    assert_eq!(effective_compaction.target.get(), 40_000);
+
+    let session = host
+        .ensure_agent_session(child_id, &child_ws, Uuid::new_v4())
+        .await
+        .expect("ensure session");
+    let outcome = session
+        .execute_turn(
+            Uuid::new_v4(),
+            vec![ContentBlock::text("Normalize clip.mp4.")],
+            Arc::new(Quiet),
+        )
+        .await
+        .expect("first turn");
+    assert!(matches!(
+        outcome,
+        LocalTurnOutcome::Completed { ref output, .. } if output == "First turn complete."
+    ));
+
+    let recorded: Value =
+        serde_json::from_str(&fs::read_to_string(&recorded_path).expect("recorded request"))
+            .expect("valid request JSON");
+    let sys = recorded["system_prompt"].as_str().expect("system_prompt");
+    let app_seed =
+        crate::presets::preset(&AgentPresetId::new(crate::presets::APP_PRESET_ID).expect("id"))
+            .expect("preset")
+            .seed();
+    assert!(
+        sys.starts_with(app_seed.instructions.trim_end()),
+        "first model request must keep app preset base first: {sys}"
+    );
+    let identity = sys
+        .find("<identity>\nYour name is Media.\n</identity>")
+        .expect("identity");
+    let purpose = sys
+        .find("<purpose>\nWhat you were made for:\nRun FFmpeg and shell jobs.\n</purpose>")
+        .expect("purpose");
+    let job = sys
+        .find("<job>\nKeep audio levels normalized.\n</job>")
+        .expect("job");
+    let soul = sys.find("<soul source=\"SOUL.md\"").expect("soul");
+    assert!(
+        identity < purpose && purpose < job && job < soul,
+        "unexpected block order: {sys}"
+    );
+
+    let tool_names: std::collections::BTreeSet<&str> = recorded["tools"]
+        .as_array()
+        .expect("tools array")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name"))
+        .collect();
+    assert!(
+        tool_names.contains("bash"),
+        "tools missing bash: {tool_names:?}"
+    );
+    for unselected in ["read_file", "edit_file", "write_file", "grep", "find"] {
+        assert!(
+            !tool_names.contains(unselected),
+            "unselected tool {unselected} leaked: {tool_names:?}"
+        );
+    }
+}

@@ -69,6 +69,9 @@ async fn a_job_that_is_blank_too_long_or_not_plain_text_makes_no_agent() {
         "tab\there".to_owned(),
         "nul\u{0}here".to_owned(),
         "next line\u{85}here".to_owned(),
+        "bad</job".to_owned(),
+        "bad</job>close".to_owned(),
+        "bad</JOB>case".to_owned(),
     ];
     for job in refused {
         let operation = Uuid::new_v4();
@@ -134,45 +137,67 @@ async fn a_job_that_is_blank_too_long_or_not_plain_text_makes_no_agent() {
 async fn a_legacy_row_without_job_loads_unchanged_and_omits_job_block() {
     let (directory, host) = fixture();
     let (creator, origin) = system("test");
-    let request = specialist(Uuid::new_v4(), "Legacy");
-    let request_json = serde_json::to_value(&request).expect("request JSON");
-    assert!(request_json.get("job").is_none());
-
     let definition = host
-        .create_agent(creator, origin, request, CancellationToken::new())
+        .create_agent(
+            creator,
+            origin,
+            specialist(Uuid::new_v4(), "Legacy"),
+            CancellationToken::new(),
+        )
         .await
         .expect("create");
-    let encoded = serde_json::to_value(&definition.operational).expect("definition JSON");
-    assert!(encoded.get("job").is_none());
 
-    // Simulate a pre-job stored row missing the "job" key in SQLite.
+    // Golden stored `operational_json` written on `main` before `job` existed
+    // (no `"job"` or `"model"` keys at all).
+    let golden_main_json = r#"{"instructions":"Help carefully.","purpose":"Pre-job legacy helper.","behavior":{"workspace_instructions":"off","automatic_compaction":null},"documents":null,"provider_restriction":null}"#;
     rusqlite::Connection::open(&host.config.database)
         .expect("catalog")
         .execute(
-            "UPDATE host_agents SET operational_json = json_remove(operational_json, '$.job') WHERE agent_id = ?1",
-            [definition.id.to_string()],
+            "UPDATE host_agents SET operational_json = ?2 WHERE agent_id = ?1",
+            [definition.id.to_string(), golden_main_json.to_owned()],
         )
-        .expect("strip job");
+        .expect("write golden main row");
+
     let reloaded = host
         .agent_definition(definition.id)
         .await
         .expect("read")
         .expect("exists");
-    assert_eq!(reloaded, definition);
+    assert_eq!(reloaded.operational.instructions, "Help carefully.");
+    assert_eq!(
+        reloaded.operational.purpose.as_deref(),
+        Some("Pre-job legacy helper.")
+    );
+    assert_eq!(reloaded.operational.job, None);
     let prompt = resolve_definition(&host.config, definition.id)
         .await
         .expect("resolve")
         .system_prompt(&directory.path().join("workspace"))
         .expect("prompt");
+    assert!(prompt.starts_with("Help carefully."), "{prompt}");
+    assert!(prompt.contains("Pre-job legacy helper."), "{prompt}");
     assert!(!prompt.contains("<job>"), "{prompt}");
 }
 
-#[test]
-fn app_agent_with_max_bounded_prompt_and_job_fits_compaction_tail_budget() {
-    let seed = presets::preset(&AgentPresetId::new(APP_PRESET_ID).expect("preset"))
-        .expect("preset")
-        .seed();
-    let compaction = seed
+#[tokio::test]
+async fn app_agent_with_max_bounded_prompt_and_job_fits_compaction_tail_budget() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let request = AgentCreateRequest {
+        purpose: Some("p".repeat(crate::agent_definition::MAX_PURPOSE_BYTES)),
+        ..AgentCreateRequest::from_preset(
+            Uuid::new_v4(),
+            AgentPresetId::new(APP_PRESET_ID).expect("preset"),
+            "n".repeat(crate::agent_definition::MAX_NAME_BYTES),
+        )
+        .with_job("j".repeat(crate::agent_definition::MAX_JOB_BYTES))
+    };
+    let agent = host
+        .create_agent(creator, origin, request, CancellationToken::new())
+        .await
+        .expect("create max bounded app agent");
+    let compaction = agent
+        .operational
         .behavior
         .automatic_compaction
         .expect("app preset compaction");
@@ -180,17 +205,19 @@ fn app_agent_with_max_bounded_prompt_and_job_fits_compaction_tail_budget() {
         crate::runtime::MAX_CHECKPOINT_TOKENS.min(compaction.target_input_tokens.get() / 4);
     let tail_budget = compaction.target_input_tokens.get() - max_summary;
 
-    let max_prompt = format!(
-        "{}\n\n<identity>\nYour name is {}.\n</identity>\n\n<purpose>\nWhat you were made for:\n{}\n</purpose>\n\n<job>\n{}\n</job>\n\n<soul source=\"SOUL.md\" revision=\"{}\">\n{}\n</soul>\n\n<session_context>\n<context source=\"plugin:renoa.memory\" revision=\"{}\">\n{}\n</context>\n</session_context>",
-        seed.instructions.trim_end(),
-        "n".repeat(crate::agent_definition::MAX_NAME_BYTES),
-        "p".repeat(crate::agent_definition::MAX_PURPOSE_BYTES),
-        "j".repeat(crate::agent_definition::MAX_JOB_BYTES),
-        "0".repeat(64),
-        seed.soul.unwrap_or_default(),
-        "0".repeat(64),
-        "m".repeat(crate::plugins::host::memory::SESSION_BLOCK_MAX),
-    );
+    let session_context: crate::plugins::host::session_context::SessionContext =
+        serde_json::from_value(serde_json::json!([{
+            "source": "plugin:renoa.memory",
+            "revision": "0".repeat(64),
+            "text": "m".repeat(crate::plugins::host::memory::SESSION_BLOCK_MAX),
+        }]))
+        .expect("session context");
+    let max_prompt = resolve_definition(&host.config, agent.id)
+        .await
+        .expect("resolve")
+        .with_session_context(session_context)
+        .system_prompt(&directory.path().join("workspace"))
+        .expect("system prompt");
     let request = renoa_agent::ModelRequest {
         system_prompt: max_prompt,
         messages: Vec::new(),

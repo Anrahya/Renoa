@@ -114,6 +114,12 @@ impl LocalRuntimeConfig {
         self.code_mode = Some(code_mode);
         self
     }
+
+    #[cfg(test)]
+    pub(crate) fn without_automatic_compaction(mut self) -> Self {
+        self.automatic_compaction = None;
+        self
+    }
 }
 
 #[derive(Debug, Error)]
@@ -385,15 +391,15 @@ pub(crate) fn context_binding(
     Ok(ContextBinding::new(revision, Arc::new(strategy)))
 }
 
-struct CompactionSettings {
-    context: NonZeroU64,
-    reserved: u64,
-    automatic_compaction: NonZeroU64,
-    target: NonZeroU64,
-    max_summary: NonZeroU64,
+pub(crate) struct CompactionSettings {
+    pub(crate) context: NonZeroU64,
+    pub(crate) reserved: u64,
+    pub(crate) automatic_compaction: NonZeroU64,
+    pub(crate) target: NonZeroU64,
+    pub(crate) max_summary: NonZeroU64,
 }
 
-fn compaction_settings(
+pub(crate) fn compaction_settings(
     provider_context: NonZeroU64,
     max_output: NonZeroU32,
     automatic_compaction: Option<crate::AutomaticCompaction>,

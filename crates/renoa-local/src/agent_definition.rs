@@ -11,12 +11,40 @@ const MAX_PRESET_ID_BYTES: usize = 128;
 pub(crate) const MAX_NAME_BYTES: usize = 512;
 pub(crate) const MAX_INSTRUCTIONS_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_PURPOSE_BYTES: usize = 1024;
-// Derived from renoa.app.v7's 40,000-token compaction target (max 10,000-token
-// summary, 30,000-token tail_budget = ~90,000 B at ESTIMATED_BYTES_PER_TOKEN=3)
-// minus ~78 KiB for APP_INSTRUCTIONS (2,812 B), <identity>/<purpose> (~1.6 KiB),
-// SESSION_BLOCK_MAX (~49.5 KiB), and reference tool schemas (~24 KiB): 8 KiB
-// keeps <soul>/<user> and retained conversation tail headroom.
-pub(crate) const MAX_JOB_BYTES: usize = 8 * 1024;
+/// Derived from `renoa.app.v7`'s compaction target minus max summary tokens,
+/// less the fixed prompt blocks, 19 reference tool schemas (`~24 KiB` + framing),
+/// and 1,000 tokens reserved for `USER.md` and retained conversation tail.
+pub(crate) const MAX_JOB_BYTES: usize = derived_max_job_bytes();
+
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "compaction budget is ~90 KiB, far below u32::MAX"
+)]
+const fn derived_max_job_bytes() -> usize {
+    let target = crate::presets::APP_COMPACTION_TARGET;
+    let summary = if crate::runtime::MAX_CHECKPOINT_TOKENS < target / 4 {
+        crate::runtime::MAX_CHECKPOINT_TOKENS
+    } else {
+        target / 4
+    };
+    let tail_budget_bytes =
+        (target - summary) as usize * crate::model_context::ESTIMATED_BYTES_PER_TOKEN as usize;
+    let fixed_bytes = crate::model_context::REQUEST_FRAME_TOKENS as usize
+        * crate::model_context::ESTIMATED_BYTES_PER_TOKEN as usize
+        + crate::presets::APP_INSTRUCTIONS.len()
+        + crate::presets::APP_SOUL.len()
+        + MAX_NAME_BYTES
+        + MAX_PURPOSE_BYTES
+        + crate::plugins::host::memory::SESSION_BLOCK_MAX
+        + 384 // <identity>, <purpose>, <job>, <soul>, and <session_context> tags + revision hashes
+        + 19 * (crate::model_context::TOOL_FRAME_TOKENS as usize
+            * crate::model_context::ESTIMATED_BYTES_PER_TOKEN as usize
+            + 16
+            + 1_228
+            + 18)
+        + 3_000; // 1,000-token reserve for USER.md and retained post-compaction turns
+    tail_budget_bytes - fixed_bytes
+}
 pub(crate) const MAX_CONNECTIONS: usize = 64;
 pub(crate) const MAX_CONNECTION_ID_BYTES: usize = 256;
 const MAX_ACTOR_ID_BYTES: usize = 256;
@@ -241,7 +269,7 @@ impl AgentOperationalDefinition {
             });
         }
         if let Some(job) = &self.job
-            && !is_plain_text(job, MAX_JOB_BYTES)
+            && (!is_plain_text(job, MAX_JOB_BYTES) || job.to_ascii_lowercase().contains("</job"))
         {
             return Err(AgentDefinitionError::InvalidJob { bytes: job.len() });
         }
@@ -361,7 +389,7 @@ pub enum AgentDefinitionError {
     )]
     InvalidPurpose { bytes: usize },
     #[error(
-        "agent job must be 1-{MAX_JOB_BYTES} bytes of text that is not blank, with no control character but newline; received {bytes} bytes"
+        "agent job must be 1-{MAX_JOB_BYTES} bytes of text that is not blank, with no `</job` closing tag and no control character but newline; received {bytes} bytes. Send it as plain text, or leave it out"
     )]
     InvalidJob { bytes: usize },
     #[error("agent creator must carry a non-empty actor identifier")]
@@ -438,45 +466,4 @@ pub enum AgentDefinitionError {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::AgentDefinition;
-
-    /// The published schema is generated from the type, never edited by hand.
-    /// `RENOA_WRITE_SCHEMAS=1 cargo test -p renoa-local agent_definition_schema`
-    /// rewrites it after a change to the definition.
-    #[test]
-    fn agent_definition_schema() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/schemas/agent-definition.schema.json");
-        let schema = serde_json::to_value(schemars::schema_for!(AgentDefinition)).expect("schema");
-        let generated = serde_json::to_string_pretty(&sorted(schema)).expect("schema JSON") + "\n";
-        if std::env::var_os("RENOA_WRITE_SCHEMAS").is_some() {
-            std::fs::write(&path, &generated).expect("write the schema");
-        }
-        let published = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(
-            published == generated,
-            "{} is not the schema of AgentDefinition; run RENOA_WRITE_SCHEMAS=1 cargo test -p renoa-local agent_definition_schema",
-            path.display()
-        );
-    }
-
-    /// Sorts every object's keys, so the file is the same whichever `serde_json`
-    /// features a build unifies: `preserve_order` keeps the generator's order.
-    fn sorted(value: serde_json::Value) -> serde_json::Value {
-        match value {
-            serde_json::Value::Object(map) => {
-                let mut entries: Vec<_> = map.into_iter().collect();
-                entries.sort_by(|left, right| left.0.cmp(&right.0));
-                entries
-                    .into_iter()
-                    .map(|(key, value)| (key, sorted(value)))
-                    .collect()
-            }
-            serde_json::Value::Array(items) => items.into_iter().map(sorted).collect(),
-            other => other,
-        }
-    }
-}
+mod tests;

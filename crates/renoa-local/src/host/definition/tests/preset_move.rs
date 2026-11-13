@@ -406,7 +406,12 @@ async fn moving_an_unmodified_preset_or_one_with_a_job_leaves_job_intact() {
         .create_agent(
             creator,
             origin,
-            specialist(Uuid::new_v4(), "KeepJob").with_job("Existing job rule."),
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
+                "KeepJob",
+            )
+            .with_job("Existing job rule."),
             CancellationToken::new(),
         )
         .await
@@ -438,16 +443,91 @@ async fn moving_oversized_custom_instructions_fails_closed_without_residue() {
     let refused = host.move_agent_to_preset(agent.id, app()).await;
     assert!(
         matches!(
-            refused,
-            Err(LocalHostError::Definition(
-                AgentDefinitionError::InvalidJob { .. }
-            ))
+            &refused,
+            Err(LocalHostError::InvalidRequest(msg))
+                if msg.contains("current instructions")
+                    && msg.contains("`job`")
+                    && msg.contains("</job")
+                    && msg.contains("Shorten or clean")
         ),
         "{refused:?}"
     );
     assert_eq!(
         host.agent_definition(agent.id).await.expect("read"),
         Some(agent.clone())
+    );
+    assert!(!soul_path(&directory, &agent).exists());
+}
+
+#[tokio::test]
+async fn moving_an_alpha_agent_to_app_enables_renoa_time() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let alpha_id = AgentPresetId::new(ALPHA_PRESET_ID).expect("preset id");
+    let alpha = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), alpha_id, "AlphaAgent"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create alpha");
+    assert!(
+        !crate::plugins::host::state::enabled(
+            &host.config.database,
+            alpha.id,
+            crate::plugins::host::HostPluginId::Time,
+        )
+        .expect("time state before move"),
+        "alpha starts with renoa.time disabled"
+    );
+
+    let moved = host
+        .move_agent_to_preset(alpha.id, app())
+        .await
+        .expect("move alpha to app");
+    assert!(moved.changed);
+    assert_eq!(moved.definition.operational.job, None);
+    assert!(
+        crate::plugins::host::state::enabled(
+            &host.config.database,
+            alpha.id,
+            crate::plugins::host::HostPluginId::Time,
+        )
+        .expect("time state after move"),
+        "moving to renoa.app.v7 must enable renoa.time"
+    );
+}
+
+#[tokio::test]
+async fn moving_with_job_and_custom_instructions_refuses_without_loss() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let custom = AgentCreateRequest::new(
+        Uuid::new_v4(),
+        "BothSet",
+        "Custom base instructions that must not be dropped.",
+    )
+    .with_job("Existing job rule.");
+    let agent = host
+        .create_agent(creator, origin, custom, CancellationToken::new())
+        .await
+        .expect("create agent with both custom instructions and job");
+
+    let refused = host.move_agent_to_preset(agent.id, app()).await;
+    assert!(
+        matches!(
+            &refused,
+            Err(LocalHostError::InvalidRequest(msg))
+                if msg.contains("job") && msg.contains("instructions")
+        ),
+        "refusal must name both job and instructions: {refused:?}"
+    );
+    assert_eq!(
+        host.agent_definition(agent.id).await.expect("read"),
+        Some(agent.clone()),
+        "custom instructions and job must both survive untouched"
     );
     assert!(!soul_path(&directory, &agent).exists());
 }

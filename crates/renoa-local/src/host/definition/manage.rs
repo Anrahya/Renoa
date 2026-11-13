@@ -258,7 +258,7 @@ impl Manage {
                 cancellation,
             )
             .await
-            .map_err(tool_error)?;
+            .map_err(create_tool_error)?;
         let summary = AgentSummary::from(&definition);
         Ok(json!({
             "id": summary.id,
@@ -288,6 +288,18 @@ fn tool_error(error: crate::LocalHostError) -> ToolError {
     match error {
         crate::LocalHostError::AgentCancelled => cancelled(),
         error => ToolError::invalid_input(error.to_string()),
+    }
+}
+
+fn create_tool_error(error: crate::LocalHostError) -> ToolError {
+    match error {
+        crate::LocalHostError::Definition(crate::AgentDefinitionError::InvalidJob { bytes }) => {
+            ToolError::invalid_input(format!(
+                "`instructions` (saved as the agent's job block) must be 1-{} bytes of text that is not blank, with no `</job` closing tag and no control character but newline; received {bytes} bytes. Send plain job rules in `instructions`, or leave `instructions` out",
+                crate::agent_definition::MAX_JOB_BYTES
+            ))
+        }
+        error => tool_error(error),
     }
 }
 
