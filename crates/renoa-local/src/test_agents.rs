@@ -15,6 +15,7 @@ pub(crate) fn insert_agent(path: &Path, agent: &str) {
     let operational = crate::AgentOperationalDefinition {
         instructions: "Fixture.".to_owned(),
         purpose: None,
+        job: None,
         behavior: crate::AgentBehavior {
             workspace_instructions: crate::WorkspaceInstructions::Off,
             automatic_compaction: None,

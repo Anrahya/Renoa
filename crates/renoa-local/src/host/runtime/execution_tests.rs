@@ -208,15 +208,18 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
     let child_id = renoa_kernel::AgentId::from_uuid(
         Uuid::parse_str(value(&child)["id"].as_str().unwrap()).unwrap(),
     );
+    let child_stored = host.agent_definition(child_id).await.unwrap().unwrap();
     assert_eq!(
-        host.agent_definition(child_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .operational
-            .purpose
-            .as_deref(),
+        child_stored.preset_id.as_ref().map(AgentPresetId::as_str),
+        Some(crate::presets::APP_PRESET_ID)
+    );
+    assert_eq!(
+        child_stored.operational.purpose.as_deref(),
         Some("Review my pull requests.")
+    );
+    assert_eq!(
+        child_stored.operational.job.as_deref(),
+        Some("Review the repository.")
     );
     let child_definition = host.resolve_definition(child_id).await.unwrap();
     assert_eq!(
@@ -231,8 +234,8 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
         )
         .unwrap()
         .len(),
-        9,
-        "the three plugin tools, the five resident owner tools and follow_up"
+        10,
+        "agent_documents, the three plugin tools, the five resident owner tools and follow_up"
     );
     assert!(
         invoke(

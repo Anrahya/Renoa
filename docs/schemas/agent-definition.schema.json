@@ -161,6 +161,13 @@
         "instructions": {
           "type": "string"
         },
+        "job": {
+          "description": "Job rules layered after `<purpose>` without replacing `instructions`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "model": {
           "anyOf": [
             {

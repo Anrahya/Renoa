@@ -25,7 +25,7 @@ use crate::{
 };
 
 const TOOL_NAME: &str = capabilities::AGENT_MANAGE;
-const BINDING_REVISION: &str = "renoa-agent-manage-v3";
+const BINDING_REVISION: &str = "renoa-agent-manage-v4";
 const CREATE_OPERATION_DOMAIN: &str = "renoa.agent.create.operation.v1";
 const RENAME_OPERATION_DOMAIN: &str = "renoa.agent.rename.operation.v1";
 
@@ -72,6 +72,7 @@ enum Input {
         #[schemars(with = "Option<String>")]
         preset_id: Option<AgentPresetId>,
         name: String,
+        /// Job rules for the new agent, layered after `<purpose>` without replacing the preset base.
         instructions: Option<String>,
         /// What the new agent is for, in one or two plain sentences its owner can read.
         purpose: Option<String>,
@@ -134,18 +135,7 @@ impl Tool for Manage {
             let input: Input = serde_json::from_value(call.arguments)
                 .map_err(|error| ToolError::invalid_input(error.to_string()))?;
             let result = match input {
-                Input::List { cursor } => {
-                    let page = self
-                        .host
-                        .list_agent_definitions(cursor, MAX_AGENT_PAGE)
-                        .await
-                        .map_err(tool_error)?;
-                    json!({
-                        "current_agent":self.actor,
-                        "agents":page.agents.iter().map(AgentSummary::from).collect::<Vec<_>>(),
-                        "next_cursor":page.next_cursor,
-                    })
-                }
+                Input::List { cursor } => self.list_agents(cursor).await?,
                 Input::Create {
                     preset_id,
                     name,
@@ -157,41 +147,22 @@ impl Tool for Manage {
                     documents,
                     connections,
                 } => {
-                    let operation = self.operation(CREATE_OPERATION_DOMAIN, &call.id);
-                    let request = AgentCreateRequest {
-                        operation_id: operation,
-                        preset_id,
-                        name,
-                        instructions,
-                        purpose,
-                        tools,
-                        connections,
-                        model,
-                        behavior,
-                        documents,
-                        automation: None,
-                    };
-                    let definition = self
-                        .host
-                        .create_agent(
-                            AgentCreator::Agent {
-                                agent_id: self.actor,
-                            },
-                            AgentCreationOrigin::AgentTool,
-                            request,
-                            cancellation,
-                        )
-                        .await
-                        .map_err(tool_error)?;
-                    let summary = AgentSummary::from(&definition);
-                    json!({
-                        "id":summary.id,
-                        "name":summary.name,
-                        "preset_id":summary.preset_id,
-                        "created_by":self.actor,
-                        "tools":summary.tools,
-                        "connections":summary.connections,
-                    })
+                    self.create_agent(
+                        &call.id,
+                        CreateInput {
+                            preset_id,
+                            name,
+                            instructions,
+                            purpose,
+                            tools,
+                            model,
+                            behavior,
+                            documents,
+                            connections,
+                        },
+                        cancellation,
+                    )
+                    .await?
                 }
                 Input::Rename {
                     id,
@@ -226,7 +197,79 @@ impl Tool for Manage {
     }
 }
 
+struct CreateInput {
+    preset_id: Option<AgentPresetId>,
+    name: String,
+    instructions: Option<String>,
+    purpose: Option<String>,
+    tools: Option<BTreeSet<String>>,
+    model: Option<crate::AgentModelSelection>,
+    behavior: Option<crate::AgentBehavior>,
+    documents: Option<crate::AgentDocuments>,
+    connections: BTreeSet<String>,
+}
+
 impl Manage {
+    async fn list_agents(&self, cursor: Option<AgentId>) -> Result<serde_json::Value, ToolError> {
+        let page = self
+            .host
+            .list_agent_definitions(cursor, MAX_AGENT_PAGE)
+            .await
+            .map_err(tool_error)?;
+        Ok(json!({
+            "current_agent": self.actor,
+            "agents": page.agents.iter().map(AgentSummary::from).collect::<Vec<_>>(),
+            "next_cursor": page.next_cursor,
+        }))
+    }
+
+    async fn create_agent(
+        &self,
+        call_id: &str,
+        input: CreateInput,
+        cancellation: CancellationToken,
+    ) -> Result<serde_json::Value, ToolError> {
+        let preset_id = input.preset_id.unwrap_or_else(|| {
+            AgentPresetId::new(presets::APP_PRESET_ID).expect("APP_PRESET_ID is valid")
+        });
+        let operation = self.operation(CREATE_OPERATION_DOMAIN, call_id);
+        let request = AgentCreateRequest {
+            operation_id: operation,
+            preset_id: Some(preset_id),
+            name: input.name,
+            instructions: None,
+            purpose: input.purpose,
+            job: input.instructions,
+            tools: input.tools,
+            connections: input.connections,
+            model: input.model,
+            behavior: input.behavior,
+            documents: input.documents,
+            automation: None,
+        };
+        let definition = self
+            .host
+            .create_agent(
+                AgentCreator::Agent {
+                    agent_id: self.actor,
+                },
+                AgentCreationOrigin::AgentTool,
+                request,
+                cancellation,
+            )
+            .await
+            .map_err(tool_error)?;
+        let summary = AgentSummary::from(&definition);
+        Ok(json!({
+            "id": summary.id,
+            "name": summary.name,
+            "preset_id": summary.preset_id,
+            "created_by": self.actor,
+            "tools": summary.tools,
+            "connections": summary.connections,
+        }))
+    }
+
     /// Derives one durable operation identity from the model call that asked for
     /// it, so a retried call replays instead of creating a second agent.
     fn operation(&self, domain: &str, call_id: &str) -> Uuid {
@@ -250,14 +293,14 @@ fn tool_error(error: crate::LocalHostError) -> ToolError {
 
 fn description() -> String {
     let mut description = String::from(
-        "Create, list, or rename durable agents on this Host. Create only when the user asks. Supply name and instructions directly, and a short plain purpose the owner will read; optionally select a preset for defaults:\n",
+        "Create, list, or rename durable agents on this Host. Create only when the user asks. Put the agent's job rules in instructions (layered on the preset base rather than replacing it), give a short name and a short plain purpose the owner will read, and select only the machine tools the job needs. Without preset_id, create uses renoa.app.v7; optionally select another preset:\n",
     );
     for preset in presets::catalog() {
         writeln!(description, "- {}: {}", preset.id(), preset.description())
             .expect("writing to a String cannot fail");
     }
     description.push_str(
-        "Use the user's chosen name; otherwise choose a short job name of 1-2 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Every agent receives plugin management and discovery. tools selects machine access only; you cannot grant machine tools to yourself. Explicit settings replace template defaults. Select only the machine tools the job needs, and reuse exact connection ids from plugin_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use automation_manage.",
+        "Use the user's chosen name; otherwise choose a short job name of 1-2 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Every agent receives plugin management and discovery. tools selects machine access only; you cannot grant machine tools to yourself. Explicit behavior, documents, model, and tools replace template defaults; instructions sets the agent's job block instead of replacing the preset base. Select only the machine tools the job needs, and reuse exact connection ids from plugin_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use automation_manage.",
     );
     description
 }
@@ -278,7 +321,7 @@ fn input_schema() -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{Input, input_schema};
+    use super::{Input, description, input_schema};
 
     #[test]
     fn an_agent_can_give_a_new_agent_its_purpose() {
@@ -296,6 +339,27 @@ mod tests {
         assert!(
             input_schema().to_string().contains("\"purpose\""),
             "the tool tells the model it can set one"
+        );
+    }
+
+    #[test]
+    fn tool_contract_documents_app_default_job_layering_and_minimal_tools() {
+        let schema = input_schema();
+        let instructions_desc = schema["properties"]["instructions"]["description"]
+            .as_str()
+            .expect("instructions description in schema");
+        assert!(
+            instructions_desc.contains("Job rules") && instructions_desc.contains("preset base"),
+            "instructions schema should describe job layering: {instructions_desc}"
+        );
+        let desc = description();
+        assert!(
+            desc.contains(crate::presets::APP_PRESET_ID),
+            "description should name default preset: {desc}"
+        );
+        assert!(
+            desc.contains("job rules") && desc.contains("select only the machine tools"),
+            "description should explain job layering and selective tools: {desc}"
         );
     }
 }

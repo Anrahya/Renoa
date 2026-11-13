@@ -11,6 +11,12 @@ const MAX_PRESET_ID_BYTES: usize = 128;
 pub(crate) const MAX_NAME_BYTES: usize = 512;
 pub(crate) const MAX_INSTRUCTIONS_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_PURPOSE_BYTES: usize = 1024;
+// Derived from renoa.app.v7's 40,000-token compaction target (max 10,000-token
+// summary, 30,000-token tail_budget = ~90,000 B at ESTIMATED_BYTES_PER_TOKEN=3)
+// minus ~78 KiB for APP_INSTRUCTIONS (2,812 B), <identity>/<purpose> (~1.6 KiB),
+// SESSION_BLOCK_MAX (~49.5 KiB), and reference tool schemas (~24 KiB): 8 KiB
+// keeps <soul>/<user> and retained conversation tail headroom.
+pub(crate) const MAX_JOB_BYTES: usize = 8 * 1024;
 pub(crate) const MAX_CONNECTIONS: usize = 64;
 pub(crate) const MAX_CONNECTION_ID_BYTES: usize = 256;
 const MAX_ACTOR_ID_BYTES: usize = 256;
@@ -189,6 +195,9 @@ pub struct AgentOperationalDefinition {
     /// it in its prompt; an app shows it instead of `instructions`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// Job rules layered after `<purpose>` without replacing `instructions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
     pub behavior: AgentBehavior,
     pub documents: Option<AgentDocuments>,
     pub provider_restriction: Option<ModelProvider>,
@@ -224,8 +233,17 @@ impl AgentOperationalDefinition {
         if self.documents.is_some_and(|documents| !documents.any()) {
             return Err(AgentDefinitionError::EmptyDocumentSet);
         }
-        if let Some(purpose) = &self.purpose {
-            check_purpose(purpose)?;
+        if let Some(purpose) = &self.purpose
+            && !is_plain_text(purpose, MAX_PURPOSE_BYTES)
+        {
+            return Err(AgentDefinitionError::InvalidPurpose {
+                bytes: purpose.len(),
+            });
+        }
+        if let Some(job) = &self.job
+            && !is_plain_text(job, MAX_JOB_BYTES)
+        {
+            return Err(AgentDefinitionError::InvalidJob { bytes: job.len() });
         }
         Ok(())
     }
@@ -249,18 +267,12 @@ pub(crate) fn check_name(name: &str) -> Result<(), AgentDefinitionError> {
     Ok(())
 }
 
-/// A purpose is plain text: not blank, at most [`MAX_PURPOSE_BYTES`], and no
-/// control character other than a newline.
-fn check_purpose(purpose: &str) -> Result<(), AgentDefinitionError> {
-    let invalid = purpose.trim().is_empty()
-        || purpose.len() > MAX_PURPOSE_BYTES
-        || purpose.chars().any(|c| c.is_control() && c != '\n');
-    if invalid {
-        return Err(AgentDefinitionError::InvalidPurpose {
-            bytes: purpose.len(),
-        });
-    }
-    Ok(())
+/// Plain text bounded by `max_bytes`, not blank, with no control character other
+/// than a newline.
+fn is_plain_text(value: &str, max_bytes: usize) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= max_bytes
+        && !value.chars().any(|c| c.is_control() && c != '\n')
 }
 
 /// The exact, revisioned capability names one agent may invoke.
@@ -348,6 +360,10 @@ pub enum AgentDefinitionError {
         "agent purpose must be 1-{MAX_PURPOSE_BYTES} bytes of text that is not blank, with no control character but newline; received {bytes} bytes. Send it as a short plain sentence, or leave it out"
     )]
     InvalidPurpose { bytes: usize },
+    #[error(
+        "agent job must be 1-{MAX_JOB_BYTES} bytes of text that is not blank, with no control character but newline; received {bytes} bytes"
+    )]
+    InvalidJob { bytes: usize },
     #[error("agent creator must carry a non-empty actor identifier")]
     InvalidActor,
     #[error("agent model must contain 1-512 bytes without control characters")]

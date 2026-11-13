@@ -148,6 +148,7 @@ fn operational_definition(
             )
         }),
         purpose: request.purpose.clone(),
+        job: request.job.clone(),
         documents,
         provider_restriction: if request.model.is_some() {
             None

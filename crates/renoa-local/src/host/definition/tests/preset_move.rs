@@ -42,6 +42,10 @@ async fn a_moved_agent_takes_the_preset_seed_and_keeps_everything_it_owns() {
     let seed = presets::preset(&app()).expect("preset").seed();
     assert_eq!(after.preset_id, Some(app()));
     assert_eq!(after.operational.instructions, seed.instructions);
+    assert_eq!(
+        after.operational.job.as_deref(),
+        Some(before.operational.instructions.as_str())
+    );
     assert_eq!(after.operational.documents, seed.documents);
     assert_eq!(
         after.operational.behavior.workspace_instructions,
@@ -51,13 +55,17 @@ async fn a_moved_agent_takes_the_preset_seed_and_keeps_everything_it_owns() {
         preset_id: before.preset_id.clone(),
         operational: crate::AgentOperationalDefinition {
             instructions: before.operational.instructions.clone(),
+            job: before.operational.job.clone(),
             behavior: before.operational.behavior,
             documents: before.operational.documents,
             ..after.operational.clone()
         },
         ..after.clone()
     };
-    assert_eq!(kept, before, "only the preset seed changed");
+    assert_eq!(
+        kept, before,
+        "only the preset seed and promoted job changed"
+    );
     assert_eq!(
         host.agent_definition(before.id).await.expect("read"),
         Some(after.clone())
@@ -368,4 +376,132 @@ async fn an_agent_on_a_retired_preset_id_moves_onto_its_successor() {
             Some(moved.definition)
         );
     }
+}
+
+#[tokio::test]
+async fn moving_an_unmodified_preset_or_one_with_a_job_leaves_job_intact() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let stock_general = host
+        .create_agent(
+            creator.clone(),
+            origin,
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
+                "Stock",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("stock general");
+    let moved_stock = host
+        .move_agent_to_preset(stock_general.id, app())
+        .await
+        .expect("move stock");
+    assert!(moved_stock.changed);
+    assert_eq!(moved_stock.definition.operational.job, None);
+
+    let with_job = host
+        .create_agent(
+            creator,
+            origin,
+            specialist(Uuid::new_v4(), "KeepJob").with_job("Existing job rule."),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("existing job");
+    let moved_job = host
+        .move_agent_to_preset(with_job.id, app())
+        .await
+        .expect("move with existing job");
+    assert_eq!(
+        moved_job.definition.operational.job.as_deref(),
+        Some("Existing job rule.")
+    );
+}
+
+#[tokio::test]
+async fn moving_oversized_custom_instructions_fails_closed_without_residue() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let oversized = "x".repeat(crate::agent_definition::MAX_JOB_BYTES + 1);
+    let agent = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::new(Uuid::new_v4(), "Large", &oversized),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create");
+    let refused = host.move_agent_to_preset(agent.id, app()).await;
+    assert!(
+        matches!(
+            refused,
+            Err(LocalHostError::Definition(
+                AgentDefinitionError::InvalidJob { .. }
+            ))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        host.agent_definition(agent.id).await.expect("read"),
+        Some(agent.clone())
+    );
+    assert!(!soul_path(&directory, &agent).exists());
+}
+
+#[tokio::test]
+async fn moving_from_a_retired_preset_distinguishes_stock_seed_from_custom_instructions() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let stock_v6 = host
+        .create_agent(
+            creator.clone(),
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), app(), "StockV6"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create stock");
+    let custom_v6 = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), app(), "CustomV6")
+                .with_instructions("Track flights and hotels."),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create custom");
+
+    rusqlite::Connection::open(&host.config.database)
+        .expect("catalog")
+        .execute(
+            "UPDATE host_agents SET preset_id = 'renoa.app.v6' WHERE agent_id IN (?1, ?2)",
+            rusqlite::params![stock_v6.id.to_string(), custom_v6.id.to_string()],
+        )
+        .expect("rewrite retired preset id");
+
+    let moved_stock = host
+        .move_agent_to_preset(stock_v6.id, app())
+        .await
+        .expect("move stock v6");
+    assert!(moved_stock.changed);
+    assert_eq!(
+        moved_stock.definition.operational.job, None,
+        "unmodified retired preset instructions must not become a duplicate <job>"
+    );
+
+    let moved_custom = host
+        .move_agent_to_preset(custom_v6.id, app())
+        .await
+        .expect("move custom v6");
+    assert!(moved_custom.changed);
+    assert_eq!(
+        moved_custom.definition.operational.job.as_deref(),
+        Some("Track flights and hotels."),
+        "customized instructions on a retired preset still move into <job>"
+    );
 }

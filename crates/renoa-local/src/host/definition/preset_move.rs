@@ -24,15 +24,18 @@ pub struct PresetMove {
 
 impl LocalHost {
     /// Moves one agent onto a preset's current instructions, behavior, and
-    /// documents.
+    /// documents. When its current instructions differ from its current
+    /// preset's seed (including when it has no preset) and no `job` is set yet,
+    /// those instructions move into `job` before applying the target seed.
     ///
-    /// Everything else stays: the agent's id, name, purpose, tools,
-    /// connections, model, provider restriction, plugin settings, sessions,
-    /// and history. The live row records the new preset id; the creation
-    /// receipt keeps the definition the agent was created with. When the
-    /// preset keeps a soul and the agent has no `SOUL.md`, the preset's default
-    /// is published; an existing `SOUL.md` is never replaced. An agent already
-    /// on the preset keeps its row, and only a missing `SOUL.md` is restored.
+    /// Everything else stays: the agent's id, name, purpose, any existing job,
+    /// tools, connections, model, provider restriction, plugin settings,
+    /// sessions, and history. The live row records the new preset id; the
+    /// creation receipt keeps the definition the agent was created with. When
+    /// the preset keeps a soul and the agent has no `SOUL.md`, the preset's
+    /// default is published; an existing `SOUL.md` is never replaced. An agent
+    /// already on the preset keeps its row, and only a missing `SOUL.md` is
+    /// restored.
     ///
     /// It refuses to run as anyone but the owner of the Host data directory,
     /// whose files the Host must be able to read. Validation and publication
@@ -65,6 +68,12 @@ impl LocalHost {
             let current =
                 store::read(&transaction, agent)?.ok_or(LocalHostError::AgentNotFound(agent))?;
             let mut moved = current.clone();
+            let is_stock_seed = current.preset_id.as_ref().is_some_and(|id| {
+                presets::is_seed_instructions(id, &current.operational.instructions)
+            });
+            if moved.operational.job.is_none() && !is_stock_seed {
+                moved.operational.job = Some(current.operational.instructions.clone());
+            }
             moved.preset_id = Some(preset_id);
             seed.instructions
                 .clone_into(&mut moved.operational.instructions);

@@ -113,11 +113,13 @@ impl ResolvedAgentDefinition {
             None
         };
         let purpose = self.definition.operational.purpose.as_deref();
+        let job = self.definition.operational.job.as_deref();
         let name = &self.definition.name;
         let session_context = self.session_context.render();
         let capacity = base.len()
             + name.len()
             + purpose.map_or(0, str::len)
+            + job.map_or(0, str::len)
             + documents.as_ref().map_or(0, String::len)
             + session_context.as_ref().map_or(0, String::len)
             + project.as_ref().map_or(0, String::len)
@@ -133,6 +135,11 @@ impl ResolvedAgentDefinition {
             prompt.push_str("\n\n<purpose>\nWhat you were made for:\n");
             prompt.push_str(purpose.trim());
             prompt.push_str("\n</purpose>");
+        }
+        if let Some(job) = job {
+            prompt.push_str("\n\n<job>\n");
+            prompt.push_str(job.trim());
+            prompt.push_str("\n</job>");
         }
         if let Some(documents) = documents {
             prompt.push_str("\n\n");
