@@ -21,7 +21,8 @@ actions!(
         OpenRoutines,
         OpenMemory,
         OpenApps,
-        OpenSettings
+        OpenSettings,
+        ToggleSidebar
     ]
 );
 
@@ -35,6 +36,7 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("cmd-shift-m", OpenMemory, None),
         KeyBinding::new("cmd-shift-a", OpenApps, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
     ]);
 }
 
@@ -51,6 +53,8 @@ pub enum Move {
     Profile,
     /// Closes the sheet or the jump box that is up.
     Close,
+    /// Shows or hides the sidebar.
+    ToggleSidebar,
 }
 
 /// The move an unbound `keystroke` asks for, if any: Esc, which the text
@@ -83,6 +87,7 @@ impl Chats {
             (Move::Sheet(Page::Memory), listen::<OpenMemory>),
             (Move::Sheet(Page::Apps), listen::<OpenApps>),
             (Move::Sheet(Page::Settings), listen::<OpenSettings>),
+            (Move::ToggleSidebar, listen::<ToggleSidebar>),
         ] {
             if moved != Move::Profile || page {
                 root = listen(root, moved, cx);

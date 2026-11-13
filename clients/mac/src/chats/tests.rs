@@ -616,6 +616,7 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
         "⌘⇧M" => "cmd-shift-m",
         "⌘⇧A" => "cmd-shift-a",
         "⌘," => "cmd-,",
+        "⌘B" => "cmd-b",
         "Esc" => "escape",
         other => panic!("Settings lists {other}, which this test does not press"),
     };
@@ -628,6 +629,21 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
         }
         // From Chef's chat, ready to type; Esc from over a sheet.
         act(&|window, cx| window.click(("agent", 0usize), cx), cx);
+        if what == "Show or hide sidebar" {
+            let open = |cx: &mut TestAppContext| {
+                chats.read_with(cx, |chats, _| chats.sidebar_open)
+            };
+            assert!(open(cx));
+            act(&|window, cx| window.press(pressed(keys), cx), cx);
+            cx.executor().advance_clock(std::time::Duration::from_secs(1));
+            cx.run_until_parked();
+            assert!(!open(cx), "{what}: {keys} collapses the sidebar");
+            act(&|window, cx| window.press(pressed(keys), cx), cx);
+            cx.executor().advance_clock(std::time::Duration::from_secs(1));
+            cx.run_until_parked();
+            assert!(open(cx), "{what}: {keys} brings it back");
+            continue;
+        }
         if what == "Close a sheet" {
             act(&|window, cx| window.press("cmd-shift-m", cx), cx);
         }
@@ -777,4 +793,34 @@ fn the_wheel_over_a_sheet_leaves_the_chat_behind_it_alone(cx: &mut TestAppContex
         !scrolled_up(cx),
         "the sheet keeps the wheel from the chat behind it"
     );
+}
+
+#[gpui_kit::test]
+fn sidebar_collapses_and_expands_by_button_and_key(cx: &mut TestAppContext) {
+    let (window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    updates
+        .send(Update::Agents(vec![agent(node_id, "Chef")]))
+        .unwrap();
+    cx.run_until_parked();
+    let act = |act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App), cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.executor().advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+    };
+    let open = |cx: &mut TestAppContext| chats.read_with(cx, |chats, _| chats.sidebar_open);
+
+    assert!(open(cx));
+    act(&|window, cx| window.click("toggle-sidebar", cx), cx);
+    assert!(!open(cx), "clicking the sidebar icon collapses it");
+    act(&|window, cx| window.click("toggle-sidebar", cx), cx);
+    assert!(open(cx), "clicking the corner icon brings it back");
+    act(&|window, cx| window.press("cmd-b", cx), cx);
+    assert!(!open(cx), "⌘B collapses it");
+    act(&|window, cx| window.press("cmd-b", cx), cx);
+    assert!(open(cx), "⌘B expands it again");
 }

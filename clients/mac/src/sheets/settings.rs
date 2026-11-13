@@ -16,7 +16,7 @@ use crate::{
 /// The keys that move around the app, as Settings lists them. The keys
 /// themselves are `chats::keys`; a test in `chats/tests.rs` presses each one
 /// listed here and checks it leads where its words say.
-pub const SHORTCUTS: [(&str, &str); 12] = [
+pub const SHORTCUTS: [(&str, &str); 13] = [
     ("Jump to an agent or page", "⌘K"),
     ("Home", "⌘0"),
     ("Open the first nine agents", "⌘1 – ⌘9"),
@@ -26,6 +26,7 @@ pub const SHORTCUTS: [(&str, &str); 12] = [
     ("Apps", "⌘⇧A"),
     ("Settings", "⌘,"),
     ("Close a sheet", "Esc"),
+    ("Show or hide sidebar", "⌘B"),
     ("Bigger", "⌘="),
     ("Smaller", "⌘−"),
     ("Actual size", "⌥⌘0"),

@@ -318,6 +318,23 @@ fn screens() {
             .unwrap();
         screen.settle();
         screen.shoot(&format!("chats-{theme}"));
+        let chats = screen.chats.clone();
+        screen
+            .cx
+            .update_window(screen.window, |_, window, cx| {
+                chats.update(cx, |chats, cx| chats.toggle_sidebar(window, cx));
+            })
+            .unwrap();
+        screen.settle();
+        screen.shoot(&format!("chats-collapsed-{theme}"));
+        let chats = screen.chats.clone();
+        screen
+            .cx
+            .update_window(screen.window, |_, window, cx| {
+                chats.update(cx, |chats, cx| chats.toggle_sidebar(window, cx));
+            })
+            .unwrap();
+        screen.settle();
         for page in Page::ALL {
             let chats = screen.chats.clone();
             screen

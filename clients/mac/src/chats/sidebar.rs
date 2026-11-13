@@ -1,12 +1,14 @@
 //! The side of the chats: the owner's agents, each with its face, the last
 //! thing said and when, and a highlight that springs to the open one.
 
+use std::time::Duration;
+
 use chrono::Local;
 use gpui_kit::{
-    AnimationExt as _, Context, FontWeight, InteractiveElement as _, IntoElement,
+    Animation, AnimationExt as _, Context, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, SpringAnimation, SpringConfig,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
-    prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, assets::IconName, div,
+    ease_out_quint, prelude::FluentBuilder as _,
 };
 
 use super::Chats;
@@ -24,6 +26,9 @@ const WIDTH: f32 = 264.;
 
 /// The height of an agent's row.
 const ROW: f32 = 56.;
+
+/// How fast the sidebar slides open or closed.
+const SLIDE: Duration = Duration::from_millis(220);
 
 /// How the highlight moves to the open chat: a little past it and back, in
 /// about half a second.
@@ -144,10 +149,11 @@ impl Chats {
                         },
                     ))
                 });
-        div()
+        let panel = div()
             .w(u(WIDTH))
             .h_full()
             .flex_none()
+            .relative()
             .flex()
             .flex_col()
             // Room for the window's traffic lights.
@@ -155,6 +161,28 @@ impl Chats {
             .bg(palette.sidebar)
             .border_r_1()
             .border_color(palette.outline)
+            .when(self.sidebar_open, |panel| {
+                panel.child(
+                    div()
+                        .id("toggle-sidebar")
+                        .absolute()
+                        .top(u(9.))
+                        .right(u(10.))
+                        .size(u(28.))
+                        .rounded(u(8.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(palette.secondary)
+                        .cursor_pointer()
+                        .hover(|button| button.bg(palette.hover).text_color(palette.text))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)),
+                        )
+                        .child(IconName::PanelLeft)
+                        .test_support(),
+                )
+            })
             .child(div().px(u(8.)).child(self.jump_button(palette, cx)))
             .child(div().pt(u(8.)).child(self.home_row(palette, cx)))
             .child(
@@ -168,7 +196,62 @@ impl Chats {
                     .child("Agents"),
             )
             .child(list)
-            .child(self.sheet_buttons(palette, cx))
+            .child(self.sheet_buttons(palette, cx));
+        let shell = div().h_full().flex_none().overflow_hidden().child(panel);
+        let open = self.sidebar_open;
+        if self.sidebar_toggled == 0 {
+            return shell
+                .w(if open { u(WIDTH) } else { u(0.) })
+                .into_any_element();
+        }
+        shell
+            .with_animation(
+                ("sidebar", self.sidebar_toggled),
+                Animation::new(SLIDE).with_easing(ease_out_quint()),
+                move |shell, t| {
+                    let shown = if open { t } else { 1. - t };
+                    shell.w(u(WIDTH * shown)).opacity(shown)
+                },
+            )
+            .into_any_element()
+    }
+
+    /// Floating expand button beside the traffic lights while the sidebar is collapsed.
+    pub(super) fn reopen_sidebar(
+        &self,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let button = div()
+            .id("toggle-sidebar")
+            .absolute()
+            .top(u(9.))
+            .left(u(82.))
+            .size(u(28.))
+            .rounded(u(8.))
+            .bg(palette.frosted)
+            .border_1()
+            .border_color(palette.outline)
+            .shadow_2xs()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(palette.secondary)
+            .cursor_pointer()
+            .hover(|button| {
+                button
+                    .bg(palette.selected)
+                    .border_color(palette.outline_strong)
+                    .text_color(palette.text)
+            })
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
+            .child(IconName::PanelLeftOpen)
+            .test_support();
+        button.with_animation(
+            ("reopen-sidebar", self.sidebar_toggled),
+            Animation::new(SLIDE).with_easing(ease_out_quint()),
+            |button, t| button.opacity(t),
+        )
     }
 }
 

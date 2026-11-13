@@ -294,6 +294,7 @@ impl Chats {
                 Some(task_id) => self.open_profile(task_id, window, cx),
                 None => return false,
             },
+            Move::ToggleSidebar => self.toggle_sidebar(window, cx),
         }
         true
     }
