@@ -115,8 +115,9 @@ truth, and Registry records cannot be passed to `add`. Alpha must verify the
 endpoint and authentication against the provider's official HTTPS
 documentation. `plugin_manage` can then add that independently researched MCP definition or
 one inspected, digest-bound Agent Plugins 1.0 directory, standalone skill, or
-public GitHub directory pinned to a full commit SHA; inspect a source; install
-exact content; list installed revisions; connect a supported
+public GitHub directory pinned to a full commit SHA (resolved via `inspect`
+from a commit, branch/tag `ref`, multi-skill repository, or `skills.sh` URL);
+inspect a source; install exact content; list installed revisions; connect a supported
 package MCP server; and authorize or explicitly restart a registered OAuth
 connection. It can also disconnect a connection from Alpha without deleting
 the Host's durable package, registration, or catalog, then re-enable the

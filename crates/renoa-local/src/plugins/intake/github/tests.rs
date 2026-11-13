@@ -1,5 +1,7 @@
+use std::{fs::File, io::Read, path::PathBuf};
+
 use super::*;
-use flate2::{Compression, write::GzEncoder};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 
 const COMMIT: &str = "1234567890123456789012345678901234567890";
 
@@ -300,7 +302,8 @@ fn hidden_gnu_metadata_is_bounded_before_tar_allocates_it() {
             &format!("repo-{COMMIT}"),
             None,
             &CancellationToken::new(),
-            1024
+            1024,
+            false
         ),
         Err(PluginError::Invalid(_))
     ));
@@ -390,4 +393,221 @@ fn tar_metadata_cannot_read_past_the_decompressed_boundary() {
         reader.read(&mut output).expect_err("cancelled read").kind(),
         std::io::ErrorKind::Other
     );
+}
+
+#[test]
+fn validate_ref_rejects_malformed_refs_and_accepts_normal_branches() {
+    for valid in ["main", "release/v1", "v1.0.0", "feature_1-test"] {
+        assert!(resolve::validate_ref(valid).is_ok(), "expected {valid} ok");
+    }
+    let too_long = "a".repeat(257);
+    for bad in [
+        "",
+        ".",
+        "/main",
+        "main/",
+        "a//b",
+        "a..b",
+        "main branch",
+        "main\n",
+        "main?a=1",
+        "main#frag",
+        "a\\b",
+        "a:b",
+        too_long.as_str(),
+    ] {
+        assert!(
+            matches!(resolve::validate_ref(bad), Err(PluginError::Invalid(_))),
+            "expected {bad:?} rejected"
+        );
+    }
+}
+
+#[test]
+fn skills_sh_odd_urls_and_selectors_are_rejected() {
+    use crate::plugins::intake::skills_sh;
+    let parsed =
+        skills_sh::parse("https://skills.sh/owner/repo/my-skill").expect("valid skills.sh url");
+    assert_eq!(parsed.repository, "https://github.com/owner/repo");
+    assert_eq!(parsed.skill, "my-skill");
+
+    for odd in [
+        "http://skills.sh/owner/repo/skill",
+        "https://example.com/owner/repo/skill",
+        "https://skills.sh/owner/repo/skill/",
+        "https://skills.sh/owner/repo/skill?ref=main",
+        "https://skills.sh/owner/repo/skill#top",
+        "https://skills.sh/owner/repo",
+        "https://skills.sh/owner/repo/",
+        "https://skills.sh/owner/repo/a/b",
+        "https://user@skills.sh/owner/repo/skill",
+        "https://skills.sh:8443/owner/repo/skill",
+        "https://skills.sh/site/docs",
+        "https://skills.sh/owner/repo.git/skill",
+        "https://skills.sh/owner/repo/.",
+        "https://skills.sh/owner/repo/..",
+        "https://skills.sh/owner/repo/bad\\skill",
+    ] {
+        assert!(
+            matches!(skills_sh::parse(odd), Err(PluginError::Invalid(_))),
+            "expected {odd:?} rejected"
+        );
+    }
+}
+
+#[tokio::test]
+async fn resolve_commit_handles_http_errors_bad_sha_and_oversized_responses() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let cases: &[(&str, Vec<u8>)] = &[
+        (
+            "301 Moved Permanently\r\nLocation: https://api.github.com/repos/new/repo/commits/HEAD",
+            b"{}".to_vec(),
+        ),
+        ("403 Forbidden", b"{}".to_vec()),
+        ("429 Too Many Requests", b"{}".to_vec()),
+        ("404 Not Found", b"{}".to_vec()),
+        ("200 OK", br#"{"sha":"not-a-sha"}"#.to_vec()),
+        ("200 OK", vec![b' '; 1_048_577]),
+    ];
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let origin = format!("http://{}", listener.local_addr().expect("addr"));
+    let expected_cases = cases
+        .iter()
+        .map(|(status, body)| ((*status).to_owned(), body.clone()))
+        .collect::<Vec<_>>();
+    let server = tokio::spawn(async move {
+        for (status, body) in expected_cases {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut req = [0_u8; 1024];
+            let _ = stream.read(&mut req).await.expect("read");
+            let headers = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).await.expect("hdrs");
+            let _ = stream.write_all(&body).await;
+        }
+    });
+
+    let err_301 = resolve::resolve_commit(&origin, "owner", "repo", None, CancellationToken::new())
+        .await
+        .expect_err("301");
+    assert!(matches!(err_301, PluginError::Invalid(_)), "{err_301:?}");
+    assert!(
+        err_301.to_string().contains("moved or redirected"),
+        "{err_301}"
+    );
+
+    for code in ["403", "429"] {
+        let err = resolve::resolve_commit(&origin, "owner", "repo", None, CancellationToken::new())
+            .await
+            .expect_err(code);
+        assert!(matches!(err, PluginError::Unavailable(_)), "{err:?}");
+        let text = err.to_string();
+        assert!(
+            text.contains("rate limit") && text.contains("\"commit\""),
+            "{text}"
+        );
+    }
+
+    for kind in ["404", "bad sha", "oversized"] {
+        let err = resolve::resolve_commit(&origin, "owner", "repo", None, CancellationToken::new())
+            .await
+            .expect_err(kind);
+        assert!(matches!(err, PluginError::Invalid(_)), "{kind}: {err:?}");
+    }
+    server.await.expect("server");
+}
+
+#[test]
+fn archive_limits_advise_path_and_discovery_policy_records_skipped_symlinks() {
+    use std::io::Write as _;
+
+    let dest = scratch().expect("dest");
+    let big_dir = scratch().expect("big tar");
+    let big_archive = big_dir.path().join("big.tar.gz");
+    let mut gz = GzEncoder::new(
+        File::create(&big_archive).expect("create"),
+        Compression::default(),
+    );
+    let mut big_hdr = tar::Header::new_gnu();
+    big_hdr
+        .set_path(format!("repo-{COMMIT}/big.bin"))
+        .expect("path");
+    big_hdr.set_mode(0o644);
+    big_hdr.set_size(33 * 1_024 * 1_024);
+    big_hdr.set_cksum();
+    gz.write_all(big_hdr.as_bytes()).expect("hdr");
+    gz.write_all(&[0_u8; 1024]).expect("eof");
+    gz.finish().expect("finish");
+
+    let err = archive::extract_limited(
+        &big_archive,
+        dest.path(),
+        &format!("repo-{COMMIT}"),
+        None,
+        &CancellationToken::new(),
+        64 * 1_024 * 1_024,
+        false,
+    )
+    .expect_err("over byte limit");
+    assert!(err.to_string().contains("\"path\""), "{err}");
+
+    let symlink_dir = scratch().expect("symlink tar");
+    let symlink_path = symlink_dir.path().join("sym.tar.gz");
+    let encoder = GzEncoder::new(
+        File::create(&symlink_path).expect("create"),
+        Compression::default(),
+    );
+    let mut builder = tar::Builder::new(encoder);
+    let mut file_hdr = tar::Header::new_gnu();
+    let skill_bytes = b"---\nname: ok\ndescription: OK.\n---\nBody.\n";
+    file_hdr.set_mode(0o644);
+    file_hdr.set_size(skill_bytes.len() as u64);
+    file_hdr.set_cksum();
+    builder
+        .append_data(
+            &mut file_hdr,
+            format!("repo-{COMMIT}/skills/ok/SKILL.md"),
+            &skill_bytes[..],
+        )
+        .expect("append skill");
+    let mut sym = tar::Header::new_gnu();
+    sym.set_entry_type(tar::EntryType::Symlink);
+    sym.set_size(0);
+    sym.set_mode(0o777);
+    sym.set_cksum();
+    builder
+        .append_link(&mut sym, format!("repo-{COMMIT}/other/link"), "../target")
+        .expect("append symlink");
+    builder.into_inner().expect("tar").finish().expect("gzip");
+
+    let strict_dest = scratch().expect("strict");
+    assert!(matches!(
+        archive::extract_limited(
+            &symlink_path,
+            strict_dest.path(),
+            &format!("repo-{COMMIT}"),
+            None,
+            &CancellationToken::new(),
+            1024 * 1024,
+            false,
+        ),
+        Err(PluginError::Invalid(_))
+    ));
+    let discovery_dest = scratch().expect("discovery");
+    let skipped = archive::extract_limited(
+        &symlink_path,
+        discovery_dest.path(),
+        &format!("repo-{COMMIT}"),
+        None,
+        &CancellationToken::new(),
+        1024 * 1024,
+        true,
+    )
+    .expect("tolerate mode skips outside links");
+    assert_eq!(skipped, vec![PathBuf::from("other/link")]);
 }

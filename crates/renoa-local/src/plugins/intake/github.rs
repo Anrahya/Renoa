@@ -1,12 +1,9 @@
 use std::{
-    collections::BTreeSet,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    path::{Component, Path, PathBuf},
+    fs,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
-use flate2::read::GzDecoder;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -15,11 +12,27 @@ use super::{PluginError, require_active, scratch};
 
 const MAX_ARCHIVE_BYTES: u64 = 128 * 1_024 * 1_024;
 const MAX_ENTRIES: usize = 16_384;
-const MAX_DEPTH: usize = 32;
+pub(super) const MAX_DEPTH: usize = 32;
 
-pub(super) fn validate(
+mod archive;
+mod resolve;
+
+#[cfg(test)]
+use archive::{BoundedReader, extract, extract_limited};
+use archive::{extract_with_policy, relative};
+pub(super) use resolve::{resolve_commit, validate_ref};
+
+pub(super) fn is_valid_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment != "."
+        && segment != ".."
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+pub(super) fn validate_locator(
     repository: &str,
-    commit: &str,
     path: Option<&str>,
 ) -> Result<(String, String), PluginError> {
     let url = Url::parse(repository)
@@ -37,14 +50,7 @@ pub(super) fn validate(
         || url.query().is_some()
         || url.fragment().is_some()
         || parts.len() != 2
-        || parts.iter().any(|part| {
-            part.is_empty()
-                || *part == "."
-                || *part == ".."
-                || !part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        })
+        || parts.iter().any(|part| !is_valid_segment(part))
         || Path::new(parts[1])
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("git"))
@@ -53,6 +59,13 @@ pub(super) fn validate(
             "repository must be https://github.com/owner/repo without credentials, query, fragment, or .git suffix",
         ));
     }
+    if let Some(path) = path {
+        relative(path)?;
+    }
+    Ok((parts[0].to_owned(), parts[1].to_owned()))
+}
+
+pub(super) fn validate_commit(commit: &str) -> Result<(), PluginError> {
     if commit.len() != 40
         || !commit
             .bytes()
@@ -62,41 +75,88 @@ pub(super) fn validate(
             "GitHub source requires a full 40-character lowercase hexadecimal commit SHA",
         ));
     }
-    if let Some(path) = path {
-        relative(path)?;
-    }
-    Ok((parts[0].to_owned(), parts[1].to_owned()))
+    Ok(())
+}
+
+pub(super) fn validate(
+    repository: &str,
+    commit: &str,
+    path: Option<&str>,
+) -> Result<(String, String), PluginError> {
+    let locator = validate_locator(repository, path)?;
+    validate_commit(commit)?;
+    Ok(locator)
 }
 
 #[derive(Clone)]
 pub(crate) struct GithubSourceClient {
     origin: String,
+    api_origin: String,
 }
 impl Default for GithubSourceClient {
     fn default() -> Self {
         Self {
             origin: "https://codeload.github.com".to_owned(),
+            api_origin: "https://api.github.com".to_owned(),
         }
     }
 }
+pub(super) struct DownloadedSource {
+    pub(super) staging: TempDir,
+    pub(super) skipped_special: Vec<PathBuf>,
+}
+
 impl GithubSourceClient {
-    pub(super) async fn download(
+    pub(super) async fn resolve_commit(
+        &self,
+        repository: &str,
+        r#ref: Option<&str>,
+        cancellation: CancellationToken,
+    ) -> Result<String, PluginError> {
+        let (owner, repo) = validate_locator(repository, None)?;
+        resolve_commit(&self.api_origin, &owner, &repo, r#ref, cancellation).await
+    }
+
+    pub(super) async fn download_with_policy(
         &self,
         repository: &str,
         commit: &str,
         path: Option<&str>,
+        tolerate_unrelated_links: bool,
         cancellation: CancellationToken,
-    ) -> Result<TempDir, PluginError> {
+    ) -> Result<DownloadedSource, PluginError> {
         let (owner, repo) = validate(repository, commit, path)?;
         let endpoint = format!("{}/{owner}/{repo}/tar.gz/{commit}", self.origin);
-        download_from(&endpoint, &repo, commit, path, cancellation).await
+        download_into_with_policy(
+            &endpoint,
+            &repo,
+            commit,
+            path,
+            tolerate_unrelated_links,
+            cancellation,
+            scratch()?,
+        )
+        .await
     }
     #[cfg(test)]
     pub(crate) fn fixture(origin: String) -> Self {
-        Self { origin }
+        Self {
+            origin: origin.clone(),
+            api_origin: origin,
+        }
     }
 }
 
+pub(super) fn http_client(action: &str) -> Result<reqwest::Client, PluginError> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(45))
+        .user_agent("renoa")
+        .build()
+        .map_err(|_| unavailable(action))
+}
+
+#[cfg(test)]
 async fn download_from(
     endpoint: &str,
     repo: &str,
@@ -108,6 +168,7 @@ async fn download_from(
     download_into(endpoint, repo, commit, path, cancellation, scratch()?).await
 }
 
+#[cfg(test)]
 async fn download_into(
     endpoint: &str,
     repo: &str,
@@ -116,12 +177,22 @@ async fn download_into(
     cancellation: CancellationToken,
     staging: TempDir,
 ) -> Result<TempDir, PluginError> {
+    download_into_with_policy(endpoint, repo, commit, path, false, cancellation, staging)
+        .await
+        .map(|downloaded| downloaded.staging)
+}
+
+async fn download_into_with_policy(
+    endpoint: &str,
+    repo: &str,
+    commit: &str,
+    path: Option<&str>,
+    tolerate_unrelated_links: bool,
+    cancellation: CancellationToken,
+    staging: TempDir,
+) -> Result<DownloadedSource, PluginError> {
     require_active(&cancellation)?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(45))
-        .build()
-        .map_err(|_| unavailable("could not initialize GitHub download client"))?;
+    let client = http_client("could not initialize GitHub download client")?;
     let mut response = tokio::select! {
         response = client.get(endpoint).send() => response.map_err(|_|unavailable("GitHub source download failed"))?,
         () = cancellation.cancelled() => return Err(PluginError::Cancelled),
@@ -136,7 +207,9 @@ async fn download_into(
         .content_length()
         .is_some_and(|size| size > MAX_ARCHIVE_BYTES)
     {
-        return Err(invalid("GitHub source archive exceeds 128 MiB"));
+        return Err(invalid(
+            "GitHub source archive exceeds 128 MiB; pass `path` in inspect or select a smaller repository",
+        ));
     }
     let archive_path = staging.path().join("source.tar.gz");
     let mut file = tokio::fs::File::create(&archive_path)
@@ -157,7 +230,9 @@ async fn download_into(
             .checked_add(chunk.len() as u64)
             .ok_or_else(|| invalid("GitHub source byte count overflowed"))?;
         if bytes > MAX_ARCHIVE_BYTES {
-            return Err(invalid("GitHub source archive exceeds 128 MiB"));
+            return Err(invalid(
+                "GitHub source archive exceeds 128 MiB; pass `path` in inspect or select a smaller repository",
+            ));
         }
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
@@ -180,277 +255,25 @@ async fn download_into(
     let prefix = format!("{repo}-{commit}");
     let subdirectory = path.map(str::to_owned);
     tokio::task::spawn_blocking(move || {
-        extract(
+        let skipped_special = extract_with_policy(
             &archive_path,
             &staging.path().join("source"),
             &prefix,
             subdirectory.as_deref(),
             &cancellation,
+            tolerate_unrelated_links,
         )?;
         fs::remove_file(&archive_path).map_err(|source| PluginError::Io {
             action: "remove downloaded GitHub archive",
             path: archive_path,
             source,
         })?;
-        Ok(staging)
+        Ok(DownloadedSource {
+            staging,
+            skipped_special,
+        })
     })
     .await?
-}
-
-fn extract(
-    archive: &Path,
-    destination: &Path,
-    prefix: &str,
-    path: Option<&str>,
-    cancellation: &CancellationToken,
-) -> Result<(), PluginError> {
-    extract_limited(
-        archive,
-        destination,
-        prefix,
-        path,
-        cancellation,
-        MAX_ARCHIVE_BYTES + 32 * 1_024 * 1_024,
-    )
-}
-
-fn extract_limited(
-    archive: &Path,
-    destination: &Path,
-    prefix: &str,
-    path: Option<&str>,
-    cancellation: &CancellationToken,
-    decompressed_limit: u64,
-) -> Result<(), PluginError> {
-    let file = File::open(archive).map_err(|source| PluginError::Io {
-        action: "read GitHub archive",
-        path: archive.to_path_buf(),
-        source,
-    })?;
-    let decoder = GzDecoder::new(file);
-    let mut archive = tar::Archive::new(BoundedReader {
-        reader: decoder,
-        remaining: decompressed_limit,
-        cancellation: cancellation.clone(),
-    });
-    let mut seen = BTreeSet::new();
-    let mut bytes = 0_u64;
-    let mut count = 0_usize;
-    let mut selected = 0_usize;
-    for entry in archive
-        .entries()
-        .map_err(|_| invalid("GitHub source is not a valid gzip tar archive"))?
-    {
-        require_active(cancellation)?;
-        let mut entry =
-            entry.map_err(|_| archive_error(cancellation, "GitHub archive entry is malformed"))?;
-        count += 1;
-        if count > MAX_ENTRIES {
-            return Err(invalid("GitHub repository exceeds 16384 archive entries"));
-        }
-        let entry_path = entry
-            .path()
-            .map_err(|_| invalid("GitHub archive path is malformed"))?
-            .into_owned();
-        let path_text = entry_path
-            .to_str()
-            .ok_or_else(|| invalid("GitHub archive path is not UTF-8"))?;
-        relative(path_text.trim_end_matches('/'))?;
-        let components = entry_path.components().collect::<Vec<_>>();
-        if !components
-            .first()
-            .and_then(|component| component.as_os_str().to_str())
-            .is_some_and(|root| same_root(root, prefix))
-        {
-            return Err(invalid(
-                "GitHub archive does not match the pinned repository commit",
-            ));
-        }
-        if !seen.insert(entry_path.clone()) {
-            return Err(invalid("GitHub archive repeats a path"));
-        }
-        let kind = entry.header().entry_type();
-        let size = entry.size();
-        bytes = bytes
-            .checked_add(size)
-            .ok_or_else(|| invalid("GitHub extracted byte count overflowed"))?;
-        if bytes > MAX_ARCHIVE_BYTES || size > 32 * 1_024 * 1_024 {
-            return Err(invalid(
-                "GitHub extracted source exceeds its file or total byte boundary",
-            ));
-        }
-        let relative_path = components.iter().skip(1).collect::<PathBuf>();
-        let relative_path = if let Some(subdirectory) = path {
-            match relative_path.strip_prefix(subdirectory) {
-                Ok(path) => path.to_path_buf(),
-                Err(_) => continue,
-            }
-        } else {
-            relative_path
-        };
-        if !kind.is_file() && !kind.is_dir() {
-            return Err(invalid(
-                "GitHub archive contains a symlink, hard link, or special file",
-            ));
-        }
-        if kind.is_dir() {
-            continue;
-        }
-        if relative_path.as_os_str().is_empty() {
-            return Err(invalid("GitHub source selection must be a directory"));
-        }
-        write_entry(
-            &mut entry,
-            destination.join(relative_path),
-            size,
-            cancellation,
-        )?;
-        selected += 1;
-    }
-    verify_trailer(archive.into_inner(), cancellation)?;
-    if selected == 0 {
-        return Err(invalid("GitHub source directory contains no files"));
-    }
-    Ok(())
-}
-
-// Consume the gzip trailer so tar end markers cannot hide a truncated stream.
-fn verify_trailer<R: Read>(
-    mut decoder: R,
-    cancellation: &CancellationToken,
-) -> Result<(), PluginError> {
-    let mut remainder = [0_u8; 8192];
-    let mut trailing = 0_usize;
-    loop {
-        require_active(cancellation)?;
-        let count = decoder
-            .read(&mut remainder)
-            .map_err(|_| archive_error(cancellation, "GitHub archive gzip checksum is invalid"))?;
-        if count == 0 {
-            break;
-        }
-        trailing += count;
-        if trailing > 1_024 * 1_024 || remainder[..count].iter().any(|byte| *byte != 0) {
-            return Err(invalid("GitHub archive has unexpected trailing data"));
-        }
-    }
-    Ok(())
-}
-
-fn write_entry<R: Read>(
-    entry: &mut tar::Entry<'_, R>,
-    target: PathBuf,
-    size: u64,
-    cancellation: &CancellationToken,
-) -> Result<(), PluginError> {
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|source| PluginError::Io {
-            action: "create GitHub source directory",
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let mut output = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&target)
-        .map_err(|source| PluginError::Io {
-            action: "create GitHub source file",
-            path: target.clone(),
-            source,
-        })?;
-    let copied = std::io::copy(entry, &mut output)
-        .map_err(|_| archive_error(cancellation, "GitHub archive file ended unsuccessfully"))?;
-    if copied != size {
-        return Err(invalid("GitHub archive file ended early"));
-    }
-    output.flush().map_err(|source| PluginError::Io {
-        action: "flush GitHub source file",
-        path: target.clone(),
-        source,
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = entry
-            .header()
-            .mode()
-            .map_err(|_| invalid("GitHub archive file mode is malformed"))?;
-        fs::set_permissions(
-            &target,
-            fs::Permissions::from_mode(if mode & 0o111 == 0 { 0o600 } else { 0o700 }),
-        )
-        .map_err(|source| PluginError::Io {
-            action: "set GitHub file permissions",
-            path: target,
-            source,
-        })?;
-    }
-    Ok(())
-}
-
-struct BoundedReader<R> {
-    reader: R,
-    remaining: u64,
-    cancellation: CancellationToken,
-}
-
-impl<R: Read> Read for BoundedReader<R> {
-    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
-        if self.cancellation.is_cancelled() {
-            return Err(std::io::Error::other("plugin intake cancelled"));
-        }
-        if output.is_empty() {
-            return Ok(0);
-        }
-        if self.remaining == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "decompressed archive exceeds its byte boundary",
-            ));
-        }
-        let limit = usize::try_from(self.remaining)
-            .unwrap_or(usize::MAX)
-            .min(output.len());
-        let read = self.reader.read(&mut output[..limit])?;
-        self.remaining -= read as u64;
-        Ok(read)
-    }
-}
-
-fn same_root(observed: &str, expected: &str) -> bool {
-    match (observed.rsplit_once('-'), expected.rsplit_once('-')) {
-        (Some((observed_repo, observed_commit)), Some((expected_repo, expected_commit))) => {
-            observed_repo.eq_ignore_ascii_case(expected_repo) && observed_commit == expected_commit
-        }
-        _ => false,
-    }
-}
-
-fn relative(value: &str) -> Result<(), PluginError> {
-    if value.is_empty()
-        || value.contains('\\')
-        || value
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
-        || value.chars().any(char::is_control)
-        || Path::new(value).components().count() > MAX_DEPTH + 1
-        || Path::new(value)
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(invalid(
-            "GitHub path must be a bounded relative directory without traversal",
-        ));
-    }
-    Ok(())
-}
-fn archive_error(cancellation: &CancellationToken, message: &str) -> PluginError {
-    if cancellation.is_cancelled() {
-        PluginError::Cancelled
-    } else {
-        invalid(message)
-    }
 }
 
 fn invalid(message: &str) -> PluginError {

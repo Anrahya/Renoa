@@ -184,17 +184,31 @@ pub enum PluginSource {
     Package { source_path: PathBuf },
     /// One standard Agent Skill directory containing SKILL.md and optional resources.
     Skill { source_path: PathBuf },
-    /// A public GitHub repository pinned to a full immutable commit. Select a plugin or
-    /// skill directory with path; omit path for the repository root. No repository code runs.
+    /// A public GitHub repository. Provide commit (40-char hex SHA) for add or install;
+    /// inspect can resolve a branch or tag ref (or omit both for the default branch) and select a skill.
     Github {
         /// Canonical HTTPS repository URL, such as <https://github.com/owner/repo>.
         repository: String,
-        /// Full 40-character lowercase hexadecimal commit SHA. Branches and tags are rejected.
+        /// Full 40-character lowercase hexadecimal commit SHA. Required for add and install;
+        /// optional during inspect.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(length(min = 40, max = 40), regex(pattern = "^[a-f0-9]{40}$"))]
-        commit: String,
+        commit: Option<String>,
+        /// Branch or tag name to resolve to a commit SHA during inspect. Rejected in add and install.
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "ref")]
+        r#ref: Option<String>,
         /// Relative directory inside the repository. No absolute paths, parent traversal, or symlinks.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<String>,
+        /// Skill name to select when inspecting a repository with multiple skills. Rejected in add and install.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skill: Option<String>,
+    },
+    /// A skills.sh skill link (`https://skills.sh/<owner>/<repo>/<skill>`), resolved to a pinned
+    /// GitHub skill during inspect. Rejected in add and install; use the pinned source from inspect.
+    SkillsSh {
+        /// Canonical HTTPS skills.sh skill URL, such as `https://skills.sh/owner/repo/skill`.
+        url: String,
     },
 }
 

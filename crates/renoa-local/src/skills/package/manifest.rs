@@ -25,6 +25,19 @@ struct Frontmatter {
     metadata: BTreeMap<String, String>,
 }
 
+#[derive(Deserialize)]
+struct FrontmatterName {
+    #[serde(default)]
+    name: Option<String>,
+}
+
+pub(super) fn frontmatter_name(bytes: &[u8]) -> Option<String> {
+    let content = std::str::from_utf8(bytes).ok()?;
+    let (frontmatter, _) = split_frontmatter(content).ok()?;
+    let parsed = serde_saphyr::from_str::<FrontmatterName>(frontmatter).ok()?;
+    parsed.name.filter(|name| !name.is_empty())
+}
+
 pub(super) fn parse(
     files: &[CapturedFile],
     expected_name: Option<&str>,
