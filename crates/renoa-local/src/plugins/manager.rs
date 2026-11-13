@@ -421,6 +421,7 @@ fn validate_add_source(
     expected: Option<&str>,
     has_connection: bool,
 ) -> Result<(), PluginError> {
+    super::intake::validate_pinned(source)?;
     if matches!(source, super::api::PluginSource::Installed { .. }) && has_connection {
         return Err(PluginError::Invalid("installed package reuse activates that plugin revision; omit server, connection, credential, and replace, then use enable for an existing connection or connect for a new one".to_owned()));
     }

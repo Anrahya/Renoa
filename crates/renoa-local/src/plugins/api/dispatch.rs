@@ -88,7 +88,7 @@ impl PluginManager {
         }
         match request {
             PluginRequest::Inspect { source } => {
-                intake::validate(&source)?;
+                intake::validate_inspect(&source)?;
                 let inspected = match source {
                     PluginSource::Installed { package_digest } => {
                         let store = self.store.clone();
@@ -97,6 +97,7 @@ impl PluginManager {
                                 .await??;
                         super::super::PluginInspection {
                             digest: installed.digest,
+                            source: None,
                             metadata: installed.metadata,
                             mcp_servers: installed.mcp_servers,
                             notices: installed.notices,
@@ -127,7 +128,7 @@ impl PluginManager {
                 credential,
                 replace,
             } => {
-                intake::validate(&source)?;
+                intake::validate_pinned(&source)?;
                 let connection = if server.is_some()
                     || connection.is_some()
                     || credential.is_some()
@@ -338,7 +339,7 @@ impl PluginManager {
         expected_digest: &str,
         cancellation: CancellationToken,
     ) -> Result<InstalledPlugin, PluginError> {
-        intake::validate(&source)?;
+        intake::validate_pinned(&source)?;
         super::super::store::validate_digest(expected_digest)?;
         let installed = if let PluginSource::Installed { package_digest } = &source {
             if package_digest != expected_digest {

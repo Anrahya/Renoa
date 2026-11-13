@@ -64,6 +64,7 @@ pub(super) fn inspect(root: &Path) -> Result<CapturedPlugin, PluginError> {
     Ok(CapturedPlugin {
         inspection: PluginInspection {
             digest: tree.digest.clone(),
+            source: None,
             metadata,
             mcp_servers,
             notices,

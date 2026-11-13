@@ -97,7 +97,14 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     );
     assert_eq!(
         properties["source"]["properties"]["kind"]["enum"],
-        json!(["installed", "mcp", "package", "skill", "github"])
+        json!([
+            "installed",
+            "mcp",
+            "package",
+            "skill",
+            "github",
+            "skills_sh"
+        ])
     );
     assert_eq!(properties["source"]["required"], json!(["kind"]));
     assert_eq!(

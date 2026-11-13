@@ -427,6 +427,8 @@ fn schemas_come_from_the_same_closed_action_and_source_types() {
     for request in [
         serde_json::json!({"action":"add","source":{"kind":"skill","source_path":"review"}}),
         serde_json::json!({"action":"inspect","source":{"kind":"github","repository":"https://github.com/owner/repo","commit":"a".repeat(40)}}),
+        serde_json::json!({"action":"inspect","source":{"kind":"github","repository":"https://github.com/owner/repo","ref":"main","skill":"alpha"}}),
+        serde_json::json!({"action":"inspect","source":{"kind":"skills_sh","url":"https://skills.sh/owner/repo/alpha"}}),
         serde_json::json!({"action":"install","source":{"kind":"package","source_path":"review"},"expected_digest":"a".repeat(64)}),
         serde_json::json!({"action":"connect","package_digest":"a".repeat(64),"server":"api","connection":"account"}),
         serde_json::json!({"action":"authorize","connection":"account"}),

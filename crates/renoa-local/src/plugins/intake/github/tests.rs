@@ -1,5 +1,7 @@
+use std::{fs::File, io::Read, path::PathBuf};
+
 use super::*;
-use flate2::{Compression, write::GzEncoder};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 
 const COMMIT: &str = "1234567890123456789012345678901234567890";
 

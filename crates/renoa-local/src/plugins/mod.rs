@@ -201,6 +201,8 @@ impl PluginNotice {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PluginInspection {
     digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<api::PluginSource>,
     metadata: PluginMetadata,
     mcp_servers: Vec<PluginMcpServer>,
     notices: Vec<PluginNotice>,
@@ -210,6 +212,11 @@ impl PluginInspection {
     #[must_use]
     pub fn digest(&self) -> &str {
         &self.digest
+    }
+
+    #[must_use]
+    pub const fn source(&self) -> Option<&api::PluginSource> {
+        self.source.as_ref()
     }
 
     #[must_use]

@@ -13,6 +13,10 @@ use crate::package_tree::{self, CapturedFile, TreeError, TreeLimits, Unsupported
 use publish::publish;
 pub(super) use publish::{PublicationBatch, initialize_store};
 
+pub(crate) fn frontmatter_name(bytes: &[u8]) -> Option<String> {
+    manifest::frontmatter_name(bytes)
+}
+
 const MAX_SOURCE_SKILLS: usize = 2_000;
 const MAX_SOURCE_FILES: usize = 16_384;
 const MAX_SOURCE_BYTES: u64 = 256 * 1_024 * 1_024;

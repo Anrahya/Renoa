@@ -204,7 +204,8 @@ this projection does not weaken the closed API. Its frozen binding identity is
 | --- | --- | --- |
 | `package` | Agent Plugins 1.0 directory | Inspect, then copy digest into the request's `expected_digest` |
 | `skill` | One standard `SKILL.md` directory | Inspect and wrap its unchanged files as one portable plugin |
-| `github` | Public `https://github.com/owner/repo`, full 40-character commit, optional relative directory | Download from GitHub codeload without redirects; inspect, then add/install exact digest |
+| `github` | Public `https://github.com/owner/repo`, `commit` (40-char SHA, or optional `ref`/default branch resolved by `inspect`), optional `path` and `skill` | Download from GitHub codeload without redirects; `inspect` resolves refs/skills to a pinned SHA and `path`; `add`/`install` require the pinned SHA and `expected_digest` |
+| `skills_sh` | Public `https://skills.sh/<owner>/<repo>/<skill>` link (excluding `/site/` pages) | Mapped locally to `github` (`https://github.com/<owner>/<repo>`) + `skill` during `inspect`; `add`/`install` require the returned pinned `github` source and `expected_digest` |
 | `mcp` | Endpoint, public headers, name, description, verified documentation URL | Generate one portable MCP plugin; add also attempts a connection |
 | `installed` | Exact installed package digest | Add activates its skills and restores retained account selections; a new account needs connect |
 
@@ -214,12 +215,14 @@ For example, this inspects a standalone local skill:
 {"action":"inspect","source":{"kind":"skill","source_path":".agents/skills/review"}}
 ```
 
-The subsequent `add` passes that same source and the returned digest as the
+The subsequent `add` passes that same source (or, for `github` / `skills_sh`,
+the pinned `github` `source` returned by `inspect`) and the returned digest as the
 root-level `expected_digest`. `install` publishes library content without
 binding its skills. GitHub directories containing `plugin.json` use the package
-loader; otherwise they must be one valid standard skill directory. Skill license
-and other original metadata remain unchanged in `SKILL.md`. Import never runs
-repository code, skill scripts, or package install hooks.
+loader; directories holding `SKILL.md` wrap a single skill; directories holding
+neither discover skill folders under them so `skill` or `path` can select one.
+Skill license and other original metadata remain unchanged in `SKILL.md`. Import
+never runs repository code, skill scripts, or package install hooks.
 
 GitHub intake bounds compressed download bytes, decompressed bytes including
 GNU/PAX metadata, entry count, depth, and file sizes. It rejects traversal,
