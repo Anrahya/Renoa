@@ -7,12 +7,13 @@
 //! preset in place; nothing enforces it at runtime.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use crate::{
     AgentBehavior, AgentDefinitionError, AgentDocuments, AgentPresetId, AutomaticCompaction,
-    ModelProvider, WorkspaceInstructions, capabilities::BuiltInCapability,
-    plugins::host::HostPluginId,
+    ModelProvider, WorkspaceInstructions, atomic_file::content_hash,
+    capabilities::BuiltInCapability, plugins::host::HostPluginId,
 };
 
 /// Renoa's built-in coding agent seed.
@@ -27,8 +28,8 @@ pub(crate) const APP_PRESET_ID: &str = "renoa.app.v7";
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
 const ARCEE_SOUL: &str = include_str!("../prompts/arcee-v1/SOUL.md");
-const APP_INSTRUCTIONS: &str = include_str!("../prompts/app-v1/system.md");
-const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
+pub(crate) const APP_INSTRUCTIONS: &str = include_str!("../prompts/app-v1/system.md");
+pub(crate) const APP_SOUL: &str = include_str!("../prompts/app-v1/SOUL.md");
 
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
@@ -37,7 +38,7 @@ const ARCEE_COMPACTION_TARGET: u64 = 40_000;
 // summary and the newest messages within 40,000. A model whose dispatch limit
 // is lower compacts at that limit (see `runtime::compaction_settings`).
 const APP_COMPACTION_TRIGGER: u64 = 400_000;
-const APP_COMPACTION_TARGET: u64 = 40_000;
+pub(crate) const APP_COMPACTION_TARGET: u64 = 40_000;
 
 const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::ReadFile,
@@ -188,7 +189,7 @@ fn seeds() -> [AgentPreset; 4] {
         },
         AgentPreset {
             id: preset_id(GENERAL_PRESET_ID),
-            description: "A general purpose agent with helpful assistant instructions and no native file or shell tools. Explicit settings replace template defaults.",
+            description: "A general purpose agent with helpful assistant instructions and no native file or shell tools.",
             instructions: "You are a helpful assistant. Complete the assigned task and report the result clearly.",
             behavior: AgentBehavior {
                 workspace_instructions: WorkspaceInstructions::Off,
@@ -239,6 +240,52 @@ pub(crate) fn preset(id: &AgentPresetId) -> Result<&'static AgentPreset, AgentDe
         })
 }
 
+/// Append-only SHA-256 digests of every instruction string ever shipped with a
+/// preset (`alpha`, `arcee`, `general`, `app`). Matched by digest rather than
+/// preset id, and a test ensures every active preset's instructions stay listed
+/// here so changing a seed without recording it fails immediately.
+const SHIPPED_SEED_INSTRUCTION_DIGESTS: &[&str] = &[
+    // renoa.app.v1
+    "49477e4b21977d03354ef003e65920649bb4237919d2f4ead4205990adeea7b3",
+    "4493f36d0aa84775a12ad52dd86d765903485f816dccdb16f0a64c5babd63e80",
+    "ebf93c935ba357aff3626ce2078e83601b3e97f96bbd94153d6c8dcc6039c554",
+    // renoa.app.v2
+    "f2cf6e459d31702c367748735c42178f0d856ffcbf507a49347a2db4bf56e950",
+    // renoa.app.v3 / v4
+    "8af0eb9324f528a8976acf82216d120282f13783d40b2b075f3893ff03bd53cb",
+    // renoa.app.v5
+    "a181a4a31001f7a93a486ac91721970eed18df245cc767cebe37bd9bc3db3be6",
+    // renoa.app.v5 / v6 / v7
+    "c66e52eb8a09c7b67ce904edb591ef3aed2300eaed8cb48635e9976e004a910c",
+    // renoa.coding.alpha.v1 / v2 / v3
+    "6dffe8edd7c94fcf6fb7bcda351714d671badda5533495f80251b4c68edb3194",
+    // renoa.general.v1
+    "55afe297f8f3a3c970d10ef4e66c0f7055978f530a6e89cc21082b560e443cb3",
+    // renoa.personal.arcee early / v1..v5
+    "ca712ba95fa0cb4c6401ceaa76e43f6f9e40c0884c9721240c13ac6b561ff4f1",
+    "df6219cd051d000b131d3c6b1db4f7fd89d9474ff9a6f25cf6867f1ebc7c93b1",
+    "fdd6add5d1f2f3a291eb4fd63a35254550fa2c2b8c5b1a5b3a6f691f24e70b72",
+    "b7205eac0c49c059e5344b8c926d243f6485b74f4d12d3a25bcb5c33bff8e3fe",
+    "c5c67ca799cb3d199459f95f87563e4a1fb06ee22dee664854203bdd854f608f",
+    "48462133177f6d68525cb7ba700cc3cfb6b0ffdcf87f9773c2040c2da98a0a58",
+    "fdff6b6416043ffca093355e5a9c8a20fb73d19954891f2034bf281b70f2c983",
+    "eec297928269f8d79f6eb7a8e613758499a0e06944609a0b9b2c8bd639c19976",
+];
+
+/// Returns `true` when `instructions` matches any shipped preset seed by digest.
+pub(crate) fn is_seed_instructions(instructions: &str) -> bool {
+    let digest = sha256_hex(instructions.as_bytes());
+    SHIPPED_SEED_INSTRUCTION_DIGESTS.contains(&digest.as_str())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(64);
+    for byte in content_hash(bytes) {
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
+}
+
 fn non_zero(value: u64) -> std::num::NonZeroU64 {
     std::num::NonZeroU64::new(value).expect("preset compaction bounds are non-zero")
 }
@@ -248,170 +295,4 @@ fn preset_id(value: &str) -> AgentPresetId {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fmt::Write as _;
-
-    use super::{
-        ALPHA_PRESET_ID, APP_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, PRESETS, preset, seeds,
-    };
-    use crate::{AgentDefinitionError, AgentPresetId, atomic_file::content_hash};
-
-    /// A tripwire, not enforcement: every preset id with the SHA-256 of its
-    /// whole seed. Agents snapshot a seed at creation and a move rewrites one
-    /// from it, so a released preset's seed changes only under a new id; this
-    /// fails when someone edits one in place.
-    const FROZEN: [(&str, &str); 4] = [
-        (
-            ALPHA_PRESET_ID,
-            "257ee0931c8a7911a24f7440cfbf0ad9cff3705b6d07381726b5abacc4c9461e",
-        ),
-        (
-            APP_PRESET_ID,
-            "f2008bea4848986c0ea821e8cd6f4505370904dee21417825db8f68735a9be73",
-        ),
-        (
-            ARCEE_PRESET_ID,
-            "6bc02c9e1151d06b4b53bb41e9155d0d2672084bcf086342b3af41aad30fb066",
-        ),
-        (
-            GENERAL_PRESET_ID,
-            "b2bf09664f28cbdd40065ea3602cfa2637d214d713cf7115b2432027fc1fa001",
-        ),
-    ];
-
-    fn seed_digest(id: &str) -> String {
-        let seed = preset(&AgentPresetId::new(id).expect("id"))
-            .expect("registered preset")
-            .seed();
-        // Serialized directly, never through `serde_json::Value`, whose key
-        // order depends on which serde_json features the build unifies.
-        let encoded = serde_json::to_string(&(
-            seed.instructions,
-            seed.behavior,
-            seed.documents,
-            seed.provider_restriction,
-            seed.soul,
-        ))
-        .expect("a seed encodes");
-        let mut hex = String::with_capacity(64);
-        for byte in content_hash(encoded.as_bytes()) {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        hex
-    }
-
-    #[test]
-    fn every_preset_seed_is_pinned_to_its_id() {
-        let changed: Vec<String> = FROZEN
-            .iter()
-            .filter_map(|(id, pinned)| {
-                let digest = seed_digest(id);
-                (digest != *pinned).then(|| format!("{id} is now {digest}"))
-            })
-            .collect();
-        assert!(
-            changed.is_empty(),
-            "a preset seed changed; give it a new preset id: {changed:?}"
-        );
-    }
-
-    #[test]
-    fn a_seed_keeps_a_soul_exactly_when_it_has_a_default() {
-        for preset in super::catalog() {
-            let seed = preset.seed();
-            assert_eq!(
-                seed.documents.is_some_and(|documents| documents.soul),
-                seed.soul.is_some(),
-                "{}",
-                preset.id().as_str()
-            );
-        }
-    }
-
-    #[test]
-    fn no_preset_is_dropped_by_a_duplicate_id() {
-        assert_eq!(PRESETS.len(), seeds().len(), "two presets share an id");
-    }
-
-    #[test]
-    fn every_static_preset_id_resolves() {
-        for (id, ..) in FROZEN {
-            let id = AgentPresetId::new(id).expect("portable preset id");
-            let preset = preset(&id).expect("registered preset");
-            assert_eq!(preset.id(), &id);
-        }
-        assert_eq!(
-            super::catalog().count(),
-            FROZEN.len(),
-            "every registered preset has a static id"
-        );
-        let unregistered = AgentPresetId::new("renoa.unregistered.v1").expect("portable preset id");
-        assert!(matches!(
-            preset(&unregistered),
-            Err(AgentDefinitionError::UnknownPreset { .. })
-        ));
-    }
-
-    /// A preset that keeps USER.md draws its line the way `agent_documents`
-    /// does: what is unlikely to change soon there, anything else worth
-    /// knowing in the notebook.
-    #[test]
-    fn a_preset_with_user_md_sends_everything_else_to_memory_note() {
-        for preset in super::catalog() {
-            let seed = preset.seed();
-            if !seed.documents.is_some_and(|documents| documents.user) {
-                continue;
-            }
-            let id = preset.id().as_str();
-            for owned in [
-                "unlikely to change soon",
-                "anything else worth knowing next time with memory_note",
-            ] {
-                assert!(seed.instructions.contains(owned), "{id}: {owned}");
-            }
-            for retired in [
-                "goals, commitments",
-                "schedule information",
-                "rarely change",
-            ] {
-                assert!(!seed.instructions.contains(retired), "{id}: {retired}");
-            }
-        }
-    }
-
-    #[test]
-    fn every_template_supplies_instructions() {
-        for preset in super::catalog() {
-            assert!(!preset.seed().instructions.trim().is_empty());
-        }
-    }
-
-    #[test]
-    fn the_arcee_preset_keeps_today_operational_behavior() {
-        let id = AgentPresetId::new(ARCEE_PRESET_ID).expect("portable preset id");
-        let preset = preset(&id).expect("registered preset");
-        let seed = preset.seed();
-        assert!(preset.host_plugins_off().is_empty());
-        assert!(seed.behavior.loads_project_instructions());
-        assert!(seed.behavior.automatic_compaction.is_some());
-        assert_eq!(
-            seed.provider_restriction,
-            Some(crate::ModelProvider::OpenCodeGo)
-        );
-        let documents = seed.documents.expect("documents");
-        assert!(documents.soul && documents.user);
-        assert!(seed.soul.is_some());
-    }
-
-    #[test]
-    fn the_general_template_has_no_native_tools_or_documents() {
-        let id = AgentPresetId::new(GENERAL_PRESET_ID).expect("portable preset id");
-        let preset = preset(&id).expect("registered preset");
-        let seed = preset.seed();
-        assert!(preset.host_plugins_off().is_empty());
-        assert!(preset.capability_baseline().is_empty());
-        assert!(!seed.behavior.loads_project_instructions());
-        assert!(seed.documents.is_none());
-        assert_eq!(seed.provider_restriction, None);
-    }
-}
+mod tests;

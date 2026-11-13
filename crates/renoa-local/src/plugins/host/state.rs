@@ -105,6 +105,35 @@ pub(crate) fn turn_off(
     .map(drop)
 }
 
+/// Updates preset-driven built-in plugin defaults for a preset move: turns ON
+/// only plugins the source preset turned off and the target leaves enabled
+/// (`source_plugins_off - target_plugins_off`), turns OFF `target_plugins_off`,
+/// and leaves every other agent plugin row untouched.
+pub(crate) fn apply_preset_defaults(
+    tx: &rusqlite::Transaction<'_>,
+    agent: AgentId,
+    source_plugins_off: &[HostPluginId],
+    target_plugins_off: &[HostPluginId],
+) -> rusqlite::Result<()> {
+    let agent_id = agent.to_string();
+    for plugin in source_plugins_off {
+        if !target_plugins_off.contains(plugin) {
+            tx.execute(
+                "DELETE FROM host_agent_builtin_plugins WHERE agent_id = ?1 AND plugin_id = ?2",
+                params![&agent_id, plugin.id()],
+            )?;
+        }
+    }
+    for plugin in target_plugins_off {
+        tx.execute(
+            "INSERT INTO host_agent_builtin_plugins(agent_id,plugin_id,enabled) VALUES(?1,?2,0) \
+             ON CONFLICT(agent_id,plugin_id) DO UPDATE SET enabled=0",
+            params![&agent_id, plugin.id()],
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn change(
     path: &Path,
     agent: AgentId,

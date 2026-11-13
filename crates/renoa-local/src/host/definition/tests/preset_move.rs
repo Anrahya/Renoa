@@ -42,6 +42,10 @@ async fn a_moved_agent_takes_the_preset_seed_and_keeps_everything_it_owns() {
     let seed = presets::preset(&app()).expect("preset").seed();
     assert_eq!(after.preset_id, Some(app()));
     assert_eq!(after.operational.instructions, seed.instructions);
+    assert_eq!(
+        after.operational.job.as_deref(),
+        Some(before.operational.instructions.as_str())
+    );
     assert_eq!(after.operational.documents, seed.documents);
     assert_eq!(
         after.operational.behavior.workspace_instructions,
@@ -51,13 +55,17 @@ async fn a_moved_agent_takes_the_preset_seed_and_keeps_everything_it_owns() {
         preset_id: before.preset_id.clone(),
         operational: crate::AgentOperationalDefinition {
             instructions: before.operational.instructions.clone(),
+            job: before.operational.job.clone(),
             behavior: before.operational.behavior,
             documents: before.operational.documents,
             ..after.operational.clone()
         },
         ..after.clone()
     };
-    assert_eq!(kept, before, "only the preset seed changed");
+    assert_eq!(
+        kept, before,
+        "only the preset seed and promoted job changed"
+    );
     assert_eq!(
         host.agent_definition(before.id).await.expect("read"),
         Some(after.clone())
@@ -368,4 +376,296 @@ async fn an_agent_on_a_retired_preset_id_moves_onto_its_successor() {
             Some(moved.definition)
         );
     }
+}
+
+#[tokio::test]
+async fn moving_an_unmodified_preset_or_one_with_a_job_leaves_job_intact() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let stock_general = host
+        .create_agent(
+            creator.clone(),
+            origin,
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
+                "Stock",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("stock general");
+    let moved_stock = host
+        .move_agent_to_preset(stock_general.id, app())
+        .await
+        .expect("move stock");
+    assert!(moved_stock.changed);
+    assert_eq!(moved_stock.definition.operational.job, None);
+
+    let with_job = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
+                "KeepJob",
+            )
+            .with_job("Existing job rule."),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("existing job");
+    let moved_job = host
+        .move_agent_to_preset(with_job.id, app())
+        .await
+        .expect("move with existing job");
+    assert_eq!(
+        moved_job.definition.operational.job.as_deref(),
+        Some("Existing job rule.")
+    );
+}
+
+#[tokio::test]
+async fn moving_oversized_custom_instructions_fails_closed_without_residue() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let oversized = "x".repeat(crate::agent_definition::MAX_JOB_BYTES + 1);
+    let agent = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::new(Uuid::new_v4(), "Large", &oversized),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create");
+    let refused = host.move_agent_to_preset(agent.id, app()).await;
+    assert!(
+        matches!(
+            &refused,
+            Err(LocalHostError::InvalidRequest(msg))
+                if msg.contains("current instructions")
+                    && msg.contains("`job`")
+                    && msg.contains("</job")
+                    && msg.contains("Shorten or clean")
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        host.agent_definition(agent.id).await.expect("read"),
+        Some(agent.clone())
+    );
+    assert!(!soul_path(&directory, &agent).exists());
+}
+
+#[tokio::test]
+async fn moving_an_alpha_agent_to_app_enables_renoa_time() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let alpha_id = AgentPresetId::new(ALPHA_PRESET_ID).expect("preset id");
+    let alpha = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), alpha_id, "AlphaAgent"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create alpha");
+    assert!(
+        !crate::plugins::host::state::enabled(
+            &host.config.database,
+            alpha.id,
+            crate::plugins::host::HostPluginId::Time,
+        )
+        .expect("time state before move"),
+        "alpha starts with renoa.time disabled"
+    );
+
+    let moved = host
+        .move_agent_to_preset(alpha.id, app())
+        .await
+        .expect("move alpha to app");
+    assert!(moved.changed);
+    assert_eq!(moved.definition.operational.job, None);
+    assert!(
+        crate::plugins::host::state::enabled(
+            &host.config.database,
+            alpha.id,
+            crate::plugins::host::HostPluginId::Time,
+        )
+        .expect("time state after move"),
+        "moving to renoa.app.v7 must enable renoa.time"
+    );
+}
+
+#[tokio::test]
+async fn moving_preserves_agent_plugin_choices() {
+    use crate::plugins::host::{HostPluginId, state};
+
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let app_agent = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), app(), "AppWithMemoryOff"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create app agent");
+    state::change(
+        &host.config.database,
+        app_agent.id,
+        HostPluginId::Memory,
+        false,
+        "turn-off-memory",
+    )
+    .expect("disable memory plugin");
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Memory)
+            .expect("memory off before move"),
+        "memory must start disabled"
+    );
+
+    let alpha_id = AgentPresetId::new(ALPHA_PRESET_ID).expect("alpha id");
+    let moved = host
+        .move_agent_to_preset(app_agent.id, alpha_id)
+        .await
+        .expect("move app to alpha");
+    assert!(moved.changed);
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Memory)
+            .expect("memory state after move to alpha"),
+        "agent choice disabling renoa.memory must survive move to another preset"
+    );
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Time)
+            .expect("time state after move to alpha"),
+        "target preset off-list still turns renoa.time off"
+    );
+
+    // Simulate an unknown/retired source preset on the moved agent, with an extra user-disabled
+    // plugin (`Skills`), then move back to `app`: target defaults apply without touching `Memory`
+    // or `Skills`, and retired-source `Time` stays as its row unless turned off by target.
+    state::change(
+        &host.config.database,
+        app_agent.id,
+        HostPluginId::Skills,
+        false,
+        "turn-off-skills",
+    )
+    .expect("disable skills plugin");
+    rusqlite::Connection::open(&host.config.database)
+        .expect("catalog")
+        .execute(
+            "UPDATE host_agents SET preset_id = 'renoa.coding.alpha.v2' WHERE agent_id = ?1",
+            rusqlite::params![app_agent.id.to_string()],
+        )
+        .expect("rewrite retired preset id");
+
+    let moved_back = host
+        .move_agent_to_preset(app_agent.id, app())
+        .await
+        .expect("move retired source back to app");
+    assert!(moved_back.changed);
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Memory)
+            .expect("memory stays off after retired-source move"),
+    );
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Skills)
+            .expect("skills stays off after retired-source move"),
+    );
+    assert!(
+        !state::enabled(&host.config.database, app_agent.id, HostPluginId::Time)
+            .expect("retired/unknown source does not re-enable previously off plugins"),
+    );
+}
+
+#[tokio::test]
+async fn moving_with_job_and_custom_instructions_refuses_without_loss() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let custom = AgentCreateRequest::new(
+        Uuid::new_v4(),
+        "BothSet",
+        "Custom base instructions that must not be dropped.",
+    )
+    .with_job("Existing job rule.");
+    let agent = host
+        .create_agent(creator, origin, custom, CancellationToken::new())
+        .await
+        .expect("create agent with both custom instructions and job");
+
+    let refused = host.move_agent_to_preset(agent.id, app()).await;
+    assert!(
+        matches!(
+            &refused,
+            Err(LocalHostError::InvalidRequest(msg))
+                if msg.contains("job") && msg.contains("instructions")
+        ),
+        "refusal must name both job and instructions: {refused:?}"
+    );
+    assert_eq!(
+        host.agent_definition(agent.id).await.expect("read"),
+        Some(agent.clone()),
+        "custom instructions and job must both survive untouched"
+    );
+    assert!(!soul_path(&directory, &agent).exists());
+}
+
+#[tokio::test]
+async fn moving_from_a_retired_preset_distinguishes_stock_seed_from_custom_instructions() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let stock_v6 = host
+        .create_agent(
+            creator.clone(),
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), app(), "StockV6"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create stock");
+    let custom_v6 = host
+        .create_agent(
+            creator,
+            origin,
+            AgentCreateRequest::from_preset(Uuid::new_v4(), app(), "CustomV6")
+                .with_instructions("Track flights and hotels."),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create custom");
+
+    rusqlite::Connection::open(&host.config.database)
+        .expect("catalog")
+        .execute(
+            "UPDATE host_agents SET preset_id = 'renoa.app.v6' WHERE agent_id IN (?1, ?2)",
+            rusqlite::params![stock_v6.id.to_string(), custom_v6.id.to_string()],
+        )
+        .expect("rewrite retired preset id");
+
+    let moved_stock = host
+        .move_agent_to_preset(stock_v6.id, app())
+        .await
+        .expect("move stock v6");
+    assert!(moved_stock.changed);
+    assert_eq!(
+        moved_stock.definition.operational.job, None,
+        "unmodified retired preset instructions must not become a duplicate <job>"
+    );
+
+    let moved_custom = host
+        .move_agent_to_preset(custom_v6.id, app())
+        .await
+        .expect("move custom v6");
+    assert!(moved_custom.changed);
+    assert_eq!(
+        moved_custom.definition.operational.job.as_deref(),
+        Some("Track flights and hotels."),
+        "customized instructions on a retired preset still move into <job>"
+    );
 }

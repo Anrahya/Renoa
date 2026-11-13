@@ -66,6 +66,10 @@ pub struct AgentCreateRequest {
     /// request when absent, so earlier requests replay byte for byte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// Job rules layered after `<purpose>`. Left out of the stored request when
+    /// absent, so earlier requests replay byte for byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
     /// Exact caller-selected capability names.
     pub tools: Option<BTreeSet<String>>,
     /// Exact caller-selected existing Host connection ids.
@@ -91,6 +95,7 @@ impl AgentCreateRequest {
             name: name.into(),
             instructions: Some(instructions.into()),
             purpose: None,
+            job: None,
             tools: None,
             connections: BTreeSet::new(),
             automation: None,
@@ -112,6 +117,7 @@ impl AgentCreateRequest {
             name: name.into(),
             instructions: None,
             purpose: None,
+            job: None,
             tools: None,
             connections: BTreeSet::new(),
             automation: None,
@@ -125,6 +131,13 @@ impl AgentCreateRequest {
     #[must_use]
     pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Layers job rules onto the preset base without replacing `instructions`.
+    #[must_use]
+    pub fn with_job(mut self, job: impl Into<String>) -> Self {
+        self.job = Some(job.into());
         self
     }
 

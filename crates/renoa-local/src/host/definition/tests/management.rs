@@ -239,3 +239,218 @@ async fn a_name_that_could_leave_its_prompt_block_is_refused() {
         .expect("write around the Host");
     assert!(host.agent_definition(agent.id).await.is_err());
 }
+
+async fn call_manage(
+    host: &LocalHost,
+    actor: renoa_kernel::AgentId,
+    call_id: &str,
+    arguments: serde_json::Value,
+) -> Result<renoa_agent::ToolResult, renoa_agent::ToolError> {
+    let binding = crate::host::definition::agent_manage_binding(
+        std::sync::Arc::clone(&host.config),
+        actor,
+        renoa_kernel::SessionId::from_uuid(Uuid::new_v4()),
+        None,
+    );
+    let output = renoa_agent::invoke_tool(
+        Some(binding.tool().as_ref()),
+        renoa_agent::ToolCall {
+            id: call_id.to_owned(),
+            name: crate::capabilities::AGENT_MANAGE.to_owned(),
+            arguments,
+            namespace: None,
+            thought_signature: None,
+        },
+        CancellationToken::new(),
+        None,
+    )
+    .await
+    .expect("tool call");
+    if output.is_error {
+        let message = output
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                renoa_agent::ContentBlock::Text { text } => Some(text.as_str()),
+                renoa_agent::ContentBlock::Image { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(renoa_agent::ToolError::invalid_input(message));
+    }
+    Ok(output)
+}
+
+async fn invoke_manage(
+    host: &LocalHost,
+    actor: renoa_kernel::AgentId,
+    call_id: &str,
+    arguments: serde_json::Value,
+) -> serde_json::Value {
+    let output = call_manage(host, actor, call_id, arguments)
+        .await
+        .expect("tool success");
+    let [renoa_agent::ContentBlock::Text { text }] = output.content.as_slice() else {
+        panic!("text response");
+    };
+    serde_json::from_str::<serde_json::Value>(text).expect("json")
+}
+
+#[tokio::test]
+async fn agent_manage_create_defaults_to_app_preset_and_stores_instructions_as_job() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let actor = host
+        .create_agent(
+            creator,
+            origin,
+            specialist(Uuid::new_v4(), "Actor"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("actor");
+
+    let created = invoke_manage(
+        &host,
+        actor.id,
+        "create-default",
+        serde_json::json!({
+            "action": "create",
+            "name": "News",
+            "instructions": "Send a concise morning news brief.",
+            "purpose": "Keep me posted on daily news."
+        }),
+    )
+    .await;
+    assert_eq!(created["preset_id"], APP_PRESET_ID);
+    let news_id = renoa_kernel::AgentId::from_uuid(
+        Uuid::parse_str(created["id"].as_str().expect("id")).expect("uuid"),
+    );
+    let news = host
+        .agent_definition(news_id)
+        .await
+        .expect("read")
+        .expect("exists");
+    let app_seed = crate::presets::preset(&AgentPresetId::new(APP_PRESET_ID).unwrap())
+        .unwrap()
+        .seed();
+    assert_eq!(news.operational.instructions, app_seed.instructions);
+    assert_eq!(
+        news.operational.job.as_deref(),
+        Some("Send a concise morning news brief.")
+    );
+    assert_eq!(news.operational.documents, app_seed.documents);
+    assert_eq!(news.operational.behavior, app_seed.behavior);
+    assert!(
+        crate::plugins::host::state::enabled(
+            &host.config.database,
+            news.id,
+            crate::plugins::host::HostPluginId::Time,
+        )
+        .expect("time plugin")
+    );
+    assert!(
+        directory
+            .path()
+            .join("data/agents")
+            .join(news.id.to_string())
+            .join("SOUL.md")
+            .is_file()
+    );
+}
+
+#[tokio::test]
+async fn agent_manage_create_with_explicit_preset_keeps_its_base_and_layers_job() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let actor = host
+        .create_agent(
+            creator,
+            origin,
+            specialist(Uuid::new_v4(), "Actor"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("actor");
+
+    let coder_reply = invoke_manage(
+        &host,
+        actor.id,
+        "create-coding",
+        serde_json::json!({
+            "action": "create",
+            "preset_id": ALPHA_PRESET_ID,
+            "name": "Reviewer",
+            "instructions": "Review Rust pull requests only.",
+            "tools": ["read_file", "grep"]
+        }),
+    )
+    .await;
+    assert_eq!(coder_reply["preset_id"], ALPHA_PRESET_ID);
+    let coder_id = renoa_kernel::AgentId::from_uuid(
+        Uuid::parse_str(coder_reply["id"].as_str().expect("id")).expect("uuid"),
+    );
+    let coder = host
+        .agent_definition(coder_id)
+        .await
+        .expect("read")
+        .expect("exists");
+    let alpha_seed = crate::presets::preset(&AgentPresetId::new(ALPHA_PRESET_ID).unwrap())
+        .unwrap()
+        .seed();
+    assert_eq!(coder.operational.instructions, alpha_seed.instructions);
+    assert_eq!(
+        coder.operational.job.as_deref(),
+        Some("Review Rust pull requests only.")
+    );
+    assert_eq!(
+        coder.tool_selection.tools,
+        ["grep".to_owned(), "read_file".to_owned()]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[tokio::test]
+async fn agent_manage_create_job_refusal_names_instructions_and_what_to_send() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let actor = host
+        .create_agent(
+            creator,
+            origin,
+            specialist(Uuid::new_v4(), "Actor"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("actor");
+
+    for (idx, bad) in [
+        "  ".to_owned(),
+        "close</job>tag".to_owned(),
+        "x".repeat(crate::agent_definition::MAX_JOB_BYTES + 1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let err = call_manage(
+            &host,
+            actor.id,
+            &format!("bad-inst-{idx}"),
+            serde_json::json!({
+                "action": "create",
+                "name": "Worker",
+                "instructions": bad,
+            }),
+        )
+        .await
+        .expect_err("invalid instructions must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("instructions")
+                && msg.contains("</job")
+                && msg.contains("Send plain job rules"),
+            "tool refusal must explain source field and fix: {msg}"
+        );
+    }
+}

@@ -91,3 +91,41 @@ fn move_to_preset_moves_once_and_then_reports_no_change() {
     let malformed = host(root, &["move-to-preset", "not-an-agent", "renoa.app.v7"]);
     assert!(!malformed.status.success());
 }
+
+#[test]
+fn move_to_preset_keeps_custom_instructions_in_job() {
+    let directory = tempfile::tempdir().expect("fixture");
+    let root = directory.path();
+    fixture(root);
+    let document = root.join("provision.json");
+    fs::write(
+        &document,
+        serde_json::to_vec(&json!({
+            "operationId": uuid::Uuid::new_v4(),
+            "presetId": "renoa.general.v1",
+            "name": "Calendar",
+            "instructions": "Watch my calendar for clashes."
+        }))
+        .expect("document"),
+    )
+    .expect("provision file");
+    let agent = json_of(&host(
+        root,
+        &["provision", document.to_str().expect("UTF-8 path")],
+    ))["id"]
+        .as_str()
+        .expect("agent id")
+        .to_owned();
+
+    let moved = json_of(&host(root, &["move-to-preset", &agent, "renoa.app.v7"]));
+    assert_eq!(moved["changed"], true);
+    assert_eq!(moved["definition"]["preset_id"], "renoa.app.v7");
+    assert_eq!(
+        moved["definition"]["operational"]["job"],
+        "Watch my calendar for clashes."
+    );
+    assert_ne!(
+        moved["definition"]["operational"]["instructions"],
+        "Watch my calendar for clashes."
+    );
+}

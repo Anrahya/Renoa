@@ -50,21 +50,24 @@ the preset into that definition; runtime resolution never consults a preset agai
 publishes the definition's JSON shape for every surface that reads it. It is
 generated from the Rust type, and a test fails when the two differ.
 
-The operational document may carry a `purpose`: what the agent is for, in the
-words of whoever made it, the owner or a parent agent. It is 1 to 1,024 bytes, not blank, with no control
-character but newline. An app shows it where a browser shows the
-instructions. An agent without one has no `purpose` key, so its stored creation
-request replays unchanged.
+The operational document may carry a `purpose` (what the agent is for, in the
+words of whoever made it, the owner or a parent agent: 1 to 1,024 bytes, not
+blank, with no control character but newline; an app shows it where a browser
+shows the instructions) and an optional `job` (job rules layered after
+`<purpose>` without replacing the preset base `instructions`: 1 to `MAX_JOB_BYTES`
+bytes derived from `renoa.app.v7`'s post-compaction tail budget, same plain-text
+rules, and rejecting `</job` case-insensitively). An agent without either key omits it, so its stored
+creation request replays unchanged.
 
 Each turn composes the system prompt from the stored definition in this order:
 the instructions; an `<identity>` block, `Your name is <name>.`, so a rename
-reaches the next turn; the `<purpose>` block; the agent's `SOUL.md`; the person's
-`USER.md`, which renders empty, with the revision of empty content, until that
-person has a profile; the `<session_context>` block the person's plugins add,
-such as their `MIND.md`; and, when enabled, the workspace `AGENTS.md`. Because the
-name is quoted into that block, a name is 1 to 512 bytes on one line with no
-surrounding whitespace, control character, `<`, or `>`; creation, rename, and
-every read of a stored row apply that one rule.
+reaches the next turn; the `<purpose>` block; the `<job>` block; the agent's
+`SOUL.md`; the person's `USER.md`, which renders empty, with the revision of
+empty content, until that person has a profile; the `<session_context>` block
+the person's plugins add, such as their `MIND.md`; and, when enabled, the
+workspace `AGENTS.md`. Because the name is quoted into that block, a name is 1
+to 512 bytes on one line with no surrounding whitespace, control character, `<`,
+or `>`; creation, rename, and every read of a stored row apply that one rule.
 
 An Arcee agent's stable system rules are part of its stored definition. When
 that definition enables the Soul, the Host publishes an owner-editable `SOUL.md`
@@ -1267,9 +1270,13 @@ with optional `instructions`, `tools`, `connections`, and `automation`. `agent-t
 applies one revision-checked capability edit. `rename-agent` applies one
 expected-current-name-checked display-name edit with an explicit operation id.
 `move-to-preset` gives an existing agent a preset's current instructions,
-behavior, and documents, and records that preset id on the live definition; the
-creation receipt keeps the definition the agent was created with. It keeps the
-agent's identity, name, purpose, tools, connections, model, sessions, and
+behavior, documents, and built-in plugin defaults, and records that preset id
+on the live definition; the creation receipt keeps the definition the agent was
+created with. When the agent's current `instructions` differ from every shipped
+preset seed and `job` is not yet set, those `instructions` move into `job`
+before applying the target seed; if `job` is already set alongside custom
+`instructions`, the move refuses without changing anything. It keeps the
+agent's identity, name, purpose, existing job, tools, connections, model, sessions, and
 history, publishes the preset's default `SOUL.md` only when the agent has none,
 and never replaces an existing one. It refuses to run as anyone but the owner
 of the data directory, so every file it writes stays readable to the Host. It
@@ -1677,10 +1684,12 @@ modification.
 ### Persistent agents
 
 The `renoa.agents` plugin exposes the canonical agent creation operation. The
-primary schema accepts a name, standing instructions, a purpose, exact machine tools,
+primary schema accepts a name, job rules (`instructions`, stored as `job` so the
+preset base stays intact), a purpose, exact machine tools,
 provider/model/reasoning defaults, behavior, documents, and existing connections.
-The preset id is optional. Caller values override template defaults; an explicit
-empty tool selection removes every template machine grant. Fresh sessions consume
+When `preset_id` is omitted, creation uses `renoa.app.v7`. Explicit behavior,
+documents, model, and tools override template defaults; an explicit empty tool
+selection removes every template machine grant. Fresh sessions consume
 the stored model preference, while saved conversation selections remain separate.
 Creation validates the requested model against the enabled provider catalog before
 writing agent state. Receipt replay returns the original definition without

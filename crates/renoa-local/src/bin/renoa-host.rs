@@ -60,6 +60,7 @@ impl ProvisionDocument {
             name: self.name,
             instructions: self.instructions,
             purpose: None,
+            job: None,
             tools: self.tools,
             connections: self.connections,
             automation: self.automation,

@@ -112,6 +112,7 @@ async fn a_request_without_a_purpose_is_stored_as_before_and_one_with_it_replays
     let definition = serde_json::to_value(crate::AgentOperationalDefinition {
         instructions: "Old.".to_owned(),
         purpose: None,
+        job: None,
         behavior: crate::AgentBehavior {
             workspace_instructions: crate::WorkspaceInstructions::Off,
             automatic_compaction: None,

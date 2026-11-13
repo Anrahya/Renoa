@@ -2,14 +2,14 @@ use std::io::Write;
 
 use renoa_agent::{AssistantContent, ContentBlock, Message, ModelRequest};
 
-const REQUEST_FRAME_TOKENS: u64 = 64;
+pub(crate) const REQUEST_FRAME_TOKENS: u64 = 64;
 const MESSAGE_FRAME_TOKENS: u64 = 12;
 const CONTENT_FRAME_TOKENS: u64 = 4;
-const TOOL_FRAME_TOKENS: u64 = 24;
+pub(crate) const TOOL_FRAME_TOKENS: u64 = 24;
 const IMAGE_TOKENS: u64 = 4_096;
-const ESTIMATED_BYTES_PER_TOKEN: u64 = 3;
+pub(crate) const ESTIMATED_BYTES_PER_TOKEN: u64 = 3;
 
-pub(super) fn estimate_input_tokens(request: &ModelRequest) -> u64 {
+pub(crate) fn estimate_input_tokens(request: &ModelRequest) -> u64 {
     let mut total = REQUEST_FRAME_TOKENS.saturating_add(text(&request.system_prompt));
     for message in &request.messages {
         total = total
