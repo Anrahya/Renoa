@@ -303,12 +303,7 @@ impl Render for AppsSheet {
                             .child(Face::new(member.look, member.primary, palette, u(18.)))
                             .child(div().text_size(u(12.)).child(member.name.clone()))
                             .when(on, |chip| {
-                                chip.child(
-                                    div()
-                                        .size(u(5.))
-                                        .rounded_full()
-                                        .bg(palette.text),
-                                )
+                                chip.child(div().size(u(5.)).rounded_full().bg(palette.text))
                             }),
                     )
                 });
