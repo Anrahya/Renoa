@@ -205,12 +205,15 @@ identity, the causing `command_id`, and one activity:
   the previous frame. Sequences count from zero for each message of the turn,
   so a surface can tell that it missed a frame;
 - `text_reset`: a message the surface was shown part of was abandoned, so the
-  surface discards the text it showed for it.
+  surface discards the text it showed for it;
+- `activity`: one normalized single-line plain-text description (`text`) of
+  what the agent is currently doing, emitted from summarized reasoning when a
+  model API returns summaries.
 
 A frame has no task sequence and no acknowledgement, and a surface that
 reconnects is never sent the frames it missed. The durable `AssistantMessage`
 of the same text supersedes the live text: a surface replaces what it showed
-with the record. Reasoning and tool-call arguments are never live activity.
+with the record. Raw reasoning and tool-call arguments never become live activity.
 
 ### `Submit`
 
@@ -600,14 +603,14 @@ Inputs:
 
 - `task_id`;
 - `command_id`;
-- one `text_delta` or `text_reset`.
+- one `text_delta`, `text_reset`, or `activity`.
 
 The coordinator relays the frame as `LiveActivity` to the surfaces attached to
 the task that asked for live activity, and only when the authenticated node
 owns the task. It stores nothing and sends no response. A frame with no
 interested surface, or from a node that does not own the task, is dropped.
 The node sends frames only while a turn runs, in visible text order, and never
-sends reasoning.
+sends raw reasoning.
 
 ### `PublishExecutionEvents`
 

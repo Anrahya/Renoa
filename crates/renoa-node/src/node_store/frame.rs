@@ -43,16 +43,18 @@ pub(crate) fn fit(kind: ExecutionEventKind) -> Result<ExecutionEventKind, serde_
     if fits_alone(&fitted)? {
         return Ok(fitted);
     }
-    // Only a tool's call id and name, which come from the model, are left.
+    // Only a tool's call id, name, and raw activity may still prevent fit.
     Ok(match fitted {
         ExecutionEventKind::ToolStarted {
             call_id,
             name,
             arguments,
+            activity: _,
         } => ExecutionEventKind::ToolStarted {
             call_id: left_out(call_id.len()),
             name: left_out(name.len()),
             arguments,
+            activity: None,
         },
         ExecutionEventKind::ToolFinished {
             call_id,
@@ -77,10 +79,12 @@ fn fit_payload(kind: ExecutionEventKind) -> Result<ExecutionEventKind, serde_jso
             call_id,
             name,
             arguments,
+            activity,
         } => ExecutionEventKind::ToolStarted {
             call_id,
             name,
             arguments: Value::String(left_out(serde_json::to_vec(&arguments)?.len())),
+            activity,
         },
         ExecutionEventKind::ToolFinished {
             call_id,
@@ -203,13 +207,17 @@ mod tests {
             call_id: "write".to_owned(),
             name: "write_file".to_owned(),
             arguments: serde_json::json!({ "content": "\"".repeat(MAX_APPLICATION_MESSAGE_BYTES / 2) }),
+            activity: Some("Writing config file".to_owned()),
         })
         .expect("fit");
         assert!(fits(&fitted));
         assert!(matches!(
             fitted,
-            ExecutionEventKind::ToolStarted { arguments: Value::String(note), .. }
-                if note.starts_with("(Left out:")
+            ExecutionEventKind::ToolStarted {
+                arguments: Value::String(note),
+                activity: Some(activity),
+                ..
+            } if note.starts_with("(Left out:") && activity == "Writing config file"
         ));
     }
 
@@ -246,6 +254,7 @@ mod tests {
             call_id: call_id.clone(),
             name: "read_file".to_owned(),
             arguments: serde_json::json!({}),
+            activity: None,
         })
         .expect("fit");
         let finished = fit(ExecutionEventKind::ToolFinished {
@@ -295,5 +304,21 @@ mod tests {
         })
         .expect("fit");
         assert!(fits(&fitted));
+    }
+
+    #[test]
+    fn oversized_raw_activity_falls_back_so_fit_still_fits() {
+        let fitted = fit(ExecutionEventKind::ToolStarted {
+            call_id: "call_1".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: serde_json::json!({}),
+            activity: Some("a".repeat(MAX_APPLICATION_MESSAGE_BYTES)),
+        })
+        .expect("fit");
+        assert!(fits(&fitted));
+        assert!(matches!(
+            fitted,
+            ExecutionEventKind::ToolStarted { activity: None, .. }
+        ));
     }
 }

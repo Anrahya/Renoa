@@ -115,6 +115,13 @@ test("the baseline execution activity profile is decoded without raw records", (
     { type: "turn_started" },
     { type: "assistant_message", text: "done" },
     { type: "tool_started", call_id: "call-1", name: "read", arguments: { path: "a" } },
+    {
+      type: "tool_started",
+      call_id: "call-2",
+      name: "read",
+      arguments: { path: "b" },
+      activity: "Reading b",
+    },
     { type: "tool_finished", call_id: "call-1", output: "contents", is_error: false },
     { type: "execution_terminated", terminal: { status: "failed", error: "stopped" } },
   ] as const;
@@ -244,6 +251,12 @@ test("live activity is a numbered text delta or a reset and carries no task sequ
     activity: { type: "text_delta", sequence: 3, text: "Hel" },
   });
   assert.deepEqual(live({ type: "text_reset" }).type, "live_activity");
+  assert.deepEqual(live({ type: "activity", text: "Checking the logs" }), {
+    type: "live_activity",
+    task_id: TASK_ID,
+    command_id: COMMAND_ID,
+    activity: { type: "activity", text: "Checking the logs" },
+  });
   assert.throws(() => live({ type: "reasoning", text: "x" }), /unsupported live activity/);
   assert.throws(
     () => live({ type: "text_delta", sequence: Number.MAX_SAFE_INTEGER + 1, text: "x" }),

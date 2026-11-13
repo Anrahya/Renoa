@@ -127,6 +127,7 @@ async fn live_progress_is_recorded_once_and_the_final_projection_adds_only_the_r
         call_id: "read".to_owned(),
         name: "read_file".to_owned(),
         arguments: serde_json::json!({"path": "proof.txt"}),
+        activity: None,
     };
     let finished = |output: &str| ExecutionEventKind::ToolFinished {
         call_id: "read".to_owned(),
@@ -214,6 +215,7 @@ async fn a_message_the_turn_repeats_is_recorded_live_in_its_place() {
         call_id: call_id.to_owned(),
         name: "read_file".to_owned(),
         arguments: serde_json::json!({}),
+        activity: None,
     };
     let turn = vec![checking.clone(), tool("one"), checking.clone(), tool("two")];
 

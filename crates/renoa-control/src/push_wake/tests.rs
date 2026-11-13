@@ -89,6 +89,7 @@ fn only_a_reply_with_text_and_a_failed_run_wake_the_owner() {
                 call_id: "call-1".to_owned(),
                 name: "search".to_owned(),
                 arguments: serde_json::json!({}),
+                activity: None,
             }),
             None,
         ),

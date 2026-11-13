@@ -67,6 +67,7 @@ impl Step {
                         call_id,
                         name,
                         arguments,
+                        ..
                     } => Self::ToolStarted {
                         call_id: call_id.clone(),
                         name: label::tool_label(name, arguments),

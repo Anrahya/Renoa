@@ -918,6 +918,11 @@ database creates it, and a pre-upgrade binary cannot open schema 17. Its
 does not send it needs no upgrade. `/s/{share}` serves a shared file to a browser
 signed in to the Host.
 
+RCP binding version 19 adds the ephemeral `activity` live frame variant and the
+optional `activity` field on `tool_started`, so the coordinator, node, Pi node,
+Android app and every surface must upgrade together; a peer still on version 18
+is refused at authentication.
+
 Without a service account push is off: apps still register tokens, owed wakes
 are dropped, and the coordinator logs `push_disabled` once. Turning it on later
 needs no app change. Provisioning is manual and outside the repository:
@@ -1061,7 +1066,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 18; the recorded version-8 proof establishes only the deployment
+binding version 19; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

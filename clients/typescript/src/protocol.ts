@@ -1,4 +1,4 @@
-export const RCP_VERSION = 18;
+export const RCP_VERSION = 19;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -33,7 +33,8 @@ export type LiveActivity =
       readonly sequence: number;
       readonly text: string;
     }
-  | { readonly type: "text_reset" };
+  | { readonly type: "text_reset" }
+  | { readonly type: "activity"; readonly text: string };
 
 export type StopOutcome = "requested" | "already_ended";
 
@@ -68,6 +69,7 @@ export type ExecutionEventKind =
       readonly call_id: string;
       readonly name: string;
       readonly arguments: unknown;
+      readonly activity?: string;
     }
   | {
       readonly type: "tool_finished";
@@ -306,6 +308,9 @@ function parseExecutionEventKind(value: unknown): ExecutionEventKind {
         call_id: string(kind.call_id, "tool call_id"),
         name: string(kind.name, "tool name"),
         arguments: required(kind, "arguments", "tool arguments"),
+        ...(kind.activity === undefined || kind.activity === null
+          ? {}
+          : { activity: string(kind.activity, "tool activity") }),
       };
     case "tool_finished":
       return {
@@ -361,6 +366,8 @@ function parseLiveActivity(value: unknown): LiveActivity {
       };
     case "text_reset":
       return { type };
+    case "activity":
+      return { type, text: string(activity.text, "live activity text") };
     default:
       throw new Error(`unsupported live activity ${type}`);
   }

@@ -328,7 +328,7 @@ fn header(
 /// goes there; past the last line, the agent at work.
 fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
     let Some(line) = row.line else {
-        return centred(prose::working(agent, palette)).into_any_element();
+        return centred(prose::working(agent, row.doing.as_deref(), palette)).into_any_element();
     };
     let at = line.at_ms;
     let time = stamp::separates(

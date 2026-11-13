@@ -2331,6 +2331,7 @@ name = "renoa-agent"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "renoa-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

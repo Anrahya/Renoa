@@ -133,6 +133,95 @@ async fn streamed_text_reaches_a_live_surface_while_the_turn_runs_and_is_never_s
 }
 
 #[tokio::test]
+async fn summarized_reasoning_and_tool_activity_reach_live_surfaces_and_arguments_stay_clean() {
+    timeout(Duration::from_secs(15), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let workspace = fixture
+            .host()
+            .agent_workspace(fixture.agent_id)
+            .await
+            .expect("agent workspace");
+        std::fs::write(workspace.join("proof.txt"), "proof\n").expect("proof file");
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+
+        let mut live = system.connect_surface().await;
+        attach_live(&mut live, system.task_id).await;
+        let mut sender = system.connect_surface().await;
+        let command_id = CommandId::new();
+        submit_when_node_is_online(
+            &mut sender,
+            system.task_id,
+            command_id,
+            "Stream summarized activity and tool.",
+        )
+        .await;
+
+        let (frames, mut events) = collect_live_until_text(&mut live, "Done.").await;
+        assert!(
+            frames.contains(&LiveActivity::Activity {
+                text: "Inspecting proof file".to_owned(),
+            }),
+            "expected summarized reasoning title in {frames:?}"
+        );
+        assert!(
+            !frames.contains(&LiveActivity::Activity {
+                text: "Reading the workspace file now.".to_owned(),
+            }),
+            "body prose must not overwrite summarized reasoning title in {frames:?}"
+        );
+
+        events.extend(collect_through_terminal(&mut live).await);
+        let kinds = execution_kinds(&events, command_id);
+        let started = kinds.iter().find_map(|kind| match kind {
+            ExecutionEventKind::ToolStarted {
+                call_id,
+                arguments,
+                activity,
+                ..
+            } if call_id == "read-proof-activity" => Some((arguments, activity)),
+            _ => None,
+        });
+        let (arguments, activity) = started.expect("tool_started event recorded");
+        assert_eq!(activity.as_deref(), Some("Reading proof.txt"));
+        assert!(
+            arguments.get("activity").is_none(),
+            "tool arguments kept synthetic activity: {arguments}"
+        );
+        let finished_ok = kinds.iter().any(|kind| {
+            matches!(
+                kind,
+                ExecutionEventKind::ToolFinished { call_id, is_error: false, .. }
+                    if call_id == "read-proof-activity"
+            )
+        });
+        assert!(finished_ok, "expected clean tool execution: {kinds:?}");
+
+        let stored = serde_json::to_string(&events).expect("serialize journal");
+        assert!(
+            !stored.contains("Inspecting proof file") && !stored.contains("Planning"),
+            "reasoning summary leaked into the durable journal: {stored}"
+        );
+
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("summarized reasoning and tool activity test timed out");
+}
+
+#[tokio::test]
 async fn stopping_a_running_turn_ends_it_cancelled_and_leaves_the_next_command_alone() {
     Box::pin(timeout(Duration::from_secs(15), async {
         let mut system = TestSystem::start().await;

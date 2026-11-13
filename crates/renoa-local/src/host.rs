@@ -47,7 +47,9 @@ pub(crate) use models::{
 };
 pub use peers::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 pub use reset::{HostResetReport, reset_host_data_root};
-pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
+pub(crate) use runtime::{
+    RuntimeRequest, resolve_runtime, synthetic_activity_tools_for_definition,
+};
 
 /// Process-local configuration used to assemble Renoa Agent sessions.
 #[derive(Clone)]

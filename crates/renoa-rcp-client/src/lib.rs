@@ -7,35 +7,29 @@
 
 mod handshake;
 mod sign_in;
+mod transport;
 
 pub use handshake::enroll;
 
 pub use sign_in::{Collected, DeviceKey, SignInRequest, ask_to_sign_in, collect_sign_in};
 
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
 };
 
-use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_protocol::{CommandId, CommandInput, TargetRef};
+use renoa_protocol::{CommandId, CommandInput, LiveActivity, TargetRef};
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredentials, ErrorCode, HostMethod, MAX_APPLICATION_MESSAGE_BYTES, NodeId,
-    ServerMessage, TargetSummary, TaskEvent, TaskId,
+    ClientMessage, DeviceCredentials, ErrorCode, HostMethod, NodeId, ServerMessage, TargetSummary,
+    TaskEvent, TaskId,
 };
 use thiserror::Error;
-use tokio::sync::{Mutex, mpsc, oneshot};
-use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async_with_config,
-    tungstenite::{Message, protocol::WebSocketConfig},
-};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-
-pub(crate) type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
-type Waiters = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<ServerMessage, ClientError>>>>>;
+use transport::{LiveTasks, Socket, Waiters, disconnected, open, receive, run, send};
 
 const OUTBOUND_CAPACITY: usize = 64;
 const EVENT_CAPACITY: usize = 256;
@@ -76,6 +70,7 @@ impl ClientError {
 pub struct Connection {
     outgoing: mpsc::Sender<ClientMessage>,
     waiters: Waiters,
+    live_tasks: LiveTasks,
     next_request: Arc<AtomicU64>,
     closed: CancellationToken,
 }
@@ -88,13 +83,38 @@ pub struct HostAnswer {
     pub body: String,
 }
 
+/// One coordinator-pushed task record or ephemeral live activity.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SurfaceEvent {
+    Task(Box<TaskEvent>),
+    Live {
+        task_id: TaskId,
+        command_id: CommandId,
+        activity: LiveActivity,
+    },
+}
+
 /// Task events in coordinator order. The stream ends, after reporting the
 /// reason, when the connection ends.
-pub struct Events(mpsc::Receiver<Result<TaskEvent, ClientError>>);
+pub struct Events(mpsc::Receiver<Result<SurfaceEvent, ClientError>>);
 
 impl Events {
-    /// Returns the next task event, or `None` after the connection's final error.
+    /// Returns the next task event, skipping ephemeral live activity frames, or
+    /// `None` after the connection's final error.
     pub async fn next(&mut self) -> Option<Result<TaskEvent, ClientError>> {
+        while let Some(item) = self.0.recv().await {
+            match item {
+                Ok(SurfaceEvent::Task(event)) => return Some(Ok(*event)),
+                Ok(SurfaceEvent::Live { .. }) => {}
+                Err(error) => return Some(Err(error)),
+            }
+        }
+        None
+    }
+
+    /// Returns the next task record or live activity frame in socket order, or
+    /// `None` after the connection's final error.
+    pub async fn next_event(&mut self) -> Option<Result<SurfaceEvent, ClientError>> {
         self.0.recv().await
     }
 }
@@ -138,9 +158,11 @@ async fn start(
     handshake::authenticate(&mut socket, credentials, key).await?;
     let (outgoing, outbound) = mpsc::channel(OUTBOUND_CAPACITY);
     let (events, inbound) = mpsc::channel(EVENT_CAPACITY);
+    let live_tasks: LiveTasks = Arc::new(StdMutex::new(HashSet::new()));
     let connection = Connection {
         outgoing,
         waiters: Arc::default(),
+        live_tasks: Arc::clone(&live_tasks),
         next_request: Arc::new(AtomicU64::new(1)),
         closed: CancellationToken::new(),
     };
@@ -149,6 +171,7 @@ async fn start(
         outbound,
         events,
         Arc::clone(&connection.waiters),
+        live_tasks,
         connection.closed.clone(),
     ));
     Ok((connection, Events(inbound)))
@@ -223,7 +246,7 @@ impl Connection {
 
     /// Attaches to a task after `after_sequence`. The replayed records and then
     /// live records arrive on [`Events`]. Returns the replay high-water mark.
-    /// This client does not ask for the task's ephemeral live activity.
+    /// This attachment does not ask for the task's ephemeral live activity.
     ///
     /// # Errors
     ///
@@ -233,22 +256,70 @@ impl Connection {
         task_id: TaskId,
         after_sequence: Option<u64>,
     ) -> Result<Option<u64>, ClientError> {
-        match self
+        self.attach_with_live(task_id, after_sequence, false).await
+    }
+
+    /// Attaches to a task after `after_sequence` and subscribes to ephemeral
+    /// live activity frames on [`Events::next_event`]. Returns the replay
+    /// high-water mark.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport failure or the coordinator's refusal.
+    pub async fn attach_live(
+        &self,
+        task_id: TaskId,
+        after_sequence: Option<u64>,
+    ) -> Result<Option<u64>, ClientError> {
+        self.attach_with_live(task_id, after_sequence, true).await
+    }
+
+    async fn attach_with_live(
+        &self,
+        task_id: TaskId,
+        after_sequence: Option<u64>,
+        live: bool,
+    ) -> Result<Option<u64>, ClientError> {
+        let was_live = if live {
+            !self
+                .live_tasks
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(task_id)
+        } else {
+            false
+        };
+        let attached = match self
             .request(|request_id| ClientMessage::Attach {
                 request_id,
                 task_id,
                 after_sequence,
-                live: false,
+                live,
             })
-            .await?
+            .await
         {
-            ServerMessage::Attached {
+            Ok(ServerMessage::Attached {
                 task_id: attached,
                 through_sequence,
                 ..
-            } if attached == task_id => Ok(through_sequence),
-            other => Err(unexpected("attached", &other)),
+            }) if attached == task_id => Ok(through_sequence),
+            Ok(other) => Err(unexpected("attached", &other)),
+            Err(error) => Err(error),
+        };
+        let mut guard = self
+            .live_tasks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match (&attached, live) {
+            (Ok(_), false) => {
+                guard.remove(&task_id);
+            }
+            (Err(_), true) if !was_live => {
+                guard.remove(&task_id);
+            }
+            _ => {}
         }
+        attached
     }
 
     /// Submits one command under a stable identity. An exact retry of an
@@ -328,162 +399,6 @@ impl Connection {
         }
         waiting.await.unwrap_or_else(|_| Err(disconnected()))
     }
-}
-
-async fn run(
-    mut socket: Socket,
-    mut outbound: mpsc::Receiver<ClientMessage>,
-    events: mpsc::Sender<Result<TaskEvent, ClientError>>,
-    waiters: Waiters,
-    closed: CancellationToken,
-) {
-    let reason = loop {
-        tokio::select! {
-            message = outbound.recv() => {
-                let Some(message) = message else { break disconnected() };
-                if let Err(error) = send(&mut socket, &message).await {
-                    break error;
-                }
-            }
-            message = receive(&mut socket) => match message {
-                Ok(message) => {
-                    if let Err(error) = dispatch(message, &events, &waiters).await {
-                        break error;
-                    }
-                }
-                Err(error) => break error,
-            }
-        }
-    };
-    closed.cancel();
-    for (_, waiter) in waiters.lock().await.drain() {
-        let _ = waiter.send(Err(reason.clone()));
-    }
-    let _ = events.send(Err(reason)).await;
-    let _ = socket.close(None).await;
-}
-
-async fn dispatch(
-    message: ServerMessage,
-    events: &mpsc::Sender<Result<TaskEvent, ClientError>>,
-    waiters: &Waiters,
-) -> Result<(), ClientError> {
-    let request_id = match &message {
-        ServerMessage::TaskEvent { event } => {
-            return events
-                .send(Ok(event.clone()))
-                .await
-                .map_err(|_| disconnected());
-        }
-        ServerMessage::Error {
-            request_id: None,
-            code,
-            message,
-        } => {
-            return Err(ClientError::Rejected {
-                code: *code,
-                message: message.clone(),
-            });
-        }
-        ServerMessage::Error {
-            request_id: Some(request_id),
-            ..
-        }
-        | ServerMessage::TaskList { request_id, .. }
-        | ServerMessage::TargetList { request_id, .. }
-        | ServerMessage::TaskOpened { request_id, .. }
-        | ServerMessage::TaskDeleted { request_id, .. }
-        | ServerMessage::DeviceList { request_id, .. }
-        | ServerMessage::DeviceRevoked { request_id, .. }
-        | ServerMessage::Attached { request_id, .. }
-        | ServerMessage::CommandAccepted { request_id, .. }
-        | ServerMessage::StopAccepted { request_id, .. }
-        | ServerMessage::HostAnswer { request_id, .. }
-        | ServerMessage::ShareLinkIssued { request_id, .. }
-        | ServerMessage::DeviceApproved { request_id, .. }
-        | ServerMessage::PushTokenSet { request_id }
-        | ServerMessage::PushTokenCleared { request_id }
-        | ServerMessage::NoticeKeySet { request_id }
-        | ServerMessage::NoticeList { request_id, .. }
-        | ServerMessage::NoticeAcknowledged { request_id } => *request_id,
-        ServerMessage::Enrolled { .. }
-        | ServerMessage::DeviceChallenge { .. }
-        | ServerMessage::Authenticated { .. }
-        | ServerMessage::ExecutionEventsAccepted { .. }
-        | ServerMessage::ExecutionAcknowledged { .. }
-        | ServerMessage::Execute { .. }
-        | ServerMessage::HostCall { .. }
-        | ServerMessage::Stop { .. }
-        | ServerMessage::LiveActivity { .. }
-        | ServerMessage::WakeRequested { .. }
-        | ServerMessage::NoticeKeys { .. }
-        | ServerMessage::NoticePut { .. }
-        | ServerMessage::NoticesWithdrawn { .. } => {
-            return Err(ClientError::Protocol(
-                "coordinator sent a node-only, session or unrequested message to a surface"
-                    .to_owned(),
-            ));
-        }
-    };
-    let Some(waiter) = waiters.lock().await.remove(&request_id) else {
-        return Err(ClientError::Protocol(format!(
-            "coordinator answered unknown request {request_id}"
-        )));
-    };
-    let result = match message {
-        ServerMessage::Error { code, message, .. } => Err(ClientError::Rejected { code, message }),
-        message => Ok(message),
-    };
-    let _ = waiter.send(result);
-    Ok(())
-}
-
-pub(crate) async fn open(endpoint: &str) -> Result<Socket, ClientError> {
-    let websocket = WebSocketConfig::default()
-        .max_message_size(Some(MAX_APPLICATION_MESSAGE_BYTES))
-        .max_frame_size(Some(MAX_APPLICATION_MESSAGE_BYTES));
-    let (socket, _) = connect_async_with_config(endpoint, Some(websocket), false)
-        .await
-        .map_err(|error| ClientError::Transport(error.to_string()))?;
-    Ok(socket)
-}
-
-pub(crate) async fn send(socket: &mut Socket, message: &ClientMessage) -> Result<(), ClientError> {
-    let json =
-        serde_json::to_string(message).map_err(|error| ClientError::Protocol(error.to_string()))?;
-    socket
-        .send(Message::Text(json.into()))
-        .await
-        .map_err(|error| ClientError::Transport(error.to_string()))
-}
-
-pub(crate) async fn receive(socket: &mut Socket) -> Result<ServerMessage, ClientError> {
-    loop {
-        match socket.next().await {
-            Some(Ok(Message::Text(json))) => {
-                return serde_json::from_str(&json)
-                    .map_err(|error| ClientError::Protocol(error.to_string()));
-            }
-            Some(Ok(Message::Ping(payload))) => {
-                socket
-                    .send(Message::Pong(payload))
-                    .await
-                    .map_err(|error| ClientError::Transport(error.to_string()))?;
-            }
-            Some(Ok(Message::Pong(_))) => {}
-            Some(Ok(Message::Close(_))) | None => return Err(disconnected()),
-            Some(Err(error)) => return Err(ClientError::Transport(error.to_string())),
-            Some(Ok(Message::Binary(_) | Message::Frame(_))) => {
-                return Err(ClientError::Protocol(
-                    "coordinator sent a non-text frame".to_owned(),
-                ));
-            }
-        }
-    }
-}
-
-fn disconnected() -> ClientError {
-    ClientError::Transport("the coordinator connection ended".to_owned())
 }
 
 fn unexpected(expected: &str, received: &ServerMessage) -> ClientError {

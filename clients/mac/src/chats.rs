@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use gpui_kit::{
@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     chat::{Line, Transcript, chat_task_id},
-    face::{Look, blink},
+    face::Look,
     home::Home,
     link::{Command, Update, host_agent},
     theme::Palette,
@@ -36,6 +36,8 @@ struct Row {
     before: Option<Line>,
     /// Whether it is coming in.
     live: bool,
+    /// What the agent is doing while working (`None` when `line.is_some()` or unknown).
+    doing: Option<String>,
 }
 
 /// Renoa no longer knows this Mac.
@@ -188,6 +190,11 @@ impl Chats {
         match update {
             Update::Linked(linked) => {
                 self.linked = linked;
+                if !linked {
+                    for transcript in self.transcripts.values_mut() {
+                        transcript.clear_live();
+                    }
+                }
                 self.home.update(cx, |home, cx| home.set_linked(linked, cx));
             }
             Update::Agents(agents) => {
@@ -231,6 +238,18 @@ impl Chats {
                         self.scroller
                             .update(cx, |scroller, cx| scroller.remeasure_items(timed, cx));
                     }
+                }
+            }
+            Update::Live {
+                task_id,
+                command_id,
+                activity,
+            } => {
+                if let Some(transcript) = self.transcripts.get_mut(&task_id)
+                    && transcript.apply_live(command_id, &activity)
+                    && self.chosen_task() == Some(task_id)
+                {
+                    self.show_rows(cx);
                 }
             }
             Update::NotSent { task_id, text } => {
@@ -331,17 +350,6 @@ impl Chats {
         cx.notify();
     }
 
-    /// What a chat's row says under its name: the last thing said, or
-    /// before anything is, what the agent is for.
-    fn preview(&self, task_id: TaskId) -> SharedString {
-        self.transcripts
-            .get(&task_id)
-            .and_then(|transcript| transcript.lines().last())
-            .map(|line| line.text.clone().into())
-            .or_else(|| self.purposes.get(&task_id).cloned())
-            .unwrap_or_default()
-    }
-
     /// The rows the conversation shows: its lines, then a working row while
     /// the agent answers.
     fn rows(&self) -> usize {
@@ -355,51 +363,21 @@ impl Chats {
     fn row(&self, index: usize) -> Row {
         let transcript = self.transcript();
         let lines = transcript.map_or(&[][..], Transcript::lines);
+        let line = lines.get(index).cloned();
+        let doing = if line.is_none() {
+            transcript.and_then(|transcript| transcript.doing().map(str::to_owned))
+        } else {
+            None
+        };
         Row {
-            line: lines.get(index).cloned(),
+            line,
             before: index
                 .checked_sub(1)
                 .and_then(|before| lines.get(before))
                 .cloned(),
             live: transcript.is_some_and(|transcript| transcript.coming_in(index)),
+            doing,
         }
-    }
-
-    /// Whether the agent of `task_id`'s chat has its eyes shut just now.
-    fn blinking(&self, task_id: TaskId) -> bool {
-        blink::shut(task_id.as_uuid().as_u128(), self.blink_clock())
-    }
-
-    fn blink_clock(&self) -> u64 {
-        u64::try_from(self.opened.elapsed().as_millis()).unwrap_or(u64::MAX)
-    }
-
-    /// How long until any listed agent's eyes open or shut.
-    fn next_blink(&self) -> Duration {
-        let seeds = self.agents.iter().map(|agent| {
-            chat_task_id(agent.node_id, agent.target.as_str())
-                .as_uuid()
-                .as_u128()
-        });
-        blink::next_change(seeds, self.blink_clock())
-    }
-
-    /// How the agent of `agent` looks, and whether it is the main agent: the
-    /// one the Host names, or while it names none that is listed, the first
-    /// listed, as on the phone (`mainAgent` in the Android app's `Badge.kt`).
-    fn face(&self, agent: &TargetSummary) -> (Option<Look>, bool) {
-        let task_id = chat_task_id(agent.node_id, agent.target.as_str());
-        let named = |agent: &TargetSummary| {
-            host_agent(agent.target.as_str()).is_some_and(|id| Some(id) == self.main)
-        };
-        let main = self
-            .agents
-            .iter()
-            .find(|listed| named(listed))
-            .or_else(|| self.agents.first());
-        let primary =
-            main.is_some_and(|main| main.node_id == agent.node_id && main.target == agent.target);
-        (self.looks.get(&task_id).copied(), primary)
     }
 
     /// Tells the scroller what changed: rows after the old working row are

@@ -122,11 +122,18 @@ fn model_completion(output: ModelEffectOutput) -> EffectCompletion {
 pub(crate) struct ToolAdapter {
     tool: Arc<dyn Tool>,
     events: Option<Arc<dyn AgentEventSink>>,
+    strips_activity: bool,
 }
 
 impl ToolAdapter {
-    pub(crate) const fn new(tool: Arc<dyn Tool>, events: Option<Arc<dyn AgentEventSink>>) -> Self {
-        Self { tool, events }
+    pub(crate) fn new(tool: Arc<dyn Tool>, events: Option<Arc<dyn AgentEventSink>>) -> Self {
+        let strips_activity =
+            renoa_agent::schema_accepts_synthetic_activity(&tool.spec().input_schema);
+        Self {
+            tool,
+            events,
+            strips_activity,
+        }
     }
 }
 
@@ -136,6 +143,7 @@ impl EffectAdapter for ToolAdapter {
         let cancellation = invocation.cancellation;
         let tool = Arc::clone(&self.tool);
         let events = self.events.as_ref().map(Arc::clone);
+        let strips_activity = self.strips_activity;
         Box::pin(async move {
             let call = match call {
                 Ok(call) => call,
@@ -146,9 +154,14 @@ impl EffectAdapter for ToolAdapter {
                 AgentEvent::ToolExecutionStart { call: call.clone() },
             )
             .await;
+            let dispatched = if strips_activity {
+                renoa_agent::strip_tool_activity(call.clone())
+            } else {
+                call.clone()
+            };
             match invoke_tool(
                 Some(tool.as_ref()),
-                call.clone(),
+                dispatched,
                 cancellation,
                 events.as_deref(),
             )

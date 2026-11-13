@@ -226,16 +226,23 @@ async function runAttempt(
       ? {}
       : { reasoning: invocation.runtime.reasoningLevel }),
   };
+  const thinkingSummaryQueue = new ResponsesThinkingSummaryTracker(invocation.runtime.model.api);
+  const optionsWithTracker = {
+    ...options,
+    onProviderStreamEvent: (providerEvent: unknown) => {
+      thinkingSummaryQueue.record(providerEvent);
+    },
+  };
   const context = withReplayedEffort(toContext(invocation.request), invocation.runtime);
   if (vertex) {
     capture.dispatched = true;
   }
-  const stream = dispatchStream(model, context, options);
+  const stream = dispatchStream(model, context, optionsWithTracker);
   for await (const event of stream) {
     if (signal.aborted) {
       throw abortError();
     }
-    const record = contentDelta(event);
+    const record = contentDelta(event, invocation.runtime.model, thinkingSummaryQueue);
     if (record !== undefined) {
       observed.outputExposed = true;
       await invocation.emit(record);
@@ -255,7 +262,83 @@ async function runAttempt(
   throw new Error("model stream closed without a terminal event");
 }
 
-function contentDelta(event: AssistantMessageEvent): WireStreamRecord | undefined {
+function isSummarizedThinkingDelta(
+  model: LoadedRuntime["model"],
+  responsesSummaryTracker: ResponsesThinkingSummaryTracker,
+): boolean {
+  switch (model.api) {
+    case "google-vertex":
+      return true;
+    case "anthropic-messages":
+      return (
+        model.provider === "anthropic" &&
+        model.id.startsWith("claude-") &&
+        !model.id.startsWith("claude-3-7")
+      );
+    case "openai-responses":
+      return responsesSummaryTracker.consumeDeltaIsSummary();
+    default:
+      return false;
+  }
+}
+
+class ResponsesThinkingSummaryTracker {
+  readonly #enabled: boolean;
+  readonly #reasoningSlots = new Set<number>();
+  readonly #pending: boolean[] = [];
+
+  constructor(api: string) {
+    this.#enabled = api === "openai-responses";
+  }
+
+  record(event: unknown): void {
+    if (!this.#enabled || typeof event !== "object" || event === null) {
+      return;
+    }
+    const candidate = event as {
+      readonly type?: unknown;
+      readonly output_index?: unknown;
+      readonly item?: { readonly type?: unknown } | null;
+    };
+    const index = candidate.output_index;
+    if (typeof index !== "number") {
+      return;
+    }
+    if (candidate.type === "response.output_item.added") {
+      if (candidate.item?.type === "reasoning") {
+        this.#reasoningSlots.add(index);
+      } else {
+        this.#reasoningSlots.delete(index);
+      }
+      return;
+    }
+    if (candidate.type === "response.output_item.done") {
+      this.#reasoningSlots.delete(index);
+      return;
+    }
+    if (!this.#reasoningSlots.has(index)) {
+      return;
+    }
+    if (
+      candidate.type === "response.reasoning_summary_text.delta" ||
+      candidate.type === "response.reasoning_summary_part.done"
+    ) {
+      this.#pending.push(true);
+    } else if (candidate.type === "response.reasoning_text.delta") {
+      this.#pending.push(false);
+    }
+  }
+
+  consumeDeltaIsSummary(): boolean {
+    return this.#pending.shift() === true;
+  }
+}
+
+function contentDelta(
+  event: AssistantMessageEvent,
+  model: LoadedRuntime["model"],
+  responsesSummaryTracker: ResponsesThinkingSummaryTracker,
+): WireStreamRecord | undefined {
   switch (event.type) {
     case "text_delta":
       return {
@@ -267,7 +350,13 @@ function contentDelta(event: AssistantMessageEvent): WireStreamRecord | undefine
       return {
         event: "content_delta",
         content_index: event.contentIndex,
-        delta: { type: "reasoning", text: event.delta },
+        delta: {
+          type: "reasoning",
+          text: event.delta,
+          ...(isSummarizedThinkingDelta(model, responsesSummaryTracker)
+            ? { summarized: true }
+            : {}),
+        },
       };
     case "toolcall_start": {
       const block = event.partial.content[event.contentIndex];

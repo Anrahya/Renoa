@@ -190,4 +190,21 @@ class WireTest {
             )
         for (frame in frames) assertFailsWith<ProtocolViolation>(frame) { decodeServerMessage(frame) }
     }
+
+    @Test
+    fun activityLiveFrameAndOptionalToolStartedActivityDecodeCleanly() {
+        val task = "00000000-0000-0000-0000-000000000010"
+        val live = """{"type":"live_activity","task_id":"$task","command_id":"$task","activity":{"type":"activity","text":"Reading logs"}}"""
+        val decodedLive = assertIs<ServerMessage.LiveActivityFrame>(decodeServerMessage(live))
+        assertEquals(LiveActivity.Activity("Reading logs"), decodedLive.activity)
+
+        val withoutActivity =
+            """{"type":"task_event","event":{"eventId":"$task","taskId":"$task","sequence":1,"kind":{"type":"execution_event","commandId":"$task","event":{"eventId":"$task","executionId":"$task","sequence":0,"recordedAtMs":0,"kind":{"type":"tool_started","call_id":"c1","name":"bash","arguments":{}}}}}}"""
+        val withActivity =
+            """{"type":"task_event","event":{"eventId":"$task","taskId":"$task","sequence":1,"kind":{"type":"execution_event","commandId":"$task","event":{"eventId":"$task","executionId":"$task","sequence":0,"recordedAtMs":0,"kind":{"type":"tool_started","call_id":"c2","name":"bash","arguments":{},"activity":"Running tests"}}}}}"""
+        val execWithout = ((decodeServerMessage(withoutActivity) as ServerMessage.TaskEventFrame).event.kind as TaskEventKind.ExecutionRecorded).event.kind
+        val execWith = ((decodeServerMessage(withActivity) as ServerMessage.TaskEventFrame).event.kind as TaskEventKind.ExecutionRecorded).event.kind
+        assertEquals(null, assertIs<ExecutionEventKind.ToolStarted>(execWithout).activity)
+        assertEquals("Running tests", assertIs<ExecutionEventKind.ToolStarted>(execWith).activity)
+    }
 }

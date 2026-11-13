@@ -61,6 +61,7 @@ internal class ChatJournal {
     /** Messages in [unsent] the app stopped sending, until the owner sends them again. */
     private val notSent = HashSet<Uuid>()
     private var draft: Draft? = null
+    private var doing: String? = null
     private var seen: String? = null
 
     /** The live text of one message; [next] is the sequence its next frame must carry. */
@@ -81,6 +82,7 @@ internal class ChatJournal {
                         attachments = input.attachments,
                     )
                 latestCommand = kind.command.commandId
+                doing = null
                 unsent.remove(kind.command.commandId)
                 notSent.remove(kind.command.commandId)
             }
@@ -90,14 +92,21 @@ internal class ChatJournal {
                         val index = recorded[kind.commandId] ?: 0
                         recorded[kind.commandId] = index + 1
                         messages += ChatMessage(messageId(kind.commandId, index), Speaker.Agent, activity.text)
+                        doing = null
                         // The record supersedes the live text it completes.
                         if (draft?.let { it.commandId == kind.commandId && it.index <= index } == true) draft = null
                     }
+                    is ExecutionEventKind.ToolStarted -> {
+                        doing = sanitizeActivity(activity.activity)
+                    }
                     is ExecutionEventKind.ExecutionTerminated -> {
                         terminals[kind.commandId] = activity.terminal
+                        doing = null
                         if (draft?.commandId == kind.commandId) draft = null
                     }
-                    else -> {}
+                    ExecutionEventKind.ExecutionStarted,
+                    ExecutionEventKind.TurnStarted,
+                    is ExecutionEventKind.ToolFinished -> {}
                 }
         }
     }
@@ -110,6 +119,14 @@ internal class ChatJournal {
      */
     fun live(commandId: Uuid, activity: LiveActivity) {
         if (commandId in terminals) return
+        if (activity is LiveActivity.Activity) {
+            if (latestCommand != null && commandId != latestCommand) return
+            doing = sanitizeActivity(activity.text)
+            return
+        }
+        if (activity is LiveActivity.TextReset && (latestCommand == null || commandId == latestCommand)) {
+            doing = null
+        }
         val current = draft?.takeIf { it.commandId == commandId }
         val first = recorded[commandId] ?: 0
         draft =
@@ -126,12 +143,14 @@ internal class ChatJournal {
                         else -> null
                     }
                 }
+                is LiveActivity.Activity -> draft
             }
     }
 
-    /** The connection dropped: live frames sent meanwhile are gone, so the draft cannot be trusted. */
+    /** The connection dropped: live frames sent meanwhile are gone, so the draft and live activity cannot be trusted. */
     fun connectionLost() {
         draft = null
+        doing = null
     }
 
     /** Shows a message the owner sent until its record arrives; it keeps the record's id, so nothing jumps. */
@@ -191,7 +210,11 @@ internal class ChatJournal {
         get() {
             val said = messages.lastOrNull { it.speaker == Speaker.Agent }
             val last = messages.lastOrNull()
-            return Glance(line = said?.text, unread = last?.speaker == Speaker.Agent && last.id != seen)
+            return Glance(
+                line = said?.text,
+                doing = doing.takeIf { state == AgentState.Working },
+                unread = last?.speaker == Speaker.Agent && last.id != seen,
+            )
         }
 
     /** The owner has read everything so far. */
@@ -200,4 +223,25 @@ internal class ChatJournal {
     }
 
     private fun messageId(commandId: Uuid, index: Int) = "$commandId-$index"
+
+    private fun sanitizeActivity(raw: String?): String? {
+        if (raw == null) return null
+        val stripped = StringBuilder(raw.length)
+        var index = 0
+        while (index < raw.length) {
+            val codePoint = raw.codePointAt(index)
+            if (Character.getType(codePoint) != Character.FORMAT.toInt()) {
+                stripped.appendCodePoint(codePoint)
+            }
+            index += Character.charCount(codePoint)
+        }
+        val trimmed = stripped.toString().trim().takeIf { it.isNotEmpty() } ?: return null
+        if (trimmed.any { it.isISOControl() }) return null
+        if (trimmed.encodeToByteArray().size > MAX_ACTIVITY_BYTES) return null
+        return trimmed
+    }
+
+    private companion object {
+        private const val MAX_ACTIVITY_BYTES = 120
+    }
 }

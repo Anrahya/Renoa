@@ -151,3 +151,142 @@ fn only_lines_new_when_they_arrive_come_in_and_the_owners_take_the_agents_time()
         "nothing left to time"
     );
 }
+
+#[test]
+fn transcript_tracks_plain_activity_from_tools_and_live_frames_and_clears_it() {
+    use renoa_protocol::{CommandId, ExecutionEvent, ExecutionEventId, ExecutionId, LiveActivity};
+    use renoa_rcp_wire::{TaskEvent, TaskEventId, TaskEventKind};
+
+    let task_id = TaskId::new();
+    let command_id = CommandId::new();
+    let other_command = CommandId::new();
+    let execution_id = ExecutionId::new();
+    let exec_for = |seq: u64, cmd: CommandId, kind: ExecutionEventKind| TaskEvent {
+        event_id: TaskEventId::new(),
+        task_id,
+        sequence: seq,
+        kind: TaskEventKind::ExecutionEvent {
+            command_id: cmd,
+            event: ExecutionEvent {
+                event_id: ExecutionEventId::new(),
+                execution_id,
+                sequence: seq,
+                recorded_at_ms: i64::try_from(seq).expect("seq") * MINUTE_MS,
+                kind,
+            },
+        },
+    };
+
+    let mut transcript = Transcript::default();
+    transcript.apply(&exec_for(0, command_id, ExecutionEventKind::TurnStarted), 0);
+    assert!(transcript.working());
+    assert_eq!(transcript.doing(), None);
+
+    assert!(transcript.apply_live(
+        command_id,
+        &LiveActivity::Activity {
+            text: "  \u{200B}Scanning \u{202E}Cargo workspace\u{E0020}  ".to_owned(),
+        },
+    ));
+    assert_eq!(transcript.doing(), Some("Scanning Cargo workspace"));
+
+    assert!(!transcript.apply_live(
+        other_command,
+        &LiveActivity::Activity {
+            text: "Stale command".to_owned(),
+        },
+    ));
+    assert_eq!(transcript.doing(), Some("Scanning Cargo workspace"));
+
+    assert!(transcript.apply_live(
+        command_id,
+        &LiveActivity::Activity {
+            text: "Bad\ncontrol\tchars".to_owned(),
+        },
+    ));
+    assert_eq!(transcript.doing(), None);
+
+    assert!(transcript.apply_live(
+        command_id,
+        &LiveActivity::Activity {
+            text: "a".repeat(renoa_protocol::MAX_ACTIVITY_BYTES),
+        },
+    ));
+    assert_eq!(
+        transcript.doing(),
+        Some("a".repeat(renoa_protocol::MAX_ACTIVITY_BYTES).as_str())
+    );
+
+    assert!(transcript.apply_live(
+        command_id,
+        &LiveActivity::Activity {
+            text: "a".repeat(renoa_protocol::MAX_ACTIVITY_BYTES + 1),
+        },
+    ));
+    assert_eq!(transcript.doing(), None);
+
+    transcript.apply(
+        &exec_for(
+            1,
+            command_id,
+            ExecutionEventKind::ToolStarted {
+                call_id: "call-1".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: serde_json::json!({ "path": "Cargo.toml" }),
+                activity: Some("Reading Cargo.toml".to_owned()),
+            },
+        ),
+        MINUTE_MS,
+    );
+    assert_eq!(transcript.doing(), Some("Reading Cargo.toml"));
+
+    transcript.apply(
+        &exec_for(
+            2,
+            command_id,
+            ExecutionEventKind::AssistantMessage {
+                text: "Here it is.".to_owned(),
+            },
+        ),
+        2 * MINUTE_MS,
+    );
+    assert_eq!(transcript.doing(), None);
+
+    assert!(transcript.apply_live(
+        command_id,
+        &LiveActivity::Activity {
+            text: "Still working".to_owned(),
+        },
+    ));
+    assert!(transcript.apply_live(command_id, &LiveActivity::TextReset));
+    assert_eq!(transcript.doing(), None);
+    assert!(!transcript.apply_live(command_id, &LiveActivity::TextReset));
+
+    assert!(transcript.apply_live(
+        command_id,
+        &LiveActivity::Activity {
+            text: "Retrying step".to_owned(),
+        },
+    ));
+    transcript.clear_live();
+    assert_eq!(transcript.doing(), None);
+
+    transcript.apply(
+        &exec_for(
+            3,
+            command_id,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            },
+        ),
+        3 * MINUTE_MS,
+    );
+    assert!(!transcript.working());
+    assert!(!transcript.apply_live(
+        command_id,
+        &LiveActivity::Activity {
+            text: "Late activity".to_owned(),
+        },
+    ));
+    assert_eq!(transcript.doing(), None);
+}

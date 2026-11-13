@@ -53,6 +53,8 @@ pub enum AssistantDelta {
     Text { text: String },
     /// Model reasoning that a host may render separately from visible text.
     Reasoning { text: String },
+    /// Summarized model reasoning safe to surface as a live activity line.
+    ReasoningSummary { text: String },
     /// Stable identity needed before incremental tool arguments can be rendered.
     ToolCallStart { id: String, name: String },
     /// One fragment of the tool call's JSON arguments.

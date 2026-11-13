@@ -257,7 +257,7 @@ fn build_runtime_inner(
     let mut tool_adapters = Vec::with_capacity(tools.len());
     let mut digest_tools = Vec::with_capacity(tools.len());
     for binding in tools {
-        let spec = binding.tool.spec().clone();
+        let spec = binding.tool.spec().with_activity_field();
         if spec.name.is_empty() {
             return Err(AgentLoopBuildError::EmptyToolName);
         }
@@ -375,7 +375,7 @@ fn prepare_code_mode(
         return Err(AgentLoopBuildError::DuplicateToolName(nested_spec.name));
     }
     let nested_binding = tool_effect_binding(&nested_spec.name);
-    let spec = code_mode_spec();
+    let spec = code_mode_spec().with_activity_field();
     let digest = DigestCodeMode {
         revision: binding.revision.clone(),
         spec: spec.clone(),

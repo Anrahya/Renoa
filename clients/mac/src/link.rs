@@ -3,13 +3,12 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    future::Future,
     sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
-use renoa_protocol::{CommandId, CommandInput, TargetRef};
-use renoa_rcp_client::{ClientError, Connection, Events, connect_with_key};
+use renoa_protocol::{CommandId, LiveActivity, TargetRef};
+use renoa_rcp_client::{ClientError, Connection, Events, SurfaceEvent, connect_with_key};
 use renoa_rcp_wire::{DeviceCredentials, ErrorCode, NodeId, TargetSummary, TaskEvent, TaskId};
 use tokio::{
     runtime::Runtime,
@@ -21,12 +20,10 @@ use uuid::Uuid;
 
 use crate::{face::Look, key::MacKey};
 use host::HostCall;
+use session::{Followed, Outgoing, Through, flush, follow, note, within};
 pub use sign_in::{SignInStep, sign_in};
 
 const DEFAULT_ORIGIN: &str = "https://renoa.live";
-/// How long a call may wait for Renoa before the link counts as lost, as the
-/// Android app waits (`Timeouts.reply`).
-const REPLY_WITHIN: Duration = Duration::from_secs(30);
 
 pub fn runtime() -> &'static Runtime {
     static RUNTIME: LazyLock<Runtime> =
@@ -106,6 +103,11 @@ pub enum Update {
     /// The Host's main agent, by its Host agent id; `None` while it names none.
     Main(Option<Uuid>),
     Event(Box<TaskEvent>),
+    Live {
+        task_id: TaskId,
+        command_id: CommandId,
+        activity: LiveActivity,
+    },
     /// Renoa refused a message to this chat; it was not sent.
     NotSent {
         task_id: TaskId,
@@ -135,24 +137,6 @@ pub enum Command {
     /// Calls the Host, beside the chats, and answers on the call.
     Host(HostCall),
 }
-
-struct Followed {
-    node_id: NodeId,
-    target: TargetRef,
-    attached: bool,
-}
-
-/// A message on its way. Its id stays the same across retries, so Renoa
-/// admits it once.
-struct Outgoing {
-    task_id: TaskId,
-    command_id: CommandId,
-    text: String,
-    sent: Option<oneshot::Sender<bool>>,
-}
-
-/// The last event received of each chat, noted as events arrive.
-type Through = Arc<Mutex<HashMap<TaskId, u64>>>;
 
 /// What the session keeps across connections.
 #[derive(Default)]
@@ -381,105 +365,31 @@ async fn catch_up(
 
 /// Passes events on as they arrive and notes the last one of each chat.
 async fn forward(mut events: Events, through: Through, updates: mpsc::UnboundedSender<Update>) {
-    while let Some(Ok(event)) = events.next().await {
-        note(&through, event.task_id, event.sequence);
-        if updates.send(Update::Event(Box::new(event))).is_err() {
+    while let Some(Ok(item)) = events.next_event().await {
+        let send = match item {
+            SurfaceEvent::Task(event) => {
+                note(&through, event.task_id, event.sequence);
+                Update::Event(event)
+            }
+            SurfaceEvent::Live {
+                task_id,
+                command_id,
+                activity,
+            } => Update::Live {
+                task_id,
+                command_id,
+                activity,
+            },
+        };
+        if updates.send(send).is_err() {
             return;
         }
     }
 }
 
-/// Notes that `task_id` was received through `sequence`; it never moves back.
-fn note(through: &Through, task_id: TaskId, sequence: u64) {
-    let mut through = through.lock().expect("through lock");
-    let last = through.entry(task_id).or_insert(sequence);
-    *last = (*last).max(sequence);
-}
-
-/// Opens a chat's task, an exact retry when another app opened it first, and
-/// attaches after the last event received. A refusal leaves the chat for the
-/// next tick; only a lost link is an error.
-async fn follow(
-    connection: &Connection,
-    task_id: TaskId,
-    chat: &mut Followed,
-    through: &Through,
-) -> Result<(), ClientError> {
-    let opened = within(connection.open_task(task_id, chat.node_id, chat.target.clone())).await;
-    if !settled(connection, opened).await? {
-        return Ok(());
-    }
-    let after = through.lock().expect("through lock").get(&task_id).copied();
-    chat.attached = settled(connection, within(connection.attach(task_id, after)).await).await?;
-    Ok(())
-}
-
-/// Sends every waiting message in order. A refusal drops a message and tells
-/// its sender, or else the views; a lost link keeps it, and the rest, for the next connection.
-async fn flush(
-    connection: &Connection,
-    outbox: &mut VecDeque<Outgoing>,
-    updates: &mpsc::UnboundedSender<Update>,
-) -> Result<(), ClientError> {
-    while let Some(next) = outbox.front() {
-        let input = CommandInput::from_text(next.text.clone());
-        let submitted = within(connection.submit(next.task_id, next.command_id, input)).await;
-        let took = settled(connection, submitted).await?;
-        let Some(done) = outbox.pop_front() else {
-            break;
-        };
-        match done.sent {
-            // Whoever sent it hears how it went, and shows a refusal itself.
-            Some(sent) => {
-                let _ = sent.send(took);
-            }
-            None if !took => {
-                let _ = updates.send(Update::NotSent {
-                    task_id: done.task_id,
-                    text: done.text,
-                });
-            }
-            None => {}
-        }
-    }
-    Ok(())
-}
-
-/// Whether a call succeeded, when Renoa answered it: a refusal is `false`.
-/// A failure that ended the connection, whatever its kind, is the error:
-/// the call may have been admitted before it ended.
-async fn settled<T>(
-    connection: &Connection,
-    call: Result<T, ClientError>,
-) -> Result<bool, ClientError> {
-    match call {
-        Ok(_) => Ok(true),
-        Err(error @ ClientError::Transport(_)) => Err(error),
-        Err(error) if ended(connection).await => Err(error),
-        Err(_) => Ok(false),
-    }
-}
-
-/// Whether the connection has ended. It ends before it fails its waiting
-/// calls, so a call failed by the end sees it ended.
-async fn ended(connection: &Connection) -> bool {
-    tokio::select! {
-        biased;
-        () = connection.closed() => true,
-        () = std::future::ready(()) => false,
-    }
-}
-
-/// `call`, or a transport failure once Renoa has not answered in
-/// [`REPLY_WITHIN`].
-async fn within<T>(call: impl Future<Output = Result<T, ClientError>>) -> Result<T, ClientError> {
-    tokio::time::timeout(REPLY_WITHIN, call)
-        .await
-        .unwrap_or_else(|_| Err(ClientError::Transport("Renoa did not answer".to_owned())))
-}
-
 pub mod host;
 mod profiles;
+mod session;
 mod sign_in;
 
 pub use profiles::host_agent;

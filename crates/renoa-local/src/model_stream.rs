@@ -441,17 +441,34 @@ enum StreamRecord {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum BridgeDelta {
-    Text { text: String },
-    Reasoning { text: String },
-    ToolCallStart { id: String, name: String },
-    ToolCallArguments { json_delta: String },
+    Text {
+        text: String,
+    },
+    Reasoning {
+        text: String,
+        #[serde(default)]
+        summarized: bool,
+    },
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    ToolCallArguments {
+        json_delta: String,
+    },
 }
 
 impl From<BridgeDelta> for AssistantDelta {
     fn from(delta: BridgeDelta) -> Self {
         match delta {
             BridgeDelta::Text { text } => Self::Text { text },
-            BridgeDelta::Reasoning { text } => Self::Reasoning { text },
+            BridgeDelta::Reasoning { text, summarized } => {
+                if summarized {
+                    Self::ReasoningSummary { text }
+                } else {
+                    Self::Reasoning { text }
+                }
+            }
             BridgeDelta::ToolCallStart { id, name } => Self::ToolCallStart { id, name },
             BridgeDelta::ToolCallArguments { json_delta } => Self::ToolCallArguments { json_delta },
         }

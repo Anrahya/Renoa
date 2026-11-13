@@ -281,7 +281,7 @@ impl AcpEventSink {
                     &message_id,
                 )));
             }
-            AssistantDelta::Reasoning { text } => {
+            AssistantDelta::Reasoning { text } | AssistantDelta::ReasoningSummary { text } => {
                 let message_id = if let Ok(mut state) = self.state.lock() {
                     state.published = true;
                     state.message_id.clone()

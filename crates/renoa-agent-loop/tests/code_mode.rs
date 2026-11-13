@@ -505,6 +505,95 @@ async fn a_nested_call_that_ends_the_turn_stops_python_and_closes_the_turn() {
     assert_eq!(requests.lock().expect("requests").len(), 1);
 }
 
+#[tokio::test]
+async fn code_mode_schema_includes_activity_and_strips_it_before_dispatch() {
+    struct NoOpEvaluator;
+
+    impl EffectAdapter for NoOpEvaluator {
+        fn invoke(&self, invocation: EffectInvocation) -> EffectFuture<'_> {
+            Box::pin(async move {
+                let request: CodeStepRequest =
+                    serde_json::from_value(invocation.request).expect("step request");
+                let CodeStep::Start { source } = request.step else {
+                    panic!("expected Start step");
+                };
+                assert_eq!(source, "return 42");
+                let encoded = serde_json::to_value(CodeStepOutput::Completed {
+                    result: json!(42),
+                    is_error: false,
+                })
+                .expect("encode");
+                EffectOutcome::Success(encoded).into()
+            })
+        }
+    }
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let agent = AgentId::new();
+    let session = SessionId::new();
+    kernel.create_agent(agent).expect("create agent");
+    kernel
+        .create_session(session, agent)
+        .expect("create session");
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(ScriptedModel {
+        responses: Mutex::new(VecDeque::from([
+            ModelResponse {
+                content: vec![AssistantContent::tool_call(ToolCall {
+                    id: "outer-activity".to_owned(),
+                    name: "code_mode".to_owned(),
+                    arguments: json!({
+                        "source": "return 42",
+                        "activity": "Running Python snippet"
+                    }),
+                    thought_signature: None,
+                    namespace: None,
+                })],
+                stop_reason: StopReason::ToolUse,
+                usage: None,
+                metadata: AssistantMetadata::default(),
+            },
+            ModelResponse {
+                content: vec![AssistantContent::text("Result was 42.")],
+                stop_reason: StopReason::Stop,
+                usage: None,
+                metadata: AssistantMetadata::default(),
+            },
+        ])),
+        requests: Arc::clone(&requests),
+    });
+    let runtime = runtime(model, Arc::new(UnknownMcpTool), Arc::new(NoOpEvaluator));
+    let command = serde_json::to_value(AgentCommand::text("Compute 42.")).expect("command");
+    let admission = kernel
+        .submit(session, Command::new(CommandId::new(), command))
+        .expect("submit");
+    let result = tokio::time::timeout(HANG_GUARD, kernel.drive(session, &runtime))
+        .await
+        .expect("code_mode finishes")
+        .expect("drive");
+    assert_eq!(
+        result,
+        DriveResult::Finished {
+            operation_id: admission.operation_id,
+            outcome: OperationOutcome::Completed,
+        }
+    );
+
+    let requests = requests.lock().expect("model requests");
+    let schema = &requests[0].tools[0].input_schema;
+    assert_eq!(
+        schema["properties"][renoa_agent::ACTIVITY_FIELD]["type"],
+        json!("string")
+    );
+    assert_eq!(schema["required"], json!(["source"]));
+    assert!(
+        matches!(&requests[1].messages[2], Message::Tool { result } if !result.is_error),
+        "code_mode must succeed with activity stripped from deny_unknown_fields CodeModeInput"
+    );
+}
+
 fn scripted_runtime(
     requests: &Arc<Mutex<Vec<ModelRequest>>>,
     dispatched: &Arc<Mutex<Vec<ToolCall>>>,

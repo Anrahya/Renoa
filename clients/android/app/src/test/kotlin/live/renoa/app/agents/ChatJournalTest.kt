@@ -11,6 +11,7 @@ import live.renoa.rcp.ExecutionTerminal
 import live.renoa.rcp.LiveActivity
 import live.renoa.rcp.TaskEvent
 import live.renoa.rcp.TaskEventKind
+import kotlinx.serialization.json.JsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -202,5 +203,82 @@ class ChatJournalTest {
         assertEquals(1, chat.conversation.messages.size)
         chat.sending(refused, "never")
         assertEquals(1, chat.conversation.messages.size, "an older read of the outbox does not bring it back")
+    }
+
+    @Test
+    fun tracksPlainActivityFromToolsAndLiveFramesAndClearsIt() {
+        val olderCommand = Uuid.random()
+        record(journal.submitted(command, "check repo"))
+        record(journal.executed(command, ExecutionEventKind.TurnStarted))
+        assertNull(chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("  \u200BChecking \u202ECargo workspace\uDB40\uDC20  "))
+        assertEquals("Checking Cargo workspace", chat.glance.doing)
+
+        chat.live(olderCommand, LiveActivity.Activity("Wrong command"))
+        assertEquals("Checking Cargo workspace", chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("Line1\nLine2"))
+        assertNull(chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("a".repeat(120)))
+        assertEquals("a".repeat(120), chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("a".repeat(121)))
+        assertNull(chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("é".repeat(61)))
+        assertNull(chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("   \u200B\t "))
+        assertNull(chat.glance.doing)
+
+        record(
+            journal.executed(
+                command,
+                ExecutionEventKind.ToolStarted(
+                    callId = "call-1",
+                    name = "read_file",
+                    arguments = JsonObject(emptyMap()),
+                    activity = "Reading Cargo.toml",
+                ),
+            ),
+        )
+        assertEquals("Reading Cargo.toml", chat.glance.doing)
+
+        record(journal.said(command, "Checked."))
+        assertNull(chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("Wrapping up"))
+        assertEquals("Wrapping up", chat.glance.doing)
+        chat.live(command, LiveActivity.TextReset)
+        assertNull(chat.glance.doing)
+
+        chat.live(command, LiveActivity.Activity("Finishing up"))
+        assertEquals("Finishing up", chat.glance.doing)
+        chat.connectionLost()
+        assertNull(chat.glance.doing)
+
+        record(journal.ended(command))
+        chat.live(command, LiveActivity.Activity("After end"))
+        assertNull(chat.glance.doing)
+    }
+
+    @Test
+    fun textDeltaAndResetStillUpdateForAnOlderRunningCommandWhileActivityStaysOnLatest() {
+        val next = Uuid.random()
+        record(journal.submitted(command, "first"))
+        record(journal.submitted(next, "second"))
+
+        chat.live(command, LiveActivity.Activity("From older"))
+        assertNull(chat.glance.doing)
+
+        delta(0, "Earlier reply")
+        assertEquals(StreamingReply("$command-0", "Earlier reply"), chat.conversation.streaming)
+
+        chat.live(command, LiveActivity.TextReset)
+        assertNull(chat.conversation.streaming)
+        delta(0, "Retry")
+        assertEquals(StreamingReply("$command-0", "Retry"), chat.conversation.streaming)
     }
 }

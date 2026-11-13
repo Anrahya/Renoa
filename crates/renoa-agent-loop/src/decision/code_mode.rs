@@ -63,7 +63,8 @@ impl AgentLoop {
         operation_id: OperationId,
     ) -> Result<LoopDecision, LoopError> {
         let call = pending.current();
-        let input = match serde_json::from_value::<CodeModeInput>(call.arguments.clone()) {
+        let stripped = renoa_agent::strip_activity_field(&call.arguments);
+        let input = match serde_json::from_value::<CodeModeInput>(stripped) {
             Ok(input)
                 if !input.source.trim().is_empty() && input.source.len() <= MAX_CODE_BYTES =>
             {

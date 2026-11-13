@@ -111,6 +111,203 @@ async fn kernel_drives_a_complete_model_tool_model_turn() {
     ));
 }
 
+#[tokio::test]
+async fn activity_schema_is_advertised_and_stripped_from_strict_tools() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+    kernel.create_agent(agent_id).expect("create agent");
+    kernel
+        .create_session(session_id, agent_id)
+        .expect("create session");
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(ScriptedModel::new(
+        [
+            ModelResponse {
+                content: vec![
+                    AssistantContent::tool_call(tool_call(
+                        "replace-1",
+                        "replace_value",
+                        serde_json::json!({
+                            "from": "old",
+                            "to": "new",
+                            "activity": "  Replacing old with new  ",
+                        }),
+                    )),
+                    AssistantContent::tool_call(tool_call(
+                        "replace-2",
+                        "replace_value",
+                        serde_json::json!({
+                            "from": "x",
+                            "to": "y",
+                            "activity": 42,
+                        }),
+                    )),
+                ],
+                stop_reason: StopReason::ToolUse,
+                usage: None,
+                metadata: AssistantMetadata::default(),
+            },
+            text_response("Done."),
+        ],
+        Arc::clone(&calls),
+    ));
+    let events = Arc::new(RecordingSink::default());
+    let runtime = build_runtime_with_events(
+        AgentLoopConfig::new(
+            "Replace values.",
+            NonZeroU32::new(4).expect("non-zero model limit"),
+            NonZeroU32::new(4).expect("non-zero tool limit"),
+        ),
+        ContextBinding::full_history(),
+        ModelBinding::new("scripted-model-v1", model, EffectRecovery::SafeToReplay),
+        vec![AgentToolBinding::new(
+            "replace-value-v1",
+            Arc::new(StrictReplace),
+            EffectRecovery::NeverReplay,
+        )],
+        events.clone(),
+    )
+    .expect("build runtime");
+    let content =
+        serde_json::to_value(AgentCommand::text("Replace both.")).expect("serialize command");
+    let admission = kernel
+        .submit(session_id, Command::new(CommandId::new(), content))
+        .expect("submit command");
+
+    assert_eq!(
+        kernel
+            .drive(session_id, &runtime)
+            .await
+            .expect("drive operation"),
+        DriveResult::Finished {
+            operation_id: admission.operation_id,
+            outcome: OperationOutcome::Completed,
+        }
+    );
+
+    let requests = calls.lock().expect("request lock");
+    let schema = &requests[0].tools[0].input_schema;
+    assert_eq!(
+        schema["properties"][renoa_agent::ACTIVITY_FIELD]["type"],
+        serde_json::json!("string")
+    );
+    assert_eq!(schema["required"], serde_json::json!(["from", "to"]));
+
+    let recorded = events.events.lock().expect("event lock");
+    assert_strict_activity_recorded(&recorded);
+}
+
+fn assert_strict_activity_recorded(recorded: &[AgentEvent]) {
+    let started_activities: Vec<_> = recorded
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolExecutionStart { call } => {
+                Some(renoa_agent::extract_tool_activity(&call.arguments))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        started_activities,
+        vec![Some("Replacing old with new".to_owned()), None]
+    );
+    let results: Vec<_> = recorded
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolExecutionEnd { result, .. } => {
+                Some((result.call_id.clone(), result.is_error))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        results,
+        vec![
+            ("replace-1".to_owned(), false),
+            ("replace-2".to_owned(), false),
+        ],
+        "strict tool must execute without unknown-field errors: {results:?}"
+    );
+}
+
+#[tokio::test]
+async fn tool_declaring_its_own_activity_property_keeps_schema_and_argument() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+    kernel.create_agent(agent_id).expect("create agent");
+    kernel
+        .create_session(session_id, agent_id)
+        .expect("create session");
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(ScriptedModel::new(
+        [
+            tool_response(tool_call(
+                "call_own",
+                "log_workout",
+                serde_json::json!({ "activity": "swimming" }),
+            )),
+            text_response("Logged."),
+        ],
+        Arc::clone(&calls),
+    ));
+    let tool = Arc::new(OwnActivityTool::default());
+    let runtime = build_runtime(
+        AgentLoopConfig::new(
+            "Log the requested workout.",
+            NonZeroU32::new(4).expect("non-zero model limit"),
+            NonZeroU32::new(4).expect("non-zero tool limit"),
+        ),
+        ContextBinding::full_history(),
+        ModelBinding::new("scripted-model-v1", model, EffectRecovery::SafeToReplay),
+        vec![AgentToolBinding::new(
+            "log-workout-v1",
+            tool.clone(),
+            EffectRecovery::NeverReplay,
+        )],
+    )
+    .expect("build runtime with own-activity tool");
+
+    let content =
+        serde_json::to_value(AgentCommand::text("Log swimming.")).expect("serialize command");
+    let admission = kernel
+        .submit(session_id, Command::new(CommandId::new(), content))
+        .expect("submit command");
+    assert_eq!(
+        kernel
+            .drive(session_id, &runtime)
+            .await
+            .expect("drive operation"),
+        DriveResult::Finished {
+            operation_id: admission.operation_id,
+            outcome: OperationOutcome::Completed,
+        }
+    );
+
+    let requests = calls.lock().expect("request lock");
+    let advertised = requests[0]
+        .tools
+        .iter()
+        .find(|spec| spec.name == "log_workout")
+        .expect("log_workout tool schema");
+    assert_eq!(
+        advertised.input_schema["properties"]["activity"]["description"],
+        serde_json::json!("Workout name required by the tool itself.")
+    );
+    assert_eq!(
+        *tool
+            .received_activities
+            .lock()
+            .expect("received activities"),
+        vec![Some("swimming".to_owned())]
+    );
+}
+
 fn observed_runtime(model: Arc<ScriptedModel>, events: Arc<RecordingSink>) -> Runtime {
     let unobserved = build_runtime(
         AgentLoopConfig::new(
@@ -387,6 +584,55 @@ impl Model for ScriptedModel {
     }
 }
 
+struct StrictReplace;
+
+impl Tool for StrictReplace {
+    fn spec(&self) -> &ToolSpec {
+        static SPEC: std::sync::OnceLock<ToolSpec> = std::sync::OnceLock::new();
+        SPEC.get_or_init(|| ToolSpec {
+            name: "replace_value".to_owned(),
+            description: "Replace one value.".to_owned(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string"},
+                    "to": {"type": "string"}
+                },
+                "required": ["from", "to"],
+                "additionalProperties": false
+            }),
+        })
+    }
+
+    fn execute(
+        &self,
+        call: ToolCall,
+        _cancellation: CancellationToken,
+        _updates: ToolUpdates,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct StrictInput {
+            from: String,
+            to: String,
+        }
+
+        Box::pin(async move {
+            let parsed: StrictInput = serde_json::from_value(call.arguments)
+                .map_err(|error| ToolError::invalid_input(error.to_string()))?;
+            Ok(ToolOutput {
+                content: vec![ContentBlock::text(format!(
+                    "Replaced {} with {}.",
+                    parsed.from, parsed.to
+                ))],
+                details: None,
+                is_error: false,
+                closing: None,
+            })
+        })
+    }
+}
+
 struct ReplaceValue;
 
 impl Tool for ReplaceValue {
@@ -455,6 +701,57 @@ impl Tool for NeverCalledTool {
         _updates: ToolUpdates,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         panic!("invalid tool-call batches must fail before tool execution")
+    }
+}
+
+#[derive(Default)]
+struct OwnActivityTool {
+    received_activities: std::sync::Mutex<Vec<Option<String>>>,
+}
+
+impl Tool for OwnActivityTool {
+    fn spec(&self) -> &ToolSpec {
+        static SPEC: std::sync::OnceLock<ToolSpec> = std::sync::OnceLock::new();
+        SPEC.get_or_init(|| ToolSpec {
+            name: "log_workout".to_owned(),
+            description: "Logs a workout with its own required activity field.".to_owned(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "activity": {
+                        "type": "string",
+                        "description": "Workout name required by the tool itself."
+                    }
+                },
+                "required": ["activity"],
+                "additionalProperties": false
+            }),
+        })
+    }
+
+    fn execute(
+        &self,
+        call: ToolCall,
+        _cancellation: CancellationToken,
+        _updates: ToolUpdates,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let activity = call
+                .arguments
+                .get("activity")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            self.received_activities
+                .lock()
+                .expect("record received activity")
+                .push(activity);
+            Ok(ToolOutput {
+                content: vec![ContentBlock::text("Logged workout.")],
+                details: None,
+                is_error: false,
+                closing: None,
+            })
+        })
     }
 }
 

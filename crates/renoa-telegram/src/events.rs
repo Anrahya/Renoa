@@ -238,6 +238,7 @@ fn observe(state: &mut ProgressState, event: AgentEvent) -> bool {
         AgentEvent::MessageUpdate {
             delta:
                 AssistantDelta::Reasoning { .. }
+                | AssistantDelta::ReasoningSummary { .. }
                 | AssistantDelta::ToolCallStart { .. }
                 | AssistantDelta::ToolCallArguments { .. },
             ..
