@@ -17,7 +17,7 @@ use gpui_kit::{
 use look::{Cheeks, Eyes, HairBack, HairColour, HairFront, PLAIN, RENOA, Skin, Tile, Wear};
 use lyon_tessellation::{LineCap, LineJoin, geom::Angle, math::vector};
 
-use crate::theme::Palette;
+use crate::theme::{Palette, u};
 
 /// What the face shows the agent doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -449,4 +449,28 @@ impl Pen<'_> {
             }
         }
     }
+}
+
+/// Renoa's five-pointed star badge at `size` units across.
+pub(crate) fn star(size: f32, color: Hsla) -> AnyElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, (), window, _| {
+            let side = f32::from(bounds.size.width.min(bounds.size.height));
+            let unit = side / 13.5;
+            let centre = vector(
+                f32::from(bounds.origin.x) + side * 0.5,
+                f32::from(bounds.origin.y) + side * 0.54,
+            );
+            let mut builder = PathBuilder::fill();
+            shapes::trace(&mut builder, shapes::STAR);
+            builder.transform(Transform::scale(unit, unit).then_translate(centre));
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .size(u(size))
+    .flex_none()
+    .into_any_element()
 }

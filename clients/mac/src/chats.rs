@@ -50,8 +50,11 @@ struct Chosen {
 pub struct Chats {
     commands: mpsc::UnboundedSender<Command>,
     linked: bool,
+    /// The agents as the Host listed them, kept so fallback stays deterministic.
+    listed: Vec<TargetSummary>,
     agents: Vec<TargetSummary>,
     chosen: Option<Chosen>,
+    user_picked: bool,
     transcripts: HashMap<TaskId, Transcript>,
     /// What each chat's agent is for, as its owner wrote it.
     purposes: HashMap<TaskId, SharedString>,
@@ -141,8 +144,10 @@ impl Chats {
         Self {
             commands,
             linked: false,
+            listed: Vec::new(),
             agents: Vec::new(),
             chosen: None,
+            user_picked: false,
             transcripts: HashMap::new(),
             purposes: HashMap::new(),
             looks: HashMap::new(),
@@ -186,18 +191,8 @@ impl Chats {
                 self.home.update(cx, |home, cx| home.set_linked(linked, cx));
             }
             Update::Agents(agents) => {
-                self.agents = agents;
-                match &mut self.chosen {
-                    // A renamed agent shows its new name.
-                    Some(chosen) => {
-                        if let Some(agent) = self.agents.iter().find(|agent| {
-                            chat_task_id(agent.node_id, agent.target.as_str()) == chosen.task_id
-                        }) {
-                            chosen.name = agent.name.clone().into();
-                        }
-                    }
-                    None => self.select(0, window, cx),
-                }
+                self.listed = agents;
+                self.arrange_agents(window, cx);
             }
             Update::Purpose {
                 node_id,
@@ -214,7 +209,10 @@ impl Chats {
             } => {
                 self.looks.insert(chat_task_id(node_id, &target), look);
             }
-            Update::Main(main) => self.main = main,
+            Update::Main(main) => {
+                self.main = main;
+                self.arrange_agents(window, cx);
+            }
             Update::Event(event) => {
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -264,6 +262,35 @@ impl Chats {
     fn transcript(&self) -> Option<&Transcript> {
         self.chosen_task()
             .and_then(|task_id| self.transcripts.get(&task_id))
+    }
+
+    /// Pins the Host's main agent first when listed, keeping the rest in order.
+    fn arrange_agents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.agents = self.listed.clone();
+        if let Some(main) = self.main
+            && let Some(at) = self
+                .agents
+                .iter()
+                .position(|agent| host_agent(agent.target.as_str()) == Some(main))
+        {
+            let pinned = self.agents.remove(at);
+            self.agents.insert(0, pinned);
+        }
+        let untouched = !self.user_picked
+            && self.main.is_some()
+            && self.composer.read(cx).value().is_empty()
+            && self.transcript().is_none_or(|t| t.lines().is_empty());
+        if self.chosen.is_none() || untouched {
+            self.select(0, window, cx);
+        }
+        if let Some(chosen) = &mut self.chosen
+            && let Some(agent) = self
+                .agents
+                .iter()
+                .find(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == chosen.task_id)
+        {
+            chosen.name = agent.name.clone().into();
+        }
     }
 
     /// Opens the chat with the agent at `index`, keeping what the owner typed

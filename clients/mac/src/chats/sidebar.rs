@@ -14,7 +14,7 @@ use gpui_kit::{
 use super::Chats;
 use crate::{
     chat::{Transcript, chat_task_id},
-    face::{Face, Mood},
+    face::{self, Face, Mood},
     stamp,
     theme::Palette,
 };
@@ -26,6 +26,9 @@ const WIDTH: f32 = 264.;
 
 /// The height of an agent's row.
 const ROW: f32 = 56.;
+
+/// Space for the thin divider below the pinned main agent row.
+const PIN_GAP: f32 = 13.;
 
 /// How fast the sidebar slides open or closed.
 const SLIDE: Duration = Duration::from_millis(220);
@@ -47,7 +50,8 @@ impl Chats {
             .position(|agent| Some(chat_task_id(agent.node_id, agent.target.as_str())) == chosen)
             .filter(|_| !self.on_home);
         let now = Local::now();
-        let rows = self.agents.iter().enumerate().map(|(index, agent)| {
+        let has_pin_gap = self.agents.len() > 1;
+        let rows = self.agents.iter().enumerate().flat_map(|(index, agent)| {
             let task_id = chat_task_id(agent.node_id, agent.target.as_str());
             let transcript = self.transcripts.get(&task_id);
             let working = transcript.is_some_and(Transcript::working);
@@ -61,7 +65,7 @@ impl Chats {
                 Mood::Resting
             };
             let is_open = open == Some(index);
-            div()
+            let row = div()
                 .id(("agent", index))
                 .relative()
                 .h(u(ROW))
@@ -71,7 +75,16 @@ impl Chats {
                 .px(u(10.))
                 .rounded(u(10.))
                 .cursor_pointer()
-                .when(!is_open, |row| row.hover(|row| row.bg(palette.hover)))
+                .when(primary, |row| {
+                    row.border_1().border_color(palette.attention_border)
+                })
+                .when(primary && !is_open, |row| {
+                    row.bg(palette.attention_wash)
+                        .hover(|row| row.bg(palette.hover).border_color(palette.attention))
+                })
+                .when(!primary && !is_open, |row| {
+                    row.hover(|row| row.bg(palette.hover))
+                })
                 .on_click(
                     cx.listener(move |this, _, window, cx| this.open_agent(index, window, cx)),
                 )
@@ -97,13 +110,24 @@ impl Chats {
                                     div()
                                         .flex_1()
                                         .min_w_0()
-                                        .truncate()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(SharedString::from(agent.name.clone())),
+                                        .flex()
+                                        .items_center()
+                                        .gap(u(5.))
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(SharedString::from(agent.name.clone())),
+                                        )
+                                        .when(primary, |title| {
+                                            title.child(face::star(10.5, palette.attention))
+                                        }),
                                 )
                                 .when_some(at, |line, at| {
                                     line.child(
                                         div()
+                                            .flex_none()
                                             .text_size(u(11.))
                                             .text_color(palette.secondary)
                                             .child(at),
@@ -123,6 +147,16 @@ impl Chats {
                         ),
                 )
                 .test_support()
+                .into_any_element();
+            let divider = (index == 0 && has_pin_gap).then(|| {
+                div()
+                    .my(u(6.))
+                    .mx(u(8.))
+                    .h(u(1.))
+                    .bg(palette.divider)
+                    .into_any_element()
+            });
+            std::iter::once(row).chain(divider)
         });
         let empty = self.agents.is_empty();
         let list =
@@ -137,7 +171,9 @@ impl Chats {
                         .relative()
                         .flex()
                         .flex_col()
-                        .when_some(open, |list, index| list.child(highlight(index, palette)))
+                        .when_some(open, |list, index| {
+                            list.child(highlight(index, has_pin_gap, palette))
+                        })
                         .children(rows),
                 )
                 .when(empty, |list| {
@@ -256,8 +292,13 @@ impl Chats {
 }
 
 /// The open chat's highlight, behind the row at `index`.
-fn highlight(index: usize, palette: Palette) -> impl IntoElement {
-    let top = u(f32::from(u16::try_from(index).unwrap_or(u16::MAX)) * ROW);
+fn highlight(index: usize, has_pin_gap: bool, palette: Palette) -> impl IntoElement {
+    let gap = if index > 0 && has_pin_gap {
+        PIN_GAP
+    } else {
+        0.
+    };
+    let top = u(f32::from(u16::try_from(index).unwrap_or(u16::MAX)) * ROW + gap);
     div()
         .absolute()
         .left_0()

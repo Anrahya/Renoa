@@ -6,12 +6,14 @@ mod prose;
 use chrono::Local;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Focusable as _, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, PathBuilder, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled as _, TestSupportExt as _, Window, canvas,
+    IntoElement, ParentElement as _, PathBuilder, PathStyle, SharedString,
+    StatefulInteractiveElement as _, StrokeOptions, StyleRefinement, Styled as _,
+    TestSupportExt as _, Window, canvas,
     component::{input::Input, message_scroller::MessageScroller},
     div, linear_color_stop, linear_gradient, point,
     prelude::FluentBuilder as _,
 };
+use lyon_tessellation::{LineCap, LineJoin};
 
 use super::{Chats, Row};
 use crate::{
@@ -139,11 +141,11 @@ impl Chats {
                     .mb(u(16.))
                     .flex()
                     .items_end()
-                    .gap(u(8.))
-                    .pl(u(16.))
+                    .gap(u(10.))
+                    .pl(u(18.))
                     .pr(u(7.))
                     .py(u(7.))
-                    .rounded(u(22.))
+                    .rounded(u(23.))
                     .bg(palette.composer)
                     .border_1()
                     .border_color(if focused {
@@ -153,12 +155,20 @@ impl Chats {
                     })
                     .shadow_md()
                     .child(
-                        div().flex_1().py(u(3.)).child(
-                            Input::new(&self.composer)
-                                .id("composer")
-                                .aria_label("Message")
-                                .appearance(false),
-                        ),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h(u(32.))
+                            .flex()
+                            .items_center()
+                            .child(
+                                div().w_full().child(
+                                    Input::new(&self.composer)
+                                        .id("composer")
+                                        .aria_label("Message")
+                                        .appearance(false),
+                                ),
+                            ),
                     )
                     .child(
                         send_button(sendable, palette)
@@ -271,7 +281,10 @@ fn header(
                 .shadow_xs()
                 .when_some(about, |pill, about| {
                     pill.cursor_pointer()
-                        .hover(|pill| pill.bg(palette.selected).border_color(palette.outline_strong))
+                        .hover(|pill| {
+                            pill.bg(palette.selected)
+                                .border_color(palette.outline_strong)
+                        })
                         .on_click(about)
                 })
                 .test_support()
@@ -325,15 +338,10 @@ fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
     )
     .then(|| at.map(|at_ms| stamp::long(at_ms, &Local::now())))
     .flatten();
-    let turned = row
-        .before
-        .as_ref()
-        .is_none_or(|before| before.speaker != line.speaker);
-    let show_header = turned || time.is_some();
     let top_pad = prose::row_top_padding(row.before.as_ref().map(|b| b.speaker), line.speaker);
     let said = match line.speaker {
         Speaker::Owner => prose::owner(index, &line, row.live, palette),
-        Speaker::Agent => prose::agent_line(index, &line, show_header, row.live, agent, palette),
+        Speaker::Agent => prose::agent_line(index, &line, row.live, palette),
     };
     div()
         .w_full()
@@ -380,9 +388,7 @@ fn send_button(sendable: bool, palette: Palette) -> gpui_kit::Stateful<gpui_kit:
         .items_center()
         .justify_center()
         .when(sendable, |button| {
-            button
-                .cursor_pointer()
-                .hover(|button| button.opacity(0.84))
+            button.cursor_pointer().hover(|button| button.opacity(0.84))
         })
         .child(
             canvas(
@@ -395,12 +401,16 @@ fn send_button(sendable: bool, palette: Palette) -> gpui_kit::Stateful<gpui_kit:
                             bounds.origin.y + u(y).to_pixels(rem),
                         )
                     };
-                    let mut up = PathBuilder::stroke(u(2.).to_pixels(rem));
-                    up.move_to(at(7., 12.5));
-                    up.line_to(at(7., 2.));
-                    up.move_to(at(2.5, 6.5));
-                    up.line_to(at(7., 2.));
-                    up.line_to(at(11.5, 6.5));
+                    let style = StrokeOptions::default()
+                        .with_line_width(f32::from(u(1.85).to_pixels(rem)))
+                        .with_line_cap(LineCap::Round)
+                        .with_line_join(LineJoin::Round);
+                    let mut up = PathBuilder::fill().with_style(PathStyle::Stroke(style));
+                    up.move_to(at(7., 11.25));
+                    up.line_to(at(7., 2.75));
+                    up.move_to(at(3., 6.75));
+                    up.line_to(at(7., 2.75));
+                    up.line_to(at(11., 6.75));
                     if let Ok(path) = up.build() {
                         window.paint_path(path, arrow);
                     }

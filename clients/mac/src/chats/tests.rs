@@ -630,16 +630,16 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
         // From Chef's chat, ready to type; Esc from over a sheet.
         act(&|window, cx| window.click(("agent", 0usize), cx), cx);
         if what == "Show or hide sidebar" {
-            let open = |cx: &mut TestAppContext| {
-                chats.read_with(cx, |chats, _| chats.sidebar_open)
-            };
+            let open = |cx: &mut TestAppContext| chats.read_with(cx, |chats, _| chats.sidebar_open);
             assert!(open(cx));
             act(&|window, cx| window.press(pressed(keys), cx), cx);
-            cx.executor().advance_clock(std::time::Duration::from_secs(1));
+            cx.executor()
+                .advance_clock(std::time::Duration::from_secs(1));
             cx.run_until_parked();
             assert!(!open(cx), "{what}: {keys} collapses the sidebar");
             act(&|window, cx| window.press(pressed(keys), cx), cx);
-            cx.executor().advance_clock(std::time::Duration::from_secs(1));
+            cx.executor()
+                .advance_clock(std::time::Duration::from_secs(1));
             cx.run_until_parked();
             assert!(open(cx), "{what}: {keys} brings it back");
             continue;
@@ -809,7 +809,8 @@ fn sidebar_collapses_and_expands_by_button_and_key(cx: &mut TestAppContext) {
             act(window, cx);
         })
         .unwrap();
-        cx.executor().advance_clock(std::time::Duration::from_secs(1));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
         cx.run_until_parked();
     };
     let open = |cx: &mut TestAppContext| chats.read_with(cx, |chats, _| chats.sidebar_open);
@@ -823,4 +824,72 @@ fn sidebar_collapses_and_expands_by_button_and_key(cx: &mut TestAppContext) {
     assert!(!open(cx), "⌘B collapses it");
     act(&|window, cx| window.press("cmd-b", cx), cx);
     assert!(open(cx), "⌘B expands it again");
+}
+
+#[gpui_kit::test]
+fn the_main_agent_is_pinned_first_even_when_listed_last(cx: &mut TestAppContext) {
+    let renoa = Uuid::from_u128(0xa1);
+    let chef = Uuid::from_u128(0xb2);
+    let scout = Uuid::from_u128(0xc3);
+    let (window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    let listed = |id: Uuid, name: &str| TargetSummary {
+        node_id,
+        target: TargetRef::new(format!("agent:{id}")),
+        name: name.to_owned(),
+    };
+    updates
+        .send(Update::Agents(vec![
+            listed(chef, "Chef"),
+            listed(scout, "Scout"),
+            listed(renoa, "Renoa"),
+        ]))
+        .unwrap();
+    updates.send(Update::Main(Some(renoa))).unwrap();
+    cx.run_until_parked();
+
+    let names = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| {
+            chats
+                .agents
+                .iter()
+                .map(|agent| agent.name.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(names(cx), ["Renoa", "Chef", "Scout"]);
+    assert_eq!(
+        chats.read_with(cx, |chats, _| chats
+            .chosen
+            .as_ref()
+            .map(|chosen| chosen.name.as_ref().to_owned())),
+        Some("Renoa".to_owned()),
+        "the pinned main agent opens first"
+    );
+
+    updates
+        .send(Update::Agents(vec![
+            listed(scout, "Scout"),
+            listed(renoa, "Renoa"),
+            listed(chef, "Chef"),
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(names(cx), ["Renoa", "Scout", "Chef"]);
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("cmd-2", cx);
+        window.press("cmd-1", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        chats.read_with(cx, |chats, _| chats
+            .chosen
+            .as_ref()
+            .map(|chosen| chosen.name.as_ref().to_owned())),
+        Some("Renoa".to_owned()),
+        "⌘1 reaches the pinned main agent"
+    );
 }
