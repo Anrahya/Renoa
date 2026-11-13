@@ -110,7 +110,7 @@ fn version_row(
         .items_center()
         .gap(u(12.))
         .px(u(14.))
-        .py(u(12.))
+        .py(u(8.))
         .child(
             div()
                 .flex_1()
@@ -205,27 +205,17 @@ impl Render for Settings {
             .child(choice(Appearance::System, "System", None, cx))
             .child(choice(Appearance::Light, "Light", Some(IconName::Sun), cx))
             .child(choice(Appearance::Dark, "Dark", Some(IconName::Moon), cx));
-        let keys = SHORTCUTS.iter().map(|(what, keys)| {
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .px(u(14.))
-                .py(u(9.))
-                .child(*what)
-                .child(
-                    div()
-                        .px(u(8.))
-                        .py(u(2.))
-                        .rounded(u(6.))
-                        .bg(palette.chat_agent)
-                        .border_1()
-                        .border_color(palette.outline)
-                        .text_size(u(11.5))
-                        .text_color(palette.secondary)
-                        .child(*keys),
-                )
-                .into_any_element()
+        let keys = SHORTCUTS.chunks(2).map(|pair| {
+            let left = shortcut_cell(pair[0].0, pair[0].1, palette);
+            let mut row = div().flex().items_stretch().child(left);
+            if let Some((what, keys)) = pair.get(1) {
+                row = row
+                    .child(div().w(u(1.)).bg(palette.divider))
+                    .child(shortcut_cell(what, keys, palette));
+            } else {
+                row = row.child(div().w(u(1.))).child(div().flex_1().min_w_0());
+            }
+            row.into_any_element()
         });
         let signing_out = self.signing_out;
         let this_mac = div()
@@ -233,7 +223,7 @@ impl Render for Settings {
             .items_center()
             .gap(u(12.))
             .px(u(14.))
-            .py(u(12.))
+            .py(u(8.))
             .child(
                 div()
                     .flex_1()
@@ -292,10 +282,10 @@ impl Render for Settings {
                 .min_h_0()
                 .overflow_y_scroll()
                 .px(u(24.))
-                .pb(u(24.))
+                .pb(u(20.))
                 .flex()
                 .flex_col()
-                .gap(u(6.))
+                .gap(u(4.))
                 .child(section("Appearance", palette))
                 .child(looks)
                 .when(self.unkept, |body| {
@@ -316,4 +306,37 @@ impl Render for Settings {
                 )),
         )
     }
+}
+
+fn shortcut_cell(what: &str, keys: &str, palette: Palette) -> AnyElement {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(u(10.))
+        .px(u(14.))
+        .py(u(4.))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(u(12.5))
+                .child(what.to_owned()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .px(u(7.))
+                .py(u(2.))
+                .rounded(u(6.))
+                .bg(palette.chat_agent)
+                .border_1()
+                .border_color(palette.outline)
+                .text_size(u(11.))
+                .text_color(palette.secondary)
+                .child(keys.to_owned()),
+        )
+        .into_any_element()
 }

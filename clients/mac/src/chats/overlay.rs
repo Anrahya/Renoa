@@ -4,10 +4,10 @@
 use std::time::Duration;
 
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, AnyView, AppContext as _, Context, Entity, FontWeight,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    ease_out_quint, prelude::FluentBuilder as _,
+    Animation, AnimationExt as _, AnyElement, AnyView, AppContext as _, Context, Entity,
+    FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    Window, div, ease_out_quint, prelude::FluentBuilder as _,
 };
 
 use renoa_rcp_wire::TaskId;
@@ -224,13 +224,15 @@ impl Chats {
         let mut places: Vec<Place> = self
             .agents
             .iter()
-            .map(|agent| {
+            .enumerate()
+            .map(|(index, agent)| {
                 let (look, primary) = self.face(agent);
                 Place::Agent {
                     task_id: chat_task_id(agent.node_id, agent.target.as_str()),
                     name: agent.name.clone().into(),
                     look,
                     primary,
+                    slot: u8::try_from(index + 1).ok().filter(|n| *n <= 9),
                 }
             })
             .collect();

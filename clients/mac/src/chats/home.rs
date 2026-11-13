@@ -40,6 +40,7 @@ impl Chats {
         if index >= self.agents.len() {
             return;
         }
+        self.user_picked = true;
         self.on_home = false;
         self.select(index, window, cx);
         self.composer
@@ -85,9 +86,7 @@ impl Chats {
             .rounded(u(10.))
             .cursor_pointer()
             .when(self.on_home, |row| row.bg(palette.selected))
-            .when(!self.on_home, |row| {
-                row.hover(|row| row.bg(palette.hover))
-            })
+            .when(!self.on_home, |row| row.hover(|row| row.bg(palette.hover)))
             .on_click(cx.listener(|this, _, window, cx| this.go_home(window, cx)))
             .child(
                 div()

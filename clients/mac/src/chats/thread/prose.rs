@@ -1,28 +1,23 @@
 //! Message rows inside a conversation: selectable owner cards, editorial
-//! Markdown replies anchored by the agent's face at the top of a turn, and the
-//! working beat.
+//! Markdown replies, and the working beat.
 
 use std::time::Duration;
 
-use chrono::Local;
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, FontWeight, IntoElement, ParentElement as _,
-    SharedString, StyleRefinement, Styled as _,
+    Animation, AnimationExt as _, AnyElement, IntoElement, ParentElement as _, SharedString,
+    StyleRefinement, Styled as _,
     component::{
         Theme,
         clipboard::Clipboard,
         text::{TextView, TextViewStyle},
     },
-    div, ease_out_quint,
-    prelude::FluentBuilder as _,
-    relative, rems,
+    div, ease_out_quint, relative, rems,
 };
 
 use super::Agent;
 use crate::{
     chat::{Line, Speaker},
     face::Mood,
-    stamp,
     theme::{Palette, u},
 };
 
@@ -69,16 +64,9 @@ pub(super) fn owner(index: usize, line: &Line, live: bool, palette: Palette) -> 
         .into_any_element()
 }
 
-/// An agent's line: anchored by its face and name at the start of a turn, with
-/// comfortable reading typography and copyable code blocks.
-pub(super) fn agent_line(
-    index: usize,
-    line: &Line,
-    show_header: bool,
-    live: bool,
-    agent: &Agent,
-    palette: Palette,
-) -> AnyElement {
+/// An agent's line: comfortable reading typography and copyable code blocks,
+/// without repeating the agent's name above every reply.
+pub(super) fn agent_line(index: usize, line: &Line, live: bool, palette: Palette) -> AnyElement {
     let body = if line.failed {
         div()
             .w_full()
@@ -133,17 +121,14 @@ pub(super) fn agent_line(
                     .blockquote_style(blockquote_style)
                     .code_block_actions(move |block, _, cx| {
                         let sans = Theme::global(cx).font_family.clone();
-                        let lang = block
-                            .lang()
-                            .filter(|lang| !lang.is_empty())
-                            .map(|lang| {
-                                div()
-                                    .font_family(sans.clone())
-                                    .text_size(u(11.))
-                                    .line_height(u(16.))
-                                    .text_color(palette.secondary)
-                                    .child(lang)
-                            });
+                        let lang = block.lang().filter(|lang| !lang.is_empty()).map(|lang| {
+                            div()
+                                .font_family(sans.clone())
+                                .text_size(u(11.))
+                                .line_height(u(16.))
+                                .text_color(palette.secondary)
+                                .child(lang)
+                        });
                         div()
                             .px(u(4.))
                             .flex()
@@ -160,53 +145,18 @@ pub(super) fn agent_line(
             .into_any_element()
     };
 
-    let header = show_header.then(|| turn_header(index, line, agent, palette));
-    let placed = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(u(6.))
-        .children(header)
-        .child(body);
     if !live {
-        return placed.into_any_element();
+        return body;
     }
-    placed
+    div()
+        .w_full()
         .relative()
+        .child(body)
         .with_animation(
             ("settle", index),
             Animation::new(SETTLE).with_easing(ease_out_quint()),
             |placed, t| placed.top(u(8. * (1. - t))).opacity(t),
         )
-        .into_any_element()
-}
-
-fn turn_header(index: usize, line: &Line, agent: &Agent, palette: Palette) -> AnyElement {
-    let now = Local::now();
-    let time = line
-        .at_ms
-        .map(|at_ms| stamp::short(at_ms, &now))
-        .unwrap_or_default();
-    div()
-        .flex()
-        .items_center()
-        .gap(u(8.))
-        .child(agent.face(palette, 20.).alive(format!("turn-{index}")))
-        .child(
-            div()
-                .text_size(u(13.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(palette.text)
-                .child(agent.name.clone()),
-        )
-        .when(!time.is_empty(), |row| {
-            row.child(
-                div()
-                    .text_size(u(11.5))
-                    .text_color(palette.secondary)
-                    .child(time),
-            )
-        })
         .into_any_element()
 }
 
@@ -262,7 +212,22 @@ pub(super) fn escape_markdown(text: &str) -> String {
         for ch in raw_line.chars() {
             if matches!(
                 ch,
-                '\\' | '`' | '*' | '_' | '#' | '[' | ']' | '<' | '>' | '~' | '|' | '!' | '+' | '-' | '.' | '(' | ')'
+                '\\' | '`'
+                    | '*'
+                    | '_'
+                    | '#'
+                    | '['
+                    | ']'
+                    | '<'
+                    | '>'
+                    | '~'
+                    | '|'
+                    | '!'
+                    | '+'
+                    | '-'
+                    | '.'
+                    | '('
+                    | ')'
             ) {
                 out.push('\\');
             }
@@ -285,8 +250,8 @@ pub(super) fn escape_markdown(text: &str) -> String {
 pub(super) fn row_top_padding(before: Option<Speaker>, current: Speaker) -> f32 {
     match before {
         None => 4.,
-        Some(prev) if prev == current => 8.,
-        Some(_) => 18.,
+        Some(prev) if prev == current => 10.,
+        Some(_) => 20.,
     }
 }
 

@@ -14,7 +14,7 @@ use gpui_kit::{
 use renoa_rcp_wire::TaskId;
 
 use crate::{
-    face::{Face, Look},
+    face::{self, Face, Look},
     sheets::Page,
     theme::Palette,
 };
@@ -30,6 +30,7 @@ pub enum Place {
         name: SharedString,
         look: Option<Look>,
         primary: bool,
+        slot: Option<u8>,
     },
     Home,
     Sheet(Page),
@@ -146,21 +147,39 @@ impl Render for Jump {
                         name,
                         look,
                         primary,
+                        slot,
                         ..
-                    } => row
-                        .child(Face::new(*look, *primary, palette, u(24.)))
-                        .child(
-                            div()
-                                .flex_1()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(name.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(u(12.))
-                                .text_color(palette.secondary)
-                                .child("Chat"),
-                        ),
+                    } => {
+                        let row = row
+                            .child(Face::new(*look, *primary, palette, u(24.)))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap(u(5.))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(name.clone()),
+                                    )
+                                    .when(*primary, |title| {
+                                        title.child(face::star(10.5, palette.attention))
+                                    }),
+                            );
+                        match slot {
+                            Some(n) => row.child(keycap(format!("⌘{n}"), palette)),
+                            None => row.child(
+                                div()
+                                    .text_size(u(12.))
+                                    .text_color(palette.secondary)
+                                    .child("Chat"),
+                            ),
+                        }
+                    }
                     Place::Home => labelled(row, IconName::House, "Home", "⌘0", palette),
                     Place::Sheet(page) => {
                         labelled(row, page.icon(), page.title(), page.keys(), palette)
@@ -209,6 +228,19 @@ impl Render for Jump {
     }
 }
 
+fn keycap(keys: impl Into<SharedString>, palette: Palette) -> Div {
+    div()
+        .px(u(7.))
+        .py(u(2.))
+        .rounded(u(6.))
+        .bg(palette.chat_agent)
+        .border_1()
+        .border_color(palette.outline)
+        .text_size(u(11.))
+        .text_color(palette.secondary)
+        .child(keys.into())
+}
+
 /// A row for a place that is not an agent: its icon, its name and its keys.
 fn labelled(
     row: Stateful<Div>,
@@ -227,18 +259,7 @@ fn labelled(
             .child(icon),
     )
     .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(title))
-    .child(
-        div()
-            .px(u(7.))
-            .py(u(2.))
-            .rounded(u(6.))
-            .bg(palette.chat_agent)
-            .border_1()
-            .border_color(palette.outline)
-            .text_size(u(11.))
-            .text_color(palette.secondary)
-            .child(keys),
-    )
+    .child(keycap(keys, palette))
 }
 
 #[cfg(test)]
@@ -256,12 +277,14 @@ mod tests {
                 name: "Renoa".into(),
                 look: None,
                 primary: true,
+                slot: Some(1),
             },
             Place::Agent {
                 task_id: TaskId::new(),
                 name: "Chef".into(),
                 look: None,
                 primary: false,
+                slot: Some(2),
             },
             Place::Sheet(Page::Routines),
             Place::Sheet(Page::Memory),
