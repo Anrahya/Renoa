@@ -1,4 +1,8 @@
-use std::{fs, path::Path, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -8,15 +12,14 @@ use super::{PluginError, require_active, scratch};
 
 const MAX_ARCHIVE_BYTES: u64 = 128 * 1_024 * 1_024;
 const MAX_ENTRIES: usize = 16_384;
-const MAX_DEPTH: usize = 32;
+pub(super) const MAX_DEPTH: usize = 32;
 
 mod archive;
 mod resolve;
 
-use archive::extract;
-use archive::relative;
 #[cfg(test)]
-use archive::{BoundedReader, extract_limited};
+use archive::{BoundedReader, extract, extract_limited};
+use archive::{extract_with_policy, relative};
 pub(super) use resolve::{resolve_commit, validate_ref};
 
 pub(super) fn is_valid_segment(segment: &str) -> bool {
@@ -98,6 +101,11 @@ impl Default for GithubSourceClient {
         }
     }
 }
+pub(super) struct DownloadedSource {
+    pub(super) staging: TempDir,
+    pub(super) skipped_special: Vec<PathBuf>,
+}
+
 impl GithubSourceClient {
     pub(super) async fn resolve_commit(
         &self,
@@ -109,16 +117,26 @@ impl GithubSourceClient {
         resolve_commit(&self.api_origin, &owner, &repo, r#ref, cancellation).await
     }
 
-    pub(super) async fn download(
+    pub(super) async fn download_with_policy(
         &self,
         repository: &str,
         commit: &str,
         path: Option<&str>,
+        tolerate_unrelated_links: bool,
         cancellation: CancellationToken,
-    ) -> Result<TempDir, PluginError> {
+    ) -> Result<DownloadedSource, PluginError> {
         let (owner, repo) = validate(repository, commit, path)?;
         let endpoint = format!("{}/{owner}/{repo}/tar.gz/{commit}", self.origin);
-        download_from(&endpoint, &repo, commit, path, cancellation).await
+        download_into_with_policy(
+            &endpoint,
+            &repo,
+            commit,
+            path,
+            tolerate_unrelated_links,
+            cancellation,
+            scratch()?,
+        )
+        .await
     }
     #[cfg(test)]
     pub(crate) fn fixture(origin: String) -> Self {
@@ -138,6 +156,7 @@ pub(super) fn http_client(action: &str) -> Result<reqwest::Client, PluginError> 
         .map_err(|_| unavailable(action))
 }
 
+#[cfg(test)]
 async fn download_from(
     endpoint: &str,
     repo: &str,
@@ -149,6 +168,7 @@ async fn download_from(
     download_into(endpoint, repo, commit, path, cancellation, scratch()?).await
 }
 
+#[cfg(test)]
 async fn download_into(
     endpoint: &str,
     repo: &str,
@@ -157,6 +177,20 @@ async fn download_into(
     cancellation: CancellationToken,
     staging: TempDir,
 ) -> Result<TempDir, PluginError> {
+    download_into_with_policy(endpoint, repo, commit, path, false, cancellation, staging)
+        .await
+        .map(|downloaded| downloaded.staging)
+}
+
+async fn download_into_with_policy(
+    endpoint: &str,
+    repo: &str,
+    commit: &str,
+    path: Option<&str>,
+    tolerate_unrelated_links: bool,
+    cancellation: CancellationToken,
+    staging: TempDir,
+) -> Result<DownloadedSource, PluginError> {
     require_active(&cancellation)?;
     let client = http_client("could not initialize GitHub download client")?;
     let mut response = tokio::select! {
@@ -173,7 +207,9 @@ async fn download_into(
         .content_length()
         .is_some_and(|size| size > MAX_ARCHIVE_BYTES)
     {
-        return Err(invalid("GitHub source archive exceeds 128 MiB"));
+        return Err(invalid(
+            "GitHub source archive exceeds 128 MiB; pass `path` in inspect or select a smaller repository",
+        ));
     }
     let archive_path = staging.path().join("source.tar.gz");
     let mut file = tokio::fs::File::create(&archive_path)
@@ -194,7 +230,9 @@ async fn download_into(
             .checked_add(chunk.len() as u64)
             .ok_or_else(|| invalid("GitHub source byte count overflowed"))?;
         if bytes > MAX_ARCHIVE_BYTES {
-            return Err(invalid("GitHub source archive exceeds 128 MiB"));
+            return Err(invalid(
+                "GitHub source archive exceeds 128 MiB; pass `path` in inspect or select a smaller repository",
+            ));
         }
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
@@ -217,19 +255,23 @@ async fn download_into(
     let prefix = format!("{repo}-{commit}");
     let subdirectory = path.map(str::to_owned);
     tokio::task::spawn_blocking(move || {
-        extract(
+        let skipped_special = extract_with_policy(
             &archive_path,
             &staging.path().join("source"),
             &prefix,
             subdirectory.as_deref(),
             &cancellation,
+            tolerate_unrelated_links,
         )?;
         fs::remove_file(&archive_path).map_err(|source| PluginError::Io {
             action: "remove downloaded GitHub archive",
             path: archive_path,
             source,
         })?;
-        Ok(staging)
+        Ok(DownloadedSource {
+            staging,
+            skipped_special,
+        })
     })
     .await?
 }

@@ -35,10 +35,7 @@ pub(super) fn frontmatter_name(bytes: &[u8]) -> Option<String> {
     let content = std::str::from_utf8(bytes).ok()?;
     let (frontmatter, _) = split_frontmatter(content).ok()?;
     let parsed = serde_saphyr::from_str::<FrontmatterName>(frontmatter).ok()?;
-    parsed
-        .name
-        .map(|name| name.trim().to_owned())
-        .filter(|name| !name.is_empty())
+    parsed.name.filter(|name| !name.is_empty())
 }
 
 pub(super) fn parse(

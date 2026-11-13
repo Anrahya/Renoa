@@ -277,35 +277,32 @@ async fn start_fixture(
                     .unwrap_or_default()
                     .to_owned();
                 recorded.lock().expect("lock").push(target.clone());
-                let (status, content_type, body) = if target == "/repos/owner/repo" {
-                    (
-                        "200 OK",
-                        "application/json",
-                        serde_json::json!({"default_branch": fixture.default_branch})
-                            .to_string()
-                            .into_bytes(),
-                    )
-                } else if let Some(encoded_ref) = target.strip_prefix("/repos/owner/repo/commits/")
-                {
-                    let decoded = encoded_ref.replace("%2F", "/");
-                    if let Some(sha) = fixture.refs.get(&decoded) {
-                        (
-                            "200 OK",
-                            "application/json",
-                            serde_json::json!({"sha": sha}).to_string().into_bytes(),
-                        )
+                let (status, content_type, body) =
+                    if let Some(encoded_ref) = target.strip_prefix("/repos/owner/repo/commits/") {
+                        let decoded = encoded_ref.replace("%2F", "/");
+                        let key = if decoded == "HEAD" {
+                            fixture.default_branch.as_str()
+                        } else {
+                            decoded.as_str()
+                        };
+                        if let Some(sha) = fixture.refs.get(key) {
+                            (
+                                "200 OK",
+                                "application/json",
+                                serde_json::json!({"sha": sha}).to_string().into_bytes(),
+                            )
+                        } else {
+                            ("404 Not Found", "application/json", b"{}".to_vec())
+                        }
+                    } else if let Some(sha) = target.strip_prefix("/owner/repo/tar.gz/") {
+                        if let Some(archive) = fixture.archives.get(sha) {
+                            ("200 OK", "application/gzip", archive.clone())
+                        } else {
+                            ("404 Not Found", "text/plain", b"missing".to_vec())
+                        }
                     } else {
-                        ("404 Not Found", "application/json", b"{}".to_vec())
-                    }
-                } else if let Some(sha) = target.strip_prefix("/owner/repo/tar.gz/") {
-                    if let Some(archive) = fixture.archives.get(sha) {
-                        ("200 OK", "application/gzip", archive.clone())
-                    } else {
-                        ("404 Not Found", "text/plain", b"missing".to_vec())
-                    }
-                } else {
-                    ("404 Not Found", "text/plain", b"unexpected".to_vec())
-                };
+                        ("404 Not Found", "text/plain", b"unexpected".to_vec())
+                    };
                 let headers = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
@@ -527,7 +524,15 @@ async fn inspect_omitted_ref_resolves_default_branch_to_commit() {
         })
     );
     let requests = seen.lock().expect("lock");
-    assert!(requests.iter().any(|path| path == "/repos/owner/repo"));
+    assert!(
+        requests
+            .iter()
+            .any(|path| path == "/repos/owner/repo/commits/HEAD")
+    );
+    assert!(
+        !requests.iter().any(|path| path == "/repos/owner/repo"),
+        "omitted ref should resolve in a single commits/HEAD call: {requests:?}"
+    );
 }
 
 #[tokio::test]
@@ -668,7 +673,7 @@ async fn skills_sh_link_installs_the_named_skill_after_inspect() {
             ("skills/beta/SKILL.md", beta_md.as_bytes()),
         ],
     );
-    let _fixture = start_fixture(
+    let (seen, _fixture) = start_fixture(
         &mut manager,
         FixtureRepo {
             default_branch: "main".to_owned(),
@@ -681,9 +686,7 @@ async fn skills_sh_link_installs_the_named_skill_after_inspect() {
     let skills_sh_source = PluginSource::SkillsSh {
         url: "https://skills.sh/owner/repo/alpha".to_owned(),
     };
-    let err = invoke(
-        &manager,
-        root.path(),
+    for request in [
         PluginRequest::Add {
             source: skills_sh_source.clone(),
             expected_digest: Some("0".repeat(64)),
@@ -692,11 +695,18 @@ async fn skills_sh_link_installs_the_named_skill_after_inspect() {
             credential: None,
             replace: false,
         },
-    )
-    .await
-    .err()
-    .expect("direct skills_sh add must be rejected");
-    assert!(err.to_string().contains("\"action\":\"inspect\""));
+        PluginRequest::Install {
+            source: skills_sh_source.clone(),
+            expected_digest: "0".repeat(64),
+        },
+    ] {
+        let err = invoke(&manager, root.path(), request)
+            .await
+            .err()
+            .expect("direct skills_sh add/install must be rejected");
+        assert!(err.to_string().contains("\"action\":\"inspect\""));
+    }
+    assert!(seen.lock().expect("lock").is_empty());
 
     let inspection = inspect_full(&manager, root.path(), skills_sh_source).await;
     let pinned_source = inspection.source().expect("pinned source").clone();
@@ -776,4 +786,260 @@ async fn skills_sh_site_link_is_refused_without_network_access() {
         assert!(text.contains("\"action\":\"inspect\""), "{text}");
     }
     assert!(seen.lock().expect("lock").is_empty());
+}
+
+#[tokio::test]
+async fn inspect_rejects_commit_with_ref_and_pinned_ops_reject_skill_or_missing_commit() {
+    let root = tempfile::tempdir().expect("fixture");
+    let (mut manager, _skills) = manager(root.path());
+    let (seen, _fixture) = start_fixture(
+        &mut manager,
+        FixtureRepo {
+            default_branch: "main".to_owned(),
+            refs: std::collections::BTreeMap::new(),
+            archives: std::collections::BTreeMap::new(),
+        },
+    )
+    .await;
+
+    let err = invoke(
+        &manager,
+        root.path(),
+        PluginRequest::Inspect {
+            source: github_source(Some(COMMIT), Some("main"), None, None),
+        },
+    )
+    .await
+    .err()
+    .expect("commit + ref must fail");
+    assert!(matches!(err, PluginError::Invalid(_)), "{err:?}");
+
+    for source in [
+        github_source(Some(COMMIT), None, None, Some("alpha")),
+        github_source(None, Some("main"), None, None),
+        github_source(Some(COMMIT), Some("main"), None, None),
+    ] {
+        for req in [
+            PluginRequest::Add {
+                source: source.clone(),
+                expected_digest: Some("0".repeat(64)),
+                server: None,
+                connection: None,
+                credential: None,
+                replace: false,
+            },
+            PluginRequest::Install {
+                source,
+                expected_digest: "0".repeat(64),
+            },
+        ] {
+            let err = invoke(&manager, root.path(), req)
+                .await
+                .err()
+                .expect("pinned operation rejection");
+            assert!(matches!(err, PluginError::Invalid(_)), "{err:?}");
+        }
+    }
+    assert!(seen.lock().expect("lock").is_empty());
+}
+
+#[tokio::test]
+async fn pathless_repo_with_symlink_outside_chosen_skill_inspects_and_installs() {
+    let root = tempfile::tempdir().expect("fixture");
+    let (mut manager, skills) = manager(root.path());
+    let alpha = "---\nname: alpha\ndescription: Alpha skill.\n---\nAlpha body.\n";
+    let other = "---\nname: other\ndescription: Other skill.\n---\nOther body.\n";
+    let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+    for (name, bytes) in [
+        ("skills/alpha/SKILL.md", alpha.as_bytes()),
+        ("skills/other/SKILL.md", other.as_bytes()),
+    ] {
+        let mut h = tar::Header::new_gnu();
+        h.set_mode(0o644);
+        h.set_size(bytes.len() as u64);
+        h.set_cksum();
+        builder
+            .append_data(&mut h, format!("repo-{COMMIT}/{name}"), bytes)
+            .expect("file");
+    }
+    for link_path in ["README-link", "skills/other/bad-link"] {
+        let mut sym = tar::Header::new_gnu();
+        sym.set_entry_type(tar::EntryType::Symlink);
+        sym.set_size(0);
+        sym.set_mode(0o777);
+        sym.set_cksum();
+        builder
+            .append_link(
+                &mut sym,
+                format!("repo-{COMMIT}/{link_path}"),
+                "../etc/passwd",
+            )
+            .expect("symlink");
+    }
+    let archive = builder.into_inner().expect("tar").finish().expect("gzip");
+    let _fixture = start_main_fixture(&mut manager, archive).await;
+
+    let other_err = invoke(
+        &manager,
+        root.path(),
+        PluginRequest::Inspect {
+            source: github_source(Some(COMMIT), None, None, Some("other")),
+        },
+    )
+    .await
+    .err()
+    .expect("symlink inside chosen folder must fail");
+    assert!(other_err.to_string().contains("symlink"), "{other_err}");
+
+    let inspection = inspect_full(
+        &manager,
+        root.path(),
+        github_source(Some(COMMIT), None, None, Some("alpha")),
+    )
+    .await;
+    let pinned = inspection.source().expect("pinned source").clone();
+    assert_eq!(
+        pinned,
+        github_source(Some(COMMIT), None, Some("skills/alpha"), None)
+    );
+
+    let PluginOutcome::Added(added) = invoke(
+        &manager,
+        root.path(),
+        PluginRequest::Add {
+            source: pinned,
+            expected_digest: Some(inspection.digest().to_owned()),
+            server: None,
+            connection: None,
+            credential: None,
+            replace: false,
+        },
+    )
+    .await
+    .expect("install chosen skill ignoring outside symlinks") else {
+        panic!("added");
+    };
+    assert_eq!(added.skills.accepted(), ["alpha"]);
+    assert_eq!(
+        skills
+            .summaries(&test_agent_id(1).to_string(), root.path())
+            .expect("skills")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn discovery_filters_invalid_names_walks_past_root_mismatch_and_lists_on_zero_matches() {
+    let root = tempfile::tempdir().expect("fixture");
+    let (mut manager, _skills) = manager(root.path());
+    let root_skill = "---\nname: root-only\ndescription: Root skill.\n---\nRoot.\n";
+    let padded_skill = "---\nname: \"  spaced  \"\ndescription: Padded frontmatter.\n---\nBody.\n";
+    let nested_skill = "---\nname: target-skill\ndescription: Nested skill.\n---\nNested.\n";
+    let bad_dir_skill = "---\ndescription: Missing valid name.\n---\nBody.\n";
+    let archive = repo_archive(
+        COMMIT,
+        &[
+            ("SKILL.md", root_skill.as_bytes()),
+            ("skills/folder-fallback/SKILL.md", padded_skill.as_bytes()),
+            ("skills/nested/SKILL.md", nested_skill.as_bytes()),
+            ("skills/Bad Dir!/SKILL.md", bad_dir_skill.as_bytes()),
+        ],
+    );
+    let _fixture = start_main_fixture(&mut manager, archive).await;
+
+    let zero_err = invoke(
+        &manager,
+        root.path(),
+        PluginRequest::Inspect {
+            source: github_source(Some(COMMIT), None, None, Some("missing")),
+        },
+    )
+    .await
+    .err()
+    .expect("missing selector returns filtered candidate list");
+    let text = zero_err.to_string();
+    assert!(
+        text.contains("\"name\":\"root-only\"") && !text.contains("\"path\":\"\""),
+        "{text}"
+    );
+    assert!(text.contains("\"name\":\"folder-fallback\""), "{text}");
+    assert!(text.contains("\"name\":\"target-skill\""), "{text}");
+    assert!(
+        !text.contains("spaced") && !text.contains("Bad Dir!"),
+        "{text}"
+    );
+
+    let inspection = inspect_full(
+        &manager,
+        root.path(),
+        github_source(Some(COMMIT), None, None, Some("target-skill")),
+    )
+    .await;
+    assert_eq!(
+        inspection.source(),
+        Some(&github_source(
+            Some(COMMIT),
+            None,
+            Some("skills/nested"),
+            None
+        ))
+    );
+}
+
+#[tokio::test]
+async fn discovery_with_skill_finds_match_past_512_entries_and_caps_error_length() {
+    let root = tempfile::tempdir().expect("fixture");
+    let (mut manager, _skills) = manager(root.path());
+    let files: Vec<(String, Vec<u8>)> = (0..520)
+        .map(|i| {
+            let name = if i == 518 {
+                "needle-skill".to_owned()
+            } else {
+                format!("skill-{i:04}")
+            };
+            let body = format!("---\nname: {name}\ndescription: Desc {i}.\n---\nBody {i}.\n");
+            (format!("skills/{name}/SKILL.md"), body.into_bytes())
+        })
+        .collect();
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_slice()))
+        .collect();
+    let archive = repo_archive(COMMIT, &refs);
+    let _fixture = start_main_fixture(&mut manager, archive).await;
+
+    let inspection = inspect_full(
+        &manager,
+        root.path(),
+        github_source(Some(COMMIT), None, None, Some("needle-skill")),
+    )
+    .await;
+    assert_eq!(
+        inspection.source(),
+        Some(&github_source(
+            Some(COMMIT),
+            None,
+            Some("skills/needle-skill"),
+            None
+        ))
+    );
+
+    let list_err = invoke(
+        &manager,
+        root.path(),
+        PluginRequest::Inspect {
+            source: github_source(Some(COMMIT), None, None, None),
+        },
+    )
+    .await
+    .err()
+    .expect("many candidates error is capped");
+    let err_text = list_err.to_string();
+    assert!(
+        err_text.len() <= 4_300,
+        "unexpectedly huge error ({}): {err_text}",
+        err_text.len()
+    );
+    assert!(err_text.contains("list truncated"), "{err_text}");
 }

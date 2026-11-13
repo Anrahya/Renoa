@@ -1,7 +1,7 @@
 mod error;
 pub(crate) mod package;
 mod projector;
-mod registry;
+pub(crate) mod registry;
 mod render;
 pub(crate) mod store;
 mod tool;

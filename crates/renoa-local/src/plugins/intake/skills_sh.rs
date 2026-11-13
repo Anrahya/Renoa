@@ -41,13 +41,10 @@ pub(super) fn parse(raw: &str) -> Result<SkillsShTarget, PluginError> {
         || Path::new(repo)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("git"))
-        || skill.is_empty()
-        || *skill == "."
-        || *skill == ".."
-        || skill.bytes().any(|byte| byte.is_ascii_control())
     {
         return Err(invalid_url());
     }
+    super::discovery::validate_skill_selector(skill)?;
     Ok(SkillsShTarget {
         repository: format!("https://github.com/{owner}/{repo}"),
         skill: (*skill).to_owned(),

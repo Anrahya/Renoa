@@ -104,7 +104,7 @@ impl PluginManager {
                         }
                     }
                     source => {
-                        self.capture_source(source, workspace, invocation.cancellation)
+                        self.capture_source_for_inspect(source, workspace, invocation.cancellation)
                             .await?
                             .inspection
                     }

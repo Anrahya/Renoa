@@ -5,16 +5,18 @@ use std::{
 
 use serde::Serialize;
 
-use crate::plugins::PluginError;
+use super::github::MAX_DEPTH;
+use crate::{plugins::PluginError, skills::registry::validate_name};
 
-const MAX_DISCOVERY_DEPTH: usize = 16;
-const MAX_DISCOVERED_SKILLS: usize = 512;
+const MAX_LISTED_SKILLS: usize = 40;
+const MAX_ERROR_BYTES: usize = 4_096;
 const MAX_SKILL_MD_BYTES: u64 = 32 * 1_024 * 1_024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(super) struct DiscoveredSkill {
     pub(super) name: String,
-    pub(super) path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) path: Option<String>,
 }
 
 struct SkillCandidate {
@@ -25,6 +27,13 @@ struct SkillCandidate {
 pub(super) enum SelectedPackage {
     Plugin { root: PathBuf, path: Option<String> },
     Skill { root: PathBuf, path: Option<String> },
+}
+
+#[derive(Default)]
+struct WalkState {
+    candidates: Vec<SkillCandidate>,
+    matches: Vec<SkillCandidate>,
+    truncated: bool,
 }
 
 pub(super) fn validate_skill_selector(skill: &str) -> Result<(), PluginError> {
@@ -59,128 +68,141 @@ pub(super) fn select(
             path: base_path.map(str::to_owned),
         });
     }
+    let mut state = WalkState::default();
     if has_skill {
-        if let Some(wanted) = skill {
-            let actual = skill_name(root, &root_fallback_name(repository, base_path))?;
-            if actual != wanted {
-                let candidate = [DiscoveredSkill {
-                    name: actual,
-                    path: base_path.unwrap_or_default().to_owned(),
-                }];
-                return Err(selection_error(
-                    &format!(
-                        "skill `{wanted}` was not found in {}",
-                        location(repository, commit, base_path)
-                    ),
-                    repository,
-                    commit,
-                    &candidate,
-                ));
+        let Some(wanted) = skill else {
+            return Ok(SelectedPackage::Skill {
+                root: root.to_path_buf(),
+                path: base_path.map(str::to_owned),
+            });
+        };
+        let fallback = root_fallback_name(repository, base_path);
+        if let Some(actual) = valid_skill_name(root, &fallback)? {
+            if actual == wanted {
+                return Ok(SelectedPackage::Skill {
+                    root: root.to_path_buf(),
+                    path: base_path.map(str::to_owned),
+                });
             }
+            state.candidates.push(SkillCandidate {
+                entry: DiscoveredSkill {
+                    name: actual,
+                    path: base_path.map(str::to_owned),
+                },
+                dir: root.to_path_buf(),
+            });
         }
-        return Ok(SelectedPackage::Skill {
-            root: root.to_path_buf(),
-            path: base_path.map(str::to_owned),
-        });
     }
 
-    let mut candidates = Vec::new();
-    walk_skills(root, root, base_path, 0, &mut candidates)?;
-    candidates.sort_by(|left, right| left.entry.path.cmp(&right.entry.path));
-    match_discovered_skill(candidates, repository, commit, base_path, skill, has_plugin)
+    let base_depth = base_path.map_or(0, |path| Path::new(path).components().count());
+    walk_skills(root, root, base_path, base_depth, 0, skill, &mut state)?;
+    state.candidates.sort_by(|left, right| {
+        (&left.entry.path, &left.entry.name).cmp(&(&right.entry.path, &right.entry.name))
+    });
+    state.matches.sort_by(|left, right| {
+        (&left.entry.path, &left.entry.name).cmp(&(&right.entry.path, &right.entry.name))
+    });
+    resolve_selection(state, repository, commit, base_path, skill, has_plugin)
 }
 
-fn match_discovered_skill(
-    candidates: Vec<SkillCandidate>,
+fn resolve_selection(
+    state: WalkState,
     repository: &str,
     commit: &str,
     base_path: Option<&str>,
     skill: Option<&str>,
     has_plugin: bool,
 ) -> Result<SelectedPackage, PluginError> {
-    if candidates.is_empty() {
-        let hint = if has_plugin {
-            format!(
-                "{} contains plugin.json and no skill `{}`; retry inspect without skill: {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":\"{repository}\",\"commit\":\"{commit}\"{}}}}}",
-                location(repository, commit, base_path),
-                skill.unwrap_or_default(),
-                path_field(base_path),
-            )
-        } else {
-            format!(
-                "no plugin.json or SKILL.md was found in {}; verify the repository or path and retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":\"{repository}\",\"commit\":\"{commit}\"}}}}",
-                location(repository, commit, base_path),
-            )
-        };
-        return Err(PluginError::Invalid(hint));
-    }
-
-    match skill {
-        None => {
-            let entries = candidates
-                .iter()
-                .map(|c| c.entry.clone())
-                .collect::<Vec<_>>();
-            Err(selection_error(
-                &format!(
-                    "{} holds neither plugin.json nor SKILL.md; choose one of the discovered skills",
-                    location(repository, commit, base_path)
-                ),
-                repository,
-                commit,
-                &entries,
-            ))
-        }
-        Some(wanted) => {
-            let mut matching = candidates
-                .into_iter()
-                .filter(|candidate| candidate.entry.name == wanted)
-                .collect::<Vec<_>>();
-            match matching.len() {
-                1 => {
-                    let chosen = matching.pop().expect("single match");
-                    Ok(SelectedPackage::Skill {
-                        root: chosen.dir,
-                        path: Some(chosen.entry.path),
-                    })
-                }
-                0 => Err(PluginError::Invalid(format!(
-                    "skill `{wanted}` was not found in {}; inspect returned no matching skill. Pick one by skill or path: retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":\"{repository}\",\"commit\":\"{commit}\",\"skill\":\"<name>\"}}}}",
-                    location(repository, commit, base_path)
-                ))),
-                _ => {
-                    let entries = matching.iter().map(|c| c.entry.clone()).collect::<Vec<_>>();
-                    Err(selection_error(
-                        &format!(
-                            "skill `{wanted}` matches multiple folders in {}; pass path to select one",
-                            location(repository, commit, base_path)
-                        ),
+    if let Some(wanted) = skill {
+        let mut matches = state.matches;
+        return match matches.len() {
+            1 => {
+                let chosen = matches.pop().expect("single match");
+                Ok(SelectedPackage::Skill {
+                    root: chosen.dir,
+                    path: chosen.entry.path,
+                })
+            }
+            0 => {
+                if state.candidates.is_empty() {
+                    return Err(empty_selection_error(
                         repository,
                         commit,
-                        &entries,
-                    ))
+                        base_path,
+                        Some(wanted),
+                        has_plugin,
+                    ));
                 }
+                let entries = state
+                    .candidates
+                    .into_iter()
+                    .map(|c| c.entry)
+                    .collect::<Vec<_>>();
+                Err(selection_error(
+                    &format!(
+                        "skill `{wanted}` was not found in {}",
+                        location(repository, commit, base_path)
+                    ),
+                    repository,
+                    commit,
+                    &entries,
+                    state.truncated,
+                ))
             }
-        }
+            _ => {
+                let entries = matches.into_iter().map(|c| c.entry).collect::<Vec<_>>();
+                Err(selection_error(
+                    &format!(
+                        "skill `{wanted}` matches multiple folders in {}; pass path to select one",
+                        location(repository, commit, base_path)
+                    ),
+                    repository,
+                    commit,
+                    &entries,
+                    false,
+                ))
+            }
+        };
     }
+
+    if state.candidates.is_empty() {
+        return Err(empty_selection_error(
+            repository, commit, base_path, None, has_plugin,
+        ));
+    }
+    let entries = state
+        .candidates
+        .into_iter()
+        .map(|c| c.entry)
+        .collect::<Vec<_>>();
+    Err(selection_error(
+        &format!(
+            "{} holds neither plugin.json nor SKILL.md; choose one of the discovered skills",
+            location(repository, commit, base_path)
+        ),
+        repository,
+        commit,
+        &entries,
+        state.truncated,
+    ))
 }
 
 fn walk_skills(
     base_root: &Path,
     dir: &Path,
     base_path: Option<&str>,
+    base_depth: usize,
     depth: usize,
-    out: &mut Vec<SkillCandidate>,
+    wanted: Option<&str>,
+    state: &mut WalkState,
 ) -> Result<(), PluginError> {
-    if depth > MAX_DISCOVERY_DEPTH {
+    if wanted.is_some() && state.matches.len() >= 2 {
+        return Ok(());
+    }
+    if base_depth + depth >= MAX_DEPTH {
         return Ok(());
     }
     if dir != base_root && is_real_file(&dir.join("SKILL.md"))? {
-        if out.len() >= MAX_DISCOVERED_SKILLS {
-            return Err(PluginError::Invalid(format!(
-                "repository exceeds {MAX_DISCOVERED_SKILLS} skills; specify path in inspect"
-            )));
-        }
         let rel = dir
             .strip_prefix(base_root)
             .expect("walk stays inside base_root")
@@ -195,16 +217,27 @@ fn walk_skills(
         let folder = dir
             .file_name()
             .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_owned();
-        let name = skill_name(dir, &folder)?;
-        out.push(SkillCandidate {
-            entry: DiscoveredSkill {
+            .unwrap_or_default();
+        if let Some(name) = valid_skill_name(dir, folder)? {
+            let entry = DiscoveredSkill {
                 name,
-                path: repo_path,
-            },
-            dir: dir.to_path_buf(),
-        });
+                path: Some(repo_path),
+            };
+            if wanted.is_some_and(|target| target == entry.name) {
+                state.matches.push(SkillCandidate {
+                    entry: entry.clone(),
+                    dir: dir.to_path_buf(),
+                });
+            }
+            if state.candidates.len() < MAX_LISTED_SKILLS {
+                state.candidates.push(SkillCandidate {
+                    entry,
+                    dir: dir.to_path_buf(),
+                });
+            } else {
+                state.truncated = true;
+            }
+        }
         return Ok(());
     }
 
@@ -222,8 +255,7 @@ fn walk_skills(
         })?;
     children.sort_by_key(std::fs::DirEntry::file_name);
     for entry in children {
-        let name = entry.file_name();
-        if name == ".git" {
+        if entry.file_name() == ".git" {
             continue;
         }
         let file_type = entry.file_type().map_err(|source| PluginError::Io {
@@ -232,7 +264,18 @@ fn walk_skills(
             source,
         })?;
         if file_type.is_dir() {
-            walk_skills(base_root, &entry.path(), base_path, depth + 1, out)?;
+            walk_skills(
+                base_root,
+                &entry.path(),
+                base_path,
+                base_depth,
+                depth + 1,
+                wanted,
+                state,
+            )?;
+            if wanted.is_some() && state.matches.len() >= 2 {
+                break;
+            }
         }
     }
     Ok(())
@@ -250,7 +293,7 @@ fn is_real_file(path: &Path) -> Result<bool, PluginError> {
     }
 }
 
-fn skill_name(dir: &Path, fallback: &str) -> Result<String, PluginError> {
+fn valid_skill_name(dir: &Path, fallback: &str) -> Result<Option<String>, PluginError> {
     let skill_md = dir.join("SKILL.md");
     let meta = fs::symlink_metadata(&skill_md).map_err(|source| PluginError::Io {
         action: "inspect SKILL.md metadata",
@@ -258,14 +301,19 @@ fn skill_name(dir: &Path, fallback: &str) -> Result<String, PluginError> {
         source,
     })?;
     if meta.len() > MAX_SKILL_MD_BYTES {
-        return Ok(fallback.to_owned());
+        return Ok(validate_name(fallback).ok().map(|()| fallback.to_owned()));
     }
     let bytes = fs::read(&skill_md).map_err(|source| PluginError::Io {
         action: "read SKILL.md",
         path: skill_md,
         source,
     })?;
-    Ok(crate::skills::package::frontmatter_name(&bytes).unwrap_or_else(|| fallback.to_owned()))
+    if let Some(name) = crate::skills::package::frontmatter_name(&bytes)
+        && validate_name(&name).is_ok()
+    {
+        return Ok(Some(name));
+    }
+    Ok(validate_name(fallback).ok().map(|()| fallback.to_owned()))
 }
 
 fn root_fallback_name(repository: &str, base_path: Option<&str>) -> String {
@@ -283,11 +331,35 @@ fn location(repository: &str, commit: &str, base_path: Option<&str>) -> String {
     }
 }
 
-fn path_field(base_path: Option<&str>) -> String {
-    match base_path {
-        Some(path) => format!(",\"path\":{}", serde_json::json!(path)),
-        None => String::new(),
-    }
+fn empty_selection_error(
+    repository: &str,
+    commit: &str,
+    base_path: Option<&str>,
+    wanted: Option<&str>,
+    has_plugin: bool,
+) -> PluginError {
+    let hint = if has_plugin {
+        let path_part = match base_path {
+            Some(path) => format!(",\"path\":{}", serde_json::json!(path)),
+            None => String::new(),
+        };
+        format!(
+            "{} contains plugin.json and no skill `{}`; retry inspect without skill: {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":{},\"commit\":{}{}}}}}",
+            location(repository, commit, base_path),
+            wanted.unwrap_or_default(),
+            serde_json::json!(repository),
+            serde_json::json!(commit),
+            path_part,
+        )
+    } else {
+        format!(
+            "no plugin.json or SKILL.md was found in {}; verify the repository or path and retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":{},\"commit\":{}}}}}",
+            location(repository, commit, base_path),
+            serde_json::json!(repository),
+            serde_json::json!(commit),
+        )
+    };
+    PluginError::Invalid(hint)
 }
 
 fn selection_error(
@@ -295,13 +367,52 @@ fn selection_error(
     repository: &str,
     commit: &str,
     skills: &[DiscoveredSkill],
+    truncated: bool,
 ) -> PluginError {
-    let list = serde_json::to_string(skills).unwrap_or_else(|_| "[]".to_owned());
-    let first_path = skills.first().map_or("<path>", |item| item.path.as_str());
+    let next_hint = if let Some(first_with_path) = skills.iter().find(|item| item.path.is_some()) {
+        format!(
+            "; retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":{},\"commit\":{},\"path\":{}}}}} (or pass \"skill\":\"<name>\")",
+            serde_json::json!(repository),
+            serde_json::json!(commit),
+            serde_json::json!(first_with_path.path.as_deref().unwrap_or_default()),
+        )
+    } else {
+        let skill = skills.first().map_or("<name>", |item| item.name.as_str());
+        format!(
+            "; retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":{},\"commit\":{},\"skill\":{}}}}}",
+            serde_json::json!(repository),
+            serde_json::json!(commit),
+            serde_json::json!(skill),
+        )
+    };
+    let budget = MAX_ERROR_BYTES.saturating_sub(summary.len() + next_hint.len() + 64);
+    let (list_json, omitted) = bounded_list_json(skills, budget);
+    let truncation_note = if truncated || omitted {
+        " (list truncated; pass `path` to narrow)"
+    } else {
+        ""
+    };
     PluginError::Invalid(format!(
-        "{summary}: {list}; retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":{},\"commit\":{},\"path\":{}}}}} (or pass \"skill\":\"<name>\")",
-        serde_json::json!(repository),
-        serde_json::json!(commit),
-        serde_json::json!(first_path),
+        "{summary}: {list_json}{truncation_note}{next_hint}"
     ))
+}
+
+fn bounded_list_json(skills: &[DiscoveredSkill], budget: usize) -> (String, bool) {
+    let mut list = String::from("[");
+    let mut omitted = false;
+    for (index, entry) in skills.iter().take(MAX_LISTED_SKILLS).enumerate() {
+        let encoded = serde_json::to_string(entry).unwrap_or_default();
+        let sep = if index == 0 { "" } else { "," };
+        if list.len() + sep.len() + encoded.len() + 1 > budget {
+            omitted = true;
+            break;
+        }
+        list.push_str(sep);
+        list.push_str(&encoded);
+    }
+    if skills.len() > MAX_LISTED_SKILLS {
+        omitted = true;
+    }
+    list.push(']');
+    (list, omitted)
 }

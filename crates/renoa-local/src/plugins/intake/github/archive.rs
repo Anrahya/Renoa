@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::{MAX_ARCHIVE_BYTES, MAX_DEPTH, MAX_ENTRIES, invalid};
 use crate::plugins::{PluginError, intake::require_active};
 
+#[cfg(test)]
 pub(super) fn extract(
     archive: &Path,
     destination: &Path,
@@ -18,6 +19,17 @@ pub(super) fn extract(
     path: Option<&str>,
     cancellation: &CancellationToken,
 ) -> Result<(), PluginError> {
+    extract_with_policy(archive, destination, prefix, path, cancellation, false).map(|_| ())
+}
+
+pub(super) fn extract_with_policy(
+    archive: &Path,
+    destination: &Path,
+    prefix: &str,
+    path: Option<&str>,
+    cancellation: &CancellationToken,
+    tolerate_unrelated_links: bool,
+) -> Result<Vec<PathBuf>, PluginError> {
     extract_limited(
         archive,
         destination,
@@ -25,6 +37,7 @@ pub(super) fn extract(
         path,
         cancellation,
         MAX_ARCHIVE_BYTES + 32 * 1_024 * 1_024,
+        tolerate_unrelated_links,
     )
 }
 
@@ -35,7 +48,8 @@ pub(super) fn extract_limited(
     path: Option<&str>,
     cancellation: &CancellationToken,
     decompressed_limit: u64,
-) -> Result<(), PluginError> {
+    tolerate_unrelated_links: bool,
+) -> Result<Vec<PathBuf>, PluginError> {
     let file = File::open(archive).map_err(|source| PluginError::Io {
         action: "read GitHub archive",
         path: archive.to_path_buf(),
@@ -51,6 +65,7 @@ pub(super) fn extract_limited(
     let mut bytes = 0_u64;
     let mut count = 0_usize;
     let mut selected = 0_usize;
+    let mut skipped_special = Vec::new();
     for entry in archive
         .entries()
         .map_err(|_| invalid("GitHub source is not a valid gzip tar archive"))?
@@ -60,7 +75,9 @@ pub(super) fn extract_limited(
             entry.map_err(|_| archive_error(cancellation, "GitHub archive entry is malformed"))?;
         count += 1;
         if count > MAX_ENTRIES {
-            return Err(invalid("GitHub repository exceeds 16384 archive entries"));
+            return Err(invalid(
+                "GitHub repository exceeds 16384 archive entries; pass `path` in inspect (`{\"action\":\"inspect\",\"source\":{\"kind\":\"github\",\"repository\":\"https://github.com/<owner>/<repo>\",\"path\":\"<dir>\"}}`) to select a subdirectory",
+            ));
         }
         let entry_path = entry
             .path()
@@ -85,24 +102,30 @@ pub(super) fn extract_limited(
         }
         let kind = entry.header().entry_type();
         let size = entry.size();
+        let repo_relative = components.iter().skip(1).collect::<PathBuf>();
+        let relative_path = if let Some(subdirectory) = path {
+            match repo_relative.strip_prefix(subdirectory) {
+                Ok(stripped) => stripped.to_path_buf(),
+                Err(_) => continue,
+            }
+        } else {
+            repo_relative.clone()
+        };
         bytes = bytes
             .checked_add(size)
             .ok_or_else(|| invalid("GitHub extracted byte count overflowed"))?;
         if bytes > MAX_ARCHIVE_BYTES || size > 32 * 1_024 * 1_024 {
             return Err(invalid(
-                "GitHub extracted source exceeds its file or total byte boundary",
+                "GitHub extracted source exceeds its 32 MiB file or 128 MiB total byte boundary; pass `path` in inspect (`{\"action\":\"inspect\",\"source\":{\"kind\":\"github\",\"repository\":\"https://github.com/<owner>/<repo>\",\"path\":\"<dir>\"}}`) to select a subdirectory",
             ));
         }
-        let relative_path = components.iter().skip(1).collect::<PathBuf>();
-        let relative_path = if let Some(subdirectory) = path {
-            match relative_path.strip_prefix(subdirectory) {
-                Ok(path) => path.to_path_buf(),
-                Err(_) => continue,
-            }
-        } else {
-            relative_path
-        };
         if !kind.is_file() && !kind.is_dir() {
+            if tolerate_unrelated_links && path.is_none() {
+                if !repo_relative.as_os_str().is_empty() {
+                    skipped_special.push(repo_relative);
+                }
+                continue;
+            }
             return Err(invalid(
                 "GitHub archive contains a symlink, hard link, or special file",
             ));
@@ -125,7 +148,7 @@ pub(super) fn extract_limited(
     if selected == 0 {
         return Err(invalid("GitHub source directory contains no files"));
     }
-    Ok(())
+    Ok(skipped_special)
 }
 
 // Consume the gzip trailer so tar end markers cannot hide a truncated stream.

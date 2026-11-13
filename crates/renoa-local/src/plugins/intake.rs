@@ -33,6 +33,27 @@ impl super::PluginManager {
         workspace: &Path,
         cancellation: CancellationToken,
     ) -> Result<CapturedPlugin, PluginError> {
+        self.capture_source_with_mode(source, workspace, false, cancellation)
+            .await
+    }
+
+    pub(crate) async fn capture_source_for_inspect(
+        &self,
+        source: PluginSource,
+        workspace: &Path,
+        cancellation: CancellationToken,
+    ) -> Result<CapturedPlugin, PluginError> {
+        self.capture_source_with_mode(source, workspace, true, cancellation)
+            .await
+    }
+
+    async fn capture_source_with_mode(
+        &self,
+        source: PluginSource,
+        workspace: &Path,
+        allow_discovery_links: bool,
+        cancellation: CancellationToken,
+    ) -> Result<CapturedPlugin, PluginError> {
         require_active(&cancellation)?;
         let normalized = normalize_remote(source)?;
         let download = match normalized {
@@ -49,12 +70,14 @@ impl super::PluginManager {
                             .await?
                     }
                 };
-                let staging = self
+                let tolerate_unrelated_links = allow_discovery_links && github.path.is_none();
+                let downloaded = self
                     .github_source
-                    .download(
+                    .download_with_policy(
                         &github.repository,
                         &resolved_commit,
                         github.path.as_deref(),
+                        tolerate_unrelated_links,
                         cancellation.clone(),
                     )
                     .await?;
@@ -63,7 +86,7 @@ impl super::PluginManager {
                     resolved_commit,
                     github.path,
                     github.skill,
-                    staging,
+                    downloaded,
                 ))
             }
             Err(local_or_mcp) => Err(local_or_mcp),
@@ -72,12 +95,12 @@ impl super::PluginManager {
         tokio::task::spawn_blocking(move || {
             require_active(&cancellation)?;
             let captured = match download {
-                Ok((repository, commit, path, skill, staging)) => capture_github_staged(
+                Ok((repository, commit, path, skill, downloaded)) => capture_github_staged(
                     repository,
                     commit,
                     path.as_deref(),
                     skill.as_deref(),
-                    &staging,
+                    &downloaded,
                 )?,
                 Err(local_or_mcp) => capture_local_or_mcp(local_or_mcp, &workspace)?,
             };
@@ -93,14 +116,15 @@ fn capture_github_staged(
     commit: String,
     path: Option<&str>,
     skill: Option<&str>,
-    staging: &TempDir,
+    downloaded: &github::DownloadedSource,
 ) -> Result<CapturedPlugin, PluginError> {
-    let root = staging.path().join("source");
+    let root = downloaded.staging.path().join("source");
     let captured = match discovery::select(&root, &repository, &commit, path, skill)? {
         discovery::SelectedPackage::Plugin {
             root,
             path: resolved,
         } => {
+            ensure_no_special_under(&downloaded.skipped_special, resolved.as_deref())?;
             let mut captured = inspect::inspect(&root)?;
             captured.inspection.source = Some(PluginSource::Github {
                 repository,
@@ -115,6 +139,7 @@ fn capture_github_staged(
             root,
             path: resolved,
         } => {
+            ensure_no_special_under(&downloaded.skipped_special, resolved.as_deref())?;
             let provenance = github_provenance(&repository, &commit, resolved.as_deref());
             let mut captured = capture_skill(&root, Some(provenance))?;
             captured.inspection.source = Some(PluginSource::Github {
@@ -128,6 +153,25 @@ fn capture_github_staged(
         }
     };
     Ok(captured)
+}
+
+fn ensure_no_special_under(
+    skipped_special: &[PathBuf],
+    selected_path: Option<&str>,
+) -> Result<(), PluginError> {
+    let bad = match selected_path {
+        Some(dir) => skipped_special
+            .iter()
+            .find(|entry| entry.starts_with(Path::new(dir))),
+        None => skipped_special.first(),
+    };
+    if let Some(entry) = bad {
+        return Err(PluginError::Invalid(format!(
+            "GitHub archive contains a symlink, hard link, or special file under the selected directory (`{}`)",
+            entry.display()
+        )));
+    }
+    Ok(())
 }
 
 fn capture_local_or_mcp(

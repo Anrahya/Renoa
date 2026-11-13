@@ -8,11 +8,6 @@ const MAX_API_BYTES: usize = 1_048_576;
 const MAX_REF_BYTES: usize = 256;
 
 #[derive(Deserialize)]
-struct RepoInfo {
-    default_branch: String,
-}
-
-#[derive(Deserialize)]
 struct CommitInfo {
     sha: String,
 }
@@ -47,42 +42,26 @@ pub(in crate::plugins::intake) async fn resolve_commit(
 ) -> Result<String, PluginError> {
     require_active(&cancellation)?;
     let client = http_client("could not initialize GitHub API client")?;
-    let branch;
     let target_ref = if let Some(reference) = r#ref {
         validate_ref(reference)?;
         reference
     } else {
-        let repo_url = format!("{api_origin}/repos/{owner}/{repo}");
-        let info: RepoInfo = get_json(
-            &client,
-            &repo_url,
-            &format!("https://github.com/{owner}/{repo}"),
-            "repository metadata",
-            &cancellation,
-        )
-        .await?;
-        validate_ref(&info.default_branch).map_err(|_| {
-            invalid(&format!(
-                "GitHub returned invalid default branch `{}` for https://github.com/{owner}/{repo}",
-                info.default_branch
-            ))
-        })?;
-        branch = info.default_branch;
-        &branch
+        "HEAD"
     };
     let encoded_ref = encode_ref_segment(target_ref);
     let commit_url = format!("{api_origin}/repos/{owner}/{repo}/commits/{encoded_ref}");
+    let repository = format!("https://github.com/{owner}/{repo}");
     let info: CommitInfo = get_json(
         &client,
         &commit_url,
-        &format!("https://github.com/{owner}/{repo}"),
+        &repository,
         &format!("ref `{target_ref}`"),
         &cancellation,
     )
     .await?;
     validate_commit(&info.sha).map_err(|_| {
         invalid(&format!(
-            "GitHub returned invalid commit SHA `{}` for ref `{target_ref}` in https://github.com/{owner}/{repo}",
+            "GitHub returned invalid commit SHA `{}` for ref `{target_ref}` in {repository}",
             info.sha
         ))
     })?;
@@ -105,9 +84,22 @@ async fn get_json<T: for<'de> Deserialize<'de>>(
         () = cancellation.cancelled() => return Err(PluginError::Cancelled),
     };
     let status = response.status();
+    if status == reqwest::StatusCode::MOVED_PERMANENTLY || status.is_redirection() {
+        return Err(invalid(&format!(
+            "GitHub repository {repository} moved or redirected (HTTP {}); pass the canonical https://github.com/<owner>/<repo> URL and retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":\"https://github.com/<owner>/<repo>\"}}}}",
+            status.as_u16()
+        )));
+    }
+    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return Err(unavailable(&format!(
+            "GitHub API rate limit or access restriction for {repository} (HTTP {}); retry later or pass a pinned 40-character commit SHA directly with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":{repository:?},\"commit\":\"<40-char-sha>\"}}}}",
+            status.as_u16()
+        )));
+    }
     if status == reqwest::StatusCode::NOT_FOUND {
         return Err(invalid(&format!(
-            "GitHub {subject} was not found in {repository}; verify the repository and ref, then retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":\"{repository}\"}}}}"
+            "GitHub {subject} was not found in {repository}; verify the repository and ref, then retry inspect with {{\"action\":\"inspect\",\"source\":{{\"kind\":\"github\",\"repository\":{repository:?}}}}}"
         )));
     }
     if !status.is_success() {
