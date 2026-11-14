@@ -148,7 +148,16 @@ pub async fn newer(
     release.newer_than(running)
 }
 
+/// The Renoa.app this process runs from, if it runs from one. Only a
+/// Renoa.app on macOS updates itself: on any other platform this is none, so
+/// the app reports that it does not update.
+#[cfg(not(target_os = "macos"))]
+pub fn running_bundle() -> Option<PathBuf> {
+    None
+}
+
 /// The Renoa.app this process runs from, if it runs from one.
+#[cfg(target_os = "macos")]
 pub fn running_bundle() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
     let bundle = executable.parent()?.parent()?.parent()?;
@@ -215,6 +224,7 @@ async fn stage_and_swap(
 
 /// Exchanges what is at `a` and `b` in one step, so the app's place is never
 /// empty: `renamex_np` with `RENAME_SWAP`.
+#[cfg(target_os = "macos")]
 fn swap(a: &Path, b: &Path) -> std::io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
     let a = CString::new(a.as_os_str().as_bytes())?;
@@ -227,6 +237,12 @@ fn swap(a: &Path, b: &Path) -> std::io::Result<()> {
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+/// Only macOS updates the app in place (`running_bundle`).
+#[cfg(not(target_os = "macos"))]
+fn swap(_: &Path, _: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
 /// The URL of `name` beside the description at `url`.

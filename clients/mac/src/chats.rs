@@ -466,7 +466,8 @@ mod home;
 mod jump;
 pub(crate) mod keys;
 mod overlay;
-#[cfg(test)]
+// The screens render with the Mac's text system.
+#[cfg(all(test, target_os = "macos"))]
 mod screens;
 mod sidebar;
 #[cfg(test)]

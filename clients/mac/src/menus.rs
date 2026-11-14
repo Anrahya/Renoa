@@ -11,7 +11,7 @@ use crate::theme;
 
 use crate::chats::keys::{
     self, AboutAgent, GoHome, JumpTo, OpenApps, OpenMemory, OpenRoutines, OpenSettings,
-    ToggleSidebar,
+    ToggleSidebar, command,
 };
 
 actions!(
@@ -59,16 +59,20 @@ pub fn install(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    // Hiding an app is the Mac's; elsewhere Ctrl+H is the text fields'.
+    #[cfg(target_os = "macos")]
     cx.bind_keys([
-        KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-h", Hide, None),
-        KeyBinding::new("alt-cmd-h", HideOthers, None),
-        KeyBinding::new("cmd-m", Minimize, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-=", Bigger, None),
-        KeyBinding::new("cmd-+", Bigger, None),
-        KeyBinding::new("cmd--", Smaller, None),
-        KeyBinding::new("alt-cmd-0", ActualSize, None),
+        KeyBinding::new(command!("h"), Hide, None),
+        KeyBinding::new(command!("alt-h"), HideOthers, None),
+    ]);
+    cx.bind_keys([
+        KeyBinding::new(command!("q"), Quit, None),
+        KeyBinding::new(command!("m"), Minimize, None),
+        KeyBinding::new(command!("w"), CloseWindow, None),
+        KeyBinding::new(command!("="), Bigger, None),
+        KeyBinding::new(command!("+"), Bigger, None),
+        KeyBinding::new(command!("-"), Smaller, None),
+        KeyBinding::new(command!("alt-0"), ActualSize, None),
     ]);
     keys::bind(cx);
     cx.set_menus(menus());
@@ -128,7 +132,7 @@ mod tests {
         test::TestWindowExt as _,
     };
 
-    use super::{install, menus};
+    use super::{command, install, menus};
 
     #[gpui_kit::test]
     fn each_menu_item_shows_its_keys_but_the_two_mac_apps_leave_bare(cx: &mut TestAppContext) {
@@ -150,11 +154,13 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(
-                unbound,
-                ["Show All", "Zoom"],
-                "the text fields bind their own edits"
-            );
+            // Hiding has keys on the Mac alone.
+            let bare: &[&str] = if cfg!(target_os = "macos") {
+                &["Show All", "Zoom"]
+            } else {
+                &["Hide Renoa", "Hide Others", "Show All", "Zoom"]
+            };
+            assert_eq!(unbound, bare, "the text fields bind their own edits");
         });
     }
 
@@ -191,7 +197,7 @@ mod tests {
     #[should_panic(expected = "not implemented")]
     fn minimize_reaches_the_window(cx: &mut TestAppContext) {
         let window = window(cx);
-        cx.update_window(window, |_, window, cx| window.press("cmd-m", cx))
+        cx.update_window(window, |_, window, cx| window.press(command!("m"), cx))
             .unwrap();
     }
 
@@ -225,22 +231,22 @@ mod tests {
                 .unwrap();
             cx.run_until_parked();
         };
-        press("cmd-=", cx);
+        press(command!("="), cx);
         assert_eq!(
             size(cx),
             (crate::theme::Zoom::default().step(1), gpui_kit::px(17.6))
         );
-        press("cmd--", cx);
-        press("cmd--", cx);
+        press(command!("-"), cx);
+        press(command!("-"), cx);
         assert_eq!(size(cx).0, crate::theme::Zoom::default().step(-1));
-        press("alt-cmd-0", cx);
+        press(command!("alt-0"), cx);
         assert_eq!(size(cx), (crate::theme::Zoom::default(), gpui_kit::px(16.)));
     }
 
     #[gpui_kit::test]
     fn close_window_closes_it(cx: &mut TestAppContext) {
         let window = window(cx);
-        cx.update_window(window, |_, window, cx| window.press("cmd-w", cx))
+        cx.update_window(window, |_, window, cx| window.press(command!("w"), cx))
             .unwrap();
         cx.run_until_parked();
         assert!(cx.update(|cx| cx.windows().is_empty()));

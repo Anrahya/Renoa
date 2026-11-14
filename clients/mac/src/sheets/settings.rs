@@ -1,5 +1,6 @@
 //! The app's own settings: how it looks, the keys that move around it, this
-//! Mac's sign-in, and which version it is and whether a newer one is ready.
+//! computer's sign-in, and which version it is and whether a newer one is
+//! ready.
 
 use gpui_kit::{
     AnyElement, Context, Entity, EventEmitter, FontWeight, InteractiveElement as _, IntoElement,
@@ -9,6 +10,8 @@ use gpui_kit::{
 
 use super::{Page, SheetEvent, group, header, pill, section};
 use crate::{
+    chats::keys,
+    device,
     theme::{self, Appearance, Palette, u},
     update::{self, Updater, Updates, updater::State},
 };
@@ -31,6 +34,13 @@ pub const SHORTCUTS: [(&str, &str); 13] = [
     ("Smaller", "⌘−"),
     ("Actual size", "⌥⌘0"),
 ];
+
+/// What Settings says of a build that does not update itself
+/// (`update::running_bundle`).
+#[cfg(target_os = "macos")]
+const NOT_UPDATING: &str = "Built from source; it doesn't update itself.";
+#[cfg(not(target_os = "macos"))]
+const NOT_UPDATING: &str = "It doesn't update itself: install a newer release to update.";
 
 pub struct Settings {
     /// What this Mac calls itself, which Renoa shows on the phone.
@@ -75,11 +85,7 @@ fn version_row(
         updates.read(cx).state().clone()
     });
     let (said, problem, action) = match &state {
-        State::FromSource => (
-            "Built from source; it doesn't update itself.".to_owned(),
-            false,
-            None,
-        ),
+        State::FromSource => (NOT_UPDATING.to_owned(), false, None),
         State::Checking => ("Checking for updates…".to_owned(), false, None),
         State::Current => ("Up to date".to_owned(), false, Some(("Check now", false))),
         State::CheckFailed(_) => (
@@ -118,7 +124,8 @@ fn version_row(
                 .flex_col()
                 .gap(u(2.))
                 .child(format!(
-                    "Renoa for Mac {}",
+                    "Renoa for {} {}",
+                    device::PLATFORM,
                     update::VERSION.unwrap_or(env!("CARGO_PKG_VERSION"))
                 ))
                 .child(
@@ -152,7 +159,7 @@ impl Render for Settings {
         let chosen = cx.try_global::<Appearance>().copied().unwrap_or_default();
         let top = header(
             Page::Settings,
-            "How Renoa looks and works on this Mac.",
+            format!("How Renoa looks and works on this {}.", device::KIND),
             palette,
             Vec::new(),
             cx.listener(|_, _, _, cx| cx.emit(SheetEvent::Close)),
@@ -240,9 +247,12 @@ impl Render for Settings {
                                 palette.secondary
                             })
                             .child(if signing_out {
-                                "This Mac forgets its sign-in. Signing in again takes a new code from your phone."
+                                format!(
+                                    "This {} forgets its sign-in. Signing in again takes a new code from your phone.",
+                                    device::KIND
+                                )
                             } else {
-                                "Approved from your phone"
+                                "Approved from your phone".to_owned()
                             }),
                     ),
             )
@@ -258,9 +268,9 @@ impl Render for Settings {
                 pill(
                     "sign-out",
                     if signing_out {
-                        "Sign out now"
+                        "Sign out now".to_owned()
                     } else {
-                        "Sign out of this Mac"
+                        format!("Sign out of this {}", device::KIND)
                     },
                     signing_out,
                     palette,
@@ -297,7 +307,7 @@ impl Render for Settings {
                 })
                 .child(section("Keyboard", palette))
                 .child(group(keys, palette))
-                .child(section("This Mac", palette))
+                .child(section(format!("This {}", device::KIND), palette))
                 .child(group([this_mac], palette))
                 .child(section("Renoa", palette))
                 .child(group(
@@ -336,7 +346,7 @@ fn shortcut_cell(what: &str, keys: &str, palette: Palette) -> AnyElement {
                 .border_color(palette.outline)
                 .text_size(u(11.))
                 .text_color(palette.secondary)
-                .child(keys.to_owned()),
+                .child(keys::shown(keys)),
         )
         .into_any_element()
 }

@@ -198,7 +198,7 @@ const DESIGN_REM: f32 = 16.0;
 const KIT_TEXT: f32 = 14.5;
 const KIT_MONO_TEXT: f32 = 12.5;
 
-/// What the app keeps of the owner's choices, beside the Keychain's secrets.
+/// What the app keeps of the owner's choices; its secrets are the vault's.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Kept {
     #[serde(default)]
@@ -207,9 +207,21 @@ struct Kept {
     zoom: Option<Zoom>,
 }
 
+/// Where the choices are kept: Application Support on macOS, the XDG config
+/// folder on Linux.
+#[cfg(target_os = "macos")]
 fn kept_at() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join("Library/Application Support/live.renoa.mac/settings.json"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn kept_at() -> Option<PathBuf> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| Some(PathBuf::from(std::env::var_os("HOME")?).join(".config")))?;
+    Some(config.join("live.renoa.mac/settings.json"))
 }
 
 /// The appearance the owner chose last, or [`Appearance::System`] when none

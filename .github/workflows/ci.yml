@@ -124,6 +124,32 @@ jobs:
           python-version: "3.13"
       - run: python3 -m unittest discover -s deploy/tests -v
 
+  # The desktop app is its own Cargo workspace, which the jobs above never
+  # build; this checks its Linux build. macOS is checked on the Mac.
+  desktop:
+    name: Desktop app (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: clients/mac
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GPUI's Linux libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/mac
+      - run: cargo fmt -- --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
   android:
     name: Android app
     runs-on: ubuntu-24.04

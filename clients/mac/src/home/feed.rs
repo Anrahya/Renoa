@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(
             held.needing_you(|_| false),
             1,
-            "a question this Mac cannot answer"
+            "a question this computer cannot answer"
         );
         let mut held = held;
         held.deal(Uuid::from_u128(3));

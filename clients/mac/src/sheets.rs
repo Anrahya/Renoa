@@ -160,7 +160,7 @@ pub const HEIGHT: f32 = 620.;
 /// the close button.
 pub fn header(
     page: Page,
-    line: &'static str,
+    line: impl Into<SharedString>,
     palette: Palette,
     actions: Vec<AnyElement>,
     close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -191,7 +191,7 @@ pub fn header(
                     div()
                         .text_size(u(12.))
                         .text_color(palette.secondary)
-                        .child(line),
+                        .child(line.into()),
                 ),
         )
         .children(actions)

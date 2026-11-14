@@ -413,7 +413,7 @@ fn home_shows_first_with_the_keys_and_a_chat_opened_from_the_side_is_ready_to_ty
         (true, true, false),
         "Home has the keys from launch"
     );
-    press("cmd-shift-r", cx);
+    press(crate::chats::keys::command!("shift-r"), cx);
     assert_eq!(
         up(cx),
         Some(Up::Sheet(Page::Routines)),
@@ -446,9 +446,9 @@ fn home_shows_first_with_the_keys_and_a_chat_opened_from_the_side_is_ready_to_ty
         );
         assert_eq!(chats.composer.read(cx).value().as_ref(), "Oat milk");
     });
-    press("cmd-0", cx);
+    press(crate::chats::keys::command!("0"), cx);
     assert_eq!(focused(cx), (true, true, false), "⌘0 goes Home");
-    press("cmd-1", cx);
+    press(crate::chats::keys::command!("1"), cx);
     assert_eq!(focused(cx), (false, false, true));
     chats.read_with(cx, |chats, _| {
         assert_eq!(
@@ -518,12 +518,18 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
         }
     };
     act(&|window, cx| window.click(("agent", 0usize), cx), cx);
-    act(&|window, cx| window.press("cmd-i", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("i"), cx),
+        cx,
+    );
     assert_eq!(up(cx), None, "the first agent is not one of the Host's");
     act(&|window, cx| window.click("about", cx), cx);
     assert_eq!(up(cx), None, "nor is its name a way to a page");
     act(&|window, cx| window.click(("agent", 1usize), cx), cx);
-    act(&|window, cx| window.press("cmd-i", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("i"), cx),
+        cx,
+    );
     assert_eq!(up(cx), Some(Up::Profile(task_id)), "⌘I opens it");
     let purpose = chats.read_with(cx, |chats, cx| {
         let shown = chats.sheet.as_ref().expect("a sheet");
@@ -550,11 +556,20 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
         Some(Up::Sheet(Page::Routines)),
         "All routines opens Routines"
     );
-    act(&|window, cx| window.press("cmd-0", cx), cx);
-    act(&|window, cx| window.press("cmd-i", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("0"), cx),
+        cx,
+    );
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("i"), cx),
+        cx,
+    );
     assert_eq!(up(cx), None, "Home has no agent to show");
     act(&|window, cx| window.click(("agent", 1usize), cx), cx);
-    act(&|window, cx| window.press("cmd-i", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("i"), cx),
+        cx,
+    );
     act(&|window, cx| window.click("message", cx), cx);
     chats.read_with(cx, |chats, _| {
         assert!(chats.sheet.is_none());
@@ -608,15 +623,15 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
         })
     };
     let pressed = |keys: &str| match keys {
-        "⌘K" => "cmd-k",
-        "⌘0" => "cmd-0",
-        "⌘I" => "cmd-i",
-        "⌘1 – ⌘9" => "cmd-1",
-        "⌘⇧R" => "cmd-shift-r",
-        "⌘⇧M" => "cmd-shift-m",
-        "⌘⇧A" => "cmd-shift-a",
-        "⌘," => "cmd-,",
-        "⌘B" => "cmd-b",
+        "⌘K" => crate::chats::keys::command!("k"),
+        "⌘0" => crate::chats::keys::command!("0"),
+        "⌘I" => crate::chats::keys::command!("i"),
+        "⌘1 – ⌘9" => crate::chats::keys::command!("1"),
+        "⌘⇧R" => crate::chats::keys::command!("shift-r"),
+        "⌘⇧M" => crate::chats::keys::command!("shift-m"),
+        "⌘⇧A" => crate::chats::keys::command!("shift-a"),
+        "⌘," => crate::chats::keys::command!(","),
+        "⌘B" => crate::chats::keys::command!("b"),
         "Esc" => "escape",
         other => panic!("Settings lists {other}, which this test does not press"),
     };
@@ -645,7 +660,10 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
             continue;
         }
         if what == "Close a sheet" {
-            act(&|window, cx| window.press("cmd-shift-m", cx), cx);
+            act(
+                &|window, cx| window.press(crate::chats::keys::command!("shift-m"), cx),
+                cx,
+            );
         }
         let expected = match what {
             "Jump to an agent or page" => (false, None, true, chat("Chef")),
@@ -681,15 +699,27 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
     }
 
     // The keys reach the chats from Home and from the jump box's own field.
-    act(&|window, cx| window.press("cmd-0", cx), cx);
-    act(&|window, cx| window.press("cmd-shift-r", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("0"), cx),
+        cx,
+    );
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("shift-r"), cx),
+        cx,
+    );
     assert_eq!(
         at(cx),
         (true, Some(Up::Sheet(Page::Routines)), false, chat("Chef"))
     );
     act(&|window, cx| window.press("escape", cx), cx);
-    act(&|window, cx| window.press("cmd-k", cx), cx);
-    act(&|window, cx| window.press("cmd-0", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("k"), cx),
+        cx,
+    );
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("0"), cx),
+        cx,
+    );
     assert_eq!(
         at(cx),
         (true, None, false, chat("Chef")),
@@ -786,7 +816,10 @@ fn the_wheel_over_a_sheet_leaves_the_chat_behind_it_alone(cx: &mut TestAppContex
     );
     assert!(!scrolled_up(cx));
 
-    act(&|window, cx| window.press("cmd-,", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!(","), cx),
+        cx,
+    );
     act(&wheel, cx);
 
     assert!(
@@ -820,9 +853,15 @@ fn sidebar_collapses_and_expands_by_button_and_key(cx: &mut TestAppContext) {
     assert!(!open(cx), "clicking the sidebar icon collapses it");
     act(&|window, cx| window.click("toggle-sidebar", cx), cx);
     assert!(open(cx), "clicking the corner icon brings it back");
-    act(&|window, cx| window.press("cmd-b", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("b"), cx),
+        cx,
+    );
     assert!(!open(cx), "⌘B collapses it");
-    act(&|window, cx| window.press("cmd-b", cx), cx);
+    act(
+        &|window, cx| window.press(crate::chats::keys::command!("b"), cx),
+        cx,
+    );
     assert!(open(cx), "⌘B expands it again");
 }
 
@@ -879,8 +918,8 @@ fn the_main_agent_is_pinned_first_even_when_listed_last(cx: &mut TestAppContext)
 
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
-        window.press("cmd-2", cx);
-        window.press("cmd-1", cx);
+        window.press(crate::chats::keys::command!("2"), cx);
+        window.press(crate::chats::keys::command!("1"), cx);
     })
     .unwrap();
     cx.run_until_parked();
