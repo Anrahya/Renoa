@@ -1,8 +1,9 @@
-//! Renoa for the Mac: a thin chat with the owner's agents over RCP.
+//! Renoa for the desktop: a thin chat with the owner's agents over RCP.
 
 mod app;
 mod chat;
 mod chats;
+mod device;
 mod face;
 mod home;
 mod icons;
@@ -36,6 +37,8 @@ fn main() {
                 size(px(1000.), px(700.)),
                 cx,
             ))),
+            // Linux desktops match the window to `live.renoa.Renoa.desktop`.
+            app_id: Some("live.renoa.Renoa".to_owned()),
             ..WindowOptions::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {

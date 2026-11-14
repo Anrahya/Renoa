@@ -1,7 +1,7 @@
-//! The window's root: signing in until this Mac has a credential, then the
-//! chats.
+//! The window's root: signing in until this computer has a credential, then
+//! the chats.
 
-use std::{process::Command, sync::Arc};
+use std::sync::Arc;
 
 use gpui_kit::{
     AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     chats::{Chats, SignedOut},
+    device,
     key::MacKey,
     link::{self, Endpoints, SignInStep},
     theme::{self, Palette, u},
@@ -19,15 +20,8 @@ use crate::{
     vault,
 };
 
-/// The longest name a device may carry.
-const MAX_LABEL_CHARS: usize = 64;
-
-/// What the owner reads when the Keychain fails; the detail goes to the log.
-const KEYCHAIN_PROBLEM: &str =
-    "Renoa couldn't use this Mac's Keychain. Unlock it in Keychain Access, then open Renoa again.";
-
 enum Screen {
-    /// The Keychain cannot keep what Renoa needs; nothing else can work.
+    /// The secret store cannot keep what Renoa needs; nothing else can work.
     Problem,
     SigningIn {
         code: Option<DeviceCode>,
@@ -92,7 +86,7 @@ impl Renoa {
         link::runtime().spawn(link::sign_in(
             self.endpoints.clone(),
             key,
-            computer_name(),
+            device::computer_name(),
             link::Pace::APP,
             vault::keep_credentials,
             steps_sender,
@@ -149,7 +143,15 @@ impl Renoa {
             commands_received,
             updates_sender,
         ));
-        let chats = cx.new(|cx| Chats::new(commands, updates, computer_name().into(), window, cx));
+        let chats = cx.new(|cx| {
+            Chats::new(
+                commands,
+                updates,
+                device::computer_name().into(),
+                window,
+                cx,
+            )
+        });
         cx.subscribe_in(&chats, window, |this, _, _: &SignedOut, window, cx| {
             vault::forget_credentials();
             this.sign_in(window, cx);
@@ -178,7 +180,7 @@ impl Render for Renoa {
                         .max_w(u(340.))
                         .text_center()
                         .text_color(palette.secondary)
-                        .child(KEYCHAIN_PROBLEM),
+                        .child(vault::PROBLEM),
                 ),
             Screen::SigningIn { code, unreachable } => {
                 let shown: SharedString = code.as_ref().map_or_else(
@@ -221,15 +223,50 @@ impl Render for Renoa {
             }
         };
         let bar = update::updater::bar(&self.updates, palette, cx);
-        crate::menus::window_items(
+        let content = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(palette.background)
+            .child(div().flex_1().min_h_0().child(screen))
+            .children(bar);
+        framed(
+            crate::menus::window_items(div().size_full().flex().flex_col().child(content)),
+            window,
+        )
+    }
+}
+
+/// The window's frame where the desktop leaves it to the app (GNOME on
+/// Wayland): a bar to move, maximise and close the window by, and edges to
+/// resize it by. Elsewhere the system draws the frame, around the app on
+/// macOS and above it under a Linux window manager.
+#[cfg(target_os = "linux")]
+fn framed(window_items: gpui_kit::Div, window: &Window) -> gpui_kit::AnyElement {
+    use gpui_kit::{
+        Decorations,
+        component::{TitleBar, window_border},
+    };
+    if !matches!(window.window_decorations(), Decorations::Client { .. }) {
+        return window_items.into_any_element();
+    }
+    // No shadow: GNOME paints the space it would take solid, not clear.
+    window_border()
+        .shadow_size(gpui_kit::px(0.))
+        .child(
             div()
                 .size_full()
                 .flex()
                 .flex_col()
-                .child(div().flex_1().min_h_0().child(screen))
-                .children(bar),
+                .child(TitleBar::new().child("Renoa"))
+                .child(window_items.flex_1().min_h_0()),
         )
-    }
+        .into_any_element()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn framed(window_items: gpui_kit::Div, _: &Window) -> gpui_kit::Div {
+    window_items
 }
 
 fn centered(palette: Palette) -> gpui_kit::Div {
@@ -249,21 +286,4 @@ fn centered(palette: Palette) -> gpui_kit::Div {
 fn spaced(code: &str) -> String {
     let (first, second) = code.split_at(code.len().min(4));
     format!("{first} {second}")
-}
-
-/// The name this Mac signs in with: its name in System Settings.
-fn computer_name() -> String {
-    let named = Command::new("/usr/sbin/scutil")
-        .args(["--get", "ComputerName"])
-        .output()
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|name| {
-            name.trim()
-                .chars()
-                .take(MAX_LABEL_CHARS)
-                .collect::<String>()
-        })
-        .filter(|name| !name.is_empty());
-    named.unwrap_or_else(|| "Mac".to_owned())
 }

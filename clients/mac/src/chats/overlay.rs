@@ -463,7 +463,7 @@ impl Chats {
                     .rounded(u(5.))
                     .bg(palette.chat_agent)
                     .text_size(u(10.5))
-                    .child("⌘K"),
+                    .child(keys::shown("⌘K")),
             )
     }
 }

@@ -1,10 +1,17 @@
-# Renoa for the Mac
+# Renoa for the desktop
 
 A thin chat with the owner's agents, in GPUI with
 [gpui-kit](https://github.com/longbridge/gpui-kit), over the shared
-`renoa-rcp-client`. It is its own Cargo workspace with its own `Cargo.lock` and
-`target/`, so the Linux build and CI never compile GPUI. It builds on a Mac
-with the Command Line Tools; Xcode is not needed.
+`renoa-rcp-client`. It runs on macOS and on Linux (Wayland or X11). It is its
+own Cargo workspace with its own `Cargo.lock` and `target/`, so the server's
+build never compiles GPUI; CI checks its Linux build (the "Desktop app" job).
+It builds on a Mac with the Command Line Tools; Xcode is not needed. On
+Debian, Ubuntu or Zorin it needs GPUI's libraries first:
+
+```sh
+sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+  libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev
+```
 
 ```sh
 cargo run
@@ -12,14 +19,14 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-`cargo run` signs the app with a code-signing identity named `Renoa Dev`
+On the Mac, `cargo run` signs the app with a code-signing identity named `Renoa Dev`
 when the login Keychain has one (`scripts/run-signed.sh`). Without it, each
 build is a new app to the Keychain, which asks for the login password again.
 Make it once in Keychain Access: Certificate Assistant → Create a
 Certificate…, name `Renoa Dev`, identity type Self Signed Root, certificate
 type Code Signing.
 
-To use it as an app, with its icon in the Dock and Launchpad:
+To use it as a Mac app, with its icon in the Dock and Launchpad:
 
 ```sh
 scripts/install-app.sh
@@ -31,6 +38,21 @@ signs it like `cargo run` does, and installs it in `/Applications`. The
 installed app stays the same binary until the next install, so once the
 Keychain is told to Always Allow it, it stops asking for the login password;
 each `cargo run` rebuild asks again.
+
+## Linux
+
+```sh
+scripts/build-deb.sh <folder>
+sudo apt install ./<folder>/renoa_<version>_amd64.deb
+```
+
+builds a `.deb` for x86-64 that installs the app as `renoa`, with a menu
+entry and the icon. Each tagged release attaches one (`.github/workflows/release.yml`).
+The key and sign-in live in the Secret Service keyring (GNOME's keyring)
+instead of the Keychain, and the keys are held with Ctrl where the Mac uses ⌘.
+Where the desktop leaves the window's frame to the app, as GNOME on Wayland
+does, the app draws a title bar and resizable edges. The Linux app does not
+update itself: Settings says so, and a newer `.deb` replaces it.
 
 ## Updates
 

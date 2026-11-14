@@ -26,17 +26,30 @@ actions!(
     ]
 );
 
+/// `keys` held with the modifier the app's keys use, ⌘ on macOS and Ctrl
+/// elsewhere, as the `&'static str` a key binding takes: `command!("shift-r")`.
+macro_rules! command {
+    ($keys:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $keys)
+        } else {
+            concat!("ctrl-", $keys)
+        }
+    };
+}
+pub(crate) use command;
+
 /// Binds the keys the menus show to their actions, for the whole app.
 pub fn bind(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-0", GoHome, None),
-        KeyBinding::new("cmd-k", JumpTo, None),
-        KeyBinding::new("cmd-i", AboutAgent, None),
-        KeyBinding::new("cmd-shift-r", OpenRoutines, None),
-        KeyBinding::new("cmd-shift-m", OpenMemory, None),
-        KeyBinding::new("cmd-shift-a", OpenApps, None),
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        KeyBinding::new("cmd-b", ToggleSidebar, None),
+        KeyBinding::new(command!("0"), GoHome, None),
+        KeyBinding::new(command!("k"), JumpTo, None),
+        KeyBinding::new(command!("i"), AboutAgent, None),
+        KeyBinding::new(command!("shift-r"), OpenRoutines, None),
+        KeyBinding::new(command!("shift-m"), OpenMemory, None),
+        KeyBinding::new(command!("shift-a"), OpenApps, None),
+        KeyBinding::new(command!(","), OpenSettings, None),
+        KeyBinding::new(command!("b"), ToggleSidebar, None),
     ]);
 }
 
@@ -61,7 +74,12 @@ pub enum Move {
 /// fields would otherwise take, and the agents' numbers.
 pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
     let held = &keystroke.modifiers;
-    let command = held.platform && !held.control && !held.alt;
+    // The modifier `command` binds with.
+    let command = if cfg!(target_os = "macos") {
+        held.platform && !held.control
+    } else {
+        held.control && !held.platform
+    } && !held.alt;
     let key = keystroke.key.as_str();
     match (command, held.shift, key) {
         (false, false, "escape") => Some(Move::Close),
@@ -71,6 +89,23 @@ pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
         },
         _ => None,
     }
+}
+
+/// `keys`, written with the Mac's symbols as Settings and the menus list
+/// them, the way this platform writes them: as they are on macOS, and as
+/// "Ctrl+Shift+R" elsewhere.
+pub fn shown(keys: &str) -> String {
+    if cfg!(target_os = "macos") {
+        return keys.to_owned();
+    }
+    keys.chars()
+        .map(|key| match key {
+            '⌘' => "Ctrl+".to_owned(),
+            '⇧' => "Shift+".to_owned(),
+            '⌥' => "Alt+".to_owned(),
+            other => other.to_string(),
+        })
+        .collect()
 }
 
 /// Answers each bound action with its move. ⌘I is answered only while a
@@ -109,7 +144,7 @@ fn listen<A: Action>(root: Div, moved: Move, cx: &mut Context<Chats>) -> Div {
 mod tests {
     use gpui_kit::Keystroke;
 
-    use super::{Move, shortcut};
+    use super::{Move, shortcut, shown};
 
     fn press(keys: &'static str) -> Option<Move> {
         shortcut(&Keystroke::parse(keys).expect("a keystroke"))
@@ -120,11 +155,37 @@ mod tests {
         for keys in [
             "k",
             "shift-r",
-            "cmd-ctrl-k",
-            "cmd-alt-1",
-            "cmd-shift-escape",
+            // ⌘ and Ctrl held together.
+            "cmd-ctrl-1",
+            // The other platform's modifier alone.
+            if cfg!(target_os = "macos") {
+                "ctrl-1"
+            } else {
+                "cmd-1"
+            },
+            command!("alt-1"),
+            command!("shift-escape"),
         ] {
             assert_eq!(press(keys), None, "{keys}");
+        }
+    }
+
+    #[test]
+    fn keys_are_written_the_way_the_platform_writes_them() {
+        let written = ["⌘K", "⌘⇧R", "⌥⌘0", "⌘1 – ⌘9", "Esc"].map(shown);
+        if cfg!(target_os = "macos") {
+            assert_eq!(written, ["⌘K", "⌘⇧R", "⌥⌘0", "⌘1 – ⌘9", "Esc"]);
+        } else {
+            assert_eq!(
+                written,
+                [
+                    "Ctrl+K",
+                    "Ctrl+Shift+R",
+                    "Alt+Ctrl+0",
+                    "Ctrl+1 – Ctrl+9",
+                    "Esc"
+                ]
+            );
         }
     }
 }

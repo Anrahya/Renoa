@@ -5,7 +5,7 @@ use tokio::{
     net::TcpListener,
 };
 
-use super::{Release, Version, beside, check_bundle, newer, version};
+use super::{Release, Version, beside, newer, version};
 
 fn release(version_name: &str) -> Release {
     Release {
@@ -145,6 +145,7 @@ fn unsigned_bundle(at: &Path, version: &str) {
     .unwrap();
 }
 
+#[cfg(target_os = "macos")]
 fn sign_ad_hoc(bundle: &Path) {
     let signed = std::process::Command::new("/usr/bin/codesign")
         .args(["--force", "--sign", "-", "--identifier", "live.renoa.mac"])
@@ -155,6 +156,7 @@ fn sign_ad_hoc(bundle: &Path) {
     assert!(signed.success());
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn an_update_must_be_renoa_at_its_version_signed_by_the_running_apps_key() {
     let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));
@@ -165,17 +167,17 @@ fn an_update_must_be_renoa_at_its_version_signed_by_the_running_apps_key() {
     unsigned_bundle(&running, "0.22.0");
     unsigned_bundle(&staged, "0.23.0");
     assert!(
-        check_bundle(&staged, "0.23.0", &running).is_err(),
+        super::check_bundle(&staged, "0.23.0", &running).is_err(),
         "an unsigned running app can't vouch for an update"
     );
     sign_ad_hoc(&running);
     sign_ad_hoc(&staged);
     // Ad hoc signatures pin the code's own hash, so another build never
     // satisfies the running app's requirement.
-    assert!(check_bundle(&staged, "0.23.0", &running).is_err());
-    assert_eq!(check_bundle(&running, "0.22.0", &running), Ok(()));
+    assert!(super::check_bundle(&staged, "0.23.0", &running).is_err());
+    assert_eq!(super::check_bundle(&running, "0.22.0", &running), Ok(()));
     assert!(
-        check_bundle(&running, "0.23.0", &running).is_err(),
+        super::check_bundle(&running, "0.23.0", &running).is_err(),
         "named another version"
     );
     std::fs::remove_dir_all(&scratch).unwrap();
@@ -183,6 +185,7 @@ fn an_update_must_be_renoa_at_its_version_signed_by_the_running_apps_key() {
 
 /// A signed Renoa.app at `<scratch>/Applications`, its release zipped and
 /// served, and a marker only the running copy has.
+#[cfg(target_os = "macos")]
 async fn installed_and_served(
     scratch: &Path,
     linked: bool,
@@ -241,6 +244,7 @@ fn leftovers(scratch: &Path) -> Vec<String> {
         .collect()
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn an_update_replaces_the_running_app_and_leaves_nothing_beside_it() {
     let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));
@@ -259,6 +263,7 @@ async fn an_update_replaces_the_running_app_and_leaves_nothing_beside_it() {
     std::fs::remove_dir_all(&scratch).unwrap();
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn an_update_that_does_not_match_its_description_changes_nothing() {
     let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));
@@ -282,6 +287,7 @@ async fn an_update_that_does_not_match_its_description_changes_nothing() {
     std::fs::remove_dir_all(&scratch).unwrap();
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn an_update_whose_app_is_a_link_is_refused() {
     let scratch = std::env::temp_dir().join(format!("renoa-update-test-{}", uuid::Uuid::new_v4()));

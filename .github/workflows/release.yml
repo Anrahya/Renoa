@@ -1,7 +1,9 @@
-# Builds one release archive in a Debian 13 container, the VPS's own glibc.
-# A pushed v* tag publishes it as a GitHub Release with build provenance. A pull
-# request that changes the release machinery, or a manual run, only uploads the
-# archive as a workflow artifact, to prove the build.
+# Builds one release archive in a Debian 13 container, the VPS's own glibc,
+# and the desktop app's .deb on Ubuntu 24.04, the base Zorin OS 18 shares.
+# A pushed v* tag publishes the archive as a GitHub Release with build
+# provenance and then attaches the .deb. A pull request that changes the
+# release machinery, or a manual run, only uploads both as workflow
+# artifacts, to prove the builds.
 name: Release
 
 on:
@@ -12,6 +14,7 @@ on:
       - ".github/workflows/release.yml"
       - "deploy/package-release"
       - "deploy/release.json"
+      - "clients/mac/scripts/build-deb.sh"
   workflow_dispatch:
 
 permissions:
@@ -62,5 +65,42 @@ jobs:
         if: github.ref_type != 'tag'
         with:
           name: renoa-${{ env.TAG }}
+          path: dist/
+          retention-days: 7
+
+  linux-app:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.run_number) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GPUI's Linux libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Build the .deb
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then export RENOA_VERSION=${TAG#v}; fi
+          clients/mac/scripts/build-deb.sh dist
+      - uses: actions/attest-build-provenance@v2
+        if: github.ref_type == 'tag'
+        with:
+          subject-path: dist/*.deb
+      - name: Attach it to the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.deb --clobber
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: renoa-${{ env.TAG }}-linux
           path: dist/
           retention-days: 7

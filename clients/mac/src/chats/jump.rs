@@ -13,6 +13,7 @@ use gpui_kit::{
 
 use renoa_rcp_wire::TaskId;
 
+use super::keys;
 use crate::{
     face::{self, Face, Look},
     sheets::Page,
@@ -238,7 +239,7 @@ fn keycap(keys: impl Into<SharedString>, palette: Palette) -> Div {
         .border_color(palette.outline)
         .text_size(u(11.))
         .text_color(palette.secondary)
-        .child(keys.into())
+        .child(keys::shown(&keys.into()))
 }
 
 /// A row for a place that is not an agent: its icon, its name and its keys.
