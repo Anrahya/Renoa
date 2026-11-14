@@ -1,19 +1,30 @@
-//! Snapshot staging, symlink-free tree copying, path resolution, and
+//! Snapshot staging, descriptor-relative tree copying, path resolution, and
 //! directory listings for published static sites.
 
 use std::{
+    ffi::OsStr,
     fmt::Write as _,
     fs::{self, DirBuilder, File, OpenOptions},
     io::{self, Read as _},
+    os::{
+        fd::AsFd as _,
+        unix::{
+            ffi::OsStrExt as _,
+            fs::{DirBuilderExt as _, OpenOptionsExt as _},
+        },
+    },
     path::{Component, Path, PathBuf},
 };
 
-#[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
-
+use nix::{
+    dir::Dir,
+    errno::Errno,
+    fcntl::{OFlag, openat},
+    sys::stat::{Mode, SFlag, fstat},
+};
 use rusqlite::{OptionalExtension as _, params};
 
-use super::{MAX_SITE_FILES, MAX_SITE_TOTAL_BYTES, SiteError};
+use super::{MAX_SITE_ENTRIES, MAX_SITE_TOTAL_BYTES, SiteError};
 use crate::host::catalog::{self, HostCatalogError};
 
 pub(crate) const SITES_RELATIVE_SUBDIR: &str = "sites";
@@ -40,6 +51,8 @@ impl Drop for DirCleanup {
 
 #[derive(Default)]
 pub(super) struct CopyStats {
+    /// Files and folders seen, which [`MAX_SITE_ENTRIES`] bounds.
+    entries: usize,
     pub(super) file_count: usize,
     pub(super) total_bytes: u64,
 }
@@ -153,73 +166,97 @@ pub(super) fn ensure_sites_dir(database: &Path) -> Result<PathBuf, SiteError> {
 }
 
 pub(super) fn create_private_dir(path: &Path) -> io::Result<()> {
-    let mut builder = DirBuilder::new();
-    #[cfg(unix)]
-    builder.mode(0o700);
-    builder.create(path)
+    DirBuilder::new().mode(0o700).create(path)
 }
 
+/// Copies the tree at `src` into `dst`, then syncs what it wrote. Every
+/// entry is opened through its parent's descriptor without following a
+/// symbolic link, so a link swapped in while the copy runs is refused, never
+/// followed; a FIFO or device is refused without blocking on it.
 pub(super) fn copy_verified_tree(
     src: &Path,
     dst: &Path,
     stats: &mut CopyStats,
 ) -> Result<(), SiteError> {
-    let mut entries = fs::read_dir(src)?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    entries.sort();
-    for entry in entries {
-        let meta = fs::symlink_metadata(&entry)?;
-        let kind = meta.file_type();
-        let name = entry
-            .file_name()
-            .ok_or_else(|| SiteError::InvalidFolder("entry has no file name".into()))?;
-        let target = dst.join(name);
-        if kind.is_symlink() {
-            return Err(SiteError::InvalidFolder(format!(
-                "`{}` is a symbolic link; static site folders must not contain symbolic links",
-                name.to_string_lossy()
-            )));
+    let root = Dir::open(src, DIRECTORY, Mode::empty()).map_err(|errno| match errno {
+        Errno::ELOOP | Errno::ENOTDIR => {
+            SiteError::InvalidFolder("the folder must be a real folder, not a link".to_owned())
         }
-        if kind.is_dir() {
+        other => io::Error::from(other).into(),
+    })?;
+    copy_dir(root, dst, stats)
+}
+
+const DIRECTORY: OFlag = OFlag::O_RDONLY
+    .union(OFlag::O_DIRECTORY)
+    .union(OFlag::O_NOFOLLOW)
+    .union(OFlag::O_CLOEXEC);
+const ENTRY: OFlag = OFlag::O_RDONLY
+    .union(OFlag::O_NOFOLLOW)
+    .union(OFlag::O_NONBLOCK)
+    .union(OFlag::O_CLOEXEC);
+
+fn copy_dir(mut dir: Dir, dst: &Path, stats: &mut CopyStats) -> Result<(), SiteError> {
+    let mut names = Vec::new();
+    for entry in dir.iter() {
+        let name = entry.map_err(io::Error::from)?.file_name().to_owned();
+        if name.as_bytes() != b"." && name.as_bytes() != b".." {
+            names.push(name);
+        }
+    }
+    names.sort();
+    for name in names {
+        stats.entries += 1;
+        if stats.entries > MAX_SITE_ENTRIES {
+            return Err(SiteError::TooManyEntries);
+        }
+        let shown = name.to_string_lossy().into_owned();
+        let target = dst.join(OsStr::from_bytes(name.as_bytes()));
+        let fd = openat(dir.as_fd(), name.as_c_str(), ENTRY, Mode::empty()).map_err(|errno| {
+            if errno == Errno::ELOOP {
+                SiteError::InvalidFolder(format!(
+                    "`{shown}` is a symbolic link; static site folders must not contain symbolic links"
+                ))
+            } else {
+                io::Error::from(errno).into()
+            }
+        })?;
+        let kind =
+            SFlag::from_bits_truncate(fstat(&fd).map_err(io::Error::from)?.st_mode) & SFlag::S_IFMT;
+        if kind == SFlag::S_IFDIR {
             create_private_dir(&target)?;
-            copy_verified_tree(&entry, &target, stats)?;
-        } else if kind.is_file() {
+            copy_dir(Dir::from_fd(fd).map_err(io::Error::from)?, &target, stats)?;
+        } else if kind == SFlag::S_IFREG {
             stats.file_count += 1;
-            if stats.file_count > MAX_SITE_FILES {
-                return Err(SiteError::TooManyFiles {
-                    file_count: stats.file_count,
-                });
-            }
-            let room = MAX_SITE_TOTAL_BYTES - stats.total_bytes;
-            if meta.len() > room {
-                return Err(SiteError::SiteTooLarge {
-                    total_bytes: stats.total_bytes.saturating_add(meta.len()),
-                });
-            }
-            let mut input = File::open(&entry)?;
-            let mut options = OpenOptions::new();
-            options.create_new(true).write(true);
-            #[cfg(unix)]
-            options.mode(0o400);
-            let mut output = options.open(&target)?;
-            // A file that grows while it is copied stops one byte past the room.
-            let copied = io::copy(&mut input.by_ref().take(room + 1), &mut output)?;
-            stats.total_bytes = stats.total_bytes.saturating_add(copied);
-            if stats.total_bytes > MAX_SITE_TOTAL_BYTES {
-                return Err(SiteError::SiteTooLarge {
-                    total_bytes: stats.total_bytes,
-                });
-            }
+            copy_file(File::from(fd), &target, stats)?;
         } else {
             return Err(SiteError::InvalidFolder(format!(
-                "`{}` is not a regular file or folder",
-                name.to_string_lossy()
+                "`{shown}` is not a regular file or folder"
             )));
         }
     }
+    File::open(dst)?.sync_all()?;
+    Ok(())
+}
+
+/// Copies one file within what is left of the site's room, and syncs it.
+fn copy_file(mut input: File, target: &Path, stats: &mut CopyStats) -> Result<(), SiteError> {
+    let room = MAX_SITE_TOTAL_BYTES - stats.total_bytes;
+    if input.metadata()?.len() > room {
+        return Err(SiteError::SiteTooLarge);
+    }
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o400)
+        .open(target)?;
+    // A file that grows while it is copied stops one byte past the room.
+    let copied = io::copy(&mut input.by_ref().take(room + 1), &mut output)?;
+    if copied > room {
+        return Err(SiteError::SiteTooLarge);
+    }
+    output.sync_all()?;
+    stats.total_bytes += copied;
     Ok(())
 }
 

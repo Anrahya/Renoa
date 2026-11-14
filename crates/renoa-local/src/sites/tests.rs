@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use super::{
-    MAX_SITE_FILES, MAX_SITE_TOTAL_BYTES, SiteEntry, SiteError, Sites, list_reachable, publish,
+    MAX_SITE_ENTRIES, MAX_SITE_TOTAL_BYTES, SiteEntry, SiteError, Sites, list_reachable, publish,
     restore_schema_54, sites_dir_for_database, unpublish, validate_site_name,
 };
 use crate::{host::catalog, host::reset_host_data_root};
@@ -334,7 +334,7 @@ fn invalid_inputs_and_symlinks_are_rejected_without_residue() {
 
     let too_many = fixture.workspace.join("many");
     fs::create_dir(&too_many).expect("many");
-    for idx in 0..=MAX_SITE_FILES {
+    for idx in 0..=MAX_SITE_ENTRIES {
         fs::write(too_many.join(format!("f{idx}.txt")), "x").expect("file");
     }
     assert!(matches!(
@@ -346,7 +346,7 @@ fn invalid_inputs_and_symlinks_are_rejected_without_residue() {
             "many",
             "many"
         ),
-        Err(SiteError::TooManyFiles { .. })
+        Err(SiteError::TooManyEntries)
     ));
 
     assert_eq!(fixture.rows(), 0);
@@ -512,7 +512,7 @@ fn a_site_past_the_size_cap_is_refused_without_residue() {
     fs::write(huge.join("index.html"), "ok").expect("huge index");
     fs::File::create(huge.join("clip.mp4"))
         .expect("clip")
-        .set_len(MAX_SITE_TOTAL_BYTES)
+        .set_len(MAX_SITE_TOTAL_BYTES + 1)
         .expect("sparse clip");
     assert!(matches!(
         publish(
@@ -523,9 +523,123 @@ fn a_site_past_the_size_cap_is_refused_without_residue() {
             "huge",
             "huge"
         ),
-        Err(SiteError::SiteTooLarge { .. })
+        Err(SiteError::SiteTooLarge)
     ));
 
     assert_eq!(fixture.rows(), 0);
     assert!(fixture.snapshot_dirs().is_empty());
+}
+
+#[test]
+fn a_site_published_without_a_person_stays_unowned_when_a_person_replaces_it() {
+    let fixture = fixture();
+    let (alice, bob) = (Uuid::new_v4(), Uuid::new_v4());
+    let dir = fixture.workspace.join("app");
+    fs::create_dir(&dir).expect("dir");
+    fs::write(dir.join("index.html"), "hi").expect("index");
+    let publish_as = |principal| {
+        publish(
+            &fixture.database,
+            fixture.agent,
+            principal,
+            &fixture.workspace,
+            "shared",
+            "app",
+        )
+    };
+    publish_as(None).expect("unowned publish");
+    publish_as(Some(bob)).expect("anyone replaces an unowned site");
+    let alice_sees = list_reachable(&fixture.database, Some(alice)).expect("alice list");
+    assert_eq!(alice_sees.len(), 1, "bob's replace left the site unowned");
+    publish_as(Some(alice)).expect("alice replaces it too");
+
+    publish(
+        &fixture.database,
+        fixture.agent,
+        Some(alice),
+        &fixture.workspace,
+        "alices",
+        "app",
+    )
+    .expect("alice's own site");
+    let before = fixture.snapshot_dirs();
+    assert!(matches!(
+        publish(
+            &fixture.database,
+            fixture.agent,
+            None,
+            &fixture.workspace,
+            "alices",
+            "app"
+        ),
+        Err(SiteError::PermissionDenied)
+    ));
+    assert_eq!(
+        fixture.snapshot_dirs(),
+        before,
+        "a refused publish leaves nothing"
+    );
+}
+
+#[test]
+fn the_sweep_removes_only_what_no_site_names() {
+    let fixture = fixture();
+    let dir = fixture.workspace.join("app");
+    fs::create_dir(&dir).expect("dir");
+    fs::write(dir.join("index.html"), "hi").expect("index");
+    publish(
+        &fixture.database,
+        fixture.agent,
+        None,
+        &fixture.workspace,
+        "kept",
+        "app",
+    )
+    .expect("publish");
+    let kept = fixture.snapshot_dirs();
+    fs::create_dir(fixture.sites_dir.join(".staging-crashed")).expect("staging");
+    fs::create_dir(fixture.sites_dir.join(Uuid::new_v4().to_string())).expect("orphan");
+    fs::write(fixture.sites_dir.join("stray"), "x").expect("stray file");
+
+    assert_eq!(
+        super::sweep(&fixture.database, &fixture.sites_dir).expect("sweep"),
+        3
+    );
+    assert_eq!(fixture.snapshot_dirs(), kept);
+    assert_eq!(
+        super::sweep(&fixture.database, &fixture.sites_dir).expect("again"),
+        0
+    );
+}
+
+#[test]
+fn a_fifo_in_the_folder_is_refused_without_blocking_or_residue() {
+    let fixture = fixture();
+    let dir = fixture.workspace.join("piped");
+    fs::create_dir(&dir).expect("dir");
+    fs::write(dir.join("index.html"), "hi").expect("index");
+    nix::unistd::mkfifo(&dir.join("pipe"), nix::sys::stat::Mode::S_IRWXU).expect("fifo");
+    assert!(matches!(
+        publish(
+            &fixture.database,
+            fixture.agent,
+            None,
+            &fixture.workspace,
+            "piped",
+            "piped"
+        ),
+        Err(SiteError::InvalidFolder(_))
+    ));
+    assert_eq!(fixture.rows(), 0);
+    assert!(fixture.snapshot_dirs().is_empty());
+}
+
+#[test]
+fn both_ways_of_opening_sites_name_the_same_folder() {
+    let directory = tempfile::tempdir().expect("directory");
+    let home = RenoaHome::at(directory.path()).expect("home");
+    assert_eq!(
+        Sites::open(&home).sites_dir,
+        Sites::from_database(&home.host_database()).sites_dir
+    );
 }

@@ -30,7 +30,8 @@ use snapshot::{
 pub use snapshot::SiteEntry;
 pub(crate) use snapshot::{sites_dir_for_database, validate_site_name};
 
-pub(crate) const MAX_SITE_FILES: usize = 512;
+/// The most files and folders one site holds, so a publish walks a bounded tree.
+pub(crate) const MAX_SITE_ENTRIES: usize = 512;
 /// The most one site holds. Publishing copies the whole folder inside the
 /// agent's turn and keeps it on the Host's disk until it is replaced, so this
 /// bounds both; it fits a few minutes of 1080p clips.
@@ -75,10 +76,12 @@ pub enum SiteError {
     PermissionDenied,
     #[error("Site folder is invalid: {0}")]
     InvalidFolder(String),
-    #[error("This folder has {file_count} files; a site is at most {MAX_SITE_FILES} files.")]
-    TooManyFiles { file_count: usize },
-    #[error("This site totals {total_bytes} bytes; a site is at most {MAX_SITE_TOTAL_BYTES}.")]
-    SiteTooLarge { total_bytes: u64 },
+    #[error(
+        "This folder has more than {MAX_SITE_ENTRIES} files and folders, the most a site holds."
+    )]
+    TooManyEntries,
+    #[error("This folder is more than {MAX_SITE_TOTAL_BYTES} bytes, the most a site holds.")]
+    SiteTooLarge,
     #[error(transparent)]
     Catalog(#[from] HostCatalogError),
     #[error("static site storage failed: {0}")]
@@ -110,6 +113,13 @@ pub(crate) fn publish(
 ) -> Result<PublishedSite, SiteError> {
     let name = validate_site_name(name)?;
     let (source_path, normalized_folder) = resolve_source_folder(workspace, folder)?;
+    let principal_text = principal.map(|id| id.to_string());
+    // Refused before the copy; checked again where the row is written.
+    replaced_snapshot(
+        &catalog::open_read_only(database)?,
+        &name,
+        principal_text.as_deref(),
+    )?;
     let sites_dir = ensure_sites_dir(database)?;
     let snapshot_id = Uuid::new_v4().to_string();
     let staging = sites_dir.join(format!(".staging-{snapshot_id}"));
@@ -128,27 +138,15 @@ pub(crate) fn publish(
     fs::rename(&staging, &snapshot_dir)?;
     staging_guard.disarm();
     let mut snapshot_guard = DirCleanup::armed(snapshot_dir);
+    // The snapshot is on disk before its row says it is there.
+    fs::File::open(&sites_dir)?.sync_all()?;
 
-    let principal_text = principal.map(|id| id.to_string());
     let now = now_ms();
     let mut db = catalog::open_verified(database)?;
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(HostCatalogError::from)?;
-    let existing = tx
-        .query_row(
-            "SELECT principal_id, snapshot_id FROM host_sites WHERE site_name = ?1",
-            [&name],
-            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(HostCatalogError::from)?;
-    if let Some((Some(owner), _)) = &existing
-        && principal_text.as_deref() != Some(owner.as_str())
-    {
-        return Err(SiteError::PermissionDenied);
-    }
-    let old_snapshot = existing.map(|(_, id)| id);
+    let old_snapshot = replaced_snapshot(&tx, &name, principal_text.as_deref())?;
     let file_count = u64::try_from(stats.file_count).unwrap_or(u64::MAX);
     tx.execute(
         "INSERT INTO host_sites (
@@ -157,7 +155,6 @@ pub(crate) fn publish(
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(site_name) DO UPDATE SET
             agent_id = excluded.agent_id,
-            principal_id = excluded.principal_id,
             snapshot_id = excluded.snapshot_id,
             source_folder = excluded.source_folder,
             file_count = excluded.file_count,
@@ -195,6 +192,69 @@ pub(crate) fn publish(
         total_bytes: stats.total_bytes,
         published_at_ms: now,
     })
+}
+
+/// The snapshot a publish of `name` by `principal` replaces, if any. A site a
+/// person published is theirs alone; one published by a turn with no person
+/// is anyone's to replace, and stays unowned.
+fn replaced_snapshot(
+    db: &rusqlite::Connection,
+    name: &str,
+    principal: Option<&str>,
+) -> Result<Option<String>, SiteError> {
+    let existing = db
+        .query_row(
+            "SELECT principal_id, snapshot_id FROM host_sites WHERE site_name = ?1",
+            [name],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(HostCatalogError::from)?;
+    match existing {
+        Some((Some(owner), _)) if principal != Some(owner.as_str()) => {
+            Err(SiteError::PermissionDenied)
+        }
+        existing => Ok(existing.map(|(_, snapshot)| snapshot)),
+    }
+}
+
+/// Removes every entry under the sites folder that no row names: staging a
+/// crash left, and snapshots whose removal failed or whose row went with its
+/// agent. Run before anything publishes, as the node starts.
+///
+/// # Errors
+/// Returns a catalog or storage failure.
+pub(crate) fn sweep(database: &Path, sites_dir: &Path) -> Result<usize, SiteError> {
+    let entries = match fs::read_dir(sites_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    let db = catalog::open_read_only(database)?;
+    let mut named = db
+        .prepare("SELECT 1 FROM host_sites WHERE snapshot_id = ?1")
+        .map_err(HostCatalogError::from)?;
+    let mut removed = 0;
+    for entry in entries {
+        let entry = entry?;
+        let kept = entry
+            .file_name()
+            .to_str()
+            .map(|id| named.exists([id]))
+            .transpose()
+            .map_err(HostCatalogError::from)?
+            .unwrap_or(false);
+        if !kept {
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 pub(crate) fn list_reachable(
@@ -315,6 +375,16 @@ impl Sites {
             publish(&database, agent, principal, &workspace, &name, &folder)
         })
         .await?
+    }
+
+    /// Removes what no published site names; see [`sweep`].
+    ///
+    /// # Errors
+    /// Returns a catalog or storage failure.
+    pub async fn sweep(&self) -> Result<usize, SiteError> {
+        let database = self.database.clone();
+        let sites_dir = self.sites_dir.clone();
+        tokio::task::spawn_blocking(move || sweep(&database, &sites_dir)).await?
     }
 
     pub(crate) async fn list_for(

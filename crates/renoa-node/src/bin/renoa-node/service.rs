@@ -24,6 +24,20 @@ pub(crate) async fn serve(
             None => None,
         };
     let sites = renoa_local::Sites::open(config.host.home());
+    // Nothing publishes yet, so what no site names is left from a crash.
+    match sites.sweep().await {
+        Ok(0) => {}
+        Ok(removed) => log::event(
+            "info",
+            "site_snapshots_swept",
+            &serde_json::json!({ "removed": removed }),
+        ),
+        Err(error) => log::event(
+            "warn",
+            "site_snapshots_sweep_failed",
+            &serde_json::json!({ "error": error.to_string() }),
+        ),
+    }
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
     let drain = CancellationToken::new();

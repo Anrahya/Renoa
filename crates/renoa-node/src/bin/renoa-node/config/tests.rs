@@ -415,6 +415,9 @@ fn a_site_gateway_listens_on_loopback_only_under_a_bare_origin() {
         ("127.0.0.1:7840", "ftp://vps.tailnet.ts.net"),
         ("127.0.0.1:7840", "https://"),
         ("127.0.0.1:7840", "https://user@vps.tailnet.ts.net"),
+        ("127.0.0.1:7840", "https://vps.tailnet.ts.net:port"),
+        ("127.0.0.1:7840", "https://vps.tailnet.ts.net:0"),
+        ("127.0.0.1:7840", "https://vps\")[x](https://evil.example"),
     ] {
         write(json!({"listen": listen, "origin": origin}));
         let error = load(&config, &credentials, &state)

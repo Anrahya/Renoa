@@ -474,14 +474,22 @@ ending with a letter or digit; required for `publish` and `unpublish`) and
 workspace; required for `publish`). Every action is refused, and nothing is
 copied, while the node runs no site gateway (`siteGateway` in the node's
 config, `deploy/README.md`). `publish` validates and copies the tree into an
-immutable snapshot under `state/sites/<snapshot_id>/` (refusing empty folders,
-symlinks, more than 512 files, or more than 1 GiB in all, before writing any
-catalog row), atomically records or replaces the row in `host_sites` (schema
-55, an agent-owned table) for the caller's principal (or unowned if none),
-removes any superseded snapshot directory, and returns
-`[name](<gateway origin>/sites/{name}/)`. Workspace edits after `publish` do
-not affect the live snapshot; republishing replaces it atomically, and another
-person cannot overwrite or unpublish a site named by the first person.
+immutable snapshot under `state/sites/<snapshot_id>/`, opening every entry
+through its parent without following a link, and refusing empty folders,
+symbolic links, anything but files and folders, more than 512 files and
+folders, or more than 1 GiB in all. It syncs the snapshot to disk, then
+atomically records or replaces the row in `host_sites` (schema 55, an
+agent-owned table) for the caller's principal (or unowned if none), removes
+the superseded snapshot directory, and returns
+`[name](<gateway origin>/sites/{name}/)`. A refused publish leaves no snapshot
+or row. Workspace edits after `publish` do not affect the live snapshot;
+republishing replaces it atomically. A site a person published is theirs: no
+one else can replace or unpublish it, and a publish over it is refused before
+anything is copied. A site published by a turn with no person is anyone's to
+replace or unpublish, and stays unowned. As the node starts, before anything
+publishes, it removes whatever under `state/sites/` no row names: staging a
+crash left, a superseded snapshot whose removal failed, and the snapshots of a
+deleted agent's sites.
 
 The node's site gateway serves every published site from its snapshot on disk,
 on a loopback address the owner reaches through Tailscale Serve, with no
@@ -489,9 +497,10 @@ sign-in: `/sites/{name}` redirects (`308`) to `/sites/{name}/`, a path ending
 in `/` serves that folder's `index.html`, the root of a site without one serves
 an escaped list of its files, and any other path serves that file with byte
 ranges. A path with an empty, `.` or `..` segment, a symbolic link, or no such
-file is `404`. The gateway is not the coordinator's origin and carries no
-Renoa credential, so a site's scripts reach nothing of Renoa's; sites share the
-gateway's one origin with each other.
+file is `404`. The gateway is not the coordinator's origin and sets no
+credential, so a site's scripts reach nothing of Renoa's while nothing on the
+same tailnet hostname signs the owner in to Renoa (cookies are not kept apart
+by port); sites share the gateway's one origin with each other.
 
 An agent's heartbeat is `renoa.owner`'s trigger: a check-in of its own at
 minute 0 every `heartbeat_hours` from 08:00 to 22:00 in the agent's

@@ -291,12 +291,17 @@ fn validate_site_gateway(gateway: &SiteGatewayDocument) -> Result<(), ServiceErr
         .origin
         .strip_prefix("https://")
         .or_else(|| gateway.origin.strip_prefix("http://"));
-    if authority.is_none_or(|authority| {
-        authority.is_empty()
-            || authority
-                .chars()
-                .any(|c| matches!(c, '/' | '?' | '#' | '@') || c.is_whitespace() || c.is_control())
-    }) {
+    let bare = authority.is_some_and(|authority| {
+        let (host, port) = authority
+            .split_once(':')
+            .map_or((authority, None), |(host, port)| (host, Some(port)));
+        !host.is_empty()
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+            && port.is_none_or(|port| port.parse::<u16>().is_ok_and(|port| port > 0))
+    });
+    if !bare {
         return Err(ServiceError::Configuration(format!(
             "siteGateway.origin `{}` must be a bare origin such as \
              https://host.tailnet.ts.net:8443, with no path or trailing slash",

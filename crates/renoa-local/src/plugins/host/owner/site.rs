@@ -200,8 +200,8 @@ fn map_site_error(error: &SiteError) -> ToolError {
     match error {
         SiteError::InvalidName
         | SiteError::InvalidFolder(_)
-        | SiteError::TooManyFiles { .. }
-        | SiteError::SiteTooLarge { .. }
+        | SiteError::TooManyEntries
+        | SiteError::SiteTooLarge
         | SiteError::NotFound => ToolError::invalid_input(error.to_string()),
         SiteError::PermissionDenied => ToolError::permission_denied(error.to_string()),
         SiteError::Catalog(_) | SiteError::Io(_) | SiteError::Background(_) => {

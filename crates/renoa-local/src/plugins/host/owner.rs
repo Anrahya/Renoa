@@ -66,11 +66,6 @@ pub(crate) struct OwnerTurn {
 /// What a resident owner tool says when the owner turned `renoa.owner` off
 /// for this agent.
 pub(crate) fn turned_off(tool: &str) -> String {
-    if tool == site::MANAGE {
-        return format!(
-            "{tool} is turned off for this agent, so nothing changed. Tell the person in your reply that you cannot publish sites right now."
-        );
-    }
     if tool == share::SHARE || tool == share::STOP {
         return format!(
             "{tool} is turned off for this agent, so nothing changed. Tell the person in your reply that you cannot share files right now."

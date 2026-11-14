@@ -17,7 +17,7 @@ getrandom.workspace = true
 globset.workspace = true
 jiff.workspace = true
 mnem.workspace = true
-nix.workspace = true
+nix = { workspace = true, features = ["dir", "fs"] }
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
 renoa-agent-loop = { path = "../renoa-agent-loop", version = "0.1.0" }
 renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol", version = "0.1.0" }
