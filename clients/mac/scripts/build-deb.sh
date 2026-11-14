@@ -45,8 +45,9 @@ Terminal=false
 DESKTOP
 
 # The libraries the app links or opens: its display (Wayland or X11), its
-# keyboard maps and Vulkan. The keyring that keeps its sign-in is any
-# Secret Service, which GNOME's keyring provides.
+# keyboard maps and Vulkan. Its key and sign-in are kept by GNOME's keyring
+# through the Secret Service; KDE Wallet keeps only text, which the binary
+# key is not.
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: renoa
 Version: $version

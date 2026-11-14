@@ -24,6 +24,13 @@ use crate::{
 use crate::theme::u;
 
 /// The width of the side.
+/// How far from the window's left edge the expand button sits: past macOS's
+/// traffic lights there, at the edge elsewhere.
+#[cfg(target_os = "macos")]
+const REOPEN_LEFT: f32 = 82.;
+#[cfg(not(target_os = "macos"))]
+const REOPEN_LEFT: f32 = 10.;
+
 const WIDTH: f32 = 264.;
 
 /// The height of an agent's row.
@@ -199,7 +206,7 @@ impl Chats {
             .relative()
             .flex()
             .flex_col()
-            // Room for the window's traffic lights.
+            // Room for the sidebar button, beside macOS's traffic lights.
             .pt(u(44.))
             .bg(palette.sidebar)
             .border_r_1()
@@ -259,7 +266,7 @@ impl Chats {
             .into_any_element()
     }
 
-    /// Floating expand button beside the traffic lights while the sidebar is collapsed.
+    /// Floating expand button, beside macOS's traffic lights, while the sidebar is collapsed.
     pub(super) fn reopen_sidebar(
         &self,
         palette: Palette,
@@ -269,7 +276,7 @@ impl Chats {
             .id("toggle-sidebar")
             .absolute()
             .top(u(9.))
-            .left(u(82.))
+            .left(u(REOPEN_LEFT))
             .size(u(28.))
             .rounded(u(8.))
             .bg(palette.frosted)

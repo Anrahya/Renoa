@@ -48,8 +48,9 @@ sudo apt install ./<folder>/renoa_<version>_amd64.deb
 
 builds a `.deb` for x86-64 that installs the app as `renoa`, with a menu
 entry and the icon. Each tagged release attaches one (`.github/workflows/release.yml`).
-The key and sign-in live in the Secret Service keyring (GNOME's keyring)
-instead of the Keychain, and the keys are held with Ctrl where the Mac uses ⌘.
+The key and sign-in live in GNOME's keyring, through the Secret Service,
+instead of the Keychain (KDE Wallet keeps only text and cannot hold the key);
+the owner's choices are kept in `~/.config/live.renoa.mac/settings.json`; and the keys are held with Ctrl where the Mac uses ⌘.
 Where the desktop leaves the window's frame to the app, as GNOME on Wayland
 does, the app draws a title bar and resizable edges. The Linux app does not
 update itself: Settings says so, and a newer `.deb` replaces it.
@@ -80,13 +81,13 @@ frees.
 
 ## Signing in
 
-The Mac has no passkey. On first launch it makes a P-256 key, keeps it in the
-login Keychain (service `live.renoa.mac`), and shows an eight-symbol code. In
-Renoa on the phone, Settings → Sign in a computer, the owner types the code;
-the Mac collects its credential, keeps it in the Keychain beside the key, and
-connects with the key (`docs/identity-v0.md`, "Signing in a computer from a
-phone"). If Renoa refuses the credential, the Mac forgets it and shows a new
-code.
+The computer has no passkey. On first launch it makes a P-256 key, keeps it in
+the login Keychain on macOS or GNOME's keyring on Linux (service
+`live.renoa.mac`), and shows an eight-symbol code. In Renoa on the phone,
+Settings → Sign in a computer, the owner types the code; the computer collects
+its credential, keeps it beside the key, and connects with the key
+(`docs/identity-v0.md`, "Signing in a computer from a phone"). If Renoa
+refuses the credential, the computer forgets it and shows a new code.
 
 `RENOA_ORIGIN` points the app at another coordinator, such as
 `http://127.0.0.1:7818`; the default is `https://renoa.live`.
@@ -170,10 +171,11 @@ owner's Host through the session (`src/sheets/`):
   /v1/host/agents/<id>/apps`), once each, with a chip per agent that turns it
   on or off for that agent (`POST /v1/host/agents/<id>/apps/<connection>/enabled`).
 - **Settings** (⌘,): System, Light or Dark, kept for the next launch in
-  `~/Library/Application Support/live.renoa.mac/settings.json`; the keys;
-  and signing out, which forgets this Mac's credential in the Keychain and
-  shows a new code. Renoa itself is not told, so the Mac stays among the
-  owner's devices.
+  `~/Library/Application Support/live.renoa.mac/settings.json` (on Linux,
+  `~/.config/live.renoa.mac/settings.json`); the keys; and signing out, which
+  forgets this computer's credential in the Keychain or keyring and shows a
+  new code. Renoa itself is not told, so the computer stays among the owner's
+  devices.
 
 An agent's own page rises the same way (`src/sheets/profile.rs`). It opens
 from the agent's name at the top of its chat or with ⌘I, for the Host's

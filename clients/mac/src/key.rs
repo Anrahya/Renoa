@@ -1,4 +1,4 @@
-//! This Mac's device key: a P-256 key made here and kept in the Keychain in
+//! This computer's device key: a P-256 key made here and kept by the vault in
 //! its PKCS#8 form.
 
 use renoa_rcp_client::{ClientError, DeviceKey};
@@ -17,11 +17,11 @@ impl MacKey {
     pub fn generate() -> Result<Self, String> {
         let document =
             EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &SystemRandom::new())
-                .map_err(|_| "this Mac could not make a key".to_owned())?;
+                .map_err(|_| format!("this {} could not make a key", crate::device::KIND))?;
         Self::from_pkcs8(document.as_ref())
     }
 
-    /// Reads a key the Keychain kept.
+    /// Reads a key the vault kept.
     pub fn from_pkcs8(pkcs8: &[u8]) -> Result<Self, String> {
         let pair =
             EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8, &SystemRandom::new())
@@ -32,7 +32,7 @@ impl MacKey {
         })
     }
 
-    /// The form the Keychain keeps.
+    /// The form the vault keeps.
     pub fn pkcs8(&self) -> &[u8] {
         &self.pkcs8
     }
@@ -51,6 +51,8 @@ impl DeviceKey for MacKey {
         self.pair
             .sign(&SystemRandom::new(), message)
             .map(|signature| signature.as_ref().to_vec())
-            .map_err(|_| ClientError::Key("this Mac's key could not sign".to_owned()))
+            .map_err(|_| {
+                ClientError::Key(format!("this {}'s key could not sign", crate::device::KIND))
+            })
     }
 }
