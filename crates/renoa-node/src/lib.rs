@@ -18,6 +18,8 @@ mod owner_wakes;
 mod projection;
 mod session;
 mod setup;
+mod site_gateway;
 mod stop;
 
 pub use bridge::{NodeError, RenoaNode};
+pub use site_gateway::serve_site_gateway;

@@ -11,6 +11,33 @@ pub(crate) async fn serve(
     state_directory: &Path,
 ) -> Result<(), ServiceError> {
     let config = config::load(config_path, credentials_path, state_directory)?;
+    // Bound before the node opens, so an address in use stops the start.
+    let gateway =
+        match config.site_gateway {
+            Some(address) => Some(tokio::net::TcpListener::bind(address).await.map_err(
+                |error| {
+                    ServiceError::Configuration(format!(
+                        "the site gateway cannot listen on {address}: {error}"
+                    ))
+                },
+            )?),
+            None => None,
+        };
+    let sites = renoa_local::Sites::open(config.host.home());
+    // Nothing publishes yet, so what no site names is left from a crash.
+    match sites.sweep().await {
+        Ok(0) => {}
+        Ok(removed) => log::event(
+            "info",
+            "site_snapshots_swept",
+            &serde_json::json!({ "removed": removed }),
+        ),
+        Err(error) => log::event(
+            "warn",
+            "site_snapshots_sweep_failed",
+            &serde_json::json!({ "error": error.to_string() }),
+        ),
+    }
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
     let drain = CancellationToken::new();
@@ -28,6 +55,18 @@ pub(crate) async fn serve(
             "home": home,
         }),
     );
+    if let Some(listener) = gateway {
+        let stop = shutdown.clone();
+        tokio::spawn(async move {
+            if let Err(error) = renoa_node::serve_site_gateway(listener, sites, stop).await {
+                log::event(
+                    "error",
+                    "site_gateway_stopped",
+                    &serde_json::json!({ "error": error.to_string() }),
+                );
+            }
+        });
+    }
     let run = node.run(shutdown.clone());
     tokio::pin!(run);
     let result = tokio::select! {

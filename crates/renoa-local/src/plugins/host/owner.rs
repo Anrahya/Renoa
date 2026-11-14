@@ -29,6 +29,7 @@ use crate::host::{
 pub(crate) mod heartbeat;
 mod input;
 pub(crate) mod share;
+pub(crate) mod site;
 #[cfg(test)]
 mod tests;
 mod today;
@@ -36,7 +37,7 @@ mod today;
 use input::{Input, Kind};
 
 pub(crate) const PLUGIN_ID: &str = "renoa.owner";
-pub(crate) const DESCRIPTION: &str = "Ask the owner a question, tell them something on their phone, or share a file from your workspace with them as a link. When the owner asks you to check in on them, turn on your heartbeat, a check-in of your own every few hours, with configure_plugin settings {\"heartbeat_hours\": n}, 1 to 24 hours apart; 0 or settings {} turns it off.";
+pub(crate) const DESCRIPTION: &str = "Ask the owner a question, tell them something on their phone, share a file from your workspace with them as a link, or publish a static site folder with site_manage. When the owner asks you to check in on them, turn on your heartbeat, a check-in of your own every few hours, with configure_plugin settings {\"heartbeat_hours\": n}, 1 to 24 hours apart; 0 or settings {} turns it off.";
 pub(crate) const ASK: &str = "ask_owner";
 pub(crate) const NOTIFY: &str = "notify_owner";
 pub(crate) const TODAY: &str = "set_today";
@@ -57,6 +58,9 @@ pub(crate) struct OwnerTurn {
     /// The person this turn talks to; a share is theirs alone. None for a
     /// turn with no person, whose shares are the Host owner's.
     pub(crate) principal: Option<uuid::Uuid>,
+    /// The site gateway's origin, which `site_manage` links to; none when the
+    /// node serves no sites.
+    pub(crate) site_origin: Option<String>,
 }
 
 /// What a resident owner tool says when the owner turned `renoa.owner` off
@@ -72,10 +76,10 @@ pub(crate) fn turned_off(tool: &str) -> String {
     )
 }
 
-/// `ask_owner`, `notify_owner`, `set_today`, `share_file` and `stop_sharing`
-/// for one turn. A replay rewrites the same item, line or share, so each is
-/// safe to replay.
-pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 5] {
+/// `ask_owner`, `notify_owner`, `set_today`, `share_file`, `stop_sharing`, and
+/// `site_manage` for one turn. A replay rewrites the same item, line, share,
+/// or site, so each is safe to replay.
+pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 6] {
     let turn = Arc::new(turn);
     let [ask, notify] = [Kind::Ask, Kind::Notify].map(|kind| {
         AgentToolBinding::new(
@@ -107,7 +111,15 @@ pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 5] {
             EffectRecovery::SafeToReplay,
         )
     });
-    [ask, notify, today, share, stop]
+    let site = AgentToolBinding::new(
+        BINDING_REVISION,
+        Arc::new(site::SiteTool {
+            turn: Arc::clone(&turn),
+            spec: site::spec(),
+        }),
+        EffectRecovery::SafeToReplay,
+    );
+    [ask, notify, today, share, stop, site]
 }
 
 fn spec(kind: Kind) -> ToolSpec {

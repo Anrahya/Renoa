@@ -184,6 +184,7 @@ fn open_host(root: &Path) -> LocalHost {
         global_skill_source: None,
         oauth_relay: None,
         code_mode: None,
+        site_origin: None,
     })
     .expect("Host")
 }

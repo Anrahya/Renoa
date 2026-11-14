@@ -41,6 +41,7 @@ pub(in crate::host) fn upgrade(transaction: &Transaction<'_>) -> Result<(), Host
 /// Turns a schema 54 catalog back into schema 53's tables.
 #[cfg(test)]
 pub(crate) fn restore_schema_53(connection: &rusqlite::Connection) {
+    crate::sites::restore_schema_54(connection);
     connection
         .execute_batch(
             "DROP TABLE host_agent_picture_operations;

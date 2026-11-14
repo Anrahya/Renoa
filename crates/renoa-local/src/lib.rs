@@ -34,6 +34,7 @@ mod selection;
 mod session;
 mod shared_registry;
 mod shares;
+mod sites;
 mod skills;
 mod speaker;
 mod stable_id;
@@ -108,6 +109,7 @@ pub use runtime::{
 pub use session::{LocalHistoryEntry, LocalSession, LocalSessionError, LocalTurnOutcome};
 pub use shared_registry::SharedPluginSyncReport;
 pub use shares::{ShareDescription, ShareError, Shares};
+pub use sites::{PublishedSite, SiteEntry, SiteError, Sites};
 pub use skills::SkillError;
 pub use skills::store::{SkillComponentRejection, SkillComponentReport};
 pub use speaker::Speaker;

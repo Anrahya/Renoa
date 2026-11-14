@@ -68,6 +68,7 @@ pub struct LocalHostAdapters<'a> {
     shared_plugin_registry: Option<&'a str>,
     oauth_relay: Option<(&'a str, &'a Path)>,
     code_mode_worker: Option<&'a Path>,
+    site_origin: Option<&'a str>,
 }
 
 impl<'a> LocalHostAdapters<'a> {
@@ -80,6 +81,7 @@ impl<'a> LocalHostAdapters<'a> {
             shared_plugin_registry: None,
             oauth_relay: None,
             code_mode_worker: None,
+            site_origin: None,
         }
     }
 
@@ -110,6 +112,14 @@ impl<'a> LocalHostAdapters<'a> {
         self.code_mode_worker = worker;
         self
     }
+
+    /// Names the origin of the node's site gateway, which published sites are
+    /// linked under.
+    #[must_use]
+    pub const fn with_site_origin(mut self, origin: Option<&'a str>) -> Self {
+        self.site_origin = origin;
+        self
+    }
 }
 
 pub(crate) struct HostConfig {
@@ -132,6 +142,7 @@ pub(crate) struct HostConfig {
     /// Host, and replaced by the next node that opens on it.
     pub(crate) peers: std::sync::Mutex<Option<Arc<dyn AgentPeers>>>,
     pub(crate) claims: crate::agent_session::claim::Claims,
+    pub(crate) site_origin: Option<String>,
 }
 
 struct HostInitialization {
@@ -148,6 +159,7 @@ struct HostInitialization {
     global_skill_source: Option<PathBuf>,
     oauth_relay: Option<(String, PathBuf)>,
     code_mode: Option<Arc<MontyEvaluator>>,
+    site_origin: Option<String>,
 }
 
 /// Model-provider settings shared by every agent assembled by one Host.
@@ -300,6 +312,7 @@ impl LocalHost {
                 .oauth_relay
                 .map(|(origin, credentials)| (origin.to_owned(), credentials.to_path_buf())),
             code_mode,
+            site_origin: adapters.site_origin.map(str::to_owned),
         })
     }
 
@@ -318,6 +331,7 @@ impl LocalHost {
             global_skill_source,
             oauth_relay,
             code_mode,
+            site_origin,
         } = initialization;
         if providers.is_empty() {
             return Err(LocalHostError::Configuration(
@@ -400,6 +414,7 @@ impl LocalHost {
                 code_mode,
                 peers: std::sync::Mutex::new(None),
                 claims: crate::agent_session::claim::Claims::default(),
+                site_origin,
             }),
         })
     }
@@ -475,6 +490,7 @@ mod tests {
             global_skill_source: None,
             oauth_relay: None,
             code_mode: None,
+            site_origin: None,
         })
     }
 

@@ -385,7 +385,7 @@ The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and
 `POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
-This release requires Host schema 54. A schema 28–53 catalog upgrades in place
+This release requires Host schema 55. A schema 28–54 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
@@ -401,8 +401,8 @@ adds the owner's feed and `renoa.memory`'s reminders, admits the
 acknowledged wake and lets every compiled plugin keep settings and triggers,
 for `renoa.owner`'s heartbeat, off until set, adds the mark of
 `follow_up`'s automations, adds the `plugin_manage` calls waiting on the
-person, adds the files agents share, and gives every agent a look and adds
-the pictures, empty; it refuses to upgrade
+person, adds the files agents share, gives every agent a look and adds
+the pictures, and adds the static sites agents publish, empty; it refuses to upgrade
 while a daily or interval automation remains. The first
 scheduler pass then creates `renoa.memory`'s nightly run: 11:00 (Mnem's pass day start) in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
@@ -618,6 +618,36 @@ absolute path. Omit any optional adapter field that this Host does not use.
 `defaultReasoning` is optional: it is the reasoning level a new session starts
 with and the one the Control Room offers when the owner creates an agent; omit
 it to take the model's own default.
+
+An optional `siteGateway` turns on the site gateway, which serves the static
+sites agents publish with `site_manage`:
+
+```json
+  "siteGateway": {
+    "listen": "127.0.0.1:7840",
+    "origin": "https://<vps-magic-dns-name>:8445"
+  }
+```
+
+The node binds `listen` before it connects and refuses to start when it cannot,
+or when the address is not loopback: the gateway asks no one to sign in, so it
+is reached only through the owner's tailnet. Serve nothing that signs the owner
+in to Renoa on the same tailnet hostname: cookies are not kept apart by port,
+so a site's scripts could then reach it. `origin` is the bare origin the
+owner's devices open, and every site link an agent writes is under it. Put one
+Tailscale Serve entry in front of the gateway, once, as root:
+
+```sh
+tailscale serve --bg --yes --https=8445 http://127.0.0.1:7840
+```
+
+Without HTTPS certificates on the tailnet, use `--http=8084` and an `http://`
+origin instead. Never run `tailscale serve` or `tailscale funnel` as `renoa`,
+and never make `renoa` the Tailscale operator: an agent could then publish to
+the internet. Each site is served from its snapshot under `state/sites/` at
+`<origin>/sites/<name>/`; a site whose files link from the root (`/assets/…`)
+must be built with relative paths (Vite: `base: './'`). Without `siteGateway`,
+`site_manage` refuses and tells the agent the gateway is off.
 
 The node also answers the owner's Host control (the Control Room's calls under
 `/v1/host`, relayed by the coordinator over this same link). It says so when it

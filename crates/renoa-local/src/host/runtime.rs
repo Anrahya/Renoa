@@ -227,6 +227,7 @@ pub(crate) fn protocol_bindings(
             command: command_id,
             workspace: workspace.to_path_buf(),
             principal: definition.principal(),
+            site_origin: host.site_origin.clone(),
         },
     ));
     controls.extend(crate::plugins::host::memory::bindings(

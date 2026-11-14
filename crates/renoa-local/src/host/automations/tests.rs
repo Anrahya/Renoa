@@ -96,6 +96,7 @@ fn try_host(root: &Path) -> Result<LocalHost, LocalHostError> {
         global_skill_source: None,
         oauth_relay: None,
         code_mode: None,
+        site_origin: None,
     })
 }
 fn host(root: &Path) -> LocalHost {

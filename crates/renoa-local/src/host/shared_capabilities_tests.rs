@@ -229,6 +229,7 @@ fn host(root: &Path) -> LocalHost {
         global_skill_source: Some(root.join("global")),
         oauth_relay: None,
         code_mode: None,
+        site_origin: None,
     })
     .expect("Host client");
     let config = Arc::get_mut(&mut host.config).expect("exclusive new configuration");

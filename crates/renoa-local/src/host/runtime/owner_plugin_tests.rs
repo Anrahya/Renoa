@@ -87,6 +87,7 @@ fn host(root: &Path) -> LocalHost {
         global_skill_source: None,
         oauth_relay: None,
         code_mode: None,
+        site_origin: None,
     })
     .expect("host")
 }
@@ -338,6 +339,7 @@ async fn a_replay_keeps_one_item_and_an_unsaved_ask_lets_the_turn_go_on() {
             command: Some(renoa_kernel::CommandId::new()),
             workspace: root.to_path_buf(),
             principal: None,
+            site_origin: None,
         })
     };
     let ask = |binding: &renoa_agent_loop::AgentToolBinding| {

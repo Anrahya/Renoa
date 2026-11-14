@@ -37,6 +37,7 @@ async fn every_non_workspace_catalog_component_has_one_runtime_binding() {
         global_skill_source: None,
         oauth_relay: None,
         code_mode: None,
+        site_origin: None,
     })
     .expect("Host");
     let definition = host
@@ -140,6 +141,7 @@ async fn synthetic_activity_tools_and_resolved_arcee_token_cost_match_runtime() 
         global_skill_source: None,
         oauth_relay: None,
         code_mode: None,
+        site_origin: None,
     })
     .expect("Host");
     let definition = host
@@ -253,6 +255,7 @@ async fn messaging_tools_are_offered_only_once_a_node_attaches_peers_and_follow_
         global_skill_source: None,
         oauth_relay: None,
         code_mode: None,
+        site_origin: None,
     })
     .expect("Host");
     let agent = host
