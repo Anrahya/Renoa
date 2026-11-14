@@ -136,6 +136,12 @@ impl RenoaHome {
     pub fn uploads(&self) -> PathBuf {
         self.root.join("state/uploads")
     }
+
+    /// Immutable snapshots of static sites agents have published.
+    #[must_use]
+    pub fn sites(&self) -> PathBuf {
+        self.root.join("state/sites")
+    }
     #[must_use]
     pub fn coordinator_database(&self) -> PathBuf {
         self.root.join("state/coordinator.sqlite3")

@@ -619,6 +619,34 @@ absolute path. Omit any optional adapter field that this Host does not use.
 with and the one the Control Room offers when the owner creates an agent; omit
 it to take the model's own default.
 
+An optional `siteGateway` turns on the site gateway, which serves the static
+sites agents publish with `site_manage`:
+
+```json
+  "siteGateway": {
+    "listen": "127.0.0.1:7840",
+    "origin": "https://<vps-magic-dns-name>:8445"
+  }
+```
+
+The node binds `listen` before it connects and refuses to start when it cannot,
+or when the address is not loopback: the gateway asks no one to sign in, so it
+is reached only through the owner's tailnet. `origin` is the bare origin the
+owner's devices open, and every site link an agent writes is under it. Put one
+Tailscale Serve entry in front of the gateway, once, as root:
+
+```sh
+tailscale serve --bg --yes --https=8445 http://127.0.0.1:7840
+```
+
+Without HTTPS certificates on the tailnet, use `--http=8084` and an `http://`
+origin instead. Never run `tailscale serve` or `tailscale funnel` as `renoa`,
+and never make `renoa` the Tailscale operator: an agent could then publish to
+the internet. Each site is served from its snapshot under `state/sites/` at
+`<origin>/sites/<name>/`; a site whose files link from the root (`/assets/…`)
+must be built with relative paths (Vite: `base: './'`). Without `siteGateway`,
+`site_manage` refuses and tells the agent the gateway is off.
+
 The node also answers the owner's Host control (the Control Room's calls under
 `/v1/host`, relayed by the coordinator over this same link). It says so when it
 connects, and no other configuration is involved: the owner is the principal the

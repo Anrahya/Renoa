@@ -1404,6 +1404,223 @@ async fn automation_writes_take_a_strict_bounded_request() {
     .await;
 }
 
+/// The site gateway on a loopback port, serving `home`'s published sites.
+struct Gateway {
+    origin: String,
+    stop: CancellationToken,
+    served: JoinHandle<std::io::Result<()>>,
+}
+
+impl Gateway {
+    async fn start(home: &renoa_local::RenoaHome) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind gateway");
+        let origin = format!("http://{}", listener.local_addr().expect("address"));
+        let stop = CancellationToken::new();
+        let served = tokio::spawn(renoa_node::serve_site_gateway(
+            listener,
+            renoa_local::Sites::open(home),
+            stop.clone(),
+        ));
+        Self {
+            origin,
+            stop,
+            served,
+        }
+    }
+
+    fn get(&self, path: &str) -> RequestBuilder {
+        Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("client")
+            .get(format!("{}{path}", self.origin))
+    }
+
+    async fn text(&self, path: &str) -> (StatusCode, String) {
+        let response = self.get(path).send().await.expect("gateway answers");
+        let status = response.status();
+        (status, response.text().await.expect("body"))
+    }
+
+    /// The status for `path` sent as written, which no URL parser tidies.
+    async fn raw_status(&self, path: &str) -> u16 {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let address = self.origin.trim_start_matches("http://");
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect gateway");
+        stream
+            .write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .expect("send request");
+        let mut answer = String::new();
+        stream
+            .read_to_string(&mut answer)
+            .await
+            .expect("read answer");
+        answer
+            .split(' ')
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .expect("status line")
+    }
+
+    async fn stop(self) {
+        self.stop.cancel();
+        self.served
+            .await
+            .expect("gateway task")
+            .expect("gateway stops cleanly");
+    }
+}
+
+/// The gateway answers for the first publish: the bare name redirects, the
+/// page and its module script load, a clip seeks, and hostile paths miss.
+async fn serves_the_first_snapshot(gateway: &Gateway, clip: &[u8]) {
+    let bare = gateway.get("/sites/demo").send().await.expect("bare");
+    assert_eq!(bare.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(bare.headers()["location"], "/sites/demo/");
+
+    let index = gateway.get("/sites/demo/").send().await.expect("index");
+    assert_eq!(index.status(), StatusCode::OK);
+    assert!(
+        index.headers()["content-type"]
+            .to_str()
+            .expect("type")
+            .starts_with("text/html")
+    );
+    assert_eq!(index.headers()["x-content-type-options"], "nosniff");
+    assert!(index.text().await.expect("index").contains("<h1>v1</h1>"));
+
+    // A module script loads with no cookie, ticket or CORS from the page.
+    let script = gateway
+        .get("/sites/demo/assets/app.js")
+        .send()
+        .await
+        .expect("script");
+    assert_eq!(script.status(), StatusCode::OK);
+    assert!(
+        script.headers()["content-type"]
+            .to_str()
+            .expect("type")
+            .starts_with("text/javascript")
+    );
+
+    // A clip seeks: a byte range is answered with that range alone.
+    let ranged = gateway
+        .get("/sites/demo/assets/clip.mp4")
+        .header("range", "bytes=1000-1999")
+        .send()
+        .await
+        .expect("range");
+    assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(ranged.headers()["content-type"], "video/mp4");
+    assert_eq!(
+        ranged.bytes().await.expect("range body").as_ref(),
+        &clip[1000..2000]
+    );
+
+    for hostile in [
+        "/sites/demo/../demo/index.html",
+        "/sites/demo/%2e%2e/demo/index.html",
+        "/sites/demo/assets/%2e%2e%2findex.html",
+        "/sites/demo//index.html",
+        "/sites/other/",
+        "/sites/Demo/",
+    ] {
+        assert_eq!(gateway.raw_status(hostile).await, 404, "{hostile}");
+    }
+}
+
+#[tokio::test]
+async fn the_gateway_serves_a_published_snapshot_until_it_is_replaced_or_unpublished() {
+    within(Box::pin(async {
+        let f = Fixture::serving().await;
+        let created = f.browser.post("/v1/host/agents", &creation()).await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let receipt: Value = created.json().await.expect("receipt");
+        let agent = AgentId::from_uuid(
+            Uuid::parse_str(receipt["record"]["id"].as_str().expect("agent id")).expect("uuid"),
+        );
+        let workspace = f.host.agent_workspace(agent).await.expect("workspace");
+        let dist = workspace.join("dist");
+        std::fs::create_dir_all(dist.join("assets")).expect("create dist");
+        std::fs::write(
+            dist.join("index.html"),
+            "<!doctype html><h1>v1</h1><script type=\"module\" src=\"assets/app.js\"></script>",
+        )
+        .expect("write v1 index");
+        let clip: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        std::fs::write(dist.join("assets/app.js"), "console.log('v1');").expect("write v1 js");
+        std::fs::write(dist.join("assets/clip.mp4"), &clip).expect("write clip");
+
+        let home = renoa_local::RenoaHome::at(f.root()).expect("home");
+        let sites = renoa_local::Sites::open(&home);
+        let publish = || {
+            sites.publish(
+                agent,
+                Some(f.owner.as_uuid()),
+                workspace.clone(),
+                "demo".to_owned(),
+                "dist".to_owned(),
+            )
+        };
+        assert_eq!(publish().await.expect("publish v1").path, "/sites/demo/");
+        let listed = f.browser.json_of("/v1/host/sites").await;
+        assert_eq!(listed["sites"][0]["name"], "demo");
+        assert_eq!(listed["sites"][0]["path"], "/sites/demo/");
+
+        let gateway = Gateway::start(&home).await;
+        serves_the_first_snapshot(&gateway, &clip).await;
+
+        // Editing the workspace changes nothing until the next publish.
+        std::fs::write(dist.join("index.html"), "<h1>v2</h1>").expect("write v2 index");
+        std::fs::remove_file(dist.join("assets/app.js")).expect("remove workspace asset");
+        assert!(gateway.text("/sites/demo/").await.1.contains("<h1>v1</h1>"));
+        publish().await.expect("publish v2");
+        assert_eq!(
+            gateway.text("/sites/demo/").await,
+            (StatusCode::OK, "<h1>v2</h1>".to_owned())
+        );
+        assert_eq!(
+            gateway.text("/sites/demo/assets/app.js").await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            std::fs::read_dir(home.sites()).expect("sites dir").count(),
+            1,
+            "the superseded snapshot is removed"
+        );
+
+        let unpublish = f
+            .browser
+            .post("/v1/host/sites/demo/unpublish", &json!({}))
+            .await;
+        assert_eq!(unpublish.status(), StatusCode::OK);
+        assert_eq!(
+            unpublish.json::<Value>().await.expect("unpublish body"),
+            json!({"name": "demo", "unpublished": true})
+        );
+        assert_eq!(
+            f.browser.json_of("/v1/host/sites").await,
+            json!({"sites": []})
+        );
+        assert_eq!(gateway.text("/sites/demo/").await.0, StatusCode::NOT_FOUND);
+        assert_eq!(
+            std::fs::read_dir(home.sites()).expect("sites dir").count(),
+            0
+        );
+        gateway.stop().await;
+        f.close().await;
+    }))
+    .await;
+}
+
 #[tokio::test]
 async fn a_receipt_survives_a_node_restart_and_stale_edits_leave_the_record_intact() {
     within(Box::pin(async {

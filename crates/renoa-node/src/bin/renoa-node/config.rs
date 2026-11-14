@@ -1,4 +1,5 @@
 use std::{
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -32,6 +33,8 @@ pub(crate) struct LoadedConfig {
     /// The surface credential that submits the Host's automation runs.
     pub(crate) automation_credentials: DeviceCredentials,
     pub(crate) host: Arc<LocalHost>,
+    /// Where the site gateway listens, when the owner turned it on.
+    pub(crate) site_gateway: Option<SocketAddr>,
 }
 
 #[derive(Deserialize)]
@@ -43,6 +46,18 @@ struct ConfigDocument {
     model: ModelDocument,
     #[serde(default)]
     adapters: AdapterDocument,
+    #[serde(default)]
+    site_gateway: Option<SiteGatewayDocument>,
+}
+
+/// The site gateway: a loopback address for it to listen on, and the origin
+/// the owner's devices reach it at through Tailscale Serve, which the links
+/// to published sites carry.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SiteGatewayDocument {
+    listen: SocketAddr,
+    origin: String,
 }
 
 /// The schema a config document declares, read without this runtime's target
@@ -115,6 +130,9 @@ pub(crate) fn load(
     }
     validate_model(&config.model)?;
     validate_adapters(&config.adapters)?;
+    if let Some(gateway) = &config.site_gateway {
+        validate_site_gateway(gateway)?;
+    }
     config
         .endpoint
         .clone()
@@ -126,7 +144,13 @@ pub(crate) fn load(
     let mut adapters = LocalHostAdapters::new(config.adapters.mcp.as_deref())
         .with_code_mode_worker(config.adapters.code_mode_worker.as_deref())
         .with_mcp_registry(config.adapters.mcp_registry.as_deref())
-        .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref());
+        .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref())
+        .with_site_origin(
+            config
+                .site_gateway
+                .as_ref()
+                .map(|gateway| gateway.origin.as_str()),
+        );
     if let Some(relay) = &config.adapters.oauth_relay {
         adapters = adapters.with_oauth_relay(&relay.origin, &relay.credentials);
     }
@@ -147,6 +171,7 @@ pub(crate) fn load(
         credentials,
         automation_credentials,
         host,
+        site_gateway: config.site_gateway.map(|gateway| gateway.listen),
     })
 }
 
@@ -248,6 +273,35 @@ fn validate_adapters(adapters: &AdapterDocument) -> Result<(), ServiceError> {
     }
     if let Some(relay) = &adapters.oauth_relay {
         require_regular_absolute(&relay.credentials, "OAuth relay device credential")?;
+    }
+    Ok(())
+}
+
+/// The gateway answers with no sign-in, so it listens on loopback only and is
+/// reached through Tailscale Serve; its origin is a bare `http(s)://host[:port]`.
+fn validate_site_gateway(gateway: &SiteGatewayDocument) -> Result<(), ServiceError> {
+    if !gateway.listen.ip().is_loopback() {
+        return Err(ServiceError::Configuration(format!(
+            "siteGateway.listen `{}` must be a loopback address such as 127.0.0.1:7840: \
+             the gateway asks no one to sign in",
+            gateway.listen
+        )));
+    }
+    let authority = gateway
+        .origin
+        .strip_prefix("https://")
+        .or_else(|| gateway.origin.strip_prefix("http://"));
+    if authority.is_none_or(|authority| {
+        authority.is_empty()
+            || authority
+                .chars()
+                .any(|c| matches!(c, '/' | '?' | '#' | '@') || c.is_whitespace() || c.is_control())
+    }) {
+        return Err(ServiceError::Configuration(format!(
+            "siteGateway.origin `{}` must be a bare origin such as \
+             https://host.tailnet.ts.net:8443, with no path or trailing slash",
+            gateway.origin
+        )));
     }
     Ok(())
 }

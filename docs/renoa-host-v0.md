@@ -428,7 +428,8 @@ its items, counted in `automation_runs_pruned` and `automation_purged`.
 
 The compiled plugin `renoa.owner` ("Reach you") keeps `ask_owner`,
 `notify_owner`, `set_today`, `share_file` and `stop_sharing` resident in every
-agent's tool list, also while
+agent's tool list, and also contributes non-resident `site_manage` (discoverable
+through `plugin_search` and executed through `tool_execute` or Code Mode), also while
 the owner has turned it off for the agent, when each call is refused with
 "nothing was sent". A guest's turn refuses them as it refuses every tool. Both take a flat
 object and a required `urgency`: `ask_owner` a `question` of at most 240
@@ -465,6 +466,32 @@ signed in to: the coordinator serves `/s/{share}` to a browser signed in to the
 Host, and an app opens it with a one-time link from `share_link`
 (`rcp-json-ws-v0.md`, "Shared files"). `stop_sharing` takes the same `path`, also for a file already
 gone, and removes the row; a later share of that file gets a new link.
+
+`site_manage` accepts `action` (`publish`, `list`, or `unpublish`), plus
+`name` (1 to 63 lowercase ASCII letters, digits, or hyphens, starting and
+ending with a letter or digit; required for `publish` and `unpublish`) and
+`folder` (a workspace-relative directory without symlinks or escaping the
+workspace; required for `publish`). Every action is refused, and nothing is
+copied, while the node runs no site gateway (`siteGateway` in the node's
+config, `deploy/README.md`). `publish` validates and copies the tree into an
+immutable snapshot under `state/sites/<snapshot_id>/` (refusing empty folders,
+symlinks, more than 512 files, or more than 1 GiB in all, before writing any
+catalog row), atomically records or replaces the row in `host_sites` (schema
+55, an agent-owned table) for the caller's principal (or unowned if none),
+removes any superseded snapshot directory, and returns
+`[name](<gateway origin>/sites/{name}/)`. Workspace edits after `publish` do
+not affect the live snapshot; republishing replaces it atomically, and another
+person cannot overwrite or unpublish a site named by the first person.
+
+The node's site gateway serves every published site from its snapshot on disk,
+on a loopback address the owner reaches through Tailscale Serve, with no
+sign-in: `/sites/{name}` redirects (`308`) to `/sites/{name}/`, a path ending
+in `/` serves that folder's `index.html`, the root of a site without one serves
+an escaped list of its files, and any other path serves that file with byte
+ranges. A path with an empty, `.` or `..` segment, a symbolic link, or no such
+file is `404`. The gateway is not the coordinator's origin and carries no
+Renoa credential, so a site's scripts reach nothing of Renoa's; sites share the
+gateway's one origin with each other.
 
 An agent's heartbeat is `renoa.owner`'s trigger: a check-in of its own at
 minute 0 every `heartbeat_hours` from 08:00 to 22:00 in the agent's
@@ -630,6 +657,13 @@ gone, is a folder, now resolves outside its workspace or cannot be reached
 through its folders return 404 `share_not_found`; a part past the end returns 404 `share_part_not_found`, a
 file grown past 25 MiB 413 `share_too_large`, and a malformed id or part number
 400 `invalid_request`.
+
+`GET /v1/host/sites` lists published static sites reachable by the signed-in
+person (`{sites: [{name, agent_id, source_folder, file_count, total_bytes,
+published_at_ms, path}]}`, `path` under the site gateway's origin).
+`POST /v1/host/sites/{name}/unpublish` removes a reachable published site and
+its snapshot directory (`{name, unpublished}`); an invalid name returns 400
+`invalid_request`.
 
 A command whose text input carries `attachments` (`rcp-json-ws-v0.md`) names
 completed uploads. The node copies each into the agent's workspace under
@@ -864,7 +898,8 @@ tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
 `renoa.memory` for a turn that talks to a person or comes from a guest,
 `agent_documents` from `renoa.documents` for an agent that keeps documents,
 `ask_owner`, `notify_owner`, `set_today`, `share_file` and `stop_sharing` from
-`renoa.owner` for every agent, and `follow_up` from `renoa.automations` for every agent.
+`renoa.owner` for every agent (with `site_manage` exposed non-residently through
+`plugin_search` and `tool_execute`), and `follow_up` from `renoa.automations` for every agent.
 The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
@@ -910,7 +945,7 @@ and `renoa.memory` also contributes the person's `MIND.md` to the system prompt:
 | `renoa.git` | Inspect local changes, diffs, and commits |
 | `renoa.time` | Show the current time and the time since the previous message |
 | `renoa.memory` | Note, recall and zoom into the speaking person's shared notebook; show their `MIND.md` |
-| `renoa.owner` | Ask the owner a question that ends the turn, or tell them something, through the feed |
+| `renoa.owner` | Ask or notify the owner through the feed, share workspace files, and publish static site snapshots |
 
 These plugins start enabled, except that an agent created from the Alpha preset
 starts with `renoa.time` off; document tools exist only for definitions that enable
@@ -1487,6 +1522,7 @@ another writer's files to empty a directory.
   state/
     host.sqlite3                   definitions, plugins, connections, receipts
     skills/<sha256>/               imported immutable skill revisions
+    sites/<snapshot-id>/           immutable published static site snapshots
     oauth-locks/                   process-safe per-connection locks
     credential-relay-state/        private pending encrypted-intake identities
     shared-registry/               transient package transfers
@@ -1539,7 +1575,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 54
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 55
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1572,9 +1608,10 @@ settings and triggers, keeping every stored setting, trigger and reminder; no
 agent has a heartbeat until it is set. Every catalog below schema 51 gains the
 mark of follow-ups, empty, every catalog below schema 52 gains the saved
 setups waiting on the person, empty, every catalog below schema 53 gains
-the shares agents keep, empty, and every catalog below schema 54 gives every
+the shares agents keep, empty, every catalog below schema 54 gives every
 agent a look, oldest first, ties broken by agent id, and gains the pictures,
-empty. Live selections
+empty, and every catalog below schema 55 gains the published static site
+snapshots table (`host_sites`), empty. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1600,7 +1637,7 @@ guidance. Reopening the upgraded catalog does not repeat the conversion.
    shape, running the earlier migration ladder first for the shared domains it
    still owns.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
-   agent-owned rows, the session directories, enabled SOUL files, and
+   agent-owned rows, the session directories, published `state/sites/` snapshots, enabled SOUL files, and
    predecessor document roots. It preserves canonical
    `agents/<agent-id>/workspace` directories and people's `users/` profiles and
    notebooks, and never deletes workspace files or the Host's shared state. One transaction

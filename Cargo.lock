@@ -2512,6 +2512,7 @@ name = "renoa-node"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "axum",
  "base64 0.22.1",
  "futures-util",
  "jiff",
@@ -2536,6 +2537,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
+ "tower-http",
  "uuid",
 ]
 

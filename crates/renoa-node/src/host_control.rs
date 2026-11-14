@@ -18,12 +18,13 @@ mod memory;
 mod profile;
 mod reply;
 mod shares;
+mod sites;
 mod uploads;
 
 use std::sync::Arc;
 
 use renoa_discord::DiscordControl;
-use renoa_local::{HostObserver, LocalHost, Shares, Uploads};
+use renoa_local::{HostObserver, LocalHost, Shares, Sites, Uploads};
 use renoa_protocol::PrincipalId;
 use renoa_rcp_wire::HostMethod;
 
@@ -45,6 +46,7 @@ pub(crate) struct HostControl {
     tasks: NodeStore,
     uploads: Uploads,
     shares: Shares,
+    sites: Sites,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -78,6 +80,8 @@ enum Operation {
     UploadPart(String, String),
     ShareDescribe(String),
     SharePart(String, String),
+    SitesList,
+    SiteUnpublish(String),
 }
 
 /// Every operation at a path, by method. The one table of the Host's control
@@ -125,6 +129,8 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         ["shares", id, "parts", index] => {
             vec![(Get, Op::SharePart((*id).to_owned(), (*index).to_owned()))]
         }
+        ["sites"] => vec![(Get, Op::SitesList)],
+        ["sites", name, "unpublish"] => vec![(Post, Op::SiteUnpublish((*name).to_owned()))],
         _ => Vec::new(),
     }
 }
@@ -177,6 +183,7 @@ impl HostControl {
             .map_err(|error| NodeError::Configuration(error.to_string()))?;
         let uploads = Uploads::open(host.home());
         let shares = Shares::open(host.home());
+        let sites = Sites::open(host.home());
         Ok(Self {
             host,
             observer,
@@ -184,6 +191,7 @@ impl HostControl {
             tasks,
             uploads,
             shares,
+            sites,
         })
     }
 
@@ -321,6 +329,8 @@ impl HostControl {
             }
             Operation::ShareDescribe(id) => shares::describe(&self.shares, principal, &id).await,
             Operation::SharePart(id, n) => shares::part(&self.shares, principal, &id, &n).await,
+            Operation::SitesList => sites::list(&self.sites, principal).await,
+            Operation::SiteUnpublish(name) => sites::unpublish(&self.sites, principal, &name).await,
             Operation::MainAgentSet => {
                 let change = decode(
                     body,

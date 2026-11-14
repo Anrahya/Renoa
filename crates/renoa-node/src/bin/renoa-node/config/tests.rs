@@ -367,3 +367,76 @@ fn state_directory_symlink_is_rejected_without_changing_its_target() {
         0o755
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_site_gateway_listens_on_loopback_only_under_a_bare_origin() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let bridge = files.path().join("bridge.mjs");
+    let credential_store = files.path().join("model.sqlite");
+    let config = files.path().join("node.json");
+    let credentials = files.path().join("device.json");
+    let automations = files.path().join("automations.json");
+    let state = files.path().join("uncreated-state");
+    std::fs::write(&bridge, "").expect("write bridge");
+    std::fs::write(&credential_store, "").expect("write model store");
+    write_credentials(&credentials);
+    write_credentials(&automations);
+    let document = |gateway: serde_json::Value| {
+        json!({
+            "schemaVersion": 5,
+            "endpoint": "ws://127.0.0.1:9/connect",
+            "automationCredentials": automations,
+            "model": {
+                "bridge": bridge,
+                "credentialStore": credential_store,
+                "providers": ["xai"],
+                "defaultProvider": "xai",
+                "defaultModel": "fixture-model"
+            },
+            "siteGateway": gateway
+        })
+    };
+    let write = |gateway: serde_json::Value| {
+        std::fs::write(
+            &config,
+            serde_json::to_vec(&document(gateway)).expect("encode config"),
+        )
+        .expect("write config");
+        private(&config);
+    };
+
+    for (listen, origin) in [
+        ("0.0.0.0:7840", "https://vps.tailnet.ts.net:8443"),
+        ("100.64.0.1:7840", "https://vps.tailnet.ts.net:8443"),
+        ("[::]:7840", "https://vps.tailnet.ts.net:8443"),
+        ("127.0.0.1:7840", "https://vps.tailnet.ts.net:8443/"),
+        ("127.0.0.1:7840", "https://vps.tailnet.ts.net/sites"),
+        ("127.0.0.1:7840", "ftp://vps.tailnet.ts.net"),
+        ("127.0.0.1:7840", "https://"),
+        ("127.0.0.1:7840", "https://user@vps.tailnet.ts.net"),
+    ] {
+        write(json!({"listen": listen, "origin": origin}));
+        let error = load(&config, &credentials, &state)
+            .err()
+            .unwrap_or_else(|| panic!("{listen} {origin} must be refused"));
+        assert!(error.to_string().contains("siteGateway"), "{error}");
+        assert!(
+            !state.exists(),
+            "a refused gateway leaves no state directory"
+        );
+    }
+    write(
+        json!({"listen": "127.0.0.1:7840", "origin": "https://vps.tailnet.ts.net:8443", "port": 1}),
+    );
+    assert!(
+        load(&config, &credentials, &state).is_err(),
+        "unknown fields are refused"
+    );
+
+    for listen in ["127.0.0.1:7840", "[::1]:7840"] {
+        write(json!({"listen": listen, "origin": "https://vps.tailnet.ts.net:8443"}));
+        let loaded = load(&config, &credentials, &state).expect("a loopback gateway loads");
+        assert_eq!(loaded.site_gateway, Some(listen.parse().expect("address")));
+    }
+}

@@ -22,7 +22,7 @@ struct Fixture {
     workspace: PathBuf,
     person: Uuid,
     shares: Shares,
-    tools: [AgentToolBinding; 5],
+    tools: [AgentToolBinding; 6],
 }
 
 fn fixture() -> Fixture {
@@ -44,6 +44,7 @@ fn fixture() -> Fixture {
         command: None,
         workspace: workspace.clone(),
         principal: Some(person),
+        site_origin: None,
     });
     Fixture {
         shares: Shares::open(&home),
