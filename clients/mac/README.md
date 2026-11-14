@@ -112,6 +112,11 @@ refuses the credential, the computer forgets it and shows a new code.
   agent's face beside the last of a run; a time goes between lines an hour or a midnight apart. An owner's line
   takes the time the agent began answering it. Lines new when they arrive
   come in with a motion; a replay of older ones does not.
+- A link in an agent's line to a file it shared, exactly `/s/<uuid>`, asks
+  Renoa for a one-time link (`share_link`) and opens it in the browser on the
+  origin the app signed in to; a refused or unanswered ask shows "Couldn't
+  open" in its place and opens nothing (`src/chats/thread/links.rs`). Web
+  links open in the browser; any other link shows as its text.
 - Each agent's chat is the task every app derives from the agent's node and
   target, so the phone and the Mac share one conversation (`src/chat.rs`).
 - A lost connection is retried every five seconds; each chat is attached again
@@ -224,5 +229,5 @@ agents and Host answers (`src/chats/screens.rs`):
 RENOA_SCREENS=/some/folder cargo test screens -- --ignored
 ```
 
-Not yet: asks, shared files, notifications, a signed `.app`, and CI on a
+Not yet: asks, notifications, a signed `.app`, and CI on a
 macOS runner.

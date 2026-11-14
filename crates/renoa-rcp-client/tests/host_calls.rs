@@ -4,18 +4,19 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_rcp_client::{ClientError, HostAnswer};
+use renoa_rcp_client::{ClientError, HostAnswer, ShareLink};
 use renoa_rcp_wire::{
     ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HostMethod,
     JSON_WS_VERSION, ServerMessage,
 };
 use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle, time::timeout};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use uuid::Uuid;
 
-/// A coordinator that signs the client in and answers each Host call with
-/// `answer`, reporting every call it receives.
-async fn relaying(
-    answer: fn(u64, &str) -> ServerMessage,
+/// A coordinator that signs the client in and answers each request with
+/// `answer`, reporting every frame it receives.
+async fn serving(
+    answer: impl Fn(&ClientMessage) -> ServerMessage + Send + Sync + 'static,
 ) -> (
     String,
     mpsc::UnboundedReceiver<ClientMessage>,
@@ -33,10 +34,7 @@ async fn relaying(
                 ClientMessage::Authenticate { .. } => ServerMessage::Authenticated {
                     version: JSON_WS_VERSION,
                 },
-                ClientMessage::CallHost {
-                    request_id, path, ..
-                } => answer(*request_id, path),
-                other => panic!("unexpected frame {other:?}"),
+                other => answer(other),
             };
             let _ = calls.send(frame);
             let json = serde_json::to_string(&reply).expect("encode");
@@ -46,6 +44,24 @@ async fn relaying(
         }
     });
     (url, received, server)
+}
+
+/// A coordinator that signs the client in and answers each Host call with
+/// `answer`, reporting every call it receives.
+async fn relaying(
+    answer: fn(u64, &str) -> ServerMessage,
+) -> (
+    String,
+    mpsc::UnboundedReceiver<ClientMessage>,
+    JoinHandle<()>,
+) {
+    serving(move |frame| match frame {
+        ClientMessage::CallHost {
+            request_id, path, ..
+        } => answer(*request_id, path),
+        other => panic!("unexpected frame {other:?}"),
+    })
+    .await
 }
 
 fn credentials() -> DeviceCredentials {
@@ -148,5 +164,62 @@ async fn a_host_that_cannot_be_reached_is_the_coordinators_refusal() {
             })
         ),
         "{unreachable:?}"
+    );
+}
+
+#[tokio::test]
+async fn client_requests_share_link_and_surfaces_coordinator_errors() {
+    let wanted = Uuid::new_v4();
+    let missing = Uuid::new_v4();
+    let (url, mut received, _server) = serving(move |frame| match frame {
+        ClientMessage::ShareLink {
+            request_id,
+            share_id,
+        } if *share_id == wanted => ServerMessage::ShareLinkIssued {
+            request_id: *request_id,
+            path: ShareLink::new(format!("/s/{share_id}?ticket=one-time")),
+        },
+        ClientMessage::ShareLink { request_id, .. } => ServerMessage::Error {
+            request_id: Some(*request_id),
+            code: ErrorCode::NotFound,
+            message: "share not found".to_owned(),
+        },
+        other => panic!("unexpected frame {other:?}"),
+    })
+    .await;
+    let (connection, _events) = renoa_rcp_client::connect(&url, credentials())
+        .await
+        .expect("connect");
+
+    let link = connection
+        .share_link(wanted)
+        .await
+        .expect("issued share link");
+    assert_eq!(link.expose(), format!("/s/{wanted}?ticket=one-time"));
+
+    loop {
+        let frame = timeout(Duration::from_secs(5), received.recv())
+            .await
+            .expect("frame")
+            .expect("open");
+        if let ClientMessage::ShareLink { share_id, .. } = frame {
+            assert_eq!(share_id, wanted);
+            break;
+        }
+    }
+
+    let err = connection
+        .share_link(missing)
+        .await
+        .expect_err("missing share rejected");
+    assert!(
+        matches!(
+            err,
+            ClientError::Rejected {
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ),
+        "{err:?}"
     );
 }

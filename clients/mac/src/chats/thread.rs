@@ -1,12 +1,13 @@
 //! The open conversation: its agent's name over a fade, the lines with the
 //! time between those far apart, the agent at work, and the composer.
 
+pub(super) mod links;
 mod prose;
 
 use chrono::Local;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Focusable as _, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, PathBuilder, PathStyle, SharedString,
+    AnyElement, App, ClickEvent, Context, Entity, Focusable as _, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, PathStyle, SharedString,
     StatefulInteractiveElement as _, StrokeOptions, StyleRefinement, Styled as _,
     TestSupportExt as _, Window, canvas,
     component::{input::Input, message_scroller::MessageScroller},
@@ -14,11 +15,15 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
 };
 use lyon_tessellation::{LineCap, LineJoin};
+use renoa_rcp_wire::TaskId;
+use tokio::sync::oneshot;
+use uuid::Uuid;
 
 use super::{Chats, Row};
 use crate::{
     chat::{Speaker, Transcript, chat_task_id},
     face::{Face, Look, Mood},
+    link::Command,
     stamp,
     theme::{Palette, u},
 };
@@ -81,7 +86,10 @@ impl Chats {
         let thread = MessageScroller::new("thread", self.scroller.clone(), move |index, _, cx| {
             chats.upgrade().map_or_else(
                 || div().into_any_element(),
-                |chats| row(index, chats.read(cx).row(index), &speaking, palette),
+                |chats| {
+                    let data = chats.read(cx).row(index);
+                    row(index, data, &speaking, chats, palette)
+                },
             )
         })
         .with_list_style(padded(StyleRefinement::default()))
@@ -175,6 +183,58 @@ impl Chats {
                             .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
                     ),
             ))
+    }
+
+    /// Asks the coordinator for a one-time link to `share_id` and opens it in
+    /// the browser, or shows an inline error in row `index` if it fails.
+    pub(super) fn open_shared_file(
+        &mut self,
+        index: usize,
+        share_id: Uuid,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(task_id) = self.chosen_task() else {
+            return;
+        };
+        let (answered, rx) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::ShareLink { share_id, answered })
+            .is_err()
+        {
+            self.mark_share_failed(task_id, index, share_id, cx);
+            return;
+        }
+        cx.spawn(async move |this, cx| match rx.await {
+            Ok(Some(url)) => {
+                let _ = this.update(cx, |_, cx| cx.open_url(&url));
+            }
+            Ok(None) | Err(_) => {
+                let _ = this.update(cx, |this, cx| {
+                    this.mark_share_failed(task_id, index, share_id, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn mark_share_failed(
+        &mut self,
+        task_id: TaskId,
+        index: usize,
+        share_id: Uuid,
+        cx: &mut Context<Self>,
+    ) {
+        self.failed_shares
+            .entry((task_id, index))
+            .or_default()
+            .insert(share_id);
+        if self.chosen_task() == Some(task_id) {
+            self.scroller.update(cx, |scroller, cx| {
+                scroller.remeasure_items(index..index + 1, cx)
+            });
+            cx.notify();
+        }
     }
 }
 
@@ -326,7 +386,13 @@ fn header(
 
 /// One row of the conversation: a line, with the time before it when one
 /// goes there; past the last line, the agent at work.
-fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
+fn row(
+    index: usize,
+    row: Row,
+    agent: &Agent,
+    chats: Entity<Chats>,
+    palette: Palette,
+) -> AnyElement {
     let Some(line) = row.line else {
         return centred(prose::working(agent, row.doing.as_deref(), palette)).into_any_element();
     };
@@ -341,7 +407,9 @@ fn row(index: usize, row: Row, agent: &Agent, palette: Palette) -> AnyElement {
     let top_pad = prose::row_top_padding(row.before.as_ref().map(|b| b.speaker), line.speaker);
     let said = match line.speaker {
         Speaker::Owner => prose::owner(index, &line, row.live, palette),
-        Speaker::Agent => prose::agent_line(index, &line, row.live, palette),
+        Speaker::Agent => {
+            prose::agent_line(index, &line, &row.failed_shares, row.live, chats, palette)
+        }
     };
     div()
         .w_full()

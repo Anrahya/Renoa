@@ -136,6 +136,20 @@ pub enum Command {
     },
     /// Calls the Host, beside the chats, and answers on the call.
     Host(HostCall),
+    /// Requests a one-time link to a shared file and answers with the full URL
+    /// on the coordinator's origin, or `None` if Renoa refused or could not be reached.
+    ShareLink {
+        share_id: Uuid,
+        answered: oneshot::Sender<Option<String>>,
+    },
+}
+
+enum Immediate {
+    Host(HostCall),
+    ShareLink {
+        share_id: Uuid,
+        answered: oneshot::Sender<Option<String>>,
+    },
 }
 
 /// What the session keeps across connections.
@@ -149,8 +163,8 @@ struct Kept {
 
 impl Kept {
     /// Keeps a chat to follow or a message to send for the next catch-up;
-    /// a Host call is the caller's to make.
-    fn hold(&mut self, command: Command) -> Option<HostCall> {
+    /// Host calls and share-link requests belong to the current connection.
+    fn hold(&mut self, command: Command) -> Option<Immediate> {
         match command {
             Command::Follow {
                 task_id,
@@ -181,7 +195,10 @@ impl Kept {
                 });
                 None
             }
-            Command::Host(call) => Some(call),
+            Command::Host(call) => Some(Immediate::Host(call)),
+            Command::ShareLink { share_id, answered } => {
+                Some(Immediate::ShareLink { share_id, answered })
+            }
         }
     }
 }
@@ -228,6 +245,7 @@ pub async fn session(
         let _ = updates.send(Update::Linked(true));
         let ended = linked(
             &connection,
+            &endpoints.origin,
             pace.agents_every,
             &mut commands,
             &updates,
@@ -261,11 +279,15 @@ async fn offline(
             () = &mut waited => return Ended::LinkLost,
             command = commands.recv() => match command {
                 None => return Ended::ViewsGone,
-                Some(command) => {
-                    if let Some(call) = kept.hold(command) {
+                Some(command) => match kept.hold(command) {
+                    None => {}
+                    Some(Immediate::Host(call)) => {
                         let _ = call.answered.send(host::Answer::Lost);
                     }
-                }
+                    Some(Immediate::ShareLink { answered, .. }) => {
+                        let _ = answered.send(None);
+                    }
+                },
             },
         }
     }
@@ -280,6 +302,7 @@ enum Ended {
 /// Serves the views over one connection until it is lost or they are gone.
 async fn linked(
     connection: &Connection,
+    origin: &str,
     agents_every: Duration,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     updates: &mpsc::UnboundedSender<Update>,
@@ -300,12 +323,26 @@ async fn linked(
                 None => return Ended::ViewsGone,
                 Some(command) => match kept.hold(command) {
                     None => catch_up(connection, updates, kept).await,
-                    Some(call) => {
+                    Some(Immediate::Host(call)) => {
                         let connection = connection.clone();
                         // A call the link outlives is answered Lost when it ends.
                         calls.push(Aborting(tokio::spawn(async move {
                             let answer = host::ask(&connection, call.method, &call.path, call.body).await;
                             let _ = call.answered.send(answer);
+                        })));
+                        calls.retain(|call| !call.finished());
+                        Ok(())
+                    }
+                    Some(Immediate::ShareLink { share_id, answered }) => {
+                        let connection = connection.clone();
+                        let origin = origin.to_owned();
+                        calls.push(Aborting(tokio::spawn(async move {
+                            let url = within(connection.share_link(share_id))
+                                .await
+                                .ok()
+                                .filter(|path| path.expose().starts_with("/s/"))
+                                .map(|path| format!("{origin}{}", path.expose()));
+                            let _ = answered.send(url);
                         })));
                         calls.retain(|call| !call.finished());
                         Ok(())

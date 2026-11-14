@@ -1,6 +1,6 @@
 use gpui_kit::{
     AnyWindowHandle, AppContext as _, Bounds, Entity, Point, TestAppContext, WindowBounds,
-    WindowOptions, px, size, test::TestWindowExt as _,
+    WindowOptions, point, px, size, test::TestWindowExt as _,
 };
 use renoa_protocol::{CommandInput, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use renoa_rcp_wire::{NodeId, TargetSummary};
@@ -930,5 +930,127 @@ fn the_main_agent_is_pinned_first_even_when_listed_last(cx: &mut TestAppContext)
             .map(|chosen| chosen.name.as_ref().to_owned())),
         Some("Renoa".to_owned()),
         "⌘1 reaches the pinned main agent"
+    );
+}
+
+#[gpui_kit::test]
+fn reply_links_open_shared_files_web_urls_show_errors_and_leave_malformed_plain(
+    cx: &mut TestAppContext,
+) {
+    let ok_id = Uuid::new_v4();
+    let missing_id = Uuid::new_v4();
+    let upper = ok_id.to_string().to_uppercase();
+
+    let (window, chats, mut asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    let task_id = chat_task_id(node_id, "renoa");
+    updates.send(Update::Linked(true)).unwrap();
+    updates
+        .send(Update::Agents(vec![agent(node_id, "Renoa")]))
+        .unwrap();
+    cx.run_until_parked();
+    while chat_command(&mut asked).is_ok() {}
+
+    let messages = [
+        format!("[x.png](/s/{ok_id})"),
+        format!("[missing.png](/s/{missing_id})"),
+        format!("[upper](/s/{upper})"),
+        format!("[extra](/s/{ok_id}/extra)"),
+        "[bad](/s/not-a-uuid)".to_owned(),
+        "[docs](https://example.com/guide)".to_owned(),
+    ];
+    for (seq, text) in messages.iter().enumerate() {
+        updates
+            .send(Update::Event(Box::new(executed(
+                task_id,
+                seq as u64,
+                ExecutionEventKind::AssistantMessage { text: text.clone() },
+            ))))
+            .unwrap();
+    }
+    updates
+        .send(Update::Event(Box::new(executed(
+            task_id,
+            messages.len() as u64,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            },
+        ))))
+        .unwrap();
+    cx.run_until_parked();
+
+    let click_line = |index: usize, cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            window.click_at(("agent-line", index), point(px(16.), px(10.)), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+
+    // 1. Valid `/s/<uuid>` requests a share link for that id and opens `<origin><path>`.
+    click_line(0, cx);
+    let Ok(Command::ShareLink { share_id, answered }) = chat_command(&mut asked) else {
+        panic!("clicking [x.png](/s/<uuid>) requests a share link");
+    };
+    assert_eq!(share_id, ok_id);
+    let expected_url = format!("https://renoa.live/s/{ok_id}?ticket=one-time");
+    let _ = answered.send(Some(expected_url.clone()));
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url().as_deref(), Some(expected_url.as_str()));
+
+    // 2. Failed request records error inline in place of the link and opens nothing.
+    click_line(1, cx);
+    let Ok(Command::ShareLink { share_id, answered }) = chat_command(&mut asked) else {
+        panic!("clicking [missing.png](/s/<uuid>) requests a share link");
+    };
+    assert_eq!(share_id, missing_id);
+    let _ = answered.send(None);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some(expected_url.as_str()),
+        "a failed request must not open a new URL"
+    );
+    chats.read_with(cx, |chats, _| {
+        let failed = &chats.row(1).failed_shares;
+        assert!(failed.contains(&missing_id));
+        assert_eq!(
+            super::thread::links::prepare_reply_markdown(&messages[1], failed),
+            "Couldn't open missing.png"
+        );
+    });
+    // Clicking the error text does not send another request.
+    click_line(1, cx);
+    assert!(chat_command(&mut asked).is_err());
+
+    // 3. Malformed `/s/` links stay plain text and request/open nothing on click.
+    for index in [2usize, 3, 4] {
+        chats.read_with(cx, |chats, _| {
+            let expected = match index {
+                2 => "upper",
+                3 => "extra",
+                _ => "bad",
+            };
+            assert_eq!(
+                super::thread::links::prepare_reply_markdown(
+                    &messages[index],
+                    &chats.row(index).failed_shares
+                ),
+                expected
+            );
+        });
+        click_line(index, cx);
+        assert!(chat_command(&mut asked).is_err());
+        assert_eq!(cx.opened_url().as_deref(), Some(expected_url.as_str()));
+    }
+
+    // 4. Ordinary https links still open in the browser.
+    click_line(5, cx);
+    assert!(chat_command(&mut asked).is_err());
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://example.com/guide")
     );
 }

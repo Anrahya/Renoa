@@ -23,13 +23,15 @@ use std::{
 
 use renoa_protocol::{CommandId, CommandInput, LiveActivity, TargetRef};
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredentials, ErrorCode, HostMethod, NodeId, ServerMessage, TargetSummary,
-    TaskEvent, TaskId,
+    ClientMessage, DeviceCredentials, ErrorCode, NodeId, ServerMessage, TargetSummary, TaskEvent,
+    TaskId,
 };
+pub use renoa_rcp_wire::{HostMethod, ShareLink};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use transport::{LiveTasks, Socket, Waiters, disconnected, open, receive, run, send};
+use uuid::Uuid;
 
 const OUTBOUND_CAPACITY: usize = 64;
 const EVENT_CAPACITY: usize = 256;
@@ -378,6 +380,25 @@ impl Connection {
         {
             ServerMessage::HostAnswer { status, body, .. } => Ok(HostAnswer { status, body }),
             other => Err(unexpected("host_answer", &other)),
+        }
+    }
+
+    /// Requests a short-lived, one-time link to the shared file identified by
+    /// `share_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport failure or the coordinator's refusal.
+    pub async fn share_link(&self, share_id: Uuid) -> Result<ShareLink, ClientError> {
+        match self
+            .request(|request_id| ClientMessage::ShareLink {
+                request_id,
+                share_id,
+            })
+            .await?
+        {
+            ServerMessage::ShareLinkIssued { path, .. } => Ok(path),
+            other => Err(unexpected("share_link_issued", &other)),
         }
     }
 
