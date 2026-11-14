@@ -12,7 +12,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use renoa_protocol::{CommandInput, TargetRef};
 use renoa_rcp_wire::{
     ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HostMethod,
-    JSON_WS_VERSION, NodeId, ServerMessage, TargetSummary, TaskId,
+    JSON_WS_VERSION, NodeId, ServerMessage, ShareLink, TargetSummary, TaskId,
 };
 use tokio::{
     net::TcpListener,
@@ -20,6 +20,7 @@ use tokio::{
     time::timeout,
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use uuid::Uuid;
 
 use super::{
     Command, Endpoints, Pace, Update,
@@ -656,4 +657,129 @@ async fn a_sender_that_asks_hears_whether_its_message_was_taken_and_the_chat_doe
         not_sent(&mut running.updates).is_empty(),
         "the sender shows its own refusal, not the chat's composer"
     );
+}
+
+#[tokio::test]
+async fn a_share_link_request_resolves_against_endpoints_origin_or_none_on_refusal_or_offline() {
+    let found = Uuid::new_v4();
+    let missing = Uuid::new_v4();
+    let untrusted = Uuid::new_v4();
+    let (endpoints, heard) = coordinator(Arc::new(move |_, frame: &ClientMessage| {
+        chat_replies(frame).unwrap_or_else(|| match frame {
+            ClientMessage::ShareLink {
+                request_id,
+                share_id,
+            } if *share_id == found => vec![reply(&ServerMessage::ShareLinkIssued {
+                request_id: *request_id,
+                path: ShareLink::new(format!("/s/{share_id}?ticket=secret-ticket")),
+            })],
+            ClientMessage::ShareLink {
+                request_id,
+                share_id,
+            } if *share_id == untrusted => vec![reply(&ServerMessage::ShareLinkIssued {
+                request_id: *request_id,
+                path: ShareLink::new("//evil.example/phish".to_owned()),
+            })],
+            ClientMessage::ShareLink { request_id, .. } => vec![reply(&ServerMessage::Error {
+                request_id: Some(*request_id),
+                code: ErrorCode::NotFound,
+                message: "gone".to_owned(),
+            })],
+            other => panic!("unexpected frame {other:?}"),
+        })
+    }))
+    .await;
+    let origin = endpoints.origin.clone();
+    let mut running = start(endpoints);
+    hear(&heard, 1, |frame| {
+        matches!(frame, ClientMessage::Attach { .. })
+    })
+    .await;
+
+    let (tx, rx) = oneshot::channel();
+    running
+        .commands
+        .send(Command::ShareLink {
+            share_id: found,
+            answered: tx,
+        })
+        .expect("send share link");
+    let url = timeout(Duration::from_secs(5), rx)
+        .await
+        .expect("answered")
+        .expect("sender");
+    assert_eq!(
+        url,
+        Some(format!("{origin}/s/{found}?ticket=secret-ticket"))
+    );
+
+    for other in [missing, untrusted] {
+        let (tx, rx) = oneshot::channel();
+        running
+            .commands
+            .send(Command::ShareLink {
+                share_id: other,
+                answered: tx,
+            })
+            .expect("send share link");
+        assert_eq!(
+            timeout(Duration::from_secs(5), rx)
+                .await
+                .expect("answered")
+                .expect("sender"),
+            None
+        );
+    }
+
+    let connections = heard.lock().expect("heard").iter().map(|(n, _)| *n).max();
+    assert_eq!(
+        connections,
+        Some(0),
+        "a refused share link does not drop the connection"
+    );
+    drop(running.commands);
+    while running.updates.try_recv().is_ok() {}
+
+    // While offline, ShareLink answers None immediately without queueing.
+    let closed = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let offline_endpoints =
+        Endpoints::at(&format!("http://{}", closed.local_addr().expect("address")));
+    drop(closed);
+    let (commands, received) = mpsc::unbounded_channel();
+    let (sender, mut updates) = mpsc::unbounded_channel();
+    let credentials = DeviceCredentials {
+        device_id: DeviceId::new(),
+        credential: DeviceCredential::new("credential"),
+    };
+    let key = Arc::new(MacKey::generate().expect("key"));
+    let task = tokio::spawn(session(
+        offline_endpoints,
+        credentials,
+        key,
+        QUICK,
+        received,
+        sender,
+    ));
+    let Some(Update::Linked(false)) = timeout(Duration::from_secs(5), updates.recv())
+        .await
+        .expect("offline status")
+    else {
+        panic!("expected offline update");
+    };
+    let (tx, rx) = oneshot::channel();
+    commands
+        .send(Command::ShareLink {
+            share_id: found,
+            answered: tx,
+        })
+        .expect("send share link offline");
+    assert_eq!(
+        timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("answered offline")
+            .expect("sender"),
+        None
+    );
+    drop(commands);
+    let _ = timeout(Duration::from_secs(5), task).await;
 }

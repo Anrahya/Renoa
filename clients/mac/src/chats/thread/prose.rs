@@ -1,11 +1,11 @@
 //! Message rows inside a conversation: selectable owner cards, editorial
 //! Markdown replies, and the working beat.
 
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, IntoElement, ParentElement as _, SharedString,
-    StyleRefinement, Styled as _,
+    Animation, AnimationExt as _, AnyElement, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, SharedString, StyleRefinement, Styled as _, TestSupportExt as _,
     component::{
         Theme,
         clipboard::Clipboard,
@@ -13,10 +13,15 @@ use gpui_kit::{
     },
     div, ease_out_quint, relative, rems,
 };
+use uuid::Uuid;
 
-use super::Agent;
+use super::{
+    Agent,
+    links::{prepare_reply_markdown, shared_file_id, web_link_url},
+};
 use crate::{
     chat::{Line, Speaker},
+    chats::Chats,
     face::Mood,
     theme::{Palette, u},
 };
@@ -66,7 +71,14 @@ pub(super) fn owner(index: usize, line: &Line, live: bool, palette: Palette) -> 
 
 /// An agent's line: comfortable reading typography and copyable code blocks,
 /// without repeating the agent's name above every reply.
-pub(super) fn agent_line(index: usize, line: &Line, live: bool, palette: Palette) -> AnyElement {
+pub(super) fn agent_line(
+    index: usize,
+    line: &Line,
+    failed_shares: &BTreeSet<Uuid>,
+    live: bool,
+    chats: Entity<Chats>,
+    palette: Palette,
+) -> AnyElement {
     let body = if line.failed {
         div()
             .w_full()
@@ -106,19 +118,34 @@ pub(super) fn agent_line(index: usize, line: &Line, live: bool, palette: Palette
             .paragraph_gap(rems(10. / 16.))
             .code_block(block_style);
 
+        let markdown = prepare_reply_markdown(&line.text, failed_shares);
         div()
+            .id(("agent-line", index))
+            .test_support()
             .w_full()
             .min_w_0()
             .text_size(u(14.5))
             .line_height(u(22.5))
             .text_color(palette.text_soft)
             .child(
-                TextView::markdown(("said", index), line.text.clone())
+                TextView::markdown(("said", index), markdown)
                     .selectable(true)
                     .style(style)
                     .inline_code_style(inline_style)
                     .list_style(list_style)
                     .blockquote_style(blockquote_style)
+                    .on_link_click(move |url, event, _, cx| {
+                        if event.is_right_click() {
+                            return;
+                        }
+                        if let Some(share_id) = shared_file_id(url.as_ref()) {
+                            chats.update(cx, |chats, cx| {
+                                chats.open_shared_file(index, share_id, cx)
+                            });
+                        } else if let Some(web_url) = web_link_url(url.as_ref()) {
+                            cx.open_url(&web_url);
+                        }
+                    })
                     .code_block_actions(move |block, _, cx| {
                         let sans = Theme::global(cx).font_family.clone();
                         let lang = block.lang().filter(|lang| !lang.is_empty()).map(|lang| {

@@ -1,7 +1,7 @@
 //! The chats: the owner's agents down the side, one conversation beside them.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -38,6 +38,8 @@ struct Row {
     live: bool,
     /// What the agent is doing while working (`None` when `line.is_some()` or unknown).
     doing: Option<String>,
+    /// Shared-file links in this row whose one-time link request failed.
+    failed_shares: BTreeSet<Uuid>,
 }
 
 /// Renoa no longer knows this Mac.
@@ -68,6 +70,8 @@ pub struct Chats {
     drafts: HashMap<TaskId, String>,
     /// The chats where Renoa refused the owner's last message.
     unsent: HashSet<TaskId>,
+    /// Shared-file links that could not be opened, per `(task_id, row_index)`.
+    failed_shares: HashMap<(TaskId, usize), BTreeSet<Uuid>>,
     composer: Entity<InputState>,
     scroller: Entity<MessageScrollerState>,
     /// Whether the scroller's last row is the agent at work.
@@ -156,6 +160,7 @@ impl Chats {
             main: None,
             drafts: HashMap::new(),
             unsent: HashSet::new(),
+            failed_shares: HashMap::new(),
             composer,
             scroller,
             shown_working: false,
@@ -369,6 +374,11 @@ impl Chats {
         } else {
             None
         };
+        let failed_shares = self
+            .chosen_task()
+            .and_then(|task_id| self.failed_shares.get(&(task_id, index)))
+            .cloned()
+            .unwrap_or_default();
         Row {
             line,
             before: index
@@ -377,6 +387,7 @@ impl Chats {
                 .cloned(),
             live: transcript.is_some_and(|transcript| transcript.coming_in(index)),
             doing,
+            failed_shares,
         }
     }
 
