@@ -34,6 +34,7 @@ const AGENT_OWNED_TABLES: &[&str] = &[
     "host_plugin_setups",
     "host_shares",
     "host_sites",
+    "host_apps",
     "host_agent_picture_operations",
     "host_agent_pictures",
     "host_agent_looks",
@@ -124,6 +125,8 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
     let removed_sessions = clear_roots(data_directory, &SESSION_ROOTS)?;
     let removed_document_roots = clear_documents(data_directory)?;
     let _removed_sites = clear_directory(&data_directory.join("state/sites"))?;
+    crate::apps::stop_units_sync(&data_directory.join("state/host.sqlite3"));
+    let _removed_apps = clear_directory(&data_directory.join("state/apps"))?;
     Ok(HostResetReport {
         removed_rows,
         removed_sessions,
@@ -135,11 +138,11 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
 /// Refuses every unusable managed root before any catalog work, so a refused
 /// reset leaves the database untouched.
 fn require_managed_roots(data_directory: &Path) -> Result<(), LocalHostError> {
-    for name in SESSION_ROOTS
-        .into_iter()
-        .chain(DOCUMENT_ROOTS)
-        .chain(["state", "state/sites"])
-    {
+    for name in SESSION_ROOTS.into_iter().chain(DOCUMENT_ROOTS).chain([
+        "state",
+        "state/sites",
+        "state/apps",
+    ]) {
         require_managed_directory(&data_directory.join(name))?;
     }
     let agents = data_directory.join("agents");

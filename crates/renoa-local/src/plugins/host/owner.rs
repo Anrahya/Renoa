@@ -26,6 +26,7 @@ use crate::host::{
     feed::{self, BODY_CHARS, CHOICE_CHARS, CHOICES, ForOwner},
 };
 
+pub(crate) mod app;
 pub(crate) mod heartbeat;
 mod input;
 pub(crate) mod share;
@@ -37,7 +38,7 @@ mod today;
 use input::{Input, Kind};
 
 pub(crate) const PLUGIN_ID: &str = "renoa.owner";
-pub(crate) const DESCRIPTION: &str = "Ask the owner a question, tell them something on their phone, share a file from your workspace with them as a link, or publish a static site folder with site_manage. When the owner asks you to check in on them, turn on your heartbeat, a check-in of your own every few hours, with configure_plugin settings {\"heartbeat_hours\": n}, 1 to 24 hours apart; 0 or settings {} turns it off.";
+pub(crate) const DESCRIPTION: &str = "Ask the owner a question, tell them something on their phone, share a file from your workspace with them as a link, publish a static site folder with site_manage, or run a live web app with app_manage. When the owner asks you to check in on them, turn on your heartbeat, a check-in of your own every few hours, with configure_plugin settings {\"heartbeat_hours\": n}, 1 to 24 hours apart; 0 or settings {} turns it off.";
 pub(crate) const ASK: &str = "ask_owner";
 pub(crate) const NOTIFY: &str = "notify_owner";
 pub(crate) const TODAY: &str = "set_today";
@@ -76,10 +77,12 @@ pub(crate) fn turned_off(tool: &str) -> String {
     )
 }
 
-/// `ask_owner`, `notify_owner`, `set_today`, `share_file`, `stop_sharing`, and
-/// `site_manage` for one turn. A replay rewrites the same item, line, share,
-/// or site, so each is safe to replay.
-pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 6] {
+pub(crate) const TOOL_COUNT: usize = 7;
+
+/// `ask_owner`, `notify_owner`, `set_today`, `share_file`, `stop_sharing`,
+/// `site_manage`, and `app_manage` for one turn. A replay rewrites the same
+/// item, line, share, site, or app, so each is safe to replay.
+pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; TOOL_COUNT] {
     let turn = Arc::new(turn);
     let [ask, notify] = [Kind::Ask, Kind::Notify].map(|kind| {
         AgentToolBinding::new(
@@ -119,7 +122,15 @@ pub(crate) fn bindings(turn: OwnerTurn) -> [AgentToolBinding; 6] {
         }),
         EffectRecovery::SafeToReplay,
     );
-    [ask, notify, today, share, stop, site]
+    let app = AgentToolBinding::new(
+        BINDING_REVISION,
+        Arc::new(app::AppTool {
+            turn: Arc::clone(&turn),
+            spec: app::spec(),
+        }),
+        EffectRecovery::SafeToReplay,
+    );
+    [ask, notify, today, share, stop, site, app]
 }
 
 fn spec(kind: Kind) -> ToolSpec {

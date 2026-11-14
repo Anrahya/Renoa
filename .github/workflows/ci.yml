@@ -45,9 +45,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      # Agent sessions require ripgrep, as they do on the VPS.
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+      # Agent sessions require ripgrep, and live apps require bubblewrap + systemd --user.
+      - name: Install runtime tools and enable systemd user manager
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
       - uses: actions/setup-node@v4
         with:
           node-version: 24

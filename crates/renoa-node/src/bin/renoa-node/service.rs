@@ -24,6 +24,7 @@ pub(crate) async fn serve(
             None => None,
         };
     let sites = renoa_local::Sites::open(config.host.home());
+    let apps = renoa_local::Apps::open(config.host.home());
     // Nothing publishes yet, so what no site names is left from a crash.
     match sites.sweep().await {
         Ok(0) => {}
@@ -37,6 +38,13 @@ pub(crate) async fn serve(
             "site_snapshots_sweep_failed",
             &serde_json::json!({ "error": error.to_string() }),
         ),
+    }
+    if let Err(error) = apps.reconcile_on_startup().await {
+        log::event(
+            "warn",
+            "live_app_startup_reconcile_failed",
+            &serde_json::json!({ "error": error.to_string() }),
+        );
     }
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
@@ -58,7 +66,7 @@ pub(crate) async fn serve(
     if let Some(listener) = gateway {
         let stop = shutdown.clone();
         tokio::spawn(async move {
-            if let Err(error) = renoa_node::serve_site_gateway(listener, sites, stop).await {
+            if let Err(error) = renoa_node::serve_site_gateway(listener, sites, apps, stop).await {
                 log::event(
                     "error",
                     "site_gateway_stopped",

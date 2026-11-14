@@ -1421,6 +1421,7 @@ impl Gateway {
         let served = tokio::spawn(renoa_node::serve_site_gateway(
             listener,
             renoa_local::Sites::open(home),
+            renoa_local::Apps::open(home),
             stop.clone(),
         ));
         Self {
@@ -1614,6 +1615,303 @@ async fn the_gateway_serves_a_published_snapshot_until_it_is_replaced_or_unpubli
         assert_eq!(
             std::fs::read_dir(home.sites()).expect("sites dir").count(),
             0
+        );
+        gateway.stop().await;
+        f.close().await;
+    }))
+    .await;
+}
+
+struct LiveAppCleanup(std::path::PathBuf);
+
+impl Drop for LiveAppCleanup {
+    fn drop(&mut self) {
+        let _ = renoa_local::reset_host_data_root(&self.0);
+    }
+}
+
+const STUDIO_SERVER_PY: &str = r#"import http.server, json, os, uuid
+
+HOST = os.environ["STUDIO_HOST"]
+PORT = int(os.environ["STUDIO_PORT"])
+BASE_PATH = os.environ["BASE_PATH"]
+BOOT_ID = uuid.uuid4().hex
+
+class StudioHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/" or self.path == "/index.html":
+            with open("index.html", "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path == "/manifest.json":
+            with open("manifest.json", "r") as f:
+                manifest = json.load(f)
+            manifest["base_path"] = BASE_PATH
+            manifest["boot_id"] = BOOT_ID
+            data = json.dumps(manifest).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path == "/clip.mp4":
+            with open("clip.mp4", "rb") as f:
+                clip = f.read()
+            rng = self.headers.get("Range")
+            if rng and rng.startswith("bytes="):
+                spec = rng[6:].split("-", 1)
+                start = int(spec[0]) if spec[0] else 0
+                end = int(spec[1]) if spec[1] else len(clip) - 1
+                chunk = clip[start : end + 1]
+                self.send_response(206)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Range", f"bytes {start}-{end}/{len(clip)}")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.end_headers()
+                self.wfile.write(chunk)
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(len(clip)))
+                self.end_headers()
+                self.wfile.write(clip)
+        elif self.path == "/old-path":
+            self.send_response(302)
+            self.send_header("Location", "/new-path?tab=1")
+            self.end_headers()
+        else:
+            self.send_error(404)
+
+    def log_message(self, fmt, *args):
+        pass
+
+http.server.ThreadingHTTPServer((HOST, PORT), StudioHandler).serve_forever()
+"#;
+
+fn write_studio_fixture(workspace: &std::path::Path) -> Vec<u8> {
+    let studio = workspace.join("studio");
+    std::fs::create_dir_all(&studio).expect("studio dir");
+    std::fs::write(
+        studio.join("index.html"),
+        "<!doctype html><h1>Media Studio</h1>",
+    )
+    .expect("write studio html");
+    std::fs::write(studio.join("manifest.json"), r#"{"title":"Studio E2E"}"#)
+        .expect("write studio manifest");
+    let clip: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+    std::fs::write(studio.join("clip.mp4"), &clip).expect("write clip");
+    std::fs::write(studio.join("serve.py"), STUDIO_SERVER_PY).expect("write serve.py");
+    clip
+}
+
+async fn assert_studio_gateway_serves(gateway: &Gateway, clip: &[u8]) -> String {
+    let bare = gateway.get("/apps/studio").send().await.expect("bare");
+    assert_eq!(bare.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(bare.headers()["location"], "/apps/studio/");
+
+    let index = gateway.get("/apps/studio/").send().await.expect("index");
+    assert_eq!(index.status(), StatusCode::OK);
+    assert!(
+        index.headers()["content-type"]
+            .to_str()
+            .expect("content-type")
+            .starts_with("text/html")
+    );
+    assert!(index.text().await.expect("html").contains("Media Studio"));
+
+    let manifest: Value = gateway
+        .get("/apps/studio/manifest.json")
+        .send()
+        .await
+        .expect("manifest")
+        .json()
+        .await
+        .expect("manifest json");
+    assert_eq!(manifest["title"], "Studio E2E");
+    assert_eq!(manifest["base_path"], "/apps/studio");
+    let boot_id = manifest["boot_id"]
+        .as_str()
+        .expect("initial boot_id")
+        .to_owned();
+
+    let ranged = gateway
+        .get("/apps/studio/clip.mp4")
+        .header("range", "bytes=0-3")
+        .send()
+        .await
+        .expect("ranged clip");
+    assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(ranged.headers()["content-type"], "video/mp4");
+    assert_eq!(ranged.bytes().await.expect("bytes").as_ref(), &clip[0..4]);
+
+    let redir = gateway
+        .get("/apps/studio/old-path")
+        .send()
+        .await
+        .expect("redirect");
+    assert_eq!(redir.status(), StatusCode::FOUND);
+    assert_eq!(redir.headers()["location"], "/apps/studio/new-path?tab=1");
+
+    for missing in [
+        "/apps/other/",
+        "/apps/studio/../studio/manifest.json",
+        "/apps/studio/./manifest.json",
+        "/apps/studio//manifest.json",
+        "/apps/studio/%2e%2e/manifest.json",
+        "/apps/studio/manifest.json%3fspoof=1",
+        "/apps/studio/manifest.json%23frag",
+    ] {
+        assert_eq!(gateway.raw_status(missing).await, 404, "{missing}");
+    }
+    boot_id
+}
+
+async fn assert_stopped_studio_rejects_traversal_and_bad_control(
+    f: &Fixture,
+    gateway: &Gateway,
+    port: u16,
+) {
+    let listed_stopped = f.browser.json_of("/v1/host/apps").await;
+    assert_eq!(listed_stopped["apps"][0]["state"], "stopped");
+    assert!(
+        Client::new()
+            .get(format!("http://127.0.0.1:{port}/manifest.json"))
+            .send()
+            .await
+            .is_err(),
+        "stopped app must close its loopback port"
+    );
+    for missing in [
+        "/apps/studio/./manifest.json",
+        "/apps/studio//manifest.json",
+        "/apps/studio/%2e%2e/manifest.json",
+        "/apps/studio/manifest.json%3fspoof=1",
+        "/apps/studio/manifest.json%23frag",
+    ] {
+        assert_eq!(gateway.raw_status(missing).await, 404, "stopped {missing}");
+    }
+    assert_eq!(
+        f.browser.json_of("/v1/host/apps").await["apps"][0]["state"],
+        "stopped",
+        "rejected traversal paths must not wake a stopped app"
+    );
+    assert_eq!(
+        f.browser
+            .post("/v1/host/apps/Bad_Name/stop", &json!({}))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        f.browser
+            .post("/v1/host/apps/unknown/stop", &json!({}))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn live_studio_app_survives_node_restart_stops_by_owner_and_wakes_on_demand() {
+    within(Box::pin(async {
+        let mut f = Fixture::serving().await;
+        let _cleanup = LiveAppCleanup(f.root());
+
+        let created = f.browser.post("/v1/host/agents", &creation()).await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let receipt: Value = created.json().await.expect("receipt");
+        let agent = AgentId::from_uuid(
+            Uuid::parse_str(receipt["record"]["id"].as_str().expect("agent id")).expect("uuid"),
+        );
+
+        let workspace = f.host.agent_workspace(agent).await.expect("workspace");
+        let clip = write_studio_fixture(&workspace);
+
+        let home = renoa_local::RenoaHome::at(f.root()).expect("home");
+        let started = renoa_local::Apps::open(&home)
+            .start(
+                agent,
+                Some(f.owner.as_uuid()),
+                &workspace,
+                "studio",
+                "studio",
+                "STUDIO_HOST=127.0.0.1 STUDIO_PORT=$PORT python3 serve.py",
+            )
+            .await
+            .expect("start studio live app");
+        assert_eq!(started.state, renoa_local::AppState::Running);
+
+        let gateway = Gateway::start(&home).await;
+        let initial_boot_id = assert_studio_gateway_serves(&gateway, &clip).await;
+
+        let listed = f.browser.json_of("/v1/host/apps").await;
+        assert_eq!(listed["apps"].as_array().expect("apps").len(), 1);
+        assert_eq!(listed["apps"][0]["name"], "studio");
+        assert_eq!(listed["apps"][0]["state"], "running");
+        assert_eq!(listed["apps"][0]["path"], "/apps/studio/");
+        assert_eq!(listed["apps"][0]["port"], started.port);
+
+        // Restart node and gateway: the supervised app process survives with the same boot_id.
+        gateway.stop().await;
+        f.stop_node().await;
+        renoa_local::Apps::open(&home)
+            .reconcile_on_startup()
+            .await
+            .expect("reconcile on node restart");
+        f.start_node().await;
+        let gateway = Gateway::start(&home).await;
+
+        let after_restart: Value = gateway
+            .get("/apps/studio/manifest.json")
+            .send()
+            .await
+            .expect("manifest after restart")
+            .json()
+            .await
+            .expect("json after restart");
+        assert_eq!(
+            after_restart["boot_id"].as_str(),
+            Some(initial_boot_id.as_str())
+        );
+
+        let stopped = f
+            .browser
+            .post("/v1/host/apps/studio/stop", &json!({}))
+            .await;
+        assert_eq!(stopped.status(), StatusCode::OK);
+        assert_eq!(
+            stopped.json::<Value>().await.expect("stop")["state"],
+            "stopped"
+        );
+        assert_stopped_studio_rejects_traversal_and_bad_control(&f, &gateway, started.port).await;
+
+        // Next gateway request wakes the stopped app on demand and serves its response.
+        let woken: Value = gateway
+            .get("/apps/studio/manifest.json")
+            .send()
+            .await
+            .expect("wake on request")
+            .json()
+            .await
+            .expect("woken json");
+        assert_eq!(woken["title"], "Studio E2E");
+        assert_eq!(woken["base_path"], "/apps/studio");
+        assert_ne!(woken["boot_id"].as_str(), Some(initial_boot_id.as_str()));
+        assert_eq!(
+            f.browser.json_of("/v1/host/apps").await["apps"][0]["state"],
+            "running"
+        );
+
+        assert_eq!(
+            f.browser
+                .post("/v1/host/apps/studio/stop", &json!({}))
+                .await
+                .status(),
+            StatusCode::OK
         );
         gateway.stop().await;
         f.close().await;

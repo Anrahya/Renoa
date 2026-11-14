@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::super::{OwnerTurn, bindings};
+use super::super::{OwnerTurn, TOOL_COUNT, bindings};
 use crate::{
     host::catalog,
     shares::{MAX_SHARE_BYTES, ShareError, Shares},
@@ -22,7 +22,7 @@ struct Fixture {
     workspace: PathBuf,
     person: Uuid,
     shares: Shares,
-    tools: [AgentToolBinding; 6],
+    tools: [AgentToolBinding; TOOL_COUNT],
 }
 
 fn fixture() -> Fixture {

@@ -97,6 +97,7 @@ fn migrate(
             crate::shares::initialize(&transaction)?;
             crate::host::appearance::initialize(&transaction)?;
             crate::sites::initialize(&transaction)?;
+            crate::apps::initialize(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],

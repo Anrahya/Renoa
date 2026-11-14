@@ -13,6 +13,7 @@ mod automations;
 mod discord;
 mod feed;
 mod heartbeat;
+mod live_apps;
 mod main_agent;
 mod memory;
 mod profile;
@@ -47,6 +48,7 @@ pub(crate) struct HostControl {
     uploads: Uploads,
     shares: Shares,
     sites: Sites,
+    apps: renoa_local::Apps,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -82,6 +84,8 @@ enum Operation {
     SharePart(String, String),
     SitesList,
     SiteUnpublish(String),
+    LiveAppsList,
+    LiveAppStop(String),
 }
 
 /// Every operation at a path, by method. The one table of the Host's control
@@ -131,6 +135,8 @@ fn operations_at(segments: &[&str]) -> Vec<(HostMethod, Operation)> {
         }
         ["sites"] => vec![(Get, Op::SitesList)],
         ["sites", name, "unpublish"] => vec![(Post, Op::SiteUnpublish((*name).to_owned()))],
+        ["apps"] => vec![(Get, Op::LiveAppsList)],
+        ["apps", name, "stop"] => vec![(Post, Op::LiveAppStop((*name).to_owned()))],
         _ => Vec::new(),
     }
 }
@@ -184,6 +190,7 @@ impl HostControl {
         let uploads = Uploads::open(host.home());
         let shares = Shares::open(host.home());
         let sites = Sites::open(host.home());
+        let apps = renoa_local::Apps::open(host.home());
         Ok(Self {
             host,
             observer,
@@ -192,6 +199,7 @@ impl HostControl {
             uploads,
             shares,
             sites,
+            apps,
         })
     }
 
@@ -331,6 +339,8 @@ impl HostControl {
             Operation::SharePart(id, n) => shares::part(&self.shares, principal, &id, &n).await,
             Operation::SitesList => sites::list(&self.sites, principal).await,
             Operation::SiteUnpublish(name) => sites::unpublish(&self.sites, principal, &name).await,
+            Operation::LiveAppsList => live_apps::list(&self.apps, principal).await,
+            Operation::LiveAppStop(name) => live_apps::stop(&self.apps, principal, &name).await,
             Operation::MainAgentSet => {
                 let change = decode(
                     body,

@@ -27,6 +27,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 tokio-util.workspace = true
 tower-http = { workspace = true, features = ["fs"] }

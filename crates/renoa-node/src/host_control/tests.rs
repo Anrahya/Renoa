@@ -39,6 +39,8 @@ fn name(operation: &Operation) -> &'static str {
         Operation::SharePart(..) => "share_part",
         Operation::SitesList => "sites_list",
         Operation::SiteUnpublish(_) => "site_unpublish",
+        Operation::LiveAppsList => "live_apps_list",
+        Operation::LiveAppStop(_) => "live_app_stop",
     }
 }
 
@@ -130,6 +132,8 @@ fn routes() -> Vec<(HostMethod, String, &'static str)> {
             "/v1/host/sites/demo/unpublish".to_owned(),
             "site_unpublish",
         ),
+        (Get, "/v1/host/apps".to_owned(), "live_apps_list"),
+        (Post, "/v1/host/apps/demo/stop".to_owned(), "live_app_stop"),
     ]
 }
 
@@ -174,6 +178,8 @@ fn every_operation_has_a_route_and_every_route_one_operation() {
         "share_part",
         "sites_list",
         "site_unpublish",
+        "live_apps_list",
+        "live_app_stop",
     ]
     .into_iter()
     .collect();
@@ -198,6 +204,8 @@ fn a_known_path_with_another_method_is_refused_and_an_unknown_path_is_not_found(
     assert_eq!(status(Post, "/v1/host/shares/a/parts/0"), 405);
     assert_eq!(status(Post, "/v1/host/sites"), 405);
     assert_eq!(status(Get, "/v1/host/sites/demo/unpublish"), 405);
+    assert_eq!(status(Post, "/v1/host/apps"), 405);
+    assert_eq!(status(Get, "/v1/host/apps/demo/stop"), 405);
     for path in [
         "/v1/hostile",
         "/v1/host/",

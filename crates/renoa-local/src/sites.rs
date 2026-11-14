@@ -22,13 +22,13 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::host::catalog::{self, HostCatalogError};
-use snapshot::{
-    CopyStats, DirCleanup, copy_verified_tree, create_private_dir, ensure_sites_dir, resolve_entry,
-    resolve_source_folder,
-};
+use snapshot::{CopyStats, copy_verified_tree, ensure_sites_dir, resolve_entry};
 
 pub use snapshot::SiteEntry;
-pub(crate) use snapshot::{sites_dir_for_database, validate_site_name};
+pub(crate) use snapshot::{
+    DirCleanup, create_private_dir, ensure_state_subdir, resolve_source_folder,
+    sites_dir_for_database, validate_site_name,
+};
 
 /// The most files and folders one site holds, so a publish walks a bounded tree.
 pub(crate) const MAX_SITE_ENTRIES: usize = 512;
@@ -58,6 +58,7 @@ pub(crate) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
 /// Turns a schema 55 catalog back into schema 54's tables.
 #[cfg(test)]
 pub(crate) fn restore_schema_54(connection: &rusqlite::Connection) {
+    crate::apps::restore_schema_55(connection);
     connection
         .execute_batch("DROP TABLE host_sites;")
         .expect("restore schema 54");

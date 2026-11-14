@@ -142,6 +142,12 @@ impl RenoaHome {
     pub fn sites(&self) -> PathBuf {
         self.root.join("state/sites")
     }
+
+    /// Runtime directories (logs and scratch space) for supervised live apps.
+    #[must_use]
+    pub fn apps(&self) -> PathBuf {
+        self.root.join("state/apps")
+    }
     #[must_use]
     pub fn coordinator_database(&self) -> PathBuf {
         self.root.join("state/coordinator.sqlite3")
