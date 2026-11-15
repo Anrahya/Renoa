@@ -8,10 +8,12 @@ use gpui_kit::{
 };
 
 use super::Chats;
+use crate::chat::chat_task_id;
 use crate::{
     home::{Home, HomeEvent},
     theme::Palette,
 };
+use renoa_rcp_wire::TaskId;
 
 use crate::theme::u;
 
@@ -35,8 +37,37 @@ impl Chats {
         cx.notify();
     }
 
-    /// Opens the chat with the agent at `index`, leaving Home, ready to type.
+    /// Where the agent whose chat is `task` sits in the list.
+    pub(super) fn agent_index(&self, task: TaskId) -> Option<usize> {
+        self.agents
+            .iter()
+            .position(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == task)
+    }
+
+    /// Drops the chats of agents no longer listed from Ctrl+Tab's walk.
+    pub(super) fn forget_gone_chats(&mut self) {
+        let listed: Vec<TaskId> = self
+            .agents
+            .iter()
+            .map(|agent| chat_task_id(agent.node_id, agent.target.as_str()))
+            .collect();
+        self.recent.keep(|task| listed.contains(&task));
+    }
+
+    /// Opens the chat with the agent at `index`, leaving Home, ready to type,
+    /// and makes it the most recent chat Ctrl+Tab goes back from.
     pub(super) fn open_agent(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(agent) = self.agents.get(index) else {
+            return;
+        };
+        self.recent
+            .opened(chat_task_id(agent.node_id, agent.target.as_str()));
+        self.show_agent(index, window, cx);
+    }
+
+    /// Opens the chat with the agent at `index` without touching the order
+    /// Ctrl+Tab walks.
+    pub(super) fn show_agent(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.agents.len() {
             return;
         }

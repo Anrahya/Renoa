@@ -205,7 +205,10 @@ reached; it is not made later, when the owner may have moved on.
 ⌘K opens a box that jumps to Home, an agent or a sheet by part of its
 name; ⌘0 goes Home; ⌘1 to ⌘9 open the first nine agents; ⌘I opens the
 page of the agent whose chat is open; Esc closes a
-sheet or the box. Settings lists the keys, and a test presses each one it
+sheet or the box. Ctrl+Tab, on every platform, goes back through the chats
+the owner opened this run, most recent first: each press while Ctrl is held
+goes one further (Shift goes back), and letting go of Ctrl makes that chat
+the most recent (`src/chats/recent.rs`). Settings lists the keys, and a test presses each one it
 lists and checks it leads where its words say (`src/chats/tests.rs`).
 
 The menu bar (`src/menus.rs`) has four menus:

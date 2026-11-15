@@ -297,6 +297,17 @@ impl Chats {
                 None => return false,
             },
             Move::ToggleSidebar => self.toggle_sidebar(window, cx),
+            Move::Cycle { back } => {
+                let Some(index) = self
+                    .recent
+                    .step(back)
+                    .and_then(|task| self.agent_index(task))
+                else {
+                    return false;
+                };
+                self.close(window, cx);
+                self.show_agent(index, window, cx);
+            }
         }
         true
     }
