@@ -182,7 +182,7 @@ impl Apps {
     /// # Errors
     /// Returns [`AppError`] on invalid name/folder/command, ownership mismatch,
     /// missing supervisor (`bwrap` / `slirp4netns` / `systemd --user`),
-    /// non-loopback bind, or startup failure.
+    /// or startup failure.
     pub async fn start(
         &self,
         agent: AgentId,

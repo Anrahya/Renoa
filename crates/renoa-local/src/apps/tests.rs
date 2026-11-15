@@ -1176,10 +1176,24 @@ fn staging_units_name_their_owner_and_cannot_collide_with_an_app() {
 fn sweeping_orphan_dirs_keeps_only_catalogued_apps() {
     let f = Fixture::new();
     let apps_root = f.home.apps();
+    let kept_id = Uuid::new_v4().to_string();
+    let record = super::LiveApp {
+        name: "kept".to_owned(),
+        agent_id: f.agent.to_string(),
+        source_folder: "kept".to_owned(),
+        command: "true".to_owned(),
+        port: 20_000,
+        state: AppState::Stopped,
+        failure_reason: None,
+        updated_at_ms: 0,
+        last_active_ms: 0,
+    };
+    super::store::insert_new_app(&f.database, &record, None, &kept_id).expect("catalogue app");
+    fs::create_dir_all(apps_root.join(&kept_id).join("scratch")).expect("kept dir");
     fs::create_dir_all(apps_root.join(".stage-left-over/scratch")).expect("stage dir");
     fs::create_dir_all(apps_root.join("no-such-app")).expect("orphan dir");
     assert_eq!(f.apps().sweep_orphan_dirs().expect("sweep"), 2);
-    assert!(f.state_app_dirs().is_empty());
+    assert_eq!(f.state_app_dirs(), vec![apps_root.join(&kept_id)]);
 }
 
 #[tokio::test]

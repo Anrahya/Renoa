@@ -238,7 +238,11 @@ class Bridge:
         if len(self.relays) // 2 >= self.max_relays:
             client.close()
             return
-        upstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            upstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except OSError:
+            client.close()
+            return
         client.setblocking(False)
         upstream.setblocking(False)
         if upstream.connect_ex(("127.0.0.1", self.port)) not in (0, errno.EINPROGRESS):
@@ -371,7 +375,8 @@ def supervise(config_path, cfg):
             return 0 if stop.is_set() else 1
         os.close(ready_r)
 
-        control, bridge_end = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        # SEQPACKET, not DGRAM: the bridge sees end-of-file when the runner dies.
+        control, bridge_end = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         status_r, status_w = os.pipe()
         fds = (bridge_end.fileno(), status_w, userns_fd, netns_fd)
         bridge = subprocess.Popen(

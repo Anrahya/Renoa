@@ -216,7 +216,8 @@ async fn connect_upstream_ws(
 
 /// Relays both directions independently, so a peer that stops reading
 /// blocks only its own direction, and closes after `idle_timeout` without a
-/// message either way so an open socket cannot keep its app awake forever.
+/// data message either way; keep-alive pings do not count, so an open socket
+/// cannot keep its app awake forever.
 async fn relay_websocket(
     client_ws: WebSocket,
     upstream_ws: tokio_tungstenite::WebSocketStream<
@@ -234,7 +235,9 @@ async fn relay_websocket(
     };
     let to_upstream = async {
         while let Some(Ok(msg)) = client_rx.next().await {
-            touch();
+            if !matches!(msg, AxumMessage::Ping(_) | AxumMessage::Pong(_)) {
+                touch();
+            }
             let close = matches!(msg, AxumMessage::Close(_));
             if up_tx.send(axum_to_tungstenite(msg)).await.is_err() || close {
                 break;
@@ -243,7 +246,9 @@ async fn relay_websocket(
     };
     let to_client = async {
         while let Some(Ok(msg)) = up_rx.next().await {
-            touch();
+            if !matches!(msg, WsMessage::Ping(_) | WsMessage::Pong(_)) {
+                touch();
+            }
             let close = matches!(msg, WsMessage::Close(_));
             if let Some(mapped) = tungstenite_to_axum(msg)
                 && client_tx.send(mapped).await.is_err()

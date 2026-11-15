@@ -533,8 +533,8 @@ but not the host, its LAN, or tailnet devices. The runner binds host `127.0.0.1:
 closing the rest, stops reading a side while 64 KiB wait for its peer, and closes a connection idle for `IDLE_TIMEOUT`. Startup verifies through host socket ownership in `/proc/net/tcp{,6}`
 that the unit's cgroup holds `127.0.0.1:$PORT` and that it answers HTTP, staging changes and cleaning up any new row,
 runtime directory, or transient unit if validation fails (preserving a running app if a `start` update fails). Active apps stop
-automatically after 30 minutes without gateway traffic (`IDLE_TIMEOUT`); a WebSocket with no message either way for that long is closed, and the gateway
-holds at most 64 open WebSockets and 64 requests until their response headers arrive, answering 503 beyond them. Apps
+automatically after 30 minutes without gateway traffic (`IDLE_TIMEOUT`); a WebSocket with no data message either way for that long is closed (pings do not count), and the gateway
+holds at most 64 open WebSockets and, across all apps, 64 requests, each from its arrival through its body and any wake until its response headers arrive, answering 503 beyond them. Apps
 reconcile across `renoa-node` restarts without interrupting live processes: before serving, the node removes runtime directories no app names,
 then re-checks each app under its lock and stops units no app owns.
 

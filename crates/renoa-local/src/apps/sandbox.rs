@@ -142,6 +142,10 @@ pub(crate) fn write_runtime_artifacts(spec: &SandboxSpec) -> Result<Vec<OsString
     ])
 }
 
+/// slirp4netns's default `10.0.2.0/24`: gateway `.2`, DNS `.3`, the app `.100`.
+const SLIRP_NETWORK: std::ops::RangeInclusive<Ipv4Addr> =
+    Ipv4Addr::new(10, 0, 2, 0)..=Ipv4Addr::new(10, 0, 2, 255);
+
 /// Every blocked range plus each IPv4 address the host holds, so an app
 /// cannot reach the host's LAN, public, or tailnet listeners through slirp.
 fn blocked_routes() -> Result<Vec<String>, AppError> {
@@ -149,7 +153,9 @@ fn blocked_routes() -> Result<Vec<String>, AppError> {
     for interface in nix::ifaddrs::getifaddrs().map_err(io::Error::from)? {
         if let Some(address) = interface.address.as_ref().and_then(|a| a.as_sockaddr_in()) {
             let ip = address.ip();
-            if !ip.is_loopback() {
+            // An address inside slirp's network would cut the app off from
+            // slirp's gateway and DNS; the more specific routes win there anyway.
+            if !ip.is_loopback() && !SLIRP_NETWORK.contains(&ip) {
                 host_addresses.insert(ip);
             }
         }

@@ -123,7 +123,8 @@ impl Apps {
     /// committing its row, so a concurrent sweep would delete it.
     ///
     /// # Errors
-    /// Returns [`AppError`] when the catalog cannot be read.
+    /// Returns [`AppError`] when the catalog cannot be read or, after trying
+    /// every orphan, the first one that could not be removed.
     pub fn sweep_orphan_dirs(&self) -> Result<usize, AppError> {
         let known: HashSet<String> = list_all_records(&self.database)?
             .into_iter()
@@ -133,15 +134,21 @@ impl Apps {
             return Ok(0);
         };
         let mut removed = 0;
+        let mut first_err = None;
         for entry in entries.flatten() {
             let name = entry.file_name();
             if name.to_str().is_some_and(|id| known.contains(id)) {
                 continue;
             }
-            fs::remove_dir_all(entry.path())?;
-            removed += 1;
+            // One directory an app made unremovable must not shield the rest.
+            match fs::remove_dir_all(entry.path()) {
+                Ok(()) => removed += 1,
+                Err(err) => {
+                    first_err.get_or_insert(err);
+                }
+            }
         }
-        Ok(removed)
+        first_err.map_or(Ok(removed), |err| Err(err.into()))
     }
 
     /// Reconciles `host_apps` with `systemd --user` when `renoa-node` starts.
