@@ -1,7 +1,7 @@
 //! The chats the owner opened this run, most recent first, and the walk
 //! Ctrl+Tab makes through them while Ctrl is held: each press goes one
-//! further, and letting go of Ctrl makes the chat it stopped on the most
-//! recent, as an app switcher does.
+//! further, and letting go of Ctrl opens the chat it stopped on and makes it
+//! the most recent, as an app switcher does.
 
 use renoa_rcp_wire::TaskId;
 
@@ -39,12 +39,23 @@ impl Recent {
         Some(self.order[at])
     }
 
-    /// Ctrl came up: the chat the walk stopped on becomes the most recent.
-    pub(super) fn settle(&mut self) {
-        if let Some(at) = self.walk.take() {
-            let task = self.order.remove(at);
-            self.order.insert(0, task);
-        }
+    /// Ctrl came up: the chat the walk stopped on becomes the most recent,
+    /// and is the one to open.
+    pub(super) fn settle(&mut self) -> Option<TaskId> {
+        let at = self.walk.take()?;
+        let task = self.order.remove(at);
+        self.order.insert(0, task);
+        Some(task)
+    }
+
+    /// Esc: the walk ends where it began.
+    pub(super) fn cancel(&mut self) {
+        self.walk = None;
+    }
+
+    /// The opened chats and where the walk is, while one goes on.
+    pub(super) fn walking(&self) -> Option<(&[TaskId], usize)> {
+        self.walk.map(|at| (self.order.as_slice(), at))
     }
 
     /// Drops the chats whose agents are gone, ending any walk.
@@ -91,10 +102,22 @@ mod tests {
         let mut recent = opened(&[a, b, c]);
         recent.step(false);
         recent.step(false);
-        recent.settle();
+        assert_eq!(recent.settle(), Some(a));
+        assert_eq!(recent.settle(), None, "the walk is over");
         assert_eq!(recent.step(false), Some(c), "a was settled on, then c");
         recent.settle();
         assert_eq!(recent.step(false), Some(a), "one press toggles back");
+    }
+
+    #[test]
+    fn esc_leaves_the_order_as_it_was() {
+        let [a, b, c] = [TaskId::new(), TaskId::new(), TaskId::new()];
+        let mut recent = opened(&[a, b, c]);
+        recent.step(false);
+        recent.step(false);
+        recent.cancel();
+        assert_eq!(recent.walking(), None);
+        assert_eq!(recent.step(false), Some(b));
     }
 
     #[test]

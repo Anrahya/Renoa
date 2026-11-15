@@ -69,8 +69,8 @@ pub enum Move {
     Close,
     /// Shows or hides the sidebar.
     ToggleSidebar,
-    /// Goes to the chat opened before, or back up the list with Shift, while
-    /// Ctrl stays held.
+    /// Moves the switcher to the chat opened before, or back up the list with
+    /// Shift, while Ctrl stays held.
     Cycle {
         back: bool,
     },
@@ -81,8 +81,13 @@ pub enum Move {
 /// Ctrl on every platform, as in a browser.
 pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
     let held = &keystroke.modifiers;
-    if keystroke.key == "tab" && held.control && !held.platform && !held.alt {
-        return Some(Move::Cycle { back: held.shift });
+    if held.control && !held.platform && !held.alt {
+        match keystroke.key.as_str() {
+            "tab" => return Some(Move::Cycle { back: held.shift }),
+            // Esc with Ctrl still held, to leave the switcher.
+            "escape" if !held.shift => return Some(Move::Close),
+            _ => {}
+        }
     }
     // The modifier `command` binds with.
     let command = if cfg!(target_os = "macos") {
@@ -138,12 +143,22 @@ impl Chats {
                 root = listen(root, moved, cx);
             }
         }
-        // Ctrl coming up ends a Ctrl+Tab walk on the chat it reached.
-        root.on_modifiers_changed(cx.listener(|chats, event: &ModifiersChangedEvent, _, _| {
-            if !event.modifiers.control {
-                chats.recent.settle();
-            }
-        }))
+        // Ctrl coming up opens the chat the Ctrl+Tab walk reached.
+        root.on_modifiers_changed(cx.listener(
+            |chats, event: &ModifiersChangedEvent, window, cx| {
+                if event.modifiers.control {
+                    return;
+                }
+                if let Some(index) = chats
+                    .recent
+                    .settle()
+                    .and_then(|task| chats.agent_index(task))
+                {
+                    chats.show_agent(index, window, cx);
+                }
+                cx.notify();
+            },
+        ))
     }
 }
 
@@ -191,6 +206,7 @@ mod tests {
     fn ctrl_tab_cycles_on_every_platform() {
         assert_eq!(press("ctrl-tab"), Some(Move::Cycle { back: false }));
         assert_eq!(press("ctrl-shift-tab"), Some(Move::Cycle { back: true }));
+        assert_eq!(press("ctrl-escape"), Some(Move::Close));
     }
 
     #[test]

@@ -465,6 +465,7 @@ impl Render for Chats {
             .child(sidebar)
             .child(main)
             .children(overlay)
+            .children(self.switcher(palette))
     }
 }
 
@@ -482,6 +483,7 @@ mod jump;
 pub(crate) mod keys;
 mod overlay;
 mod recent;
+mod switcher;
 // The screens render with the Mac's text system.
 #[cfg(all(test, target_os = "macos"))]
 mod screens;

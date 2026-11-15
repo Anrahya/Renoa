@@ -676,10 +676,11 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
                 act(&|window, cx| window.click(("agent", 1usize), cx), cx);
                 (false, None, false, chat("Chef"))
             }
-            // Chef, then Cook, opened: Ctrl+Tab goes back to Chef.
+            // Chef, then Cook, opened: Ctrl+Tab shows the switcher and stays
+            // on Cook until Ctrl comes up, which this test never lets it do.
             "Switch between open chats" => {
                 act(&|window, cx| window.click(("agent", 1usize), cx), cx);
-                (false, None, false, chat("Chef"))
+                (false, None, false, chat("Cook"))
             }
             "Close a sheet" => (false, None, false, chat("Chef")),
             page => {
@@ -1110,14 +1111,36 @@ fn ctrl_tab_walks_only_the_chats_the_owner_opened(cx: &mut TestAppContext) {
     for index in [0usize, 1, 2] {
         act(&|window, cx| window.click(("agent", index), cx), cx);
     }
+    // The switcher's marked chat, while it shows.
+    let marked = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| {
+            let (opened, at) = chats.recent.walking()?;
+            let index = chats.agent_index(opened[at])?;
+            Some(chats.agents[index].name.clone())
+        })
+    };
     act(&ctrl(true), cx);
     for expected in ["Bo", "Ann", "Cy", "Bo"] {
         act(&|window, cx| window.press("ctrl-tab", cx), cx);
-        assert_eq!(chosen(cx).as_deref(), Some(expected), "Di is skipped");
+        assert_eq!(marked(cx).as_deref(), Some(expected), "Di is skipped");
+        assert_eq!(
+            chosen(cx).as_deref(),
+            Some("Cy"),
+            "no switch while Ctrl is held"
+        );
     }
-    // Letting go settles on Bo; one press then goes back to Cy.
+    // Letting go opens Bo; one press then marks Cy, and letting go opens it.
     act(&ctrl(false), cx);
+    assert_eq!(marked(cx), None, "the switcher closes");
+    assert_eq!(chosen(cx).as_deref(), Some("Bo"));
     act(&ctrl(true), cx);
     act(&|window, cx| window.press("ctrl-tab", cx), cx);
+    act(&ctrl(false), cx);
+    assert_eq!(chosen(cx).as_deref(), Some("Cy"));
+    // Esc leaves the switcher where it began.
+    act(&ctrl(true), cx);
+    act(&|window, cx| window.press("ctrl-tab", cx), cx);
+    act(&|window, cx| window.press("ctrl-escape", cx), cx);
+    act(&ctrl(false), cx);
     assert_eq!(chosen(cx).as_deref(), Some("Cy"));
 }

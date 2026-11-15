@@ -280,6 +280,10 @@ impl Chats {
     /// Makes `moved`; says whether it could.
     pub(super) fn go(&mut self, moved: Move, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match moved {
+            Move::Close if self.recent.walking().is_some() => {
+                self.recent.cancel();
+                cx.notify();
+            }
             Move::Close if self.sheet.is_none() && self.jumping.is_none() => return false,
             Move::Close => self.close(window, cx),
             Move::Jump => self.open_jump(window, cx),
@@ -297,16 +301,13 @@ impl Chats {
                 None => return false,
             },
             Move::ToggleSidebar => self.toggle_sidebar(window, cx),
+            // The switcher shows the walk; letting go of Ctrl opens its chat.
             Move::Cycle { back } => {
-                let Some(index) = self
-                    .recent
-                    .step(back)
-                    .and_then(|task| self.agent_index(task))
-                else {
+                if self.recent.step(back).is_none() {
                     return false;
-                };
+                }
                 self.close(window, cx);
-                self.show_agent(index, window, cx);
+                cx.notify();
             }
         }
         true
