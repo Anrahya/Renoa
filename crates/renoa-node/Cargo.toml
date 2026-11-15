@@ -10,7 +10,7 @@ name = "renoa-node"
 path = "src/bin/renoa-node/main.rs"
 
 [dependencies]
-axum = { workspace = true, features = ["http1", "tokio"] }
+axum = { workspace = true, features = ["http1", "tokio", "ws"] }
 base64.workspace = true
 futures-util.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }

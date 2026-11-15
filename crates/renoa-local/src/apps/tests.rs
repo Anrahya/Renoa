@@ -74,7 +74,11 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = tempfile::Builder::new()
+            .prefix("renoa-apps-test-")
+            .tempdir_in("/var/tmp")
+            .or_else(|_| tempfile::tempdir())
+            .expect("tempdir");
         let root = dir.path().canonicalize().expect("canonical");
         let home = RenoaHome::at(root.join("home")).expect("home");
         home.initialize().expect("init home");
@@ -376,14 +380,41 @@ async fn unresponsive_port_is_reported_without_residue_or_infinite_retry() {
     )
     .expect("overwrite with hanging script");
 
-    let first_wake = apps.ensure_running("stale").await;
+    let hang_wake = apps.ensure_running("stale").await;
+    assert!(
+        matches!(hang_wake, Err(AppError::StartupFailed { .. })),
+        "{hang_wake:?}"
+    );
+    let after_hang = apps
+        .status_for("stale", None)
+        .await
+        .expect("status after timeout");
+    assert_eq!(
+        after_hang.state,
+        AppState::Stopped,
+        "cold-start timeout must keep stopped state so next request can retry"
+    );
+
+    fs::write(
+        f.workspace.join("stale/server.py"),
+        "import sys\nprint('crash', flush=True)\nsys.exit(1)\n",
+    )
+    .expect("overwrite with crashing script");
+
+    let crash_apps = f.apps();
+    let first_wake = crash_apps.ensure_running("stale").await;
     assert!(
         matches!(first_wake, Err(AppError::Failed { .. })),
         "{first_wake:?}"
     );
+    let after_crash = crash_apps
+        .status_for("stale", None)
+        .await
+        .expect("status after crash");
+    assert_eq!(after_crash.state, AppState::Failed);
 
     let t0 = Instant::now();
-    let second_wake = apps.ensure_running("stale").await;
+    let second_wake = crash_apps.ensure_running("stale").await;
     assert!(
         matches!(second_wake, Err(AppError::Failed { .. })),
         "{second_wake:?}"
@@ -428,6 +459,8 @@ class H(http.server.BaseHTTPRequestHandler):
             "app_write": try_write("/app/app_wrote.txt", "ok-app"),
             "tmp_write": try_write("/tmp/scratch_wrote.txt", "ok-tmp"),
             "tmp_log": try_read("/tmp/app.log"),
+            "passwd": try_read("/etc/passwd"),
+            "shadow": try_read("/etc/shadow"),
         }}
         body = json.dumps(data).encode()
         self.send_response(200)
@@ -505,6 +538,18 @@ async fn bwrap_sandbox_isolates_credentials_state_other_apps_and_root() {
     );
     assert!(
         probes["tmp_log"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("ERR:")),
+        "{probes}"
+    );
+    assert!(
+        probes["passwd"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("ERR:")),
+        "{probes}"
+    );
+    assert!(
+        probes["shadow"]
             .as_str()
             .is_some_and(|s| s.starts_with("ERR:")),
         "{probes}"
@@ -855,15 +900,270 @@ async fn existing_app_command_update_succeeds_and_failure_marks_failed() {
             "python3 nonexistent.py",
         )
         .await
-        .expect_err("failing command update must fail");
+        .expect_err("failing command update must fail staging");
     assert!(matches!(err, AppError::StartupFailed { .. }), "{err:?}");
+
+    let still_live = apps
+        .status_for("updatable", None)
+        .await
+        .expect("running app stays running after staging failure");
+    assert_eq!(still_live.state, AppState::Running);
+    assert_eq!(still_live.command, "python3 -u server.py");
+    let still_resp = get_json(format!("http://127.0.0.1:{}/still-live", started.port)).await;
+    assert_eq!(still_resp["base_path"], "/apps/updatable");
+
+    apps.stop_for("updatable", None)
+        .await
+        .expect("stop updatable before failing stopped start");
+    let stopped_err = apps
+        .start(
+            f.agent,
+            None,
+            &f.workspace,
+            "updatable",
+            "updatable",
+            "python3 nonexistent.py",
+        )
+        .await
+        .expect_err("failing stopped update must fail");
+    assert!(
+        matches!(stopped_err, AppError::StartupFailed { .. }),
+        "{stopped_err:?}"
+    );
 
     let status = apps
         .status_for("updatable", None)
         .await
         .expect("status after failed update");
     assert_eq!(status.state, AppState::Failed);
-    assert_eq!(status.command, "python3 nonexistent.py");
+    assert_eq!(status.command, "python3 -u server.py");
     assert!(status.failure_reason.is_some());
     assert_eq!(unit_main_pid_sync(&f.database, "updatable"), 0);
+}
+
+#[tokio::test]
+async fn command_supports_braced_vars_and_literals_while_rejecting_workspace_root_folder() {
+    let f = Fixture::new();
+    let script = r#"import http.server, json, os, sys
+
+port = int(sys.argv[1])
+base_arg = sys.argv[2]
+tag = sys.argv[3]
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({
+            "port": port,
+            "base": base_arg,
+            "tag": tag,
+            "env_port": os.environ["PORT"],
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, format, *args):
+        pass
+
+http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
+"#;
+    f.write_app("braced", script);
+    f.cleanup.register("braced");
+    let apps = f.apps();
+
+    let dot_err = apps
+        .start(
+            f.agent,
+            None,
+            &f.workspace,
+            "rootrefused",
+            ".",
+            "python3 server.py",
+        )
+        .await
+        .expect_err("workspace root `.` must be refused as app folder");
+    assert!(matches!(dot_err, AppError::InvalidFolder(_)), "{dot_err:?}");
+    assert_eq!(f.count_rows(), 0);
+
+    let started = apps
+        .start(
+            f.agent,
+            None,
+            &f.workspace,
+            "braced",
+            "braced",
+            r#"python3 server.py "${PORT}" "${BASE_PATH}" '$100'"#,
+        )
+        .await
+        .expect("start with braced vars and literal dollar");
+    let resp = get_json(format!("http://127.0.0.1:{}/", started.port)).await;
+    assert_eq!(resp["port"], started.port);
+    assert_eq!(resp["base"], "/apps/braced");
+    assert_eq!(resp["tag"], "$100");
+    assert_eq!(resp["env_port"], started.port.to_string());
+}
+
+#[tokio::test]
+async fn sandbox_isolates_host_loopback_and_refuses_secondary_listener() {
+    let f = Fixture::new();
+    let host_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind host listener");
+    let host_port = host_listener.local_addr().expect("local addr").port();
+
+    let net_script = format!(
+        r#"import http.server, json, os, socket
+
+PORT = int(os.environ["PORT"])
+
+def probe(host, port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        s.connect((host, port))
+        return "CONNECTED"
+    except OSError as e:
+        return "ERR:" + type(e).__name__ + ":" + str(e)
+    finally:
+        s.close()
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({{
+            "host_loopback": probe("127.0.0.1", {host_port}),
+            "slirp_host_gw": probe("10.0.2.2", 22),
+        }}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, format, *args):
+        pass
+
+http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+"#
+    );
+    f.write_app("netiso", &net_script);
+    f.cleanup.register("netiso");
+    let apps = f.apps();
+
+    let started = apps
+        .start(
+            f.agent,
+            None,
+            &f.workspace,
+            "netiso",
+            "netiso",
+            "python3 server.py",
+        )
+        .await
+        .expect("start netiso");
+    let probes = get_json(format!("http://127.0.0.1:{}/", started.port)).await;
+    drop(host_listener);
+    assert!(
+        probes["host_loopback"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("ERR:")),
+        "sandbox must not reach host 127.0.0.1 services: {probes}"
+    );
+    assert!(
+        probes["slirp_host_gw"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("ERR:")),
+        "sandbox must block slirp4netns 10.0.2.2 host loopback: {probes}"
+    );
+
+    let secondary_script = r#"import http.server, os, socket
+PORT = int(os.environ["PORT"])
+extra = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+extra.bind(("127.0.0.1", PORT + 1))
+extra.listen(1)
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+    def log_message(self, format, *args):
+        pass
+http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+"#;
+    f.write_app("secondport", secondary_script);
+    f.cleanup.register("secondport");
+    let err = apps
+        .start(
+            f.agent,
+            None,
+            &f.workspace,
+            "secondport",
+            "secondport",
+            "python3 server.py",
+        )
+        .await
+        .expect_err("binding extra loopback port inside sandbox must be refused");
+    assert!(
+        matches!(err, AppError::StartupFailed { ref reason } if reason.contains("127.0.0.1 only")),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn port_squatting_detection_rejects_external_host_listener() {
+    let f = Fixture::new();
+    f.write_app("legit", TEST_HTTP_SERVER);
+    f.cleanup.register("legit");
+    let apps = f.apps();
+    apps.start(
+        f.agent,
+        None,
+        &f.workspace,
+        "legit",
+        "legit",
+        "python3 server.py",
+    )
+    .await
+    .expect("start legit");
+
+    let main_pid = unit_main_pid_sync(&f.database, "legit");
+    assert_ne!(main_pid, 0);
+    let dirs = f.state_app_dirs();
+    assert_eq!(dirs.len(), 1);
+    let runtime_dir = &dirs[0];
+
+    let squatter = std::net::TcpListener::bind("127.0.0.1:0").expect("bind squatter");
+    let squatted_port = squatter.local_addr().expect("squatter addr").port();
+
+    let verdict = super::health::check_unit_listener(main_pid, runtime_dir, squatted_port);
+    assert_eq!(
+        verdict,
+        Err(super::health::ListenerViolation::PortSquatted(
+            squatted_port
+        ))
+    );
+}
+
+#[tokio::test]
+async fn inactive_unit_transitions_running_app_to_stopped_not_failed() {
+    let f = Fixture::new();
+    f.write_app("graceful", TEST_HTTP_SERVER);
+    f.cleanup.register("graceful");
+    let apps = f.apps();
+    apps.start(
+        f.agent,
+        None,
+        &f.workspace,
+        "graceful",
+        "graceful",
+        "python3 server.py",
+    )
+    .await
+    .expect("start graceful");
+
+    stop_unit_sync(&f.database, "graceful");
+    assert_eq!(unit_main_pid_sync(&f.database, "graceful"), 0);
+
+    let status = apps
+        .status_for("graceful", None)
+        .await
+        .expect("status after inactive unit");
+    assert_eq!(status.state, AppState::Stopped);
+    assert_eq!(status.failure_reason, None);
 }

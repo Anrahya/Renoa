@@ -1,8 +1,9 @@
-//! Systemd `--user` transient unit supervision + `bubblewrap` sandboxing.
+//! Systemd `--user` transient unit supervision backed by `sandbox`.
 
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs, io,
+    os::unix::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -12,17 +13,19 @@ use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
 
 use super::{
-    AppError, CPU_QUOTA, CRASH_BURST, CRASH_INTERVAL_SECS, LOG_TAIL_BYTES, LOG_TAIL_LINES,
-    MEMORY_MAX,
+    AppError, CPU_QUOTA, CRASH_BURST, CRASH_INTERVAL_SECS, MEMORY_MAX,
+    model::{APPS_SLICE, MEMORY_SWAP_MAX, SLICE_MEMORY_MAX, SLICE_TASKS_MAX, TASKS_MAX},
+    sandbox::{BWRAP_PATH, PYTHON3_PATH, SLIRP4NETNS_PATH, SandboxSpec, write_runtime_artifacts},
 };
 
-const BWRAP_PATH: &str = "/usr/bin/bwrap";
-const SANDBOX_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+pub(super) use super::sandbox::read_log_tail;
+
 const UNIT_PREFIX: &str = "renoa-app-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum UnitStatus {
-    Active,
+    Active { main_pid: u32 },
+    Activating,
     Failed { detail: String },
     Inactive,
 }
@@ -33,6 +36,7 @@ pub(super) struct StartUnitSpec {
     pub app_name: String,
     pub app_dir: PathBuf,
     pub scratch_dir: PathBuf,
+    pub runtime_dir: PathBuf,
     pub log_file: PathBuf,
     pub command: String,
     pub port: u16,
@@ -54,6 +58,14 @@ pub(super) fn home_hash(database: &Path) -> String {
 
 pub(super) fn unit_name(database: &Path, app_name: &str) -> String {
     format!("{UNIT_PREFIX}{}-{app_name}.service", home_hash(database))
+}
+
+pub(super) fn staging_unit_name(database: &Path, app_name: &str, seq: u64) -> String {
+    let pid = std::process::id();
+    format!(
+        "{UNIT_PREFIX}{}-{app_name}-stage-{pid}-{seq}.service",
+        home_hash(database)
+    )
 }
 
 pub(super) fn unit_prefix_for(database: &Path) -> String {
@@ -91,13 +103,27 @@ fn user_command(program: &str) -> Command {
     cmd
 }
 
-/// Checks that `bwrap` and `systemd-run --user` (`user@<uid>.service`) are
+fn escape_systemd_dollars(arg: &OsStr) -> OsString {
+    let bytes = arg.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        out.push(b);
+        if b == b'$' {
+            out.push(b'$');
+        }
+    }
+    OsString::from_vec(out)
+}
+
+/// Checks that `bwrap`, `slirp4netns`, `python3`, and `systemd-run --user` are
 /// available before mutating any disk state or database rows.
 pub(super) async fn preflight() -> Result<(), AppError> {
-    if !Path::new(BWRAP_PATH).is_file() {
-        return Err(AppError::SupervisorUnavailable(format!(
-            "`{BWRAP_PATH}` is not installed"
-        )));
+    for required in [BWRAP_PATH, SLIRP4NETNS_PATH, PYTHON3_PATH] {
+        if !Path::new(required).is_file() {
+            return Err(AppError::SupervisorUnavailable(format!(
+                "`{required}` is not installed"
+            )));
+        }
     }
     let output = user_command("systemctl")
         .args(["--user", "is-system-running"])
@@ -116,135 +142,81 @@ pub(super) async fn preflight() -> Result<(), AppError> {
     )))
 }
 
-fn append_system_ro_mounts(args: &mut Vec<OsString>) {
-    args.extend([
-        OsString::from("--ro-bind"),
-        OsString::from("/usr"),
-        OsString::from("/usr"),
-    ]);
-
-    for sys_path in ["/bin", "/lib", "/lib64", "/sbin"] {
-        let p = Path::new(sys_path);
-        match fs::symlink_metadata(p) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                if let Ok(target) = fs::read_link(p) {
-                    args.extend([
-                        OsString::from("--symlink"),
-                        target.into_os_string(),
-                        OsString::from(sys_path),
-                    ]);
-                }
-            }
-            Ok(meta) if meta.is_dir() => {
-                args.extend([
-                    OsString::from("--ro-bind"),
-                    OsString::from(sys_path),
-                    OsString::from(sys_path),
-                ]);
-            }
-            _ => {}
-        }
+async fn ensure_apps_slice() -> Result<(), AppError> {
+    let output = user_command("systemctl")
+        .args([
+            "--user",
+            "set-property",
+            "--runtime",
+            APPS_SLICE,
+            &format!("MemoryMax={SLICE_MEMORY_MAX}"),
+            &format!("MemorySwapMax={MEMORY_SWAP_MAX}"),
+            &format!("TasksMax={SLICE_TASKS_MAX}"),
+        ])
+        .output()
+        .await
+        .map_err(|err| {
+            AppError::SupervisorUnavailable(format!("cannot configure `{APPS_SLICE}`: {err}"))
+        })?;
+    if output.status.success() {
+        return Ok(());
     }
-
-    for extra_ro in ["/etc", "/run/systemd/resolve"] {
-        if Path::new(extra_ro).is_dir() {
-            args.extend([
-                OsString::from("--ro-bind"),
-                OsString::from(extra_ro),
-                OsString::from(extra_ro),
-            ]);
-        }
-    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(AppError::SupervisorUnavailable(format!(
+        "failed to configure `{APPS_SLICE}`: {stderr}"
+    )))
 }
 
-/// Starts a transient `systemd --user` unit running `bwrap` around `command`.
+/// Starts a transient `systemd --user` unit running the sandbox supervisor around `command`.
 pub(super) async fn start_unit(spec: &StartUnitSpec) -> Result<(), AppError> {
     let _ = stop_unit(&spec.unit).await;
+    ensure_apps_slice().await?;
 
-    let mut args: Vec<OsString> = vec![
-        OsString::from("--user"),
-        OsString::from("--quiet"),
-        OsString::from("--unit"),
-        OsString::from(&spec.unit),
-        OsString::from("--description"),
-        OsString::from(format!("Renoa live app {}", spec.app_name)),
-        OsString::from("-p"),
-        OsString::from("Type=exec"),
-        OsString::from("-p"),
-        OsString::from("Restart=on-failure"),
-        OsString::from("-p"),
-        OsString::from("RestartSec=200ms"),
-        OsString::from("-p"),
-        OsString::from(format!("StartLimitIntervalSec={CRASH_INTERVAL_SECS}s")),
-        OsString::from("-p"),
-        OsString::from(format!("StartLimitBurst={CRASH_BURST}")),
-        OsString::from("-p"),
-        OsString::from(format!("MemoryMax={MEMORY_MAX}")),
-        OsString::from("-p"),
-        OsString::from(format!("CPUQuota={CPU_QUOTA}")),
-        OsString::from("-p"),
-        OsString::from("TimeoutStopSec=5s"),
-        OsString::from("-p"),
-        OsString::from("KillMode=control-group"),
-        OsString::from("-p"),
-        OsString::from(format!("StandardOutput=append:{}", spec.log_file.display())),
-        OsString::from("-p"),
-        OsString::from(format!("StandardError=append:{}", spec.log_file.display())),
-        OsString::from("--"),
-        OsString::from(BWRAP_PATH),
-        OsString::from("--unshare-all"),
-        OsString::from("--share-net"),
-        OsString::from("--die-with-parent"),
-        OsString::from("--new-session"),
+    let runner_args = write_runtime_artifacts(&SandboxSpec {
+        app_dir: spec.app_dir.clone(),
+        scratch_dir: spec.scratch_dir.clone(),
+        runtime_dir: spec.runtime_dir.clone(),
+        log_file: spec.log_file.clone(),
+        port: spec.port,
+        base_path: spec.base_path.clone(),
+        command: spec.command.clone(),
+    })?;
+
+    let description = format!("Renoa live app {}", spec.app_name);
+    let props = [
+        "Type=exec".to_owned(),
+        "Restart=on-failure".to_owned(),
+        "RestartSec=200ms".to_owned(),
+        format!("StartLimitIntervalSec={CRASH_INTERVAL_SECS}s"),
+        format!("StartLimitBurst={CRASH_BURST}"),
+        format!("MemoryMax={MEMORY_MAX}"),
+        format!("MemorySwapMax={MEMORY_SWAP_MAX}"),
+        format!("TasksMax={TASKS_MAX}"),
+        format!("CPUQuota={CPU_QUOTA}"),
+        "TimeoutStopSec=5s".to_owned(),
+        "KillMode=control-group".to_owned(),
+        "StandardOutput=null".to_owned(),
+        "StandardError=journal".to_owned(),
     ];
-
-    append_system_ro_mounts(&mut args);
-
-    args.extend([
-        OsString::from("--dev"),
-        OsString::from("/dev"),
-        OsString::from("--proc"),
-        OsString::from("/proc"),
-        OsString::from("--bind"),
-        spec.app_dir.as_os_str().to_os_string(),
-        OsString::from("/app"),
-        OsString::from("--bind"),
-        spec.scratch_dir.as_os_str().to_os_string(),
-        OsString::from("/tmp"),
-        OsString::from("--remount-ro"),
-        OsString::from("/"),
-        OsString::from("--chdir"),
-        OsString::from("/app"),
-        OsString::from("--clearenv"),
-        OsString::from("--setenv"),
-        OsString::from("PATH"),
-        OsString::from(SANDBOX_PATH),
-        OsString::from("--setenv"),
-        OsString::from("HOME"),
-        OsString::from("/tmp"),
-        OsString::from("--setenv"),
-        OsString::from("TMPDIR"),
-        OsString::from("/tmp"),
-        OsString::from("--setenv"),
-        OsString::from("PORT"),
-        OsString::from(spec.port.to_string()),
-        OsString::from("--setenv"),
-        OsString::from("BASE_PATH"),
-        OsString::from(&spec.base_path),
-        OsString::from("--setenv"),
-        OsString::from("HOST"),
-        OsString::from("127.0.0.1"),
-        OsString::from("--setenv"),
-        OsString::from("HOSTNAME"),
-        OsString::from("127.0.0.1"),
-        OsString::from("--setenv"),
-        OsString::from("BIND"),
-        OsString::from("127.0.0.1"),
-        OsString::from("--"),
-        OsString::from("/bin/sh"),
-        OsString::from("-c"),
-        OsString::from(&spec.command),
-    ]);
+    let mut args: Vec<OsString> = [
+        "--user",
+        "--quiet",
+        "--slice",
+        APPS_SLICE,
+        "--unit",
+        &spec.unit,
+        "--description",
+        &description,
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+    for prop in &props {
+        args.push(OsString::from("-p"));
+        args.push(OsString::from(prop));
+    }
+    args.push(OsString::from("--"));
+    args.extend(runner_args.into_iter().map(|a| escape_systemd_dollars(&a)));
 
     let output = user_command("systemd-run")
         .args(&args)
@@ -300,6 +272,8 @@ pub(super) async fn unit_status(unit: &str) -> Result<UnitStatus, io::Error> {
             "-p",
             "SubState",
             "-p",
+            "MainPID",
+            "-p",
             "Result",
             "-p",
             "ExecMainStatus",
@@ -318,6 +292,7 @@ pub(super) async fn unit_status(unit: &str) -> Result<UnitStatus, io::Error> {
     let mut load_state = "";
     let mut active_state = "";
     let mut sub_state = "";
+    let mut main_pid: u32 = 0;
     let mut result = "";
     let mut exec_status = "";
     for line in stdout.lines() {
@@ -326,6 +301,7 @@ pub(super) async fn unit_status(unit: &str) -> Result<UnitStatus, io::Error> {
                 "LoadState" => load_state = v,
                 "ActiveState" => active_state = v,
                 "SubState" => sub_state = v,
+                "MainPID" => main_pid = v.trim().parse::<u32>().unwrap_or(0),
                 "Result" => result = v,
                 "ExecMainStatus" => exec_status = v,
                 _ => {}
@@ -336,7 +312,7 @@ pub(super) async fn unit_status(unit: &str) -> Result<UnitStatus, io::Error> {
     if load_state == "not-found" || active_state == "inactive" || active_state.is_empty() {
         return Ok(UnitStatus::Inactive);
     }
-    if active_state == "failed" {
+    if active_state == "failed" || sub_state == "failed" {
         let detail = if result.is_empty() {
             format!("unit failed (exit status {exec_status})")
         } else {
@@ -344,8 +320,14 @@ pub(super) async fn unit_status(unit: &str) -> Result<UnitStatus, io::Error> {
         };
         return Ok(UnitStatus::Failed { detail });
     }
-    if matches!(active_state, "active" | "activating" | "reloading") && sub_state != "failed" {
-        return Ok(UnitStatus::Active);
+    if active_state == "active" && sub_state == "running" && main_pid > 0 {
+        return Ok(UnitStatus::Active { main_pid });
+    }
+    if matches!(
+        active_state,
+        "activating" | "reloading" | "deactivating" | "active" | "refreshing"
+    ) {
+        return Ok(UnitStatus::Activating);
     }
     Ok(UnitStatus::Inactive)
 }
@@ -377,31 +359,6 @@ pub(super) async fn list_home_units(database: &Path) -> Result<Vec<String>, io::
         .collect())
 }
 
-pub(super) fn read_log_tail(log_file: &Path) -> String {
-    use std::io::{Read as _, Seek as _, SeekFrom};
-    let Ok(mut file) = fs::File::open(log_file) else {
-        return String::new();
-    };
-    let Ok(len) = file.metadata().map(|m| m.len()) else {
-        return String::new();
-    };
-    let limit = LOG_TAIL_BYTES as u64;
-    let start = len.saturating_sub(limit);
-    if file.seek(SeekFrom::Start(start)).is_err() {
-        return String::new();
-    }
-    let mut bytes = Vec::with_capacity(usize::try_from(len - start).unwrap_or(LOG_TAIL_BYTES));
-    if file.take(limit).read_to_end(&mut bytes).is_err() {
-        return String::new();
-    }
-    let text = String::from_utf8_lossy(&bytes);
-    let mut lines: Vec<&str> = text.lines().collect();
-    if lines.len() > LOG_TAIL_LINES {
-        lines = lines.split_off(lines.len() - LOG_TAIL_LINES);
-    }
-    lines.join("\n")
-}
-
 fn sync_systemctl() -> std::process::Command {
     let mut cmd = std::process::Command::new("systemctl");
     cmd.stdin(Stdio::null());
@@ -411,11 +368,33 @@ fn sync_systemctl() -> std::process::Command {
     cmd
 }
 
+fn stop_specific_unit_sync(unit: &str) -> io::Result<()> {
+    let stop_out = sync_systemctl().args(["--user", "stop", unit]).output()?;
+    let _ = sync_systemctl()
+        .args(["--user", "reset-failed", unit])
+        .output();
+    if stop_out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&stop_out.stderr);
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("not loaded") || lower.contains("no such") {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "systemctl stop `{unit}` failed: {}",
+        stderr.trim()
+    )))
+}
+
 /// Synchronously stops any `renoa-app-<hash12>-*.service` units for `database`
 /// during host reset.
-pub(crate) fn stop_units_sync(database: &Path) {
+///
+/// # Errors
+/// Returns an `io::Error` if querying or stopping the user units fails.
+pub(crate) fn stop_units_sync(database: &Path) -> io::Result<()> {
     let pattern = format!("{}*.service", unit_prefix_for(database));
-    let Ok(output) = sync_systemctl()
+    let output = sync_systemctl()
         .args([
             "--user",
             "list-units",
@@ -424,58 +403,76 @@ pub(crate) fn stop_units_sync(database: &Path) {
             "--no-legend",
             &pattern,
         ])
-        .output()
-    else {
-        return;
-    };
+        .output()?;
     if !output.status.success() {
-        return;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(io::Error::other(format!(
+            "systemctl list-units failed: {}",
+            stderr.trim()
+        )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut first_err: Option<io::Error> = None;
     for line in stdout.lines() {
         let Some(unit) = line.split_whitespace().next() else {
             continue;
         };
-        let _ = sync_systemctl().args(["--user", "stop", unit]).output();
-        let _ = sync_systemctl()
-            .args(["--user", "reset-failed", unit])
-            .output();
+        if let Err(err) = stop_specific_unit_sync(unit)
+            && first_err.is_none()
+        {
+            first_err = Some(err);
+        }
     }
+    if let Some(err) = first_err {
+        return Err(err);
+    }
+    Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn stop_unit_sync(database: &Path, app_name: &str) {
     let unit = unit_name(database, app_name);
-    for args in [["--user", "stop", &unit], ["--user", "reset-failed", &unit]] {
-        let _ = sync_systemctl().args(args).output();
-    }
+    let _ = stop_specific_unit_sync(&unit);
 }
 
 /// RAII drop guard stopping a transient unit if startup is cancelled or fails
 /// before the database row commits.
 pub(super) struct UnitCleanup {
-    database: PathBuf,
-    app_name: String,
+    unit: String,
     armed: bool,
 }
 
 impl UnitCleanup {
     pub(super) fn armed(database: &Path, app_name: &str) -> Self {
-        Self {
-            database: database.to_path_buf(),
-            app_name: app_name.to_owned(),
-            armed: true,
-        }
+        Self::armed_unit(unit_name(database, app_name))
     }
 
-    pub(super) fn disarm(&mut self) {
+    pub(super) const fn armed_unit(unit: String) -> Self {
+        Self { unit, armed: true }
+    }
+
+    pub(super) const fn disarm(&mut self) {
         self.armed = false;
+    }
+
+    pub(super) async fn cleanup(&mut self) {
+        if self.armed {
+            self.armed = false;
+            let _ = stop_unit(&self.unit).await;
+        }
     }
 }
 
 impl Drop for UnitCleanup {
     fn drop(&mut self) {
         if self.armed {
-            stop_unit_sync(&self.database, &self.app_name);
+            self.armed = false;
+            let unit = std::mem::take(&mut self.unit);
+            let _ = std::thread::Builder::new()
+                .name("renoa-unit-cleanup".into())
+                .spawn(move || {
+                    let _ = stop_specific_unit_sync(&unit);
+                });
         }
     }
 }

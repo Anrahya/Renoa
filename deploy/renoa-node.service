@@ -1,7 +1,7 @@
 [Unit]
 Description=Renoa RCP execution node for the shared Host
-After=network-online.target renoa-coordinator.service
-Wants=network-online.target
+After=network-online.target renoa-coordinator.service systemd-user-sessions.service user@299.service
+Wants=network-online.target user@299.service
 
 [Service]
 Type=simple

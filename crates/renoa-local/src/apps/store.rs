@@ -147,45 +147,6 @@ pub(super) fn update_existing_on_start(
     clippy::too_many_arguments,
     reason = "columns of one host_apps row update"
 )]
-pub(super) fn update_existing_on_failure(
-    database: &Path,
-    app_name: &str,
-    agent_id: &str,
-    principal_id: Option<&str>,
-    source_folder: &str,
-    command: &str,
-    reason: &str,
-    now_ms: i64,
-) -> Result<(), AppError> {
-    let conn = catalog::open_verified(database)?;
-    let changed = conn
-        .execute(
-            "UPDATE host_apps SET
-                agent_id = ?2,
-                principal_id = CASE WHEN principal_id IS NULL THEN NULL ELSE COALESCE(?3, principal_id) END,
-                source_folder = ?4,
-                command = ?5,
-                state = 'failed',
-                failure_reason = ?6,
-                updated_at_ms = ?7
-             WHERE app_name = ?1",
-            params![
-                app_name,
-                agent_id,
-                principal_id,
-                source_folder,
-                command,
-                reason,
-                now_ms
-            ],
-        )
-        .map_err(HostCatalogError::from)?;
-    if changed == 0 {
-        return Err(AppError::NotFound);
-    }
-    Ok(())
-}
-
 pub(super) fn set_state_running(
     database: &Path,
     app_name: &str,

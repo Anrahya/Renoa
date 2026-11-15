@@ -26,8 +26,8 @@ use snapshot::{CopyStats, copy_verified_tree, ensure_sites_dir, resolve_entry};
 
 pub use snapshot::SiteEntry;
 pub(crate) use snapshot::{
-    DirCleanup, create_private_dir, ensure_state_subdir, resolve_source_folder,
-    sites_dir_for_database, validate_site_name,
+    DirCleanup, create_private_dir, resolve_source_folder, sites_dir_for_database,
+    validate_site_name,
 };
 
 /// The most files and folders one site holds, so a publish walks a bounded tree.

@@ -39,13 +39,6 @@ pub(crate) async fn serve(
             &serde_json::json!({ "error": error.to_string() }),
         ),
     }
-    if let Err(error) = apps.reconcile_on_startup().await {
-        log::event(
-            "warn",
-            "live_app_startup_reconcile_failed",
-            &serde_json::json!({ "error": error.to_string() }),
-        );
-    }
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
     let drain = CancellationToken::new();
@@ -53,6 +46,7 @@ pub(crate) async fn serve(
         .with_automations(config.automation_credentials)?
         .with_drain(drain.clone());
     let shutdown = CancellationToken::new();
+    spawn_apps_startup_reconcile(apps.clone(), shutdown.clone());
     let signal = wait_for_shutdown();
     tokio::pin!(signal);
     log::event(
@@ -101,6 +95,32 @@ pub(crate) async fn serve(
         log::event("info", "service_stopped", &serde_json::json!({}));
     }
     result
+}
+
+fn spawn_apps_startup_reconcile(apps: renoa_local::Apps, stop: CancellationToken) {
+    tokio::spawn(async move {
+        let mut delay = std::time::Duration::from_secs(1);
+        loop {
+            match apps.reconcile_on_startup().await {
+                Ok(()) => return,
+                Err(error) => {
+                    log::event(
+                        "warn",
+                        "live_app_startup_reconcile_failed",
+                        &serde_json::json!({
+                            "error": error.to_string(),
+                            "retry_secs": delay.as_secs(),
+                        }),
+                    );
+                }
+            }
+            tokio::select! {
+                () = stop.cancelled() => return,
+                () = tokio::time::sleep(delay) => {}
+            }
+            delay = (delay * 2).min(std::time::Duration::from_secs(30));
+        }
+    });
 }
 
 async fn wait_for_shutdown() -> Result<(), ServiceError> {

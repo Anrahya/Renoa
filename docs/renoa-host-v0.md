@@ -498,34 +498,35 @@ sign-in: `/sites/{name}` redirects (`308`) to `/sites/{name}/`, a path ending
 in `/` serves that folder's `index.html`, the root of a site without one serves
 an escaped list of its files, and any other path serves that file with byte
 ranges. A path with an empty, `.` or `..` segment, a symbolic link, or no such
-file is `404`. It also reverse-proxies live apps at `/apps/{name}/`: `/apps/{name}`
+file is `404`. It also reverse-proxies HTTP and WebSocket live apps at `/apps/{name}/`: `/apps/{name}`
 redirects (`308`) to `/apps/{name}/`, stopped apps wake on demand and wait up to
 15 seconds for an HTTP answer on `127.0.0.1:$PORT`, and responses stream back
-with `X-Forwarded-Prefix`, `X-Forwarded-Host`, and root-relative `Location`
+with `X-Forwarded-Prefix`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and root-relative or loopback `Location`
 headers rewritten under `/apps/{name}` (rejecting `.`, `..`, `//`, `\`, control
-bytes, and encoded delimiters as `404`; capping request bodies at 64 MiB; and
-stripping hop-by-hop and client `X-Forwarded-*` headers). The gateway is not the
+bytes, and encoded delimiters as `404`; capping request bodies at 64 MiB;
+stripping hop-by-hop headers, client `X-Forwarded-*` headers, and `__Host-renoa_*`
+cookies while refusing upstream `Set-Cookie` headers with that prefix as `502`;
+and returning sanitized `502` responses without internal paths or logs). The gateway is not the
 coordinator's origin and sets no credential, so a site's or app's scripts reach
 nothing of Renoa's while nothing on the same tailnet hostname signs the owner in
 to Renoa (cookies are not kept apart by port); sites and live apps share the
 gateway's one origin with each other.
 
 `app_manage` accepts `action` (`start`, `stop`, `restart`, `status`, or `logs`),
-`name` (same rules as `site_manage`), `folder` (workspace-relative real folder inside
-the workspace without traversing symlinks; required for `start`), and `command`
-(shell command executed inside `/app`; required for `start`). Every `app_manage`
+`name` (same rules as `site_manage`), `folder` (workspace-relative real subdirectory inside
+the workspace without traversing symlinks, refusing `.`; required for `start`), and `command`
+(shell command written to `command.sh` and executed inside `/app`; required for `start`). Every `app_manage`
 action refuses without creating state when the node runs no site gateway. Each app
 is recorded in `host_apps` (schema 56, an agent-owned table) with a reserved
 loopback port (`20000..=29999`), owns its folder plus private `state/apps/<app_id>/`
-(`scratch/` and `app.log`), and runs outside `renoa-node` under `systemd-run --user`
-(`MemoryMax=512M`, `CPUQuota=100%`, restarting on failure up to 3 starts in 15
-seconds before marking `failed`) inside `/usr/bin/bwrap` (`--unshare-all --share-net`
-to isolate filesystem, mounts, PID, IPC, UTS, and environment while sharing loopback
-and outbound network, read-only host OS directories, only the app folder at `/app`
+(`scratch/` capped at 256 MiB and bounded 1 MiB `app.log`), and runs outside `renoa-node` under `systemd-run --user`
+in `renoa-apps.slice` (`MemoryMax=2G`, `TasksMax=1024`; per-unit `MemoryMax=512M`, `MemorySwapMax=0`, `CPUQuota=100%`, `TasksMax=128`, restarting on failure up to 3 starts in 15
+seconds before marking `failed`, with at most `MAX_RUNNING_APPS = 4` concurrent apps) inside `/usr/bin/bwrap` (`--unshare-all --remount-ro /`
+to isolate filesystem, mounts, network, PID, IPC, UTS, and environment, with minimal synthetic `/etc` omitting host `/etc/passwd` and `/etc/shadow`, read-only host OS binaries/libraries, only the app folder at `/app`
 and `scratch/` at `/tmp` writable, `HOST=BIND=HOSTNAME=127.0.0.1`, `PORT`, and
-`BASE_PATH=/apps/{name}`). Startup verifies through `/proc/net/tcp{,6}` that the
-app listens on `127.0.0.1:$PORT` only and answers HTTP, cleaning up any new row,
-runtime directory, or transient unit if validation fails. Active apps stop
+`BASE_PATH=/apps/{name}`) paired with `/usr/bin/slirp4netns` (`--disable-host-loopback --enable-seccomp`, bridged onto `127.0.0.1:$PORT` over `SCM_RIGHTS`). Startup verifies through cgroup-scoped `/proc/<pid>/net/tcp{,6}` and host socket ownership in `/proc/net/tcp{,6}` that the
+app listens on `127.0.0.1:$PORT` only and answers HTTP, staging changes and cleaning up any new row,
+runtime directory, or transient unit if validation fails (preserving a running app if a `start` update fails). Active apps stop
 automatically after 30 minutes without gateway traffic (`IDLE_TIMEOUT`) and
 reconcile across `renoa-node` restarts without interrupting live processes.
 

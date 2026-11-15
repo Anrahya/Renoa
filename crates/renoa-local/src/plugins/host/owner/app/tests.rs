@@ -309,3 +309,15 @@ async fn without_a_site_gateway_app_manage_refuses_before_starting_anything() {
     assert!(fs::read_dir(f.home.apps()).map_or(true, |mut d| d.next().is_none()));
     assert!(!Apps::open(&f.home).exists("demo").expect("exists"));
 }
+
+#[test]
+fn spec_and_paths_share_single_owner_constants() {
+    let spec = super::spec();
+    let idle = crate::apps::IDLE_TIMEOUT_MINUTES.to_string();
+    assert!(
+        spec.description.contains(&idle),
+        "app_manage description must embed IDLE_TIMEOUT_MINUTES ({idle}): {}",
+        spec.description
+    );
+    assert_eq!(renoa_home::APPS_DIRECTORY_PATH, "state/apps");
+}

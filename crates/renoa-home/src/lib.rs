@@ -10,6 +10,7 @@ use std::{
 };
 
 pub const HOST_DATABASE_PATH: &str = "state/host.sqlite3";
+pub const APPS_DIRECTORY_PATH: &str = "state/apps";
 const DIRECTORIES: [&str; 7] = [
     "config",
     "credentials",
@@ -146,7 +147,7 @@ impl RenoaHome {
     /// Runtime directories (logs and scratch space) for supervised live apps.
     #[must_use]
     pub fn apps(&self) -> PathBuf {
-        self.root.join("state/apps")
+        self.root.join(APPS_DIRECTORY_PATH)
     }
     #[must_use]
     pub fn coordinator_database(&self) -> PathBuf {

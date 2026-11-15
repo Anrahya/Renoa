@@ -7,26 +7,36 @@ use thiserror::Error;
 
 use crate::{host::catalog::HostCatalogError, sites::SiteError};
 
-pub(crate) const APPS_RELATIVE_SUBDIR: &str = "apps";
 pub(crate) const SCRATCH_DIR_NAME: &str = "scratch";
 pub(crate) const LOG_FILE_NAME: &str = "app.log";
 
-/// Stop an idle live app after 30 minutes without a gateway request. Long
-/// enough to cover interactive review sessions and brief breaks without
+/// Idle window in minutes before reclaiming a running live app.
+pub const IDLE_TIMEOUT_MINUTES: u64 = 30;
+
+/// Stop an idle live app after [`IDLE_TIMEOUT_MINUTES`] without a gateway request.
+/// Long enough to cover interactive review sessions and brief breaks without
 /// shutting down mid-thought, while reclaiming idle dev servers and Python
 /// runtimes automatically.
-pub const IDLE_TIMEOUT: Duration = Duration::from_mins(30);
+pub const IDLE_TIMEOUT: Duration = Duration::from_mins(IDLE_TIMEOUT_MINUTES);
 
 /// How long initial startup or on-demand wake waits for HTTP readiness on
 /// `127.0.0.1:$PORT` before reporting failure instead of retrying forever.
 pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(crate) const MEMORY_MAX: &str = "512M";
+pub(crate) const MEMORY_SWAP_MAX: &str = "0";
 pub(crate) const CPU_QUOTA: &str = "100%";
+pub(crate) const TASKS_MAX: u32 = 128;
+pub(crate) const APPS_SLICE: &str = "renoa-apps.slice";
+pub(crate) const SLICE_MEMORY_MAX: &str = "2G";
+pub(crate) const SLICE_TASKS_MAX: u32 = 1024;
+pub(crate) const MAX_RUNNING_APPS: usize = 4;
 pub(crate) const CRASH_BURST: u32 = 3;
 pub(crate) const CRASH_INTERVAL_SECS: u64 = 15;
 pub(crate) const LOG_TAIL_LINES: usize = 50;
 pub(crate) const LOG_TAIL_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_LOG_FILE_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_SCRATCH_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

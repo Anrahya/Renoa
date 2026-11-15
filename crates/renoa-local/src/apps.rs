@@ -1,8 +1,10 @@
 //! Supervised, `bubblewrap`-sandboxed live web apps served via the site gateway.
 
 pub(crate) mod health;
+mod launch;
 mod model;
 mod reconcile;
+mod sandbox;
 mod store;
 mod supervisor;
 #[cfg(test)]
@@ -20,28 +22,55 @@ use renoa_kernel::AgentId;
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
-use crate::sites::{
-    DirCleanup, create_private_dir, ensure_state_subdir, resolve_source_folder, validate_site_name,
-};
-use model::{APPS_RELATIVE_SUBDIR, LOG_FILE_NAME, SCRATCH_DIR_NAME};
-use reconcile::{ensure_runtime_dirs, log_file_path, now_ms};
+use crate::sites::{resolve_source_folder, validate_site_name};
+use health::StartupError;
+use launch::{ensure_apps_root, log_file_path, now_ms, runtime_dir_for};
+use model::LOG_FILE_NAME;
 use store::{
-    AppRecord, ensure_reachable, insert_new_app, list_records, read_record, set_state_failed,
-    set_state_stopped, update_existing_on_failure, update_existing_on_start, update_last_active,
-    used_ports,
+    AppRecord, ensure_reachable, list_records, read_record, set_state_failed, set_state_stopped,
+    update_last_active,
 };
 use supervisor::UnitStatus;
 
-pub use model::{AppError, AppLogs, AppState, IDLE_TIMEOUT, LiveApp, STARTUP_TIMEOUT};
-pub(crate) use model::{
-    CPU_QUOTA, CRASH_BURST, CRASH_INTERVAL_SECS, LOG_TAIL_BYTES, LOG_TAIL_LINES, MEMORY_MAX,
+pub use model::{
+    AppError, AppLogs, AppState, IDLE_TIMEOUT, IDLE_TIMEOUT_MINUTES, LiveApp, STARTUP_TIMEOUT,
 };
+pub(crate) use model::{CPU_QUOTA, CRASH_BURST, CRASH_INTERVAL_SECS, MEMORY_MAX};
 pub(crate) use store::initialize;
 #[cfg(test)]
 pub(crate) use store::restore_schema_55;
 pub(crate) use supervisor::stop_units_sync;
 #[cfg(test)]
 pub(crate) use supervisor::{stop_unit_sync, unit_main_pid_sync};
+
+/// Keeps an app marked busy while an HTTP response or WebSocket stream is open
+/// so idle sweeping and capacity eviction do not interrupt active transfers.
+#[derive(Debug)]
+pub struct AppStreamGuard {
+    name: String,
+    database: PathBuf,
+    active_streams: Arc<StdMutex<HashMap<String, usize>>>,
+}
+
+impl Drop for AppStreamGuard {
+    fn drop(&mut self) {
+        {
+            let mut guard = self
+                .active_streams
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(count) = guard.get_mut(&self.name) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    guard.remove(&self.name);
+                }
+            }
+        }
+        if let Ok(now) = now_ms() {
+            let _ = update_last_active(&self.database, &self.name, now);
+        }
+    }
+}
 
 /// Host-owned registry and supervisor bridge for live web apps.
 #[derive(Debug, Clone)]
@@ -50,15 +79,16 @@ pub struct Apps {
     idle_timeout: Duration,
     startup_timeout: Duration,
     locks: Arc<StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
+    active_streams: Arc<StdMutex<HashMap<String, usize>>>,
 }
 
 struct StartSpec {
-    agent: AgentId,
-    principal: Option<Uuid>,
-    name: String,
-    source_folder: String,
-    command: String,
-    app_dir: PathBuf,
+    pub agent: AgentId,
+    pub principal: Option<Uuid>,
+    pub name: String,
+    pub source_folder: String,
+    pub command: String,
+    pub app_dir: PathBuf,
 }
 
 impl Apps {
@@ -74,6 +104,7 @@ impl Apps {
             idle_timeout: IDLE_TIMEOUT,
             startup_timeout: STARTUP_TIMEOUT,
             locks: Arc::new(StdMutex::new(HashMap::new())),
+            active_streams: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -89,11 +120,40 @@ impl Apps {
         self.idle_timeout
     }
 
+    /// Acquires an active-stream guard for `name`, preventing idle/capacity eviction
+    /// while held and refreshing `last_active_ms` on drop.
+    #[must_use]
+    pub fn acquire_stream(&self, name: &str) -> AppStreamGuard {
+        {
+            let mut guard = self
+                .active_streams
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = guard.entry(name.to_owned()).or_insert(0);
+            *entry = entry.saturating_add(1);
+        }
+        AppStreamGuard {
+            name: name.to_owned(),
+            database: self.database.clone(),
+            active_streams: Arc::clone(&self.active_streams),
+        }
+    }
+
+    fn active_stream_count(&self, name: &str) -> usize {
+        self.active_streams
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(name)
+            .copied()
+            .unwrap_or(0)
+    }
+
     fn lock_for(&self, name: &str) -> Arc<AsyncMutex<()>> {
         let mut map = self
             .locks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.retain(|k, v| k == name || Arc::strong_count(v) > 1);
         Arc::clone(
             map.entry(name.to_owned())
                 .or_insert_with(|| Arc::new(AsyncMutex::new(()))),
@@ -105,8 +165,8 @@ impl Apps {
     ///
     /// # Errors
     /// Returns [`AppError`] on invalid name/folder/command, ownership mismatch,
-    /// missing supervisor (`bwrap` / `systemd --user`), non-loopback bind, or
-    /// startup failure.
+    /// missing supervisor (`bwrap` / `slirp4netns` / `systemd --user`),
+    /// non-loopback bind, or startup failure.
     pub async fn start(
         &self,
         agent: AgentId,
@@ -118,7 +178,12 @@ impl Apps {
     ) -> Result<LiveApp, AppError> {
         let name = validate_site_name(name)?;
         let command = validate_command(command)?;
-        let (app_dir, _) = resolve_source_folder(workspace, folder)?;
+        let (app_dir, normalized) = resolve_source_folder(workspace, folder)?;
+        if normalized == "." {
+            return Err(AppError::InvalidFolder(
+                "folder must name a subdirectory inside the workspace, not `.`".into(),
+            ));
+        }
         let source_folder = app_dir
             .to_str()
             .ok_or_else(|| AppError::InvalidFolder("folder path is not UTF-8".into()))?
@@ -144,7 +209,7 @@ impl Apps {
         }
 
         supervisor::preflight().await?;
-        let apps_root = ensure_state_subdir(&self.database, APPS_RELATIVE_SUBDIR)?;
+        let apps_root = ensure_apps_root(&self.database)?;
 
         if let Some(rec) = existing {
             return self.restart_existing_on_start(spec, &rec, &apps_root).await;
@@ -164,7 +229,10 @@ impl Apps {
             return Ok(None);
         }
         let unit = supervisor::unit_name(&self.database, &spec.name);
-        if !matches!(supervisor::unit_status(&unit).await, Ok(UnitStatus::Active)) {
+        if !matches!(
+            supervisor::unit_status(&unit).await,
+            Ok(UnitStatus::Active { .. })
+        ) {
             return Ok(None);
         }
         match self.verify_live_loopback_http(rec).await {
@@ -178,105 +246,6 @@ impl Apps {
             Ok(false) => Ok(None),
             Err(reason) => Err(AppError::StartupFailed { reason }),
         }
-    }
-
-    async fn restart_existing_on_start(
-        &self,
-        spec: StartSpec,
-        rec: &AppRecord,
-        apps_root: &Path,
-    ) -> Result<LiveApp, AppError> {
-        let scratch = ensure_runtime_dirs(apps_root, &rec.app_id)?;
-        let log_file = apps_root.join(&rec.app_id).join(LOG_FILE_NAME);
-        let agent_str = spec.agent.to_string();
-        let principal_str = spec.principal.map(|u| u.to_string());
-        let mut unit_cleanup = supervisor::UnitCleanup::armed(&self.database, &rec.app.name);
-        if let Err(reason) = self
-            .boot_unit(
-                &rec.app.name,
-                spec.app_dir,
-                scratch,
-                log_file,
-                spec.command.clone(),
-                rec.app.port,
-            )
-            .await
-        {
-            let _ = update_existing_on_failure(
-                &self.database,
-                &rec.app.name,
-                &agent_str,
-                principal_str.as_deref(),
-                &spec.source_folder,
-                &spec.command,
-                &reason,
-                now_ms()?,
-            );
-            return Err(AppError::StartupFailed { reason });
-        }
-        update_existing_on_start(
-            &self.database,
-            &rec.app.name,
-            &agent_str,
-            principal_str.as_deref(),
-            &spec.source_folder,
-            &spec.command,
-            now_ms()?,
-        )?;
-        unit_cleanup.disarm();
-        read_record(&self.database, &rec.app.name)?
-            .map(|r| r.app)
-            .ok_or(AppError::NotFound)
-    }
-
-    async fn create_and_start_app(
-        &self,
-        spec: StartSpec,
-        apps_root: &Path,
-    ) -> Result<LiveApp, AppError> {
-        let app_id = Uuid::new_v4().to_string();
-        let runtime_dir = apps_root.join(&app_id);
-        let mut cleanup = DirCleanup::armed(runtime_dir.clone());
-        create_private_dir(&runtime_dir)?;
-        let scratch = runtime_dir.join(SCRATCH_DIR_NAME);
-        create_private_dir(&scratch)?;
-        let log_file = runtime_dir.join(LOG_FILE_NAME);
-
-        let port_reservation = health::allocate_port(&used_ports(&self.database)?, &spec.name)?;
-        let port = port_reservation.port();
-        let mut unit_cleanup = supervisor::UnitCleanup::armed(&self.database, &spec.name);
-        if let Err(reason) = self
-            .boot_unit(
-                &spec.name,
-                spec.app_dir,
-                scratch,
-                log_file,
-                spec.command.clone(),
-                port,
-            )
-            .await
-        {
-            return Err(AppError::StartupFailed { reason });
-        }
-
-        let now = now_ms()?;
-        let principal_str = spec.principal.map(|u| u.to_string());
-        let record = LiveApp {
-            name: spec.name,
-            agent_id: spec.agent.to_string(),
-            source_folder: spec.source_folder,
-            command: spec.command,
-            port,
-            state: AppState::Running,
-            failure_reason: None,
-            updated_at_ms: now,
-            last_active_ms: now,
-        };
-        insert_new_app(&self.database, &record, principal_str.as_deref(), &app_id)?;
-        unit_cleanup.disarm();
-        cleanup.disarm();
-        drop(port_reservation);
-        Ok(record)
     }
 
     /// Stops a running app for `principal`.
@@ -321,7 +290,7 @@ impl Apps {
     ///
     /// # Errors
     /// Returns [`AppError`] on invalid name, unknown app, ownership mismatch, or
-    /// catalog failure.
+    /// catalog/systemd failure.
     pub async fn status_for(
         &self,
         name: &str,
@@ -339,7 +308,7 @@ impl Apps {
     /// Lists all apps reachable by `principal`, synced against `systemd`.
     ///
     /// # Errors
-    /// Returns [`AppError`] on catalog failure.
+    /// Returns [`AppError`] on catalog or `systemd` failure.
     pub async fn list(&self, principal: Option<Uuid>) -> Result<Vec<LiveApp>, AppError> {
         let records = list_records(&self.database, principal)?;
         let mut out = Vec::with_capacity(records.len());
@@ -357,7 +326,7 @@ impl Apps {
     ///
     /// # Errors
     /// Returns [`AppError`] on invalid name, unknown app, ownership mismatch, or
-    /// catalog failure.
+    /// catalog/systemd failure.
     pub async fn logs_for(&self, name: &str, principal: Option<Uuid>) -> Result<AppLogs, AppError> {
         let name = validate_site_name(name)?;
         let mutex = self.lock_for(&name);
@@ -381,8 +350,28 @@ impl Apps {
         Ok(read_record(&self.database, &name)?.is_some())
     }
 
+    /// Fast-path lookup for the site gateway: returns the assigned loopback
+    /// port if SQLite marks `name` `Running`, `None` if `Stopped`, or `Err` if
+    /// `Failed` or unknown. Avoids `systemctl`, `/proc`, and HTTP probes.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] on invalid name, unknown app, failed app state, or
+    /// catalog failure.
+    pub fn running_port(&self, name: &str) -> Result<Option<u16>, AppError> {
+        let name = validate_site_name(name)?;
+        let rec = read_record(&self.database, &name)?.ok_or(AppError::NotFound)?;
+        match rec.app.state {
+            AppState::Running => {
+                let _ = update_last_active(&self.database, &name, now_ms()?);
+                Ok(Some(rec.app.port))
+            }
+            AppState::Stopped => Ok(None),
+            AppState::Failed => Err(self.failed_error(&rec)),
+        }
+    }
+
     /// Ensures a registered app is running and healthy before proxying an HTTP
-    /// request. Wakes `stopped` apps once; refuses `failed` apps immediately.
+    /// or WebSocket request. Wakes `stopped` apps once; refuses `failed` apps.
     ///
     /// # Errors
     /// Returns [`AppError`] if the app does not exist, previously failed, fails to
@@ -395,27 +384,26 @@ impl Apps {
         let rec = read_record(&self.database, &name)?.ok_or(AppError::NotFound)?;
         match rec.app.state {
             AppState::Failed => Err(self.failed_error(&rec)),
-            AppState::Stopped => self.launch_existing(&rec).await.map_err(|err| match err {
-                AppError::StartupFailed { reason } => AppError::Failed {
-                    name: rec.app.name.clone(),
-                    reason,
-                    logs: supervisor::read_log_tail(&log_file_path(&self.database, &rec.app_id)),
-                },
-                other => other,
-            }),
+            AppState::Stopped => self.wake_existing(&rec).await,
             AppState::Running => {
                 let synced = self.sync_live_state(&rec).await?;
                 if synced.state == AppState::Failed {
                     let latest = read_record(&self.database, &name)?.ok_or(AppError::NotFound)?;
                     return Err(self.failed_error(&latest));
                 }
-                let log_file = log_file_path(&self.database, &rec.app_id);
+                if synced.state == AppState::Stopped {
+                    let latest = read_record(&self.database, &name)?.ok_or(AppError::NotFound)?;
+                    return self.wake_existing(&latest).await;
+                }
+                let runtime_dir = runtime_dir_for(&self.database, &rec.app_id);
+                let log_file = runtime_dir.join(LOG_FILE_NAME);
                 match self.verify_live_loopback_http(&rec).await {
                     Ok(true) => {}
                     Ok(false) => {
                         let unit = supervisor::unit_name(&self.database, &rec.app.name);
-                        if let Err(reason) = health::wait_until_healthy(
+                        if let Err(err) = health::wait_until_healthy(
                             &unit,
+                            &runtime_dir,
                             synced.port,
                             &log_file,
                             self.startup_timeout,
@@ -423,13 +411,26 @@ impl Apps {
                         .await
                         {
                             let _ = supervisor::stop_unit(&unit).await;
-                            let _ =
-                                set_state_failed(&self.database, &rec.app.name, &reason, now_ms()?);
-                            return Err(AppError::Failed {
-                                name: rec.app.name.clone(),
-                                reason,
-                                logs: supervisor::read_log_tail(&log_file),
-                            });
+                            return match err {
+                                StartupError::TimedOut(reason) => {
+                                    let _ =
+                                        set_state_stopped(&self.database, &rec.app.name, now_ms()?);
+                                    Err(AppError::StartupFailed { reason })
+                                }
+                                StartupError::Failed(reason) => {
+                                    let _ = set_state_failed(
+                                        &self.database,
+                                        &rec.app.name,
+                                        &reason,
+                                        now_ms()?,
+                                    );
+                                    Err(AppError::Failed {
+                                        name: rec.app.name.clone(),
+                                        reason,
+                                        logs: supervisor::read_log_tail(&log_file),
+                                    })
+                                }
+                            };
                         }
                     }
                     Err(reason) => {

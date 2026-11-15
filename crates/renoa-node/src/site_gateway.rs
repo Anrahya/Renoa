@@ -27,7 +27,9 @@ use crate::node_log;
 ///
 /// # Errors
 /// Returns the listener's failure.
+mod http_policy;
 mod proxy;
+mod ws;
 
 #[derive(Clone)]
 struct GatewayState {
@@ -104,7 +106,7 @@ async fn app_bare(
 ) -> axum::response::Response {
     use axum::response::IntoResponse as _;
     if uri.path() != format!("/apps/{name}") {
-        return proxy::error_response(
+        return http_policy::error_response(
             StatusCode::NOT_FOUND,
             "No live app is registered at this address.",
         );
@@ -117,11 +119,11 @@ async fn app_bare(
             };
             Redirect::permanent(&location).into_response()
         }
-        Ok(false) => proxy::error_response(
+        Ok(false) => http_policy::error_response(
             StatusCode::NOT_FOUND,
             "No live app is registered at this address.",
         ),
-        Err(_) => proxy::error_response(StatusCode::INTERNAL_SERVER_ERROR, ""),
+        Err(_) => http_policy::error_response(StatusCode::INTERNAL_SERVER_ERROR, ""),
     }
 }
 

@@ -651,10 +651,10 @@ at `<origin>/sites/<name>/`; a site whose files link from the root (`/assets/…
 must be built with relative paths (Vite: `base: './'`). Each live app is
 served at `<origin>/apps/<name>/` and receives `$PORT` (`127.0.0.1`-only),
 `$BASE_PATH` (`/apps/<name>`), and `HOST=127.0.0.1` (`BIND`, `HOSTNAME`) in a
-`bwrap` sandbox supervised by `systemd-run --user` (install `bubblewrap` on the
-host and run `loginctl enable-linger renoa` once so user units survive
-`renoa-node` restarts). Without `siteGateway`, `site_manage` and `app_manage`
-refuse and tell the agent the gateway is off.
+`bwrap` + `slirp4netns` sandbox supervised by `systemd-run --user` (install
+`bubblewrap` and `slirp4netns` on the host and run `loginctl enable-linger renoa`
+once so user units survive `renoa-node` restarts). Without `siteGateway`,
+`site_manage` and `app_manage` refuse and tell the agent the gateway is off.
 
 The node also answers the owner's Host control (the Control Room's calls under
 `/v1/host`, relayed by the coordinator over this same link). It says so when it

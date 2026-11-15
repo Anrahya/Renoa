@@ -58,7 +58,10 @@ pub use agent_definition::{
 };
 pub use agent_model::AgentModelSelection;
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
-pub use apps::{AppError, AppLogs, AppState, Apps, IDLE_TIMEOUT, LiveApp, STARTUP_TIMEOUT};
+pub use apps::{
+    AppError, AppLogs, AppState, AppStreamGuard, Apps, IDLE_TIMEOUT, IDLE_TIMEOUT_MINUTES, LiveApp,
+    STARTUP_TIMEOUT,
+};
 pub use code_mode::validate_code_mode_worker;
 pub use compact_invocation::{CompactInvocation, compact_invocation};
 pub use documents::UserProfile;

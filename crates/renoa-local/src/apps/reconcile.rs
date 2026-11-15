@@ -1,25 +1,20 @@
-//! Idle sweeping, startup reconciliation, boot/health coordination, and runtime
-//! directory helpers for live apps.
+//! Idle sweeping, capacity eviction, startup reconciliation, and systemd sync.
 
-use std::{
-    collections::HashSet,
-    fs, io,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashSet, fs};
 
 use super::{
     AppError, AppState, Apps, LiveApp, health,
-    model::{APPS_RELATIVE_SUBDIR, LOG_FILE_NAME, SCRATCH_DIR_NAME},
-    store::{AppRecord, list_all_records, read_record, set_state_failed, set_state_running},
-    supervisor::{self, StartUnitSpec, UnitStatus},
+    launch::{
+        apps_dir_for_database, format_reason_with_logs, log_file_path, now_ms, runtime_dir_for,
+    },
+    model::MAX_RUNNING_APPS,
+    store::{AppRecord, list_all_records, read_record, set_state_failed, set_state_stopped},
+    supervisor::{self, UnitStatus},
 };
-use crate::sites::{create_private_dir, ensure_state_subdir};
 
 impl Apps {
-    /// Stops any running app whose `last_active_ms` is older than `idle_timeout`.
-    /// Continues across individual app errors and returns an error only if no
-    /// apps were stopped and a stop failed.
+    /// Stops any running app whose `last_active_ms` is older than `idle_timeout`
+    /// and that has no open proxy/WebSocket streams.
     ///
     /// # Errors
     /// Returns [`AppError`] on catalog read failure or if every attempted stop fails.
@@ -30,7 +25,10 @@ impl Apps {
         let mut first_err: Option<AppError> = None;
 
         for rec in list_all_records(&self.database)? {
-            if rec.app.state != AppState::Running || rec.app.last_active_ms > cutoff {
+            if rec.app.state != AppState::Running
+                || rec.app.last_active_ms > cutoff
+                || self.active_stream_count(&rec.app.name) > 0
+            {
                 continue;
             }
             let mutex = self.lock_for(&rec.app.name);
@@ -47,6 +45,7 @@ impl Apps {
             };
             if fresh.app.state == AppState::Running
                 && fresh.app.last_active_ms <= now_ms()? - idle_ms
+                && self.active_stream_count(&fresh.app.name) == 0
             {
                 match self.stop_locked(&fresh).await {
                     Ok(_) => stopped.push(fresh.app.name),
@@ -66,14 +65,68 @@ impl Apps {
         Ok(stopped)
     }
 
+    pub(super) async fn enforce_running_cap(
+        &self,
+        excluding: Option<&str>,
+    ) -> Result<(), AppError> {
+        let mut candidates: Vec<AppRecord> = list_all_records(&self.database)?
+            .into_iter()
+            .filter(|rec| {
+                rec.app.state == AppState::Running && excluding != Some(rec.app.name.as_str())
+            })
+            .collect();
+        if candidates.len() < MAX_RUNNING_APPS {
+            return Ok(());
+        }
+        candidates.sort_by_key(|rec| rec.app.last_active_ms);
+        let mut remaining = candidates.len() + 1 - MAX_RUNNING_APPS;
+
+        for cand in candidates {
+            if remaining == 0 {
+                break;
+            }
+            if self.active_stream_count(&cand.app.name) > 0 {
+                continue;
+            }
+            let mutex = self.lock_for(&cand.app.name);
+            let Ok(_guard) = mutex.try_lock() else {
+                continue;
+            };
+            let Some(fresh) = read_record(&self.database, &cand.app.name)? else {
+                remaining = remaining.saturating_sub(1);
+                continue;
+            };
+            if fresh.app.state != AppState::Running {
+                remaining = remaining.saturating_sub(1);
+                continue;
+            }
+            if self.active_stream_count(&fresh.app.name) > 0 {
+                continue;
+            }
+            if self.stop_locked(&fresh).await.is_ok() {
+                remaining = remaining.saturating_sub(1);
+            }
+        }
+
+        if remaining > 0 {
+            return Err(AppError::StartupFailed {
+                reason: format!(
+                    "all {MAX_RUNNING_APPS} running live app slots are busy with active streams"
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// Reconciles `host_apps` with `systemd --user` when `renoa-node` starts.
     ///
     /// # Errors
-    /// Returns [`AppError`] on catalog read failure.
+    /// Returns [`AppError`] on catalog read or transient `systemd --user` unavailability.
     pub async fn reconcile_on_startup(&self) -> Result<(), AppError> {
         let records = list_all_records(&self.database)?;
         let mut known_names = HashSet::new();
         let mut known_ids = HashSet::new();
+        let mut first_supervisor_err: Option<AppError> = None;
 
         for rec in &records {
             known_names.insert(rec.app.name.clone());
@@ -90,26 +143,50 @@ impl Apps {
                     Ok(UnitStatus::Inactive) => {
                         let _ = self.launch_existing(rec).await;
                     }
-                    Ok(UnitStatus::Active) | Err(_) => {}
+                    Ok(UnitStatus::Active { .. } | UnitStatus::Activating) => {}
+                    Err(err) => {
+                        if first_supervisor_err.is_none() {
+                            first_supervisor_err = Some(AppError::SupervisorUnavailable(format!(
+                                "unit status check failed during startup: {err}"
+                            )));
+                        }
+                    }
                 },
-                AppState::Stopped => {
-                    if matches!(supervisor::unit_status(&unit).await, Ok(UnitStatus::Active)) {
+                AppState::Stopped => match supervisor::unit_status(&unit).await {
+                    Ok(UnitStatus::Active { .. } | UnitStatus::Activating) => {
                         let _ = supervisor::stop_unit(&unit).await;
                     }
-                }
+                    Ok(_) => {}
+                    Err(err) => {
+                        if first_supervisor_err.is_none() {
+                            first_supervisor_err = Some(AppError::SupervisorUnavailable(format!(
+                                "unit status check failed during startup: {err}"
+                            )));
+                        }
+                    }
+                },
                 AppState::Failed => {}
             }
         }
 
         let prefix = supervisor::unit_prefix_for(&self.database);
-        if let Ok(units) = supervisor::list_home_units(&self.database).await {
-            for unit in units {
-                if let Some(app_name) = unit
-                    .strip_prefix(&prefix)
-                    .and_then(|rest| rest.strip_suffix(".service"))
-                    && !known_names.contains(app_name)
-                {
-                    let _ = supervisor::stop_unit(&unit).await;
+        match supervisor::list_home_units(&self.database).await {
+            Ok(units) => {
+                for unit in units {
+                    if let Some(app_name) = unit
+                        .strip_prefix(&prefix)
+                        .and_then(|rest| rest.strip_suffix(".service"))
+                        && !known_names.contains(app_name)
+                    {
+                        let _ = supervisor::stop_unit(&unit).await;
+                    }
+                }
+            }
+            Err(err) => {
+                if first_supervisor_err.is_none() {
+                    first_supervisor_err = Some(AppError::SupervisorUnavailable(format!(
+                        "list units failed during startup: {err}"
+                    )));
                 }
             }
         }
@@ -125,72 +202,10 @@ impl Apps {
             }
         }
 
-        Ok(())
-    }
-
-    pub(super) async fn boot_unit(
-        &self,
-        name: &str,
-        app_dir: PathBuf,
-        scratch_dir: PathBuf,
-        log_file: PathBuf,
-        command: String,
-        port: u16,
-    ) -> Result<(), String> {
-        let unit = supervisor::unit_name(&self.database, name);
-        if let Err(err) = supervisor::stop_unit(&unit).await {
-            return Err(err.to_string());
-        }
-        let spec = StartUnitSpec {
-            unit: unit.clone(),
-            app_name: name.to_owned(),
-            app_dir,
-            scratch_dir,
-            log_file: log_file.clone(),
-            command,
-            port,
-            base_path: format!("/apps/{name}"),
-        };
-        if let Err(err) = supervisor::start_unit(&spec).await {
-            return Err(err.to_string());
-        }
-        if let Err(reason) =
-            health::wait_until_healthy(&unit, port, &log_file, self.startup_timeout).await
-        {
-            if let Err(stop_err) = supervisor::stop_unit(&unit).await {
-                return Err(format!("{reason} (stop unit failed: {stop_err})"));
-            }
-            return Err(reason);
+        if let Some(err) = first_supervisor_err {
+            return Err(err);
         }
         Ok(())
-    }
-
-    pub(super) async fn launch_existing(&self, rec: &AppRecord) -> Result<LiveApp, AppError> {
-        supervisor::preflight().await?;
-        let app_dir = verify_existing_folder(&rec.app.source_folder)?;
-        let apps_root = ensure_state_subdir(&self.database, APPS_RELATIVE_SUBDIR)?;
-        let scratch = ensure_runtime_dirs(&apps_root, &rec.app_id)?;
-        let log_file = apps_root.join(&rec.app_id).join(LOG_FILE_NAME);
-        let mut unit_cleanup = supervisor::UnitCleanup::armed(&self.database, &rec.app.name);
-        if let Err(reason) = self
-            .boot_unit(
-                &rec.app.name,
-                app_dir,
-                scratch,
-                log_file,
-                rec.app.command.clone(),
-                rec.app.port,
-            )
-            .await
-        {
-            let _ = set_state_failed(&self.database, &rec.app.name, &reason, now_ms()?);
-            return Err(AppError::StartupFailed { reason });
-        }
-        set_state_running(&self.database, &rec.app.name, now_ms()?)?;
-        unit_cleanup.disarm();
-        read_record(&self.database, &rec.app.name)?
-            .map(|r| r.app)
-            .ok_or(AppError::NotFound)
     }
 
     pub(super) async fn sync_live_state(&self, rec: &AppRecord) -> Result<LiveApp, AppError> {
@@ -210,28 +225,42 @@ impl Apps {
                 })
             }
             Ok(UnitStatus::Inactive) => {
-                let reason = format_reason_with_logs(
-                    "app exited unexpectedly",
-                    &log_file_path(&self.database, &rec.app_id),
-                );
-                set_state_failed(&self.database, &rec.app.name, &reason, now_ms()?)?;
+                set_state_stopped(&self.database, &rec.app.name, now_ms()?)?;
                 Ok(LiveApp {
-                    state: AppState::Failed,
-                    failure_reason: Some(reason),
+                    state: AppState::Stopped,
+                    failure_reason: None,
                     ..rec.app.clone()
                 })
             }
-            Ok(UnitStatus::Active) | Err(_) => Ok(rec.app.clone()),
+            Ok(UnitStatus::Active { .. } | UnitStatus::Activating) => Ok(rec.app.clone()),
+            Err(err) => Err(AppError::SupervisorUnavailable(format!(
+                "cannot query unit status for `{}`: {err}",
+                rec.app.name
+            ))),
         }
     }
 
     pub(super) async fn verify_live_loopback_http(&self, rec: &AppRecord) -> Result<bool, String> {
-        match health::check_loopback_only_listener(rec.app.port) {
+        let unit = supervisor::unit_name(&self.database, &rec.app.name);
+        let main_pid = match supervisor::unit_status(&unit).await {
+            Ok(UnitStatus::Active { main_pid }) => main_pid,
+            Ok(UnitStatus::Activating | UnitStatus::Inactive) => return Ok(false),
+            Ok(UnitStatus::Failed { detail }) => {
+                let _ = supervisor::stop_unit(&unit).await;
+                if let Ok(now) = now_ms() {
+                    let _ = set_state_failed(&self.database, &rec.app.name, &detail, now);
+                }
+                return Err(detail);
+            }
+            Err(err) => return Err(format!("cannot inspect unit `{unit}`: {err}")),
+        };
+
+        let runtime_dir = runtime_dir_for(&self.database, &rec.app_id);
+        match health::check_unit_listener(main_pid, &runtime_dir, rec.app.port) {
             Ok(true) => Ok(health::probe_http(rec.app.port).await),
             Ok(false) => Ok(false),
             Err(violation) => {
                 let reason = violation.message();
-                let unit = supervisor::unit_name(&self.database, &rec.app.name);
                 let _ = supervisor::stop_unit(&unit).await;
                 if let Ok(now) = now_ms() {
                     let _ = set_state_failed(&self.database, &rec.app.name, &reason, now);
@@ -252,92 +281,4 @@ impl Apps {
             logs: supervisor::read_log_tail(&log_file_path(&self.database, &rec.app_id)),
         }
     }
-}
-
-pub(super) fn verify_existing_folder(folder: &str) -> Result<PathBuf, AppError> {
-    let app_dir = PathBuf::from(folder);
-    let meta = fs::symlink_metadata(&app_dir).map_err(|err| {
-        AppError::InvalidFolder(format!("cannot open `{}`: {err}", app_dir.display()))
-    })?;
-    if meta.file_type().is_symlink() || !meta.is_dir() {
-        return Err(AppError::InvalidFolder(format!(
-            "`{}` must be a real folder",
-            app_dir.display()
-        )));
-    }
-    let canonical = fs::canonicalize(&app_dir).map_err(|err| {
-        AppError::InvalidFolder(format!("cannot resolve `{}`: {err}", app_dir.display()))
-    })?;
-    if canonical != app_dir {
-        return Err(AppError::InvalidFolder(format!(
-            "`{}` must not traverse a symbolic link",
-            app_dir.display()
-        )));
-    }
-    Ok(app_dir)
-}
-
-fn ensure_real_dir(dir: &Path) -> Result<(), AppError> {
-    match fs::symlink_metadata(dir) {
-        Ok(meta) => {
-            if meta.file_type().is_symlink() || !meta.is_dir() {
-                return Err(AppError::Io(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("`{}` must be a real directory", dir.display()),
-                )));
-            }
-            let canonical = fs::canonicalize(dir)?;
-            let parent = dir.parent().unwrap_or_else(|| Path::new("."));
-            let expected = fs::canonicalize(parent)?.join(dir.file_name().unwrap_or_default());
-            if canonical != expected {
-                return Err(AppError::Io(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("`{}` must not traverse a symbolic link", dir.display()),
-                )));
-            }
-            Ok(())
-        }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            create_private_dir(dir).map_err(Into::into)
-        }
-        Err(err) => Err(err.into()),
-    }
-}
-
-pub(super) fn ensure_runtime_dirs(apps_root: &Path, app_id: &str) -> Result<PathBuf, AppError> {
-    let base = apps_root.join(app_id);
-    ensure_real_dir(&base)?;
-    let scratch = base.join(SCRATCH_DIR_NAME);
-    ensure_real_dir(&scratch)?;
-    Ok(scratch)
-}
-
-pub(super) fn apps_dir_for_database(database: &Path) -> PathBuf {
-    database
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(APPS_RELATIVE_SUBDIR)
-}
-
-pub(super) fn log_file_path(database: &Path, app_id: &str) -> PathBuf {
-    apps_dir_for_database(database)
-        .join(app_id)
-        .join(LOG_FILE_NAME)
-}
-
-pub(super) fn format_reason_with_logs(detail: &str, log_file: &Path) -> String {
-    let tail = supervisor::read_log_tail(log_file);
-    if tail.is_empty() {
-        detail.to_owned()
-    } else {
-        format!("{detail}\n\nRecent logs:\n{tail}")
-    }
-}
-
-pub(super) fn now_ms() -> Result<i64, AppError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    i64::try_from(duration.as_millis())
-        .map_err(|_| AppError::Io(io::Error::other("system clock overflows i64 milliseconds")))
 }

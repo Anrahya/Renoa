@@ -56,7 +56,10 @@ enum Action {
 pub(super) fn spec() -> ToolSpec {
     ToolSpec {
         name: MANAGE.to_owned(),
-        description: "Start, stop, restart, inspect status, or read logs for a supervised live web app backed by a folder in your workspace and one command listening on 127.0.0.1:$PORT. The app runs sandboxed (writable only to its own folder and /tmp, no access to credentials or state), survives node restarts and reboots, stops after 30 minutes idle, and wakes on the first request at <origin>/apps/<name>/.".to_owned(),
+        description: format!(
+            "Start, stop, restart, inspect status, or read logs for a supervised live web app backed by a subdirectory in your workspace and one command listening on 127.0.0.1:$PORT. The app runs in an isolated network/mount sandbox (writable only to its own folder and /tmp, no access to credentials, state, or host loopback services), survives node restarts and reboots, stops after {} minutes idle, and wakes on the first request at <origin>/apps/<name>/.",
+            crate::apps::IDLE_TIMEOUT_MINUTES
+        ),
         input_schema: json!({
             "type": "object",
             "properties": {

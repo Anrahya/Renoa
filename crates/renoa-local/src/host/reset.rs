@@ -125,8 +125,8 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
     let removed_sessions = clear_roots(data_directory, &SESSION_ROOTS)?;
     let removed_document_roots = clear_documents(data_directory)?;
     let _removed_sites = clear_directory(&data_directory.join("state/sites"))?;
-    crate::apps::stop_units_sync(&data_directory.join("state/host.sqlite3"));
-    let _removed_apps = clear_directory(&data_directory.join("state/apps"))?;
+    crate::apps::stop_units_sync(&database)?;
+    let _removed_apps = clear_directory(&data_directory.join(renoa_home::APPS_DIRECTORY_PATH))?;
     Ok(HostResetReport {
         removed_rows,
         removed_sessions,
@@ -141,7 +141,7 @@ fn require_managed_roots(data_directory: &Path) -> Result<(), LocalHostError> {
     for name in SESSION_ROOTS.into_iter().chain(DOCUMENT_ROOTS).chain([
         "state",
         "state/sites",
-        "state/apps",
+        renoa_home::APPS_DIRECTORY_PATH,
     ]) {
         require_managed_directory(&data_directory.join(name))?;
     }
