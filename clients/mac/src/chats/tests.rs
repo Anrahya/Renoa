@@ -632,6 +632,7 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
         "⌘⇧A" => crate::chats::keys::command!("shift-a"),
         "⌘," => crate::chats::keys::command!(","),
         "⌘B" => crate::chats::keys::command!("b"),
+        "⌃Tab" => "ctrl-tab",
         "Esc" => "escape",
         other => panic!("Settings lists {other}, which this test does not press"),
     };
@@ -674,6 +675,12 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
             "Open the first nine agents" => {
                 act(&|window, cx| window.click(("agent", 1usize), cx), cx);
                 (false, None, false, chat("Chef"))
+            }
+            // Chef, then Cook, opened: Ctrl+Tab shows the switcher and stays
+            // on Cook until Ctrl comes up, which this test never lets it do.
+            "Switch between open chats" => {
+                act(&|window, cx| window.click(("agent", 1usize), cx), cx);
+                (false, None, false, chat("Cook"))
             }
             "Close a sheet" => (false, None, false, chat("Chef")),
             page => {
@@ -1053,4 +1060,87 @@ fn reply_links_open_shared_files_web_urls_show_errors_and_leave_malformed_plain(
         cx.opened_url().as_deref(),
         Some("https://example.com/guide")
     );
+}
+
+#[gpui_kit::test]
+fn ctrl_tab_walks_only_the_chats_the_owner_opened(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent as _, Modifiers, ModifiersChangedEvent};
+
+    let (window, chats, _asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    updates
+        .send(Update::Agents(vec![
+            agent(node_id, "Ann"),
+            agent(node_id, "Bo"),
+            agent(node_id, "Cy"),
+            agent(node_id, "Di"),
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    let act = |act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App), cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let ctrl = |control: bool| {
+        move |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+            let modifiers = Modifiers {
+                control,
+                ..Modifiers::default()
+            };
+            window.dispatch_event(
+                ModifiersChangedEvent {
+                    modifiers,
+                    capslock: window.capslock(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+        }
+    };
+    let chosen = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| {
+            chats.chosen.as_ref().map(|chosen| chosen.name.to_string())
+        })
+    };
+
+    // Ann, Bo, then Cy; Di is never opened.
+    for index in [0usize, 1, 2] {
+        act(&|window, cx| window.click(("agent", index), cx), cx);
+    }
+    // The switcher's marked chat, while it shows.
+    let marked = |cx: &mut TestAppContext| {
+        chats.read_with(cx, |chats, _| {
+            let (opened, at) = chats.recent.walking()?;
+            let index = chats.agent_index(opened[at])?;
+            Some(chats.agents[index].name.clone())
+        })
+    };
+    act(&ctrl(true), cx);
+    for expected in ["Bo", "Ann", "Cy", "Bo"] {
+        act(&|window, cx| window.press("ctrl-tab", cx), cx);
+        assert_eq!(marked(cx).as_deref(), Some(expected), "Di is skipped");
+        assert_eq!(
+            chosen(cx).as_deref(),
+            Some("Cy"),
+            "no switch while Ctrl is held"
+        );
+    }
+    // Letting go opens Bo; one press then marks Cy, and letting go opens it.
+    act(&ctrl(false), cx);
+    assert_eq!(marked(cx), None, "the switcher closes");
+    assert_eq!(chosen(cx).as_deref(), Some("Bo"));
+    act(&ctrl(true), cx);
+    act(&|window, cx| window.press("ctrl-tab", cx), cx);
+    act(&ctrl(false), cx);
+    assert_eq!(chosen(cx).as_deref(), Some("Cy"));
+    // Esc leaves the switcher where it began.
+    act(&ctrl(true), cx);
+    act(&|window, cx| window.press("ctrl-tab", cx), cx);
+    act(&|window, cx| window.press("ctrl-escape", cx), cx);
+    act(&ctrl(false), cx);
+    assert_eq!(chosen(cx).as_deref(), Some("Cy"));
 }

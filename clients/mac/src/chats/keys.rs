@@ -5,7 +5,8 @@
 //! one it lists and checks where it leads.
 
 use gpui_kit::{
-    Action, App, Context, Div, InteractiveElement as _, KeyBinding, Keystroke, actions,
+    Action, App, Context, Div, InteractiveElement as _, KeyBinding, Keystroke,
+    ModifiersChangedEvent, actions,
 };
 
 use super::Chats;
@@ -68,12 +69,26 @@ pub enum Move {
     Close,
     /// Shows or hides the sidebar.
     ToggleSidebar,
+    /// Moves the switcher to the chat opened before, or back up the list with
+    /// Shift, while Ctrl stays held.
+    Cycle {
+        back: bool,
+    },
 }
 
 /// The move an unbound `keystroke` asks for, if any: Esc, which the text
-/// fields would otherwise take, and the agents' numbers.
+/// fields would otherwise take, the agents' numbers, and Ctrl+Tab, which is
+/// Ctrl on every platform, as in a browser.
 pub fn shortcut(keystroke: &Keystroke) -> Option<Move> {
     let held = &keystroke.modifiers;
+    if held.control && !held.platform && !held.alt {
+        match keystroke.key.as_str() {
+            "tab" => return Some(Move::Cycle { back: held.shift }),
+            // Esc with Ctrl still held, to leave the switcher.
+            "escape" if !held.shift => return Some(Move::Close),
+            _ => {}
+        }
+    }
     // The modifier `command` binds with.
     let command = if cfg!(target_os = "macos") {
         held.platform && !held.control
@@ -100,7 +115,7 @@ pub fn shown(keys: &str) -> String {
     }
     keys.chars()
         .map(|key| match key {
-            '⌘' => "Ctrl+".to_owned(),
+            '⌘' | '⌃' => "Ctrl+".to_owned(),
             '⇧' => "Shift+".to_owned(),
             '⌥' => "Alt+".to_owned(),
             other => other.to_string(),
@@ -128,7 +143,22 @@ impl Chats {
                 root = listen(root, moved, cx);
             }
         }
-        root
+        // Ctrl coming up opens the chat the Ctrl+Tab walk reached.
+        root.on_modifiers_changed(cx.listener(
+            |chats, event: &ModifiersChangedEvent, window, cx| {
+                if event.modifiers.control {
+                    return;
+                }
+                if let Some(index) = chats
+                    .recent
+                    .settle()
+                    .and_then(|task| chats.agent_index(task))
+                {
+                    chats.show_agent(index, window, cx);
+                }
+                cx.notify();
+            },
+        ))
     }
 }
 
@@ -165,16 +195,25 @@ mod tests {
             },
             command!("alt-1"),
             command!("shift-escape"),
+            "tab",
+            "alt-ctrl-tab",
         ] {
             assert_eq!(press(keys), None, "{keys}");
         }
     }
 
     #[test]
+    fn ctrl_tab_cycles_on_every_platform() {
+        assert_eq!(press("ctrl-tab"), Some(Move::Cycle { back: false }));
+        assert_eq!(press("ctrl-shift-tab"), Some(Move::Cycle { back: true }));
+        assert_eq!(press("ctrl-escape"), Some(Move::Close));
+    }
+
+    #[test]
     fn keys_are_written_the_way_the_platform_writes_them() {
-        let written = ["⌘K", "⌘⇧R", "⌥⌘0", "⌘1 – ⌘9", "Esc"].map(shown);
+        let written = ["⌘K", "⌘⇧R", "⌥⌘0", "⌘1 – ⌘9", "Esc", "⌃Tab"].map(shown);
         if cfg!(target_os = "macos") {
-            assert_eq!(written, ["⌘K", "⌘⇧R", "⌥⌘0", "⌘1 – ⌘9", "Esc"]);
+            assert_eq!(written, ["⌘K", "⌘⇧R", "⌥⌘0", "⌘1 – ⌘9", "Esc", "⌃Tab"]);
         } else {
             assert_eq!(
                 written,
@@ -183,7 +222,8 @@ mod tests {
                     "Ctrl+Shift+R",
                     "Alt+Ctrl+0",
                     "Ctrl+1 – Ctrl+9",
-                    "Esc"
+                    "Esc",
+                    "Ctrl+Tab"
                 ]
             );
         }

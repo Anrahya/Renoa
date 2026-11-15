@@ -98,6 +98,8 @@ pub struct Chats {
     /// Holds the keys while Home shows: Home tracks it.
     home_focus: FocusHandle,
     _home_events: Subscription,
+    /// The chats the owner opened, for Ctrl+Tab.
+    recent: recent::Recent,
 }
 
 impl EventEmitter<SignedOut> for Chats {}
@@ -178,6 +180,7 @@ impl Chats {
             sidebar_toggled: 0,
             home_focus,
             _home_events,
+            recent: recent::Recent::default(),
         }
     }
 
@@ -205,6 +208,7 @@ impl Chats {
             Update::Agents(agents) => {
                 self.listed = agents;
                 self.arrange_agents(window, cx);
+                self.forget_gone_chats();
             }
             Update::Purpose {
                 node_id,
@@ -461,6 +465,7 @@ impl Render for Chats {
             .child(sidebar)
             .child(main)
             .children(overlay)
+            .children(self.switcher(palette))
     }
 }
 
@@ -477,6 +482,8 @@ mod home;
 mod jump;
 pub(crate) mod keys;
 mod overlay;
+mod recent;
+mod switcher;
 // The screens render with the Mac's text system.
 #[cfg(all(test, target_os = "macos"))]
 mod screens;
