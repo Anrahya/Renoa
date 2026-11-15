@@ -149,26 +149,39 @@ const SLIRP_NETWORK: std::ops::RangeInclusive<Ipv4Addr> =
 /// Every blocked range plus each IPv4 address the host holds, so an app
 /// cannot reach the host's LAN, public, or tailnet listeners through slirp.
 fn blocked_routes() -> Result<Vec<String>, AppError> {
-    let mut host_addresses = BTreeSet::new();
-    for interface in nix::ifaddrs::getifaddrs().map_err(io::Error::from)? {
-        if let Some(address) = interface.address.as_ref().and_then(|a| a.as_sockaddr_in()) {
-            let ip = address.ip();
-            // An address inside slirp's network would cut the app off from
-            // slirp's gateway and DNS; the more specific routes win there anyway.
-            if !ip.is_loopback() && !SLIRP_NETWORK.contains(&ip) {
-                host_addresses.insert(ip);
-            }
-        }
-    }
+    let trie = fs::read_to_string(FIB_TRIE)?;
+    // An address inside slirp's network would cut the app off from slirp's
+    // gateway and DNS; the more specific routes win there anyway.
+    let host_addresses = local_addresses(&trie)
+        .into_iter()
+        .filter(|ip| !ip.is_loopback() && !SLIRP_NETWORK.contains(ip));
     Ok(BLOCKED_RANGES
         .iter()
         .map(|range| (*range).to_owned())
-        .chain(
-            host_addresses
-                .into_iter()
-                .map(|ip: Ipv4Addr| format!("{ip}/32")),
-        )
+        .chain(host_addresses.map(|ip| format!("{ip}/32")))
         .collect())
+}
+
+/// The kernel's routing tables as text. Reading it needs no socket, unlike
+/// `getifaddrs`, whose netlink socket `renoa-node.service`'s
+/// `RestrictAddressFamilies` refuses with `EAFNOSUPPORT`.
+const FIB_TRIE: &str = "/proc/net/fib_trie";
+
+/// Each IPv4 address the host holds: a leaf of `fib_trie` whose route is
+/// `/32 host LOCAL`.
+pub(super) fn local_addresses(trie: &str) -> BTreeSet<Ipv4Addr> {
+    let mut leaf = None;
+    let mut found = BTreeSet::new();
+    for line in trie.lines().map(str::trim_start) {
+        if let Some(rest) = line.strip_prefix("|-- ") {
+            leaf = rest.parse::<Ipv4Addr>().ok();
+        } else if line.starts_with("/32 host LOCAL")
+            && let Some(ip) = leaf
+        {
+            found.insert(ip);
+        }
+    }
+    found
 }
 
 pub(crate) fn read_log_tail(log_file: &Path) -> String {
