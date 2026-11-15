@@ -2,14 +2,13 @@
 
 use std::{
     ffi::{OsStr, OsString},
-    fs, io,
+    io,
     os::unix::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     process::Stdio,
 };
 
 use nix::unistd::Uid;
-use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
 
 use super::{
@@ -19,8 +18,7 @@ use super::{
 };
 
 pub(super) use super::sandbox::read_log_tail;
-
-const UNIT_PREFIX: &str = "renoa-app-";
+use super::unit_names::{unit_name, unit_prefix_for};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum UnitStatus {
@@ -41,35 +39,6 @@ pub(super) struct StartUnitSpec {
     pub command: String,
     pub port: u16,
     pub base_path: String,
-}
-
-pub(super) fn home_hash(database: &Path) -> String {
-    let canonical = fs::canonicalize(database).unwrap_or_else(|_| database.to_path_buf());
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_os_str().as_encoded_bytes());
-    let digest = hasher.finalize();
-    let mut hex = String::with_capacity(12);
-    for byte in &digest[..6] {
-        use std::fmt::Write as _;
-        let _ = write!(&mut hex, "{byte:02x}");
-    }
-    hex
-}
-
-pub(super) fn unit_name(database: &Path, app_name: &str) -> String {
-    format!("{UNIT_PREFIX}{}-{app_name}.service", home_hash(database))
-}
-
-pub(super) fn staging_unit_name(database: &Path, app_name: &str, seq: u64) -> String {
-    let pid = std::process::id();
-    format!(
-        "{UNIT_PREFIX}{}-{app_name}-stage-{pid}-{seq}.service",
-        home_hash(database)
-    )
-}
-
-pub(super) fn unit_prefix_for(database: &Path) -> String {
-    format!("{UNIT_PREFIX}{}-", home_hash(database))
 }
 
 fn user_runtime_env() -> Vec<(&'static str, OsString)> {

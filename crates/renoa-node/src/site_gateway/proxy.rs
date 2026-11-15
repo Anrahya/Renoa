@@ -32,7 +32,10 @@ use crate::node_log;
 
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const REPLAY_BUFFER_BYTES: usize = 64 * 1024;
+/// A request holds its slot until its response headers arrive; the body then
+/// streams without one. Each app's sandbox bridge caps its own connections.
 const MAX_CONCURRENT_REQUESTS: usize = 64;
+const MAX_OPEN_WEBSOCKETS: usize = 64;
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const UPSTREAM_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -40,23 +43,32 @@ const UPSTREAM_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) struct ProxyClient {
     client: reqwest::Client,
     permits: Arc<Semaphore>,
+    websockets: Arc<Semaphore>,
 }
 
 impl ProxyClient {
     pub(super) fn new() -> Result<Self, reqwest::Error> {
         let client = reqwest::Client::builder()
             .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
+            .pool_max_idle_per_host(MAX_CONCURRENT_REQUESTS)
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .build()?;
         Ok(Self {
             client,
             permits: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
+            websockets: Arc::new(Semaphore::new(MAX_OPEN_WEBSOCKETS)),
         })
     }
 
-    pub(super) async fn acquire_permit(&self) -> Option<OwnedSemaphorePermit> {
-        Arc::clone(&self.permits).acquire_owned().await.ok()
+    /// A request slot, or `None` at once when every slot is taken.
+    pub(super) fn try_request_permit(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.permits).try_acquire_owned().ok()
+    }
+
+    /// A slot held for an open WebSocket's lifetime, or `None` when all are taken.
+    pub(super) fn try_websocket_permit(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.websockets).try_acquire_owned().ok()
     }
 }
 
@@ -70,7 +82,7 @@ pub(super) async fn forward(
         return ws::forward_websocket(proxy, apps, name, request).await;
     }
 
-    let Some(_permit) = proxy.acquire_permit().await else {
+    let Some(_permit) = proxy.try_request_permit() else {
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "Site gateway concurrency limit reached.",

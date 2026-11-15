@@ -652,8 +652,11 @@ must be built with relative paths (Vite: `base: './'`). Each live app is
 served at `<origin>/apps/<name>/` and receives `$PORT` (`127.0.0.1`-only),
 `$BASE_PATH` (`/apps/<name>`), and `HOST=127.0.0.1` (`BIND`, `HOSTNAME`) in a
 `bwrap` + `slirp4netns` sandbox supervised by `systemd-run --user` (install
-`bubblewrap` and `slirp4netns` on the host and run `loginctl enable-linger renoa`
-once so user units survive `renoa-node` restarts). Without `siteGateway`,
+`bubblewrap`, `slirp4netns`, and Python 3.12 or later on the host and run
+`loginctl enable-linger renoa` once so user units survive `renoa-node`
+restarts). `deploy/renoa-node.service` orders the node after `user@299.service`,
+the `renoa` user's manager on the VPS (uid 299); change the uid there for
+another service user. Without `siteGateway`,
 `site_manage` and `app_manage` refuse and tell the agent the gateway is off.
 
 The node also answers the owner's Host control (the Control Room's calls under

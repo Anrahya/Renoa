@@ -1,23 +1,23 @@
 //! Bubblewrap + slirp4netns sandbox runtime artifacts and bounded log tailing.
 
 use std::{
+    collections::BTreeSet,
     ffi::OsString,
     fs, io,
+    net::Ipv4Addr,
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
-
 use super::AppError;
 use super::model::{
-    LOG_TAIL_BYTES, LOG_TAIL_LINES, MAX_LOG_FILE_BYTES, MAX_SCRATCH_BYTES, STARTUP_TIMEOUT,
+    IDLE_TIMEOUT, LOG_TAIL_BYTES, LOG_TAIL_LINES, MAX_APP_CONNECTIONS, MAX_LOG_FILE_BYTES,
+    MAX_SCRATCH_BYTES, STARTUP_TIMEOUT,
 };
 
 pub(crate) const BWRAP_PATH: &str = "/usr/bin/bwrap";
 pub(crate) const SLIRP4NETNS_PATH: &str = "/usr/bin/slirp4netns";
 pub(crate) const PYTHON3_PATH: &str = "/usr/bin/python3";
-pub(crate) const SANDBOX_STATE_NAME: &str = "sandbox.json";
 
 const COMMAND_SCRIPT_NAME: &str = "command.sh";
 const CONFIG_FILE_NAME: &str = "config.json";
@@ -26,6 +26,18 @@ const RESOLV_CONF_NAME: &str = "resolv.conf";
 const HOSTS_FILE_NAME: &str = "hosts";
 const SANDBOX_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const RUNNER_PY: &str = include_str!("runner.py");
+
+/// Destinations an app cannot reach through slirp4netns: the carrier-grade
+/// NAT range Tailscale assigns and the private and link-local ranges.
+/// slirp's own `10.0.2.0/24` stays reachable because its
+/// connected route is more specific than `10.0.0.0/8`.
+const BLOCKED_RANGES: [&str; 5] = [
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+];
 
 #[derive(Debug, Clone)]
 pub(crate) struct SandboxSpec {
@@ -36,24 +48,6 @@ pub(crate) struct SandboxSpec {
     pub port: u16,
     pub base_path: String,
     pub command: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct SandboxState {
-    pub child_pid: u32,
-    pub port: u16,
-}
-
-pub(crate) fn read_sandbox_state(runtime_dir: &Path) -> Result<Option<SandboxState>, String> {
-    let path = runtime_dir.join(SANDBOX_STATE_NAME);
-    let raw = match fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(format!("cannot read `{}`: {err}", path.display())),
-    };
-    serde_json::from_str::<SandboxState>(&raw)
-        .map(Some)
-        .map_err(|err| format!("invalid `{}`: {err}", path.display()))
 }
 
 pub(crate) fn check_scratch_quota(scratch_dir: &Path) -> Result<(), AppError> {
@@ -113,15 +107,25 @@ pub(crate) fn write_runtime_artifacts(spec: &SandboxSpec) -> Result<Vec<OsString
         "app_dir": spec.app_dir,
         "scratch_dir": spec.scratch_dir,
         "log_file": spec.log_file,
-        "sandbox_state": spec.runtime_dir.join(SANDBOX_STATE_NAME),
         "command_script": cmd_path,
         "resolv_conf": resolv_path,
         "hosts_file": hosts_path,
         "bwrap_path": BWRAP_PATH,
         "slirp4netns_path": SLIRP4NETNS_PATH,
         "port": spec.port,
-        "base_path": spec.base_path,
-        "path_env": SANDBOX_PATH,
+        "env": {
+            "PATH": SANDBOX_PATH,
+            "HOME": "/tmp",
+            "TMPDIR": "/tmp",
+            "PORT": spec.port.to_string(),
+            "BASE_PATH": spec.base_path,
+            "HOST": "127.0.0.1",
+            "BIND": "127.0.0.1",
+            "HOSTNAME": "127.0.0.1",
+        },
+        "blocked_routes": blocked_routes()?,
+        "max_connections": MAX_APP_CONNECTIONS,
+        "idle_timeout_secs": IDLE_TIMEOUT.as_secs_f64(),
         "max_log_bytes": MAX_LOG_FILE_BYTES,
         "startup_timeout_secs": STARTUP_TIMEOUT.as_secs_f64(),
     });
@@ -136,6 +140,29 @@ pub(crate) fn write_runtime_artifacts(spec: &SandboxSpec) -> Result<Vec<OsString
         runner_path.into_os_string(),
         config_path.into_os_string(),
     ])
+}
+
+/// Every blocked range plus each IPv4 address the host holds, so an app
+/// cannot reach the host's LAN, public, or tailnet listeners through slirp.
+fn blocked_routes() -> Result<Vec<String>, AppError> {
+    let mut host_addresses = BTreeSet::new();
+    for interface in nix::ifaddrs::getifaddrs().map_err(io::Error::from)? {
+        if let Some(address) = interface.address.as_ref().and_then(|a| a.as_sockaddr_in()) {
+            let ip = address.ip();
+            if !ip.is_loopback() {
+                host_addresses.insert(ip);
+            }
+        }
+    }
+    Ok(BLOCKED_RANGES
+        .iter()
+        .map(|range| (*range).to_owned())
+        .chain(
+            host_addresses
+                .into_iter()
+                .map(|ip: Ipv4Addr| format!("{ip}/32")),
+        )
+        .collect())
 }
 
 pub(crate) fn read_log_tail(log_file: &Path) -> String {

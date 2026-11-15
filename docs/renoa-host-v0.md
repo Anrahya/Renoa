@@ -519,16 +519,24 @@ the workspace without traversing symlinks, refusing `.`; required for `start`), 
 action refuses without creating state when the node runs no site gateway. Each app
 is recorded in `host_apps` (schema 56, an agent-owned table) with a reserved
 loopback port (`20000..=29999`), owns its folder plus private `state/apps/<app_id>/`
-(`scratch/` capped at 256 MiB and bounded 1 MiB `app.log`), and runs outside `renoa-node` under `systemd-run --user`
+(`scratch/`, which a start refuses once it holds over 256 MiB, and a bounded 1 MiB `app.log`), and runs outside `renoa-node` under `systemd-run --user`
 in `renoa-apps.slice` (`MemoryMax=2G`, `TasksMax=1024`; per-unit `MemoryMax=512M`, `MemorySwapMax=0`, `CPUQuota=100%`, `TasksMax=128`, restarting on failure up to 3 starts in 15
-seconds before marking `failed`, with at most `MAX_RUNNING_APPS = 4` concurrent apps) inside `/usr/bin/bwrap` (`--unshare-all --remount-ro /`
+seconds before marking `failed`, with at most `MAX_RUNNING_APPS = 4` concurrent apps).
+The unit runs `runner.py` under `/usr/bin/python3`, which starts the command in `/usr/bin/bwrap` (`--unshare-all --remount-ro /`
 to isolate filesystem, mounts, network, PID, IPC, UTS, and environment, with minimal synthetic `/etc` omitting host `/etc/passwd` and `/etc/shadow`, read-only host OS binaries/libraries, only the app folder at `/app`
-and `scratch/` at `/tmp` writable, `HOST=BIND=HOSTNAME=127.0.0.1`, `PORT`, and
-`BASE_PATH=/apps/{name}`) paired with `/usr/bin/slirp4netns` (`--disable-host-loopback --enable-seccomp`, bridged onto `127.0.0.1:$PORT` over `SCM_RIGHTS`). Startup verifies through cgroup-scoped `/proc/<pid>/net/tcp{,6}` and host socket ownership in `/proc/net/tcp{,6}` that the
-app listens on `127.0.0.1:$PORT` only and answers HTTP, staging changes and cleaning up any new row,
+and `scratch/` at `/tmp` writable and mounted by descriptor so the app inherits none, `HOST=BIND=HOSTNAME=127.0.0.1`, `PORT`, and
+`BASE_PATH=/apps/{name}`). `/usr/bin/slirp4netns` (`--disable-host-loopback --enable-seccomp`) gives the sandbox outbound networking, and before the command runs
+the runner's bridge joins the sandbox's namespaces and adds unreachable routes for `10.0.0.0/8` (slirp's own `10.0.2.0/24` stays reachable),
+`100.64.0.0/10`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, and every IPv4 address the host holds, so an app reaches the public internet
+but not the host, its LAN, or tailnet devices. The runner binds host `127.0.0.1:$PORT` once the app accepts connections on its own loopback port
+(on `127.0.0.1` or any address) and passes each accepted connection to the bridge over `SCM_RIGHTS`; the bridge relays at most 256 at once,
+closing the rest, stops reading a side while 64 KiB wait for its peer, and closes a connection idle for `IDLE_TIMEOUT`. Startup verifies through host socket ownership in `/proc/net/tcp{,6}`
+that the unit's cgroup holds `127.0.0.1:$PORT` and that it answers HTTP, staging changes and cleaning up any new row,
 runtime directory, or transient unit if validation fails (preserving a running app if a `start` update fails). Active apps stop
-automatically after 30 minutes without gateway traffic (`IDLE_TIMEOUT`) and
-reconcile across `renoa-node` restarts without interrupting live processes.
+automatically after 30 minutes without gateway traffic (`IDLE_TIMEOUT`); a WebSocket with no message either way for that long is closed, and the gateway
+holds at most 64 open WebSockets and 64 requests until their response headers arrive, answering 503 beyond them. Apps
+reconcile across `renoa-node` restarts without interrupting live processes: before serving, the node removes runtime directories no app names,
+then re-checks each app under its lock and stops units no app owns.
 
 An agent's heartbeat is `renoa.owner`'s trigger: a check-in of its own at
 minute 0 every `heartbeat_hours` from 08:00 to 22:00 in the agent's

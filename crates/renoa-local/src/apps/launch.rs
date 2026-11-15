@@ -19,6 +19,7 @@ use super::{
         set_state_stopped, update_existing_on_start, used_ports,
     },
     supervisor::{self, StartUnitSpec, UnitStatus},
+    unit_names,
 };
 use crate::sites::{DirCleanup, create_private_dir};
 
@@ -31,7 +32,7 @@ impl Apps {
         rec: &AppRecord,
         apps_root: &Path,
     ) -> Result<LiveApp, AppError> {
-        let unit = supervisor::unit_name(&self.database, &rec.app.name);
+        let unit = unit_names::unit_name(&self.database, &rec.app.name);
         let config_changed =
             rec.app.source_folder != spec.source_folder || rec.app.command != spec.command;
         let currently_live = rec.app.state == AppState::Running
@@ -113,7 +114,7 @@ impl Apps {
         let port = port_reservation.port();
         let mut unit_cleanup = supervisor::UnitCleanup::armed(&self.database, &spec.name);
         let unit_spec = StartUnitSpec {
-            unit: supervisor::unit_name(&self.database, &spec.name),
+            unit: unit_names::unit_name(&self.database, &spec.name),
             app_name: spec.name.clone(),
             app_dir: spec.app_dir,
             scratch_dir,
@@ -161,14 +162,9 @@ impl Apps {
         if let Err(err) = supervisor::start_unit(spec).await {
             return Err(StartupError::Failed(err.to_string()));
         }
-        if let Err(err) = health::wait_until_healthy(
-            &spec.unit,
-            &spec.runtime_dir,
-            spec.port,
-            &spec.log_file,
-            self.startup_timeout,
-        )
-        .await
+        if let Err(err) =
+            health::wait_until_healthy(&spec.unit, spec.port, &spec.log_file, self.startup_timeout)
+                .await
         {
             if let Err(stop_err) = supervisor::stop_unit(&spec.unit).await {
                 let reason = err.into_message();
@@ -202,7 +198,7 @@ impl Apps {
         )
         .map_err(|e| e.to_string())?;
         let seq = STAGING_SEQ.fetch_add(1, Ordering::Relaxed);
-        let stage_unit = supervisor::staging_unit_name(&self.database, &spec.name, seq);
+        let stage_unit = unit_names::staging_unit_name(&self.database, &spec.name, seq);
         let mut unit_cleanup = supervisor::UnitCleanup::armed_unit(stage_unit.clone());
 
         let unit_spec = StartUnitSpec {
@@ -230,7 +226,7 @@ impl Apps {
         let log_file = runtime_dir.join(LOG_FILE_NAME);
         let mut unit_cleanup = supervisor::UnitCleanup::armed(&self.database, &rec.app.name);
         let spec = StartUnitSpec {
-            unit: supervisor::unit_name(&self.database, &rec.app.name),
+            unit: unit_names::unit_name(&self.database, &rec.app.name),
             app_name: rec.app.name.clone(),
             app_dir,
             scratch_dir,

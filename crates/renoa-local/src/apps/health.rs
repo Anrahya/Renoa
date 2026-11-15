@@ -1,4 +1,4 @@
-//! Port allocation, unit-scoped `127.0.0.1`-only listener verification, and
+//! Port allocation, unit-scoped `127.0.0.1` listener verification, and
 //! HTTP readiness probes.
 
 use std::{
@@ -20,7 +20,7 @@ use tokio::{
 };
 
 use super::{
-    AppError, STARTUP_TIMEOUT, sandbox,
+    AppError, STARTUP_TIMEOUT,
     supervisor::{self, UnitStatus},
 };
 
@@ -43,7 +43,7 @@ impl ListenerViolation {
     pub(super) fn message(&self) -> String {
         match self {
             Self::NonLoopback(addr) => {
-                format!("App bound {addr}; live apps must bind 127.0.0.1 only on $PORT.")
+                format!("A host process listens on {addr}, this app's port.")
             }
             Self::PortSquatted(port) => {
                 format!("Host port 127.0.0.1:{port} is held by a process outside the app unit.")
@@ -130,59 +130,6 @@ fn read_cgroup(pid: u32) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-}
-
-fn scan_sandbox_tables(child_pid: u32, target_port: u16) -> Result<bool, ListenerViolation> {
-    let v4_path = format!("/proc/{child_pid}/net/tcp");
-    let v4 = fs::read_to_string(&v4_path)
-        .map_err(|err| ListenerViolation::Unreadable(format!("cannot read {v4_path}: {err}")))?;
-    let found_target = check_sandbox_table(&v4, target_port, false)?;
-
-    let v6_path = format!("/proc/{child_pid}/net/tcp6");
-    if Path::new(&v6_path).exists() {
-        let v6 = fs::read_to_string(&v6_path).map_err(|err| {
-            ListenerViolation::Unreadable(format!("cannot read {v6_path}: {err}"))
-        })?;
-        let _ = check_sandbox_table(&v6, target_port, true)?;
-    }
-    Ok(found_target)
-}
-
-fn check_sandbox_table(
-    contents: &str,
-    expected_port: u16,
-    is_v6: bool,
-) -> Result<bool, ListenerViolation> {
-    const TCP_LISTEN: &str = "0A";
-    let mut found_target = false;
-
-    for line in contents.lines().skip(1) {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 10 || fields[3] != TCP_LISTEN {
-            continue;
-        }
-        let Some((ip_hex, port_hex)) = fields[1].split_once(':') else {
-            continue;
-        };
-        let Ok(port) = u16::from_str_radix(port_hex, 16) else {
-            continue;
-        };
-        if is_v6 {
-            return Err(ListenerViolation::NonLoopback(format!(
-                "[v6:{ip_hex}]:{port}"
-            )));
-        }
-        let Ok(raw) = u32::from_str_radix(ip_hex, 16) else {
-            return Err(ListenerViolation::NonLoopback(format!("{ip_hex}:{port}")));
-        };
-        let ip = Ipv4Addr::from(raw.to_ne_bytes());
-        if ip != Ipv4Addr::LOCALHOST || port != expected_port {
-            return Err(ListenerViolation::NonLoopback(format!("{ip}:{port}")));
-        }
-        found_target = true;
-    }
-
-    Ok(found_target)
 }
 
 fn find_host_loopback_inodes(target_port: u16) -> Result<Vec<u64>, ListenerViolation> {
@@ -284,44 +231,24 @@ fn cgroup_owns_socket_inode(unit_cgroup: &str, inodes: &[u64]) -> bool {
     false
 }
 
-/// Verifies both the sandbox network namespace listener and that host
-/// `127.0.0.1:port` is owned by a process in `main_pid`'s cgroup.
-pub(super) fn check_unit_listener(
-    main_pid: u32,
-    runtime_dir: &Path,
-    port: u16,
-) -> Result<bool, ListenerViolation> {
+/// Reports whether host `127.0.0.1:port` listens from a process in
+/// `main_pid`'s cgroup. The runner binds that port only after the app inside
+/// its sandbox accepts connections, so ownership also proves the app is up.
+pub(super) fn check_unit_listener(main_pid: u32, port: u16) -> Result<bool, ListenerViolation> {
     if main_pid == 0 {
         return Ok(false);
     }
     let Some(unit_cgroup) = read_cgroup(main_pid) else {
         return Ok(false);
     };
-
     let host_inodes = find_host_loopback_inodes(port)?;
-    if !host_inodes.is_empty() && !cgroup_owns_socket_inode(&unit_cgroup, &host_inodes) {
+    if host_inodes.is_empty() {
+        return Ok(false);
+    }
+    if !cgroup_owns_socket_inode(&unit_cgroup, &host_inodes) {
         return Err(ListenerViolation::PortSquatted(port));
     }
-
-    let state = match sandbox::read_sandbox_state(runtime_dir) {
-        Ok(Some(state)) => state,
-        Ok(None) => return Ok(false),
-        Err(reason) => return Err(ListenerViolation::Unreadable(reason)),
-    };
-    if state.port != port {
-        return Err(ListenerViolation::Unreadable(format!(
-            "sandbox port {} does not match assigned port {port}",
-            state.port
-        )));
-    }
-    if read_cgroup(state.child_pid).as_deref() != Some(unit_cgroup.as_str()) {
-        return Ok(false);
-    }
-    if !scan_sandbox_tables(state.child_pid, port)? {
-        return Ok(false);
-    }
-
-    Ok(!host_inodes.is_empty() && cgroup_owns_socket_inode(&unit_cgroup, &host_inodes))
+    Ok(true)
 }
 
 fn is_v4_mapped_loopback_hex(ip_hex: &str) -> bool {
@@ -378,7 +305,6 @@ pub(super) async fn probe_http(port: u16) -> bool {
 /// returns `StartupError::TimedOut` on deadline expiry.
 pub(super) async fn wait_until_healthy(
     unit: &str,
-    runtime_dir: &Path,
     port: u16,
     log_file: &Path,
     startup_timeout: Duration,
@@ -425,10 +351,10 @@ pub(super) async fn wait_until_healthy(
             }
         };
 
-        match check_unit_listener(main_pid, runtime_dir, port) {
+        match check_unit_listener(main_pid, port) {
             Ok(true) => {
                 if probe_http(port).await {
-                    match check_unit_listener(main_pid, runtime_dir, port) {
+                    match check_unit_listener(main_pid, port) {
                         Ok(true) => return Ok(()),
                         Ok(false) => {}
                         Err(violation) => return Err(StartupError::Failed(violation.message())),

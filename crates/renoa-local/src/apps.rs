@@ -9,11 +9,12 @@ mod store;
 mod supervisor;
 #[cfg(test)]
 mod tests;
+mod unit_names;
 
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex as StdMutex},
+    sync::{Arc, LazyLock, Mutex as StdMutex},
     time::Duration,
 };
 
@@ -24,8 +25,7 @@ use uuid::Uuid;
 
 use crate::sites::{resolve_source_folder, validate_site_name};
 use health::StartupError;
-use launch::{ensure_apps_root, log_file_path, now_ms, runtime_dir_for};
-use model::LOG_FILE_NAME;
+use launch::{ensure_apps_root, log_file_path, now_ms};
 use store::{
     AppRecord, ensure_reachable, list_records, read_record, set_state_failed, set_state_stopped,
     update_last_active,
@@ -72,14 +72,23 @@ impl Drop for AppStreamGuard {
     }
 }
 
+type AppLocks = Arc<StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>>;
+type StreamCounts = Arc<StdMutex<HashMap<String, usize>>>;
+
+/// Per-app locks and open-stream counts for each Host database. The agent
+/// tool, the control API, and the gateway each hold their own `Apps`; sharing
+/// this state makes them serialize on one app and see each other's streams.
+static SHARED_STATE: LazyLock<StdMutex<HashMap<PathBuf, (AppLocks, StreamCounts)>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
 /// Host-owned registry and supervisor bridge for live web apps.
 #[derive(Debug, Clone)]
 pub struct Apps {
     database: PathBuf,
     idle_timeout: Duration,
     startup_timeout: Duration,
-    locks: Arc<StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
-    active_streams: Arc<StdMutex<HashMap<String, usize>>>,
+    locks: AppLocks,
+    active_streams: StreamCounts,
 }
 
 struct StartSpec {
@@ -99,12 +108,19 @@ impl Apps {
 
     #[must_use]
     pub fn from_database(database: &Path) -> Self {
+        let key = std::fs::canonicalize(database).unwrap_or_else(|_| database.to_path_buf());
+        let (locks, active_streams) = SHARED_STATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(key)
+            .or_default()
+            .clone();
         Self {
             database: database.to_path_buf(),
             idle_timeout: IDLE_TIMEOUT,
             startup_timeout: STARTUP_TIMEOUT,
-            locks: Arc::new(StdMutex::new(HashMap::new())),
-            active_streams: Arc::new(StdMutex::new(HashMap::new())),
+            locks,
+            active_streams,
         }
     }
 
@@ -228,7 +244,7 @@ impl Apps {
         {
             return Ok(None);
         }
-        let unit = supervisor::unit_name(&self.database, &spec.name);
+        let unit = unit_names::unit_name(&self.database, &spec.name);
         if !matches!(
             supervisor::unit_status(&unit).await,
             Ok(UnitStatus::Active { .. })
@@ -264,7 +280,7 @@ impl Apps {
     }
 
     async fn stop_locked(&self, rec: &AppRecord) -> Result<LiveApp, AppError> {
-        supervisor::stop_unit(&supervisor::unit_name(&self.database, &rec.app.name)).await?;
+        supervisor::stop_unit(&unit_names::unit_name(&self.database, &rec.app.name)).await?;
         set_state_stopped(&self.database, &rec.app.name, now_ms()?)?;
         read_record(&self.database, &rec.app.name)?
             .map(|r| r.app)
@@ -395,15 +411,13 @@ impl Apps {
                     let latest = read_record(&self.database, &name)?.ok_or(AppError::NotFound)?;
                     return self.wake_existing(&latest).await;
                 }
-                let runtime_dir = runtime_dir_for(&self.database, &rec.app_id);
-                let log_file = runtime_dir.join(LOG_FILE_NAME);
+                let log_file = log_file_path(&self.database, &rec.app_id);
                 match self.verify_live_loopback_http(&rec).await {
                     Ok(true) => {}
                     Ok(false) => {
-                        let unit = supervisor::unit_name(&self.database, &rec.app.name);
+                        let unit = unit_names::unit_name(&self.database, &rec.app.name);
                         if let Err(err) = health::wait_until_healthy(
                             &unit,
-                            &runtime_dir,
                             synced.port,
                             &log_file,
                             self.startup_timeout,

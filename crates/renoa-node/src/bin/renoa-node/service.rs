@@ -39,6 +39,20 @@ pub(crate) async fn serve(
             &serde_json::json!({ "error": error.to_string() }),
         ),
     }
+    // Nothing starts an app yet, so a directory no app names is left from a crash.
+    match apps.sweep_orphan_dirs() {
+        Ok(0) => {}
+        Ok(removed) => log::event(
+            "info",
+            "live_app_dirs_swept",
+            &serde_json::json!({ "removed": removed }),
+        ),
+        Err(error) => log::event(
+            "warn",
+            "live_app_dirs_sweep_failed",
+            &serde_json::json!({ "error": error.to_string() }),
+        ),
+    }
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
     let drain = CancellationToken::new();

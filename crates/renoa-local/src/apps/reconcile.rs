@@ -4,12 +4,11 @@ use std::{collections::HashSet, fs};
 
 use super::{
     AppError, AppState, Apps, LiveApp, health,
-    launch::{
-        apps_dir_for_database, format_reason_with_logs, log_file_path, now_ms, runtime_dir_for,
-    },
+    launch::{apps_dir_for_database, format_reason_with_logs, log_file_path, now_ms},
     model::MAX_RUNNING_APPS,
     store::{AppRecord, list_all_records, read_record, set_state_failed, set_state_stopped},
     supervisor::{self, UnitStatus},
+    unit_names,
 };
 
 impl Apps {
@@ -118,101 +117,106 @@ impl Apps {
         Ok(())
     }
 
+    /// Removes every entry under the apps directory that no `host_apps` row
+    /// names, including staging directories a crash left behind. Call it
+    /// before anything can start an app: a start creates its directory before
+    /// committing its row, so a concurrent sweep would delete it.
+    ///
+    /// # Errors
+    /// Returns [`AppError`] when the catalog cannot be read.
+    pub fn sweep_orphan_dirs(&self) -> Result<usize, AppError> {
+        let known: HashSet<String> = list_all_records(&self.database)?
+            .into_iter()
+            .map(|rec| rec.app_id)
+            .collect();
+        let Ok(entries) = fs::read_dir(apps_dir_for_database(&self.database)) else {
+            return Ok(0);
+        };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_str().is_some_and(|id| known.contains(id)) {
+                continue;
+            }
+            fs::remove_dir_all(entry.path())?;
+            removed += 1;
+        }
+        Ok(removed)
+    }
+
     /// Reconciles `host_apps` with `systemd --user` when `renoa-node` starts.
+    /// It runs while the gateway serves, so each app is re-read under its
+    /// lock instead of trusting a snapshot taken before a concurrent start.
     ///
     /// # Errors
     /// Returns [`AppError`] on catalog read or transient `systemd --user` unavailability.
     pub async fn reconcile_on_startup(&self) -> Result<(), AppError> {
-        let records = list_all_records(&self.database)?;
-        let mut known_names = HashSet::new();
-        let mut known_ids = HashSet::new();
         let mut first_supervisor_err: Option<AppError> = None;
+        let names: Vec<String> = list_all_records(&self.database)?
+            .into_iter()
+            .map(|rec| rec.app.name)
+            .collect();
 
-        for rec in &records {
-            known_names.insert(rec.app.name.clone());
-            known_ids.insert(rec.app_id.clone());
-
-            let mutex = self.lock_for(&rec.app.name);
+        for name in names {
+            let mutex = self.lock_for(&name);
             let _guard = mutex.lock().await;
-            let unit = supervisor::unit_name(&self.database, &rec.app.name);
-            match rec.app.state {
-                AppState::Running => match supervisor::unit_status(&unit).await {
-                    Ok(UnitStatus::Failed { detail }) => {
-                        let _ = set_state_failed(&self.database, &rec.app.name, &detail, now_ms()?);
-                    }
-                    Ok(UnitStatus::Inactive) => {
-                        let _ = self.launch_existing(rec).await;
-                    }
-                    Ok(UnitStatus::Active { .. } | UnitStatus::Activating) => {}
-                    Err(err) => {
-                        if first_supervisor_err.is_none() {
-                            first_supervisor_err = Some(AppError::SupervisorUnavailable(format!(
-                                "unit status check failed during startup: {err}"
-                            )));
-                        }
-                    }
-                },
-                AppState::Stopped => match supervisor::unit_status(&unit).await {
-                    Ok(UnitStatus::Active { .. } | UnitStatus::Activating) => {
-                        let _ = supervisor::stop_unit(&unit).await;
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        if first_supervisor_err.is_none() {
-                            first_supervisor_err = Some(AppError::SupervisorUnavailable(format!(
-                                "unit status check failed during startup: {err}"
-                            )));
-                        }
-                    }
-                },
-                AppState::Failed => {}
+            let Some(rec) = read_record(&self.database, &name)? else {
+                continue;
+            };
+            let unit = unit_names::unit_name(&self.database, &name);
+            let status = supervisor::unit_status(&unit).await;
+            match (rec.app.state, status) {
+                (_, Err(err)) => {
+                    first_supervisor_err.get_or_insert(AppError::SupervisorUnavailable(format!(
+                        "unit status check failed during startup: {err}"
+                    )));
+                }
+                (AppState::Running, Ok(UnitStatus::Failed { detail })) => {
+                    let _ = set_state_failed(&self.database, &name, &detail, now_ms()?);
+                }
+                (AppState::Running, Ok(UnitStatus::Inactive)) => {
+                    let _ = self.launch_existing(&rec).await;
+                }
+                (AppState::Stopped, Ok(UnitStatus::Active { .. } | UnitStatus::Activating)) => {
+                    let _ = supervisor::stop_unit(&unit).await;
+                }
+                _ => {}
             }
         }
 
-        let prefix = supervisor::unit_prefix_for(&self.database);
         match supervisor::list_home_units(&self.database).await {
             Ok(units) => {
+                let prefix = unit_names::unit_prefix_for(&self.database);
                 for unit in units {
-                    if let Some(app_name) = unit
+                    let Some(owner) = unit
                         .strip_prefix(&prefix)
                         .and_then(|rest| rest.strip_suffix(".service"))
-                        && !known_names.contains(app_name)
-                    {
+                        .map(unit_names::unit_owner)
+                    else {
+                        continue;
+                    };
+                    let mutex = self.lock_for(owner.name);
+                    let _guard = mutex.lock().await;
+                    if owner.staging || read_record(&self.database, owner.name)?.is_none() {
                         let _ = supervisor::stop_unit(&unit).await;
                     }
                 }
             }
             Err(err) => {
-                if first_supervisor_err.is_none() {
-                    first_supervisor_err = Some(AppError::SupervisorUnavailable(format!(
-                        "list units failed during startup: {err}"
-                    )));
-                }
+                first_supervisor_err.get_or_insert(AppError::SupervisorUnavailable(format!(
+                    "list units failed during startup: {err}"
+                )));
             }
         }
 
-        if let Ok(entries) = fs::read_dir(apps_dir_for_database(&self.database)) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                if let Some(dir_name) = name.to_str()
-                    && !known_ids.contains(dir_name)
-                {
-                    let _ = fs::remove_dir_all(entry.path());
-                }
-            }
-        }
-
-        if let Some(err) = first_supervisor_err {
-            return Err(err);
-        }
-        Ok(())
+        first_supervisor_err.map_or(Ok(()), Err)
     }
 
     pub(super) async fn sync_live_state(&self, rec: &AppRecord) -> Result<LiveApp, AppError> {
         if rec.app.state != AppState::Running {
             return Ok(rec.app.clone());
         }
-        let unit = supervisor::unit_name(&self.database, &rec.app.name);
+        let unit = unit_names::unit_name(&self.database, &rec.app.name);
         match supervisor::unit_status(&unit).await {
             Ok(UnitStatus::Failed { detail }) => {
                 let reason =
@@ -241,7 +245,7 @@ impl Apps {
     }
 
     pub(super) async fn verify_live_loopback_http(&self, rec: &AppRecord) -> Result<bool, String> {
-        let unit = supervisor::unit_name(&self.database, &rec.app.name);
+        let unit = unit_names::unit_name(&self.database, &rec.app.name);
         let main_pid = match supervisor::unit_status(&unit).await {
             Ok(UnitStatus::Active { main_pid }) => main_pid,
             Ok(UnitStatus::Activating | UnitStatus::Inactive) => return Ok(false),
@@ -255,8 +259,7 @@ impl Apps {
             Err(err) => return Err(format!("cannot inspect unit `{unit}`: {err}")),
         };
 
-        let runtime_dir = runtime_dir_for(&self.database, &rec.app_id);
-        match health::check_unit_listener(main_pid, &runtime_dir, rec.app.port) {
+        match health::check_unit_listener(main_pid, rec.app.port) {
             Ok(true) => Ok(health::probe_http(rec.app.port).await),
             Ok(false) => Ok(false),
             Err(violation) => {

@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use tokio::time::Instant;
+
 use axum::{
     body::Body,
     extract::{
@@ -56,10 +58,10 @@ pub(super) async fn forward_websocket(
     name: &str,
     request: Request<Body>,
 ) -> Response {
-    let Some(_permit) = proxy.acquire_permit().await else {
+    let Some(permit) = proxy.try_websocket_permit() else {
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            "Site gateway concurrency limit reached.",
+            "Site gateway WebSocket limit reached.",
         );
     };
     let Some(upstream_suffix) = validated_upstream_suffix(request.uri().path(), name) else {
@@ -144,8 +146,9 @@ pub(super) async fn forward_websocket(
     let apps_clone = apps.clone();
     let _ = apps.touch(name);
     upgrade.on_upgrade(move |client_ws| async move {
+        let _permit = permit;
         let _stream_guard = apps_clone.acquire_stream(&app_name);
-        relay_websocket(client_ws, upstream_ws).await;
+        relay_websocket(client_ws, upstream_ws, apps_clone.idle_timeout()).await;
     })
 }
 
@@ -211,45 +214,63 @@ async fn connect_upstream_ws(
         .map_err(|err| err.to_string())
 }
 
+/// Relays both directions independently, so a peer that stops reading
+/// blocks only its own direction, and closes after `idle_timeout` without a
+/// message either way so an open socket cannot keep its app awake forever.
 async fn relay_websocket(
     client_ws: WebSocket,
     upstream_ws: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
+    idle_timeout: Duration,
 ) {
     let (mut client_tx, mut client_rx) = client_ws.split();
     let (mut up_tx, mut up_rx) = upstream_ws.split();
-
-    loop {
-        tokio::select! {
-            msg = client_rx.next() => match msg {
-                Some(Ok(msg)) => {
-                    let close = matches!(msg, AxumMessage::Close(_));
-                    let mapped = axum_to_tungstenite(msg);
-                    if up_tx.send(mapped).await.is_err() {
-                        break;
-                    }
-                    if close {
-                        break;
-                    }
-                }
-                _ => break,
-            },
-            msg = up_rx.next() => match msg {
-                Some(Ok(msg)) => {
-                    let close = matches!(msg, WsMessage::Close(_));
-                    if let Some(mapped) = tungstenite_to_axum(msg)
-                        && client_tx.send(mapped).await.is_err()
-                    {
-                        break;
-                    }
-                    if close {
-                        break;
-                    }
-                }
-                _ => break,
-            },
+    let last_active = std::sync::Mutex::new(Instant::now());
+    let touch = || {
+        *last_active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+    };
+    let to_upstream = async {
+        while let Some(Ok(msg)) = client_rx.next().await {
+            touch();
+            let close = matches!(msg, AxumMessage::Close(_));
+            if up_tx.send(axum_to_tungstenite(msg)).await.is_err() || close {
+                break;
+            }
         }
+    };
+    let to_client = async {
+        while let Some(Ok(msg)) = up_rx.next().await {
+            touch();
+            let close = matches!(msg, WsMessage::Close(_));
+            if let Some(mapped) = tungstenite_to_axum(msg)
+                && client_tx.send(mapped).await.is_err()
+            {
+                break;
+            }
+            if close {
+                break;
+            }
+        }
+    };
+    let idle = async {
+        loop {
+            let deadline = *last_active
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                + idle_timeout;
+            if deadline <= Instant::now() {
+                break;
+            }
+            tokio::time::sleep_until(deadline).await;
+        }
+    };
+    tokio::select! {
+        () = to_upstream => {}
+        () = to_client => {}
+        () = idle => {}
     }
 }
 

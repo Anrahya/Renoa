@@ -587,85 +587,6 @@ async fn bwrap_sandbox_isolates_credentials_state_other_apps_and_root() {
 }
 
 #[tokio::test]
-async fn non_loopback_bind_is_refused_without_residue() {
-    let f = Fixture::new();
-    let script = r#"import http.server, os
-PORT = int(os.environ["PORT"])
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"public")
-    def log_message(self, format, *args):
-        pass
-http.server.ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
-"#;
-    f.write_app("publicbind", script);
-    f.cleanup.register("publicbind");
-
-    let err = f
-        .apps()
-        .start(
-            f.agent,
-            None,
-            &f.workspace,
-            "publicbind",
-            "publicbind",
-            "python3 server.py",
-        )
-        .await
-        .expect_err("0.0.0.0 bind must be refused");
-    assert!(
-        matches!(err, AppError::StartupFailed { ref reason } if reason.contains("127.0.0.1 only")),
-        "{err:?}"
-    );
-    assert_eq!(f.count_rows(), 0);
-    assert!(f.state_app_dirs().is_empty());
-    assert_eq!(unit_main_pid_sync(&f.database, "publicbind"), 0);
-}
-
-#[tokio::test]
-async fn ipv6_bind_is_refused() {
-    let f = Fixture::new();
-    let script = r#"import http.server, os, socket
-PORT = int(os.environ["PORT"])
-v6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-v6.bind(("::1", PORT))
-v6.listen(5)
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"v6")
-    def log_message(self, format, *args):
-        pass
-http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
-"#;
-    f.write_app("ipv6bind", script);
-    f.cleanup.register("ipv6bind");
-
-    let err = f
-        .apps()
-        .start(
-            f.agent,
-            None,
-            &f.workspace,
-            "ipv6bind",
-            "ipv6bind",
-            "python3 server.py",
-        )
-        .await
-        .expect_err("::1 bind must be refused");
-    assert!(
-        matches!(err, AppError::StartupFailed { ref reason } if reason.contains("127.0.0.1 only")),
-        "{err:?}"
-    );
-    assert_eq!(f.count_rows(), 0);
-    assert!(f.state_app_dirs().is_empty());
-    assert_eq!(unit_main_pid_sync(&f.database, "ipv6bind"), 0);
-}
-
-#[tokio::test]
 async fn ownership_blocks_other_principal_and_keeps_unowned_shared() {
     let f = Fixture::new();
     let alice = Uuid::new_v4();
@@ -1004,16 +925,37 @@ http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
     assert_eq!(resp["env_port"], started.port.to_string());
 }
 
+/// One IPv4 address the host holds outside loopback, for egress probes.
+fn host_non_loopback_ipv4() -> Option<std::net::Ipv4Addr> {
+    nix::ifaddrs::getifaddrs()
+        .expect("getifaddrs")
+        .filter_map(|interface| {
+            interface
+                .address?
+                .as_sockaddr_in()
+                .map(nix::sys::socket::SockaddrIn::ip)
+        })
+        .find(|ip| !ip.is_loopback())
+}
+
 #[tokio::test]
-async fn sandbox_isolates_host_loopback_and_refuses_secondary_listener() {
+async fn sandbox_blocks_host_and_private_egress_and_inherits_no_descriptors() {
     let f = Fixture::new();
-    let host_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind host listener");
+    let host_listener = std::net::TcpListener::bind("0.0.0.0:0").expect("bind host listener");
     let host_port = host_listener.local_addr().expect("local addr").port();
+    let host_ip = host_non_loopback_ipv4().expect("host has a non-loopback IPv4 address");
 
     let net_script = format!(
         r#"import http.server, json, os, socket
 
 PORT = int(os.environ["PORT"])
+# Before this process opens anything of its own: every inherited descriptor.
+def target(fd):
+    try:
+        return os.readlink(f"/proc/self/fd/{{fd}}")
+    except FileNotFoundError:
+        return "/proc/listing"  # the descriptor listdir used, closed since
+INHERITED = {{fd: target(fd) for fd in os.listdir("/proc/self/fd")}}
 
 def probe(host, port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1029,8 +971,11 @@ def probe(host, port):
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         body = json.dumps({{
+            "inherited": INHERITED,
             "host_loopback": probe("127.0.0.1", {host_port}),
-            "slirp_host_gw": probe("10.0.2.2", 22),
+            "slirp_host_gw": probe("10.0.2.2", {host_port}),
+            "host_address": probe("{host_ip}", {host_port}),
+            "env_host": os.environ.get("HOST"),
         }}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -1040,7 +985,10 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+extra = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+extra.bind(("127.0.0.1", PORT + 1))
+extra.listen(1)
+http.server.ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
 "#
     );
     f.write_app("netiso", &net_script);
@@ -1057,52 +1005,181 @@ http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
             "python3 server.py",
         )
         .await
-        .expect("start netiso");
+        .expect("an app may bind 0.0.0.0 and a second port inside its own namespace");
     let probes = get_json(format!("http://127.0.0.1:{}/", started.port)).await;
     drop(host_listener);
+    for (probe, what) in [
+        ("host_loopback", "host 127.0.0.1 services"),
+        ("slirp_host_gw", "host loopback through slirp's 10.0.2.2"),
+        ("host_address", "the host's own non-loopback address"),
+    ] {
+        assert!(
+            probes[probe]
+                .as_str()
+                .is_some_and(|s| s.starts_with("ERR:")),
+            "sandbox must not reach {what}: {probes}"
+        );
+    }
+    let inherited = probes["inherited"].as_object().expect("inherited map");
+    let leaked: Vec<_> = inherited
+        .iter()
+        .filter(|(fd, target)| {
+            !matches!(fd.as_str(), "0" | "1" | "2")
+                && !target.as_str().is_some_and(|t| t.starts_with("/proc/"))
+        })
+        .collect();
     assert!(
-        probes["host_loopback"]
-            .as_str()
-            .is_some_and(|s| s.starts_with("ERR:")),
-        "sandbox must not reach host 127.0.0.1 services: {probes}"
+        leaked.is_empty(),
+        "app inherited descriptors: {inherited:?}"
     );
-    assert!(
-        probes["slirp_host_gw"]
-            .as_str()
-            .is_some_and(|s| s.starts_with("ERR:")),
-        "sandbox must block slirp4netns 10.0.2.2 host loopback: {probes}"
-    );
+    assert_eq!(probes["env_host"], "127.0.0.1");
+}
 
-    let secondary_script = r#"import http.server, os, socket
-PORT = int(os.environ["PORT"])
-extra = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-extra.bind(("127.0.0.1", PORT + 1))
-extra.listen(1)
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-    def log_message(self, format, *args):
-        pass
-http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
-"#;
-    f.write_app("secondport", secondary_script);
-    f.cleanup.register("secondport");
-    let err = apps
+/// Opens `count` idle connections to `port` and returns them.
+fn idle_connections(port: u16, count: usize) -> Vec<std::net::TcpStream> {
+    (0..count)
+        .map(|_| std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect"))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_connection_flood_does_not_take_the_app_down() {
+    let f = Fixture::new();
+    f.write_app("flood", TEST_HTTP_SERVER);
+    f.cleanup.register("flood");
+    let apps = f.apps();
+    let started = apps
         .start(
             f.agent,
             None,
             &f.workspace,
-            "secondport",
-            "secondport",
+            "flood",
+            "flood",
             "python3 server.py",
         )
         .await
-        .expect_err("binding extra loopback port inside sandbox must be refused");
-    assert!(
-        matches!(err, AppError::StartupFailed { ref reason } if reason.contains("127.0.0.1 only")),
-        "{err:?}"
+        .expect("start flood");
+    let main_pid = unit_main_pid_sync(&f.database, "flood");
+
+    let flood = idle_connections(started.port, 2 * super::model::MAX_APP_CONNECTIONS as usize);
+    sleep(Duration::from_secs(1)).await;
+    drop(flood);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(response) = client()
+            .get(format!("http://127.0.0.1:{}/", started.port))
+            .send()
+            .await
+        {
+            assert!(response.status().is_success());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "app stopped answering after a flood"
+        );
+        sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        unit_main_pid_sync(&f.database, "flood"),
+        main_pid,
+        "the runner must survive a flood without a restart"
     );
+}
+
+#[tokio::test]
+async fn a_client_that_stops_reading_does_not_grow_the_bridge() {
+    let f = Fixture::new();
+    let script = r#"import http.server, os
+PORT = int(os.environ["PORT"])
+CHUNK = b"x" * (1024 * 1024)
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(CHUNK) * 2048))
+        self.end_headers()
+        for sent in range(2048):
+            self.wfile.write(CHUNK)
+            with open("/tmp/sent", "w") as f:
+                f.write(str(sent + 1))
+    def log_message(self, format, *args):
+        pass
+http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+"#;
+    f.write_app("hose", script);
+    f.cleanup.register("hose");
+    let apps = f.apps();
+    let started = apps
+        .start(
+            f.agent,
+            None,
+            &f.workspace,
+            "hose",
+            "hose",
+            "python3 server.py",
+        )
+        .await
+        .expect("start hose");
+    let main_pid = unit_main_pid_sync(&f.database, "hose");
+
+    let mut stalled = std::net::TcpStream::connect(("127.0.0.1", started.port)).expect("connect");
+    std::io::Write::write_all(&mut stalled, b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").expect("send");
+    sleep(Duration::from_secs(3)).await;
+
+    let sent_path = f.state_app_dirs()[0].join("scratch/sent");
+    let sent_mib: u64 = fs::read_to_string(&sent_path)
+        .expect("progress file")
+        .parse()
+        .expect("progress count");
+    assert!(
+        sent_mib < 64,
+        "the app wrote {sent_mib} MiB to a client that reads nothing"
+    );
+    assert_eq!(unit_main_pid_sync(&f.database, "hose"), main_pid);
+    drop(stalled);
+}
+
+#[test]
+fn every_apps_handle_for_one_database_shares_its_locks() {
+    let f = Fixture::new();
+    let tool = Apps::from_database(&f.database);
+    let gateway = f.apps();
+    assert!(std::sync::Arc::ptr_eq(
+        &tool.lock_for("a"),
+        &gateway.lock_for("a")
+    ));
+    let _stream = gateway.acquire_stream("a");
+    assert_eq!(tool.active_stream_count("a"), 1);
+}
+
+#[test]
+fn staging_units_name_their_owner_and_cannot_collide_with_an_app() {
+    let f = Fixture::new();
+    let prefix = super::unit_names::unit_prefix_for(&f.database);
+    let stem = |unit: &str| {
+        unit.strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".service"))
+            .expect("unit stem")
+            .to_owned()
+    };
+    let staging = stem(&super::unit_names::staging_unit_name(&f.database, "x", 2));
+    let owner = super::unit_names::unit_owner(&staging);
+    assert_eq!((owner.name, owner.staging), ("x", true));
+
+    let lookalike = stem(&super::unit_names::unit_name(&f.database, "x-stage-1-2"));
+    let owner = super::unit_names::unit_owner(&lookalike);
+    assert_eq!((owner.name, owner.staging), ("x-stage-1-2", false));
+}
+
+#[test]
+fn sweeping_orphan_dirs_keeps_only_catalogued_apps() {
+    let f = Fixture::new();
+    let apps_root = f.home.apps();
+    fs::create_dir_all(apps_root.join(".stage-left-over/scratch")).expect("stage dir");
+    fs::create_dir_all(apps_root.join("no-such-app")).expect("orphan dir");
+    assert_eq!(f.apps().sweep_orphan_dirs().expect("sweep"), 2);
+    assert!(f.state_app_dirs().is_empty());
 }
 
 #[tokio::test]
@@ -1124,14 +1201,10 @@ async fn port_squatting_detection_rejects_external_host_listener() {
 
     let main_pid = unit_main_pid_sync(&f.database, "legit");
     assert_ne!(main_pid, 0);
-    let dirs = f.state_app_dirs();
-    assert_eq!(dirs.len(), 1);
-    let runtime_dir = &dirs[0];
-
     let squatter = std::net::TcpListener::bind("127.0.0.1:0").expect("bind squatter");
     let squatted_port = squatter.local_addr().expect("squatter addr").port();
 
-    let verdict = super::health::check_unit_listener(main_pid, runtime_dir, squatted_port);
+    let verdict = super::health::check_unit_listener(main_pid, squatted_port);
     assert_eq!(
         verdict,
         Err(super::health::ListenerViolation::PortSquatted(

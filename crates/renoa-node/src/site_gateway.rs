@@ -23,10 +23,6 @@ use tower_http::services::ServeFile;
 
 use crate::node_log;
 
-/// Serves published sites on `listener` until `shutdown`.
-///
-/// # Errors
-/// Returns the listener's failure.
 mod http_policy;
 mod proxy;
 mod ws;

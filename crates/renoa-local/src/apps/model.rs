@@ -37,6 +37,11 @@ pub(crate) const LOG_TAIL_LINES: usize = 50;
 pub(crate) const LOG_TAIL_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_LOG_FILE_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_SCRATCH_BYTES: u64 = 256 * 1024 * 1024;
+/// Concurrent connections the sandbox bridge relays for one app; it closes
+/// any beyond this. Each holds two descriptors under the default 1024 soft
+/// limit and buffers at most 256 KiB, so the bridge stays under 64 MiB of
+/// its app's `MEMORY_MAX`.
+pub(crate) const MAX_APP_CONNECTIONS: u32 = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
