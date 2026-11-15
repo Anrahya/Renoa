@@ -385,7 +385,7 @@ The deploy health check asks the coordinator at `127.0.0.1:7818` for
 `/v1/host/discord` without a login (expecting 401) and
 `POST /v1/host/discord/inspection` from a foreign origin (expecting 403).
 
-This release requires Host schema 55. A schema 28–54 catalog upgrades in place
+This release requires Host schema 56. A schema 28–55 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
@@ -402,7 +402,8 @@ acknowledged wake and lets every compiled plugin keep settings and triggers,
 for `renoa.owner`'s heartbeat, off until set, adds the mark of
 `follow_up`'s automations, adds the `plugin_manage` calls waiting on the
 person, adds the files agents share, gives every agent a look and adds
-the pictures, and adds the static sites agents publish, empty; it refuses to upgrade
+the pictures, adds the static sites agents publish, empty, and adds the
+supervised live apps (`host_apps`), empty; it refuses to upgrade
 while a daily or interval automation remains. The first
 scheduler pass then creates `renoa.memory`'s nightly run: 11:00 (Mnem's pass day start) in the main
 agent's `renoa.time` zone, or else the Host's, compacting each person's
@@ -620,7 +621,8 @@ with and the one the Control Room offers when the owner creates an agent; omit
 it to take the model's own default.
 
 An optional `siteGateway` turns on the site gateway, which serves the static
-sites agents publish with `site_manage`:
+sites agents publish with `site_manage` and reverse-proxies the supervised live
+apps agents start with `app_manage`:
 
 ```json
   "siteGateway": {
@@ -644,10 +646,18 @@ tailscale serve --bg --yes --https=8445 http://127.0.0.1:7840
 Without HTTPS certificates on the tailnet, use `--http=8084` and an `http://`
 origin instead. Never run `tailscale serve` or `tailscale funnel` as `renoa`,
 and never make `renoa` the Tailscale operator: an agent could then publish to
-the internet. Each site is served from its snapshot under `state/sites/` at
-`<origin>/sites/<name>/`; a site whose files link from the root (`/assets/…`)
-must be built with relative paths (Vite: `base: './'`). Without `siteGateway`,
-`site_manage` refuses and tells the agent the gateway is off.
+the internet. Each static site is served from its snapshot under `state/sites/`
+at `<origin>/sites/<name>/`; a site whose files link from the root (`/assets/…`)
+must be built with relative paths (Vite: `base: './'`). Each live app is
+served at `<origin>/apps/<name>/` and receives `$PORT` (`127.0.0.1`-only),
+`$BASE_PATH` (`/apps/<name>`), and `HOST=127.0.0.1` (`BIND`, `HOSTNAME`) in a
+`bwrap` + `slirp4netns` sandbox supervised by `systemd-run --user` (install
+`bubblewrap`, `slirp4netns`, and Python 3.12 or later on the host and run
+`loginctl enable-linger renoa` once so user units survive `renoa-node`
+restarts). `deploy/renoa-node.service` orders the node after `user@299.service`,
+the `renoa` user's manager on the VPS (uid 299); change the uid there for
+another service user. Without `siteGateway`,
+`site_manage` and `app_manage` refuse and tell the agent the gateway is off.
 
 The node also answers the owner's Host control (the Control Room's calls under
 `/v1/host`, relayed by the coordinator over this same link). It says so when it

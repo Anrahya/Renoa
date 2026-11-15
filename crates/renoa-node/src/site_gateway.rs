@@ -23,23 +23,120 @@ use tower_http::services::ServeFile;
 
 use crate::node_log;
 
-/// Serves published sites on `listener` until `shutdown`.
+mod http_policy;
+mod proxy;
+mod ws;
+
+#[derive(Clone)]
+struct GatewayState {
+    sites: Sites,
+    apps: renoa_local::Apps,
+    proxy: proxy::ProxyClient,
+}
+
+impl axum::extract::FromRef<GatewayState> for Sites {
+    fn from_ref(state: &GatewayState) -> Self {
+        state.sites.clone()
+    }
+}
+
+/// Serves static published sites under `/sites/<name>/` and reverse-proxies
+/// supervised live apps under `/apps/<name>/` until `shutdown` fires.
 ///
 /// # Errors
-/// Returns the listener's failure.
+/// Returns an [`std::io::Error`] if initializing the HTTP proxy client or
+/// serving from `listener` fails.
 pub async fn serve_site_gateway(
     listener: TcpListener,
     sites: Sites,
+    apps: renoa_local::Apps,
     shutdown: CancellationToken,
 ) -> std::io::Result<()> {
+    let proxy = proxy::ProxyClient::new().map_err(std::io::Error::other)?;
+    let state = GatewayState {
+        sites,
+        apps: apps.clone(),
+        proxy,
+    };
+
+    let sweep_shutdown = shutdown.clone();
+    let sweep_apps = apps.clone();
+    let sweep_interval = (apps.idle_timeout() / 4).clamp(
+        std::time::Duration::from_millis(200),
+        std::time::Duration::from_secs(60),
+    );
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                () = sweep_shutdown.cancelled() => break,
+                () = tokio::time::sleep(sweep_interval) => {
+                    if let Err(err) = sweep_apps.stop_idle().await {
+                        crate::node_log::event(
+                            "warn",
+                            "live_app_idle_sweep_failed",
+                            &serde_json::json!({ "error": err.to_string() }),
+                        );
+                    }
+                }
+            }
+        }
+    });
+
     let app = Router::new()
         .route("/sites/{name}", get(bare))
         .route("/sites/{name}/", get(root))
         .route("/sites/{name}/{*path}", get(file))
-        .with_state(sites);
+        .route("/apps/{name}", axum::routing::any(app_bare))
+        .route("/apps/{name}/", axum::routing::any(app_root))
+        .route("/apps/{name}/{*path}", axum::routing::any(app_file))
+        .with_state(state);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown.cancelled_owned())
         .await
+}
+
+async fn app_bare(
+    State(state): State<GatewayState>,
+    Path(name): Path<String>,
+    uri: axum::http::Uri,
+) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    if uri.path() != format!("/apps/{name}") {
+        return http_policy::error_response(
+            StatusCode::NOT_FOUND,
+            "No live app is registered at this address.",
+        );
+    }
+    match state.apps.exists(&name) {
+        Ok(true) => {
+            let location = match uri.query() {
+                Some(q) => format!("/apps/{name}/?{q}"),
+                None => format!("/apps/{name}/"),
+            };
+            Redirect::permanent(&location).into_response()
+        }
+        Ok(false) => http_policy::error_response(
+            StatusCode::NOT_FOUND,
+            "No live app is registered at this address.",
+        ),
+        Err(_) => http_policy::error_response(StatusCode::INTERNAL_SERVER_ERROR, ""),
+    }
+}
+
+async fn app_root(
+    State(state): State<GatewayState>,
+    Path(name): Path<String>,
+    request: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    proxy::forward(&state.proxy, &state.apps, &name, request).await
+}
+
+async fn app_file(
+    State(state): State<GatewayState>,
+    Path((name, _path)): Path<(String, String)>,
+    request: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    proxy::forward(&state.proxy, &state.apps, &name, request).await
 }
 
 /// A site's bare name goes to its root, so relative links resolve inside it.

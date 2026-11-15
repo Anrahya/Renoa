@@ -132,7 +132,8 @@ impl HostPluginId {
             | owner::TODAY
             | owner::share::SHARE
             | owner::share::STOP
-            | owner::site::MANAGE => Some(Self::Owner),
+            | owner::site::MANAGE
+            | owner::app::MANAGE => Some(Self::Owner),
             _ => None,
         }
     }

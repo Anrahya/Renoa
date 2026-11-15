@@ -29,14 +29,14 @@ use crate::host::catalog::{self, HostCatalogError};
 
 pub(crate) const SITES_RELATIVE_SUBDIR: &str = "sites";
 
-pub(super) struct DirCleanup(Option<PathBuf>);
+pub(crate) struct DirCleanup(Option<PathBuf>);
 
 impl DirCleanup {
-    pub(super) fn armed(path: PathBuf) -> Self {
+    pub(crate) fn armed(path: PathBuf) -> Self {
         Self(Some(path))
     }
 
-    pub(super) fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         self.0 = None;
     }
 }
@@ -72,7 +72,7 @@ pub(crate) fn validate_site_name(name: &str) -> Result<String, SiteError> {
     Ok(name.to_owned())
 }
 
-pub(super) fn resolve_source_folder(
+pub(crate) fn resolve_source_folder(
     workspace: &Path,
     folder: &str,
 ) -> Result<(PathBuf, String), SiteError> {
@@ -132,6 +132,10 @@ pub(crate) fn sites_dir_for_database(database: &Path) -> PathBuf {
 }
 
 pub(super) fn ensure_sites_dir(database: &Path) -> Result<PathBuf, SiteError> {
+    ensure_state_subdir(database, SITES_RELATIVE_SUBDIR)
+}
+
+pub(crate) fn ensure_state_subdir(database: &Path, subdir: &str) -> Result<PathBuf, SiteError> {
     let state_dir = database.parent().unwrap_or_else(|| Path::new("."));
     let state_meta = fs::symlink_metadata(state_dir)?;
     if state_meta.file_type().is_symlink() || !state_meta.is_dir() {
@@ -140,32 +144,32 @@ pub(super) fn ensure_sites_dir(database: &Path) -> Result<PathBuf, SiteError> {
             state_dir.display()
         )));
     }
-    let sites = state_dir.join(SITES_RELATIVE_SUBDIR);
-    match fs::symlink_metadata(&sites) {
+    let target = state_dir.join(subdir);
+    match fs::symlink_metadata(&target) {
         Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
             return Err(SiteError::InvalidFolder(format!(
                 "`{}` must be a plain directory, not a symbolic link",
-                sites.display()
+                target.display()
             )));
         }
         Ok(_) => {}
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            create_private_dir(&sites)?;
+            create_private_dir(&target)?;
         }
         Err(err) => return Err(err.into()),
     }
     let canonical_state = fs::canonicalize(state_dir)?;
-    let canonical_sites = fs::canonicalize(&sites)?;
-    if canonical_sites != canonical_state.join(SITES_RELATIVE_SUBDIR) {
+    let canonical_target = fs::canonicalize(&target)?;
+    if canonical_target != canonical_state.join(subdir) {
         return Err(SiteError::InvalidFolder(format!(
-            "`{}` must be the plain `sites` directory under state",
-            sites.display()
+            "`{}` must be the plain `{subdir}` directory under state",
+            target.display()
         )));
     }
-    Ok(sites)
+    Ok(target)
 }
 
-pub(super) fn create_private_dir(path: &Path) -> io::Result<()> {
+pub(crate) fn create_private_dir(path: &Path) -> io::Result<()> {
     DirBuilder::new().mode(0o700).create(path)
 }
 

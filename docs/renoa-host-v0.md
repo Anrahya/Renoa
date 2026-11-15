@@ -428,8 +428,9 @@ its items, counted in `automation_runs_pruned` and `automation_purged`.
 
 The compiled plugin `renoa.owner` ("Reach you") keeps `ask_owner`,
 `notify_owner`, `set_today`, `share_file` and `stop_sharing` resident in every
-agent's tool list, and also contributes non-resident `site_manage` (discoverable
-through `plugin_search` and executed through `tool_execute` or Code Mode), also while
+agent's tool list, and also contributes non-resident `site_manage` and
+`app_manage` (discoverable through `plugin_search` and executed through
+`tool_execute` or Code Mode), also while
 the owner has turned it off for the agent, when each call is refused with
 "nothing was sent". A guest's turn refuses them as it refuses every tool. Both take a flat
 object and a required `urgency`: `ask_owner` a `question` of at most 240
@@ -497,10 +498,45 @@ sign-in: `/sites/{name}` redirects (`308`) to `/sites/{name}/`, a path ending
 in `/` serves that folder's `index.html`, the root of a site without one serves
 an escaped list of its files, and any other path serves that file with byte
 ranges. A path with an empty, `.` or `..` segment, a symbolic link, or no such
-file is `404`. The gateway is not the coordinator's origin and sets no
-credential, so a site's scripts reach nothing of Renoa's while nothing on the
-same tailnet hostname signs the owner in to Renoa (cookies are not kept apart
-by port); sites share the gateway's one origin with each other.
+file is `404`. It also reverse-proxies HTTP and WebSocket live apps at `/apps/{name}/`: `/apps/{name}`
+redirects (`308`) to `/apps/{name}/`, stopped apps wake on demand and wait up to
+15 seconds for an HTTP answer on `127.0.0.1:$PORT`, and responses stream back
+with `X-Forwarded-Prefix`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and root-relative or loopback `Location`
+headers rewritten under `/apps/{name}` (rejecting `.`, `..`, `//`, `\`, control
+bytes, and encoded delimiters as `404`; capping request bodies at 64 MiB;
+stripping hop-by-hop headers, client `X-Forwarded-*` headers, and `__Host-renoa_*`
+cookies while refusing upstream `Set-Cookie` headers with that prefix as `502`;
+and returning sanitized `502` responses without internal paths or logs). The gateway is not the
+coordinator's origin and sets no credential, so a site's or app's scripts reach
+nothing of Renoa's while nothing on the same tailnet hostname signs the owner in
+to Renoa (cookies are not kept apart by port); sites and live apps share the
+gateway's one origin with each other.
+
+`app_manage` accepts `action` (`start`, `stop`, `restart`, `status`, or `logs`),
+`name` (same rules as `site_manage`), `folder` (workspace-relative real subdirectory inside
+the workspace without traversing symlinks, refusing `.`; required for `start`), and `command`
+(shell command written to `command.sh` and executed inside `/app`; required for `start`). Every `app_manage`
+action refuses without creating state when the node runs no site gateway. Each app
+is recorded in `host_apps` (schema 56, an agent-owned table) with a reserved
+loopback port (`20000..=29999`), owns its folder plus private `state/apps/<app_id>/`
+(`scratch/`, which a start refuses once it holds over 256 MiB, and a bounded 1 MiB `app.log`), and runs outside `renoa-node` under `systemd-run --user`
+in `renoa-apps.slice` (`MemoryMax=2G`, `TasksMax=1024`; per-unit `MemoryMax=512M`, `MemorySwapMax=0`, `CPUQuota=100%`, `TasksMax=128`, restarting on failure up to 3 starts in 15
+seconds before marking `failed`, with at most `MAX_RUNNING_APPS = 4` concurrent apps).
+The unit runs `runner.py` under `/usr/bin/python3`, which starts the command in `/usr/bin/bwrap` (`--unshare-all --remount-ro /`
+to isolate filesystem, mounts, network, PID, IPC, UTS, and environment, with minimal synthetic `/etc` omitting host `/etc/passwd` and `/etc/shadow`, read-only host OS binaries/libraries, only the app folder at `/app`
+and `scratch/` at `/tmp` writable and mounted by descriptor so the app inherits none, `HOST=BIND=HOSTNAME=127.0.0.1`, `PORT`, and
+`BASE_PATH=/apps/{name}`). `/usr/bin/slirp4netns` (`--disable-host-loopback --enable-seccomp`) gives the sandbox outbound networking, and before the command runs
+the runner's bridge joins the sandbox's namespaces and adds unreachable routes for `10.0.0.0/8` (slirp's own `10.0.2.0/24` stays reachable),
+`100.64.0.0/10`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, and every IPv4 address the host holds, so an app reaches the public internet
+but not the host, its LAN, or tailnet devices. The runner binds host `127.0.0.1:$PORT` once the app accepts connections on its own loopback port
+(on `127.0.0.1` or any address) and passes each accepted connection to the bridge over `SCM_RIGHTS`; the bridge relays at most 256 at once,
+closing the rest, stops reading a side while 64 KiB wait for its peer, and closes a connection idle for `IDLE_TIMEOUT`. Startup verifies through host socket ownership in `/proc/net/tcp{,6}`
+that the unit's cgroup holds `127.0.0.1:$PORT` and that it answers HTTP, staging changes and cleaning up any new row,
+runtime directory, or transient unit if validation fails (preserving a running app if a `start` update fails). Active apps stop
+automatically after 30 minutes without gateway traffic (`IDLE_TIMEOUT`); a WebSocket with no data message either way for that long is closed (pings do not count), and the gateway
+holds at most 64 open WebSockets and, across all apps, 64 requests, each from its arrival through its body and any wake until its response headers arrive, answering 503 beyond them. Apps
+reconcile across `renoa-node` restarts without interrupting live processes: before serving, the node removes runtime directories no app names,
+then re-checks each app under its lock and stops units no app owns.
 
 An agent's heartbeat is `renoa.owner`'s trigger: a check-in of its own at
 minute 0 every `heartbeat_hours` from 08:00 to 22:00 in the agent's
@@ -673,6 +709,11 @@ published_at_ms, path}]}`, `path` under the site gateway's origin).
 `POST /v1/host/sites/{name}/unpublish` removes a reachable published site and
 its snapshot directory (`{name, unpublished}`); an invalid name returns 400
 `invalid_request`.
+`GET /v1/host/apps` lists supervised live apps reachable by the signed-in person
+(`{apps: [{name, agent_id, source_folder, command, port, state, failure_reason?,
+updated_at_ms, last_active_ms, path}]}`, `path` `/apps/{name}/`).
+`POST /v1/host/apps/{name}/stop` stops a reachable live app and returns its
+updated record; an invalid name returns 400 `invalid_request`.
 
 A command whose text input carries `attachments` (`rcp-json-ws-v0.md`) names
 completed uploads. The node copies each into the agent's workspace under
@@ -907,8 +948,8 @@ tools directly: `memory_note`, `memory_recall` and `memory_zoom` from
 `renoa.memory` for a turn that talks to a person or comes from a guest,
 `agent_documents` from `renoa.documents` for an agent that keeps documents,
 `ask_owner`, `notify_owner`, `set_today`, `share_file` and `stop_sharing` from
-`renoa.owner` for every agent (with `site_manage` exposed non-residently through
-`plugin_search` and `tool_execute`), and `follow_up` from `renoa.automations` for every agent.
+`renoa.owner` for every agent (with `site_manage` and `app_manage` exposed
+non-residently through `plugin_search` and `tool_execute`), and `follow_up` from `renoa.automations` for every agent.
 The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
@@ -1584,7 +1625,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 55
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 56
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1619,8 +1660,9 @@ mark of follow-ups, empty, every catalog below schema 52 gains the saved
 setups waiting on the person, empty, every catalog below schema 53 gains
 the shares agents keep, empty, every catalog below schema 54 gives every
 agent a look, oldest first, ties broken by agent id, and gains the pictures,
-empty, and every catalog below schema 55 gains the published static site
-snapshots table (`host_sites`), empty. Live selections
+empty, every catalog below schema 55 gains the published static site
+snapshots table (`host_sites`), empty, and every catalog below schema 56 gains
+the supervised live apps table (`host_apps`), empty. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.

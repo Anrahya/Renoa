@@ -15,7 +15,7 @@ listed=$(grep -v '^#' "$exceptions" | awk 'NF { print $1 }')
 # Listed before the loop so a failed listing, such as outside a git checkout,
 # fails the check instead of checking nothing.
 files=$(
-  git ls-files '*.rs' '*.ts' '*.tsx' '*.mjs' '*.js' '*.kt' |
+  git ls-files '*.rs' '*.ts' '*.tsx' '*.mjs' '*.js' '*.kt' '*.py' |
     grep -vE '(^|/)tests?(/|\.rs$)|_tests?\.rs$|\.test\.(ts|tsx|mjs|js)$|/benches/|/examples/|/dist/|\.d\.ts$|(^|/)test[_-]|/fixtures?/|/testFixtures/'
 )
 

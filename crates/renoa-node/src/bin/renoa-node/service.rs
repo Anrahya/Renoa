@@ -24,6 +24,7 @@ pub(crate) async fn serve(
             None => None,
         };
     let sites = renoa_local::Sites::open(config.host.home());
+    let apps = renoa_local::Apps::open(config.host.home());
     // Nothing publishes yet, so what no site names is left from a crash.
     match sites.sweep().await {
         Ok(0) => {}
@@ -38,6 +39,20 @@ pub(crate) async fn serve(
             &serde_json::json!({ "error": error.to_string() }),
         ),
     }
+    // Nothing starts an app yet, so a directory no app names is left from a crash.
+    match apps.sweep_orphan_dirs() {
+        Ok(0) => {}
+        Ok(removed) => log::event(
+            "info",
+            "live_app_dirs_swept",
+            &serde_json::json!({ "removed": removed }),
+        ),
+        Err(error) => log::event(
+            "warn",
+            "live_app_dirs_sweep_failed",
+            &serde_json::json!({ "error": error.to_string() }),
+        ),
+    }
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
     let drain = CancellationToken::new();
@@ -45,6 +60,7 @@ pub(crate) async fn serve(
         .with_automations(config.automation_credentials)?
         .with_drain(drain.clone());
     let shutdown = CancellationToken::new();
+    spawn_apps_startup_reconcile(apps.clone(), shutdown.clone());
     let signal = wait_for_shutdown();
     tokio::pin!(signal);
     log::event(
@@ -58,7 +74,7 @@ pub(crate) async fn serve(
     if let Some(listener) = gateway {
         let stop = shutdown.clone();
         tokio::spawn(async move {
-            if let Err(error) = renoa_node::serve_site_gateway(listener, sites, stop).await {
+            if let Err(error) = renoa_node::serve_site_gateway(listener, sites, apps, stop).await {
                 log::event(
                     "error",
                     "site_gateway_stopped",
@@ -93,6 +109,32 @@ pub(crate) async fn serve(
         log::event("info", "service_stopped", &serde_json::json!({}));
     }
     result
+}
+
+fn spawn_apps_startup_reconcile(apps: renoa_local::Apps, stop: CancellationToken) {
+    tokio::spawn(async move {
+        let mut delay = std::time::Duration::from_secs(1);
+        loop {
+            match apps.reconcile_on_startup().await {
+                Ok(()) => return,
+                Err(error) => {
+                    log::event(
+                        "warn",
+                        "live_app_startup_reconcile_failed",
+                        &serde_json::json!({
+                            "error": error.to_string(),
+                            "retry_secs": delay.as_secs(),
+                        }),
+                    );
+                }
+            }
+            tokio::select! {
+                () = stop.cancelled() => return,
+                () = tokio::time::sleep(delay) => {}
+            }
+            delay = (delay * 2).min(std::time::Duration::from_secs(30));
+        }
+    });
 }
 
 async fn wait_for_shutdown() -> Result<(), ServiceError> {

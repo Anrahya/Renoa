@@ -4,6 +4,7 @@ mod agent_definition;
 mod agent_model;
 mod agent_session;
 mod agent_trace;
+mod apps;
 mod atomic_file;
 mod bash;
 mod capabilities;
@@ -57,6 +58,10 @@ pub use agent_definition::{
 };
 pub use agent_model::AgentModelSelection;
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
+pub use apps::{
+    AppError, AppLogs, AppState, AppStreamGuard, Apps, IDLE_TIMEOUT, IDLE_TIMEOUT_MINUTES, LiveApp,
+    STARTUP_TIMEOUT,
+};
 pub use code_mode::validate_code_mode_worker;
 pub use compact_invocation::{CompactInvocation, compact_invocation};
 pub use documents::UserProfile;
