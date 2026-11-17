@@ -6,15 +6,11 @@ mod prose;
 
 use chrono::Local;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Entity, Focusable as _, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, PathStyle, SharedString,
-    StatefulInteractiveElement as _, StrokeOptions, StyleRefinement, Styled as _,
-    TestSupportExt as _, Window, canvas,
-    component::{input::Input, message_scroller::MessageScroller},
-    div, linear_color_stop, linear_gradient, point,
-    prelude::FluentBuilder as _,
+    AnyElement, App, ClickEvent, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, StyleRefinement,
+    Styled as _, TestSupportExt as _, Window, component::message_scroller::MessageScroller, div,
+    linear_color_stop, linear_gradient, prelude::FluentBuilder as _,
 };
-use lyon_tessellation::{LineCap, LineJoin};
 use renoa_rcp_wire::TaskId;
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -74,9 +70,12 @@ impl Chats {
         let purpose = task_id.and_then(|task_id| self.purposes.get(&task_id).cloned());
         let working = self.transcript().is_some_and(Transcript::working);
         let empty = chosen.is_some() && self.rows() == 0 && !working;
-        let notice = task_id
-            .filter(|task_id| self.unsent.contains(task_id))
-            .map(|_| "Your message didn't send. Try again.");
+        let notice = task_id.and_then(|task_id| {
+            self.unsent
+                .contains(&task_id)
+                .then_some("Your message didn't send. Try again.")
+                .or_else(|| self.stop_notices.get(&task_id).copied())
+        });
         // Rows read the chat as they are drawn; only the visible ones are.
         let chats = cx.entity().downgrade();
         let speaking = agent.clone();
@@ -104,8 +103,6 @@ impl Chats {
                 .shadow_md()
         })
         .flex_1();
-        let sendable = self.linked && !self.composer.read(cx).value().trim().is_empty();
-        let focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
         div()
             .flex_1()
             .min_w_0()
@@ -142,47 +139,7 @@ impl Chats {
                         .child(notice),
                 ))
             })
-            .child(centred(
-                div()
-                    .w_full()
-                    .mt(u(6.))
-                    .mb(u(16.))
-                    .flex()
-                    .items_end()
-                    .gap(u(10.))
-                    .pl(u(18.))
-                    .pr(u(7.))
-                    .py(u(7.))
-                    .rounded(u(23.))
-                    .bg(palette.composer)
-                    .border_1()
-                    .border_color(if focused {
-                        palette.outline_strong
-                    } else {
-                        palette.outline
-                    })
-                    .shadow_md()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h(u(32.))
-                            .flex()
-                            .items_center()
-                            .child(
-                                div().w_full().child(
-                                    Input::new(&self.composer)
-                                        .id("composer")
-                                        .aria_label("Message")
-                                        .appearance(false),
-                                ),
-                            ),
-                    )
-                    .child(
-                        send_button(sendable, palette)
-                            .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
-                    ),
-            ))
+            .child(centred(self.composer_bar(working, palette, window, cx)))
     }
 
     /// Asks the coordinator for a one-time link to `share_id` and opens it in
@@ -437,53 +394,4 @@ fn row(
         })
         .child(centred(said))
         .into_any_element()
-}
-
-/// The round send button: ink when there is something to send, muted when not.
-fn send_button(sendable: bool, palette: Palette) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let (fill, arrow) = if sendable {
-        (palette.text, palette.background)
-    } else {
-        (palette.chat_agent, palette.secondary.opacity(0.6))
-    };
-    div()
-        .id("send")
-        .size(u(32.))
-        .flex_none()
-        .rounded_full()
-        .bg(fill)
-        .flex()
-        .items_center()
-        .justify_center()
-        .when(sendable, |button| {
-            button.cursor_pointer().hover(|button| button.opacity(0.84))
-        })
-        .child(
-            canvas(
-                |_, _, _| (),
-                move |bounds, (), window, _| {
-                    let rem = window.rem_size();
-                    let at = |x: f32, y: f32| {
-                        point(
-                            bounds.origin.x + u(x).to_pixels(rem),
-                            bounds.origin.y + u(y).to_pixels(rem),
-                        )
-                    };
-                    let style = StrokeOptions::default()
-                        .with_line_width(f32::from(u(1.85).to_pixels(rem)))
-                        .with_line_cap(LineCap::Round)
-                        .with_line_join(LineJoin::Round);
-                    let mut up = PathBuilder::fill().with_style(PathStyle::Stroke(style));
-                    up.move_to(at(7., 11.25));
-                    up.line_to(at(7., 2.75));
-                    up.move_to(at(3., 6.75));
-                    up.line_to(at(7., 2.75));
-                    up.line_to(at(11., 6.75));
-                    if let Ok(path) = up.build() {
-                        window.paint_path(path, arrow);
-                    }
-                },
-            )
-            .size(u(14.)),
-        )
 }

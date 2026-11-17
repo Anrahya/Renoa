@@ -59,6 +59,7 @@ pub struct Transcript {
     through: Option<u64>,
     working: bool,
     doing: Option<String>,
+    active_command: Option<CommandId>,
     latest_command: Option<CommandId>,
     terminated: HashSet<CommandId>,
 }
@@ -81,6 +82,20 @@ impl Transcript {
     /// Plain-text one-line summary of what the agent is currently doing, if any.
     pub fn doing(&self) -> Option<&str> {
         self.doing.as_deref()
+    }
+
+    /// The command a stop would cancel: the active command, or else the latest
+    /// non-terminated command while the agent is working.
+    pub fn running_command(&self) -> Option<CommandId> {
+        if !self.working {
+            return None;
+        }
+        self.active_command
+            .filter(|id| !self.terminated.contains(id))
+            .or_else(|| {
+                self.latest_command
+                    .filter(|id| !self.terminated.contains(id))
+            })
     }
 
     /// Whether the line at `index` is still coming in: it was new when it
@@ -145,14 +160,19 @@ impl Transcript {
                 match &event.kind {
                     ExecutionEventKind::TurnStarted | ExecutionEventKind::ExecutionStarted => {
                         self.working = true;
+                        self.active_command = Some(*command_id);
                         self.latest_command = Some(*command_id);
                     }
                     ExecutionEventKind::AssistantMessage { text } => {
+                        self.active_command = Some(*command_id);
                         self.doing = None;
                         self.say(Speaker::Agent, text, false, at_ms, fresh);
                     }
                     ExecutionEventKind::ExecutionTerminated { terminal } => {
                         self.terminated.insert(*command_id);
+                        if self.active_command == Some(*command_id) {
+                            self.active_command = None;
+                        }
                         self.working = false;
                         self.doing = None;
                         if let ExecutionTerminal::Failed { .. } = terminal {
@@ -162,6 +182,7 @@ impl Transcript {
                     }
                     ExecutionEventKind::ToolStarted { activity, .. } => {
                         self.working = true;
+                        self.active_command = Some(*command_id);
                         self.doing = activity.as_deref().and_then(normalize_activity);
                     }
                     ExecutionEventKind::ToolFinished { .. } => {}

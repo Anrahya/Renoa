@@ -8,6 +8,7 @@ use std::{
 };
 
 use renoa_protocol::{CommandId, LiveActivity, TargetRef};
+pub use renoa_rcp_client::StopOutcome;
 use renoa_rcp_client::{ClientError, Connection, Events, SurfaceEvent, connect_with_key};
 use renoa_rcp_wire::{DeviceCredentials, ErrorCode, NodeId, TargetSummary, TaskEvent, TaskId};
 use tokio::{
@@ -20,7 +21,8 @@ use uuid::Uuid;
 
 use crate::{face::Look, key::MacKey};
 use host::HostCall;
-use session::{Followed, Outgoing, Through, flush, follow, note, within};
+pub use session::StopProblem;
+use session::{Followed, Outgoing, Through, flush, follow, note, request_stop, within};
 pub use sign_in::{SignInStep, sign_in};
 
 const DEFAULT_ORIGIN: &str = "https://renoa.live";
@@ -142,6 +144,12 @@ pub enum Command {
         share_id: Uuid,
         answered: oneshot::Sender<Option<String>>,
     },
+    /// Asks Renoa to stop executing `command_id` on `task_id`.
+    Stop {
+        task_id: TaskId,
+        command_id: CommandId,
+        answered: oneshot::Sender<Result<StopOutcome, StopProblem>>,
+    },
 }
 
 enum Immediate {
@@ -149,6 +157,11 @@ enum Immediate {
     ShareLink {
         share_id: Uuid,
         answered: oneshot::Sender<Option<String>>,
+    },
+    Stop {
+        task_id: TaskId,
+        command_id: CommandId,
+        answered: oneshot::Sender<Result<StopOutcome, StopProblem>>,
     },
 }
 
@@ -199,6 +212,15 @@ impl Kept {
             Command::ShareLink { share_id, answered } => {
                 Some(Immediate::ShareLink { share_id, answered })
             }
+            Command::Stop {
+                task_id,
+                command_id,
+                answered,
+            } => Some(Immediate::Stop {
+                task_id,
+                command_id,
+                answered,
+            }),
         }
     }
 }
@@ -287,6 +309,9 @@ async fn offline(
                     Some(Immediate::ShareLink { answered, .. }) => {
                         let _ = answered.send(None);
                     }
+                    Some(Immediate::Stop { answered, .. }) => {
+                        let _ = answered.send(Err(StopProblem::Uncertain));
+                    }
                 },
             },
         }
@@ -344,6 +369,18 @@ async fn linked(
                                 .map(|path| format!("{origin}{}", path.expose()));
                             let _ = answered.send(url);
                         })));
+                        calls.retain(|call| !call.finished());
+                        Ok(())
+                    }
+                    Some(Immediate::Stop {
+                        task_id,
+                        command_id,
+                        answered,
+                    }) => {
+                        let connection = connection.clone();
+                        calls.push(Aborting(tokio::spawn(request_stop(
+                            connection, task_id, command_id, answered,
+                        ))));
                         calls.retain(|call| !call.finished());
                         Ok(())
                     }

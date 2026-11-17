@@ -15,7 +15,8 @@ use gpui_kit::{
     div,
     prelude::FluentBuilder as _,
 };
-use renoa_rcp_wire::{TargetSummary, TaskId};
+use renoa_protocol::{CommandId, ExecutionEventKind};
+use renoa_rcp_wire::{TargetSummary, TaskEventKind, TaskId};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -70,6 +71,10 @@ pub struct Chats {
     drafts: HashMap<TaskId, String>,
     /// The chats where Renoa refused the owner's last message.
     unsent: HashSet<TaskId>,
+    /// Active commands whose stop request has not settled yet.
+    stopping: HashSet<CommandId>,
+    /// Stop errors shown above the composer per chat until cleared.
+    stop_notices: HashMap<TaskId, &'static str>,
     /// Shared-file links that could not be opened, per `(task_id, row_index)`.
     failed_shares: HashMap<(TaskId, usize), BTreeSet<Uuid>>,
     composer: Entity<InputState>,
@@ -162,6 +167,8 @@ impl Chats {
             main: None,
             drafts: HashMap::new(),
             unsent: HashSet::new(),
+            stopping: HashSet::new(),
+            stop_notices: HashMap::new(),
             failed_shares: HashMap::new(),
             composer,
             scroller,
@@ -199,6 +206,7 @@ impl Chats {
             Update::Linked(linked) => {
                 self.linked = linked;
                 if !linked {
+                    self.stopping.clear();
                     for transcript in self.transcripts.values_mut() {
                         transcript.clear_live();
                     }
@@ -230,6 +238,15 @@ impl Chats {
                 self.arrange_agents(window, cx);
             }
             Update::Event(event) => {
+                if let TaskEventKind::ExecutionEvent {
+                    command_id,
+                    event: exec,
+                } = &event.kind
+                    && matches!(exec.kind, ExecutionEventKind::ExecutionTerminated { .. })
+                {
+                    self.stopping.remove(command_id);
+                    self.stop_notices.remove(&event.task_id);
+                }
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_or(0, |since| {
@@ -410,26 +427,6 @@ impl Chats {
             }
         });
     }
-
-    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.composer.read(cx).value().trim().to_owned();
-        let Some(task_id) = self.chosen_task() else {
-            return;
-        };
-        // Offline, the text stays in the composer until Renoa is back.
-        if text.is_empty() || !self.linked {
-            return;
-        }
-        let _ = self.commands.send(Command::Send {
-            task_id,
-            text,
-            sent: None,
-        });
-        self.unsent.remove(&task_id);
-        self.composer
-            .update(cx, |composer, cx| composer.set_value("", window, cx));
-        cx.notify();
-    }
 }
 
 impl Render for Chats {
@@ -478,6 +475,7 @@ fn joined(first: String, then: &str) -> String {
     }
 }
 
+mod composer;
 mod home;
 mod jump;
 pub(crate) mod keys;
