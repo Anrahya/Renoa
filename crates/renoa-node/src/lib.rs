@@ -19,6 +19,7 @@ mod projection;
 mod session;
 mod setup;
 mod site_gateway;
+mod steering;
 mod stop;
 
 pub use bridge::{NodeError, RenoaNode};

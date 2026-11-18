@@ -211,6 +211,23 @@ if (pending.size > 0) throw Error("tool calls were left without results");"#;
 /// discovering its schema first as a model must. The question's recipient
 /// answers "Count the files." with what its turn context says about the
 /// sender, and the asker answers that reply the same way.
+/// A turn whose first model call waits for release before it asks for a tool,
+/// so a steer sent meanwhile reaches the model call after that tool.
+const STEER_TURNS: &str = r#"} else if (prompt === "Render, then listen." && toolResults.length === 0) {
+  writeFileSync(join(workspace, "model-started"), "started");
+  while (!existsSync(join(workspace, "model-release"))) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  content = [{ type: "tool_call", id: "read-steered", name: "read_file", arguments: { path: "proof.txt" } }];
+  stopReason = "tool_use";
+} else if (prompt === "Keep it short." && toolResults.length === 1) {
+  content = [{ type: "text", text: "Kept it short." }];
+} else if (prompt === "Render, then listen." && toolResults.length === 1) {
+  content = [{ type: "text", text: "Rendered without changes." }];
+} else if (prompt === "Too late.") {
+  content = [{ type: "text", text: "Answered on its own." }];
+"#;
+
 const AGENT_TURNS: &str = r#"} else if (prompt.startsWith("Ask ")) {
   const [, agent, question] = prompt.match(/^Ask ([^:]+): (.*)$/);
   const turn = request.messages.slice(request.messages.findLastIndex(message => message.role === "user") + 1)
@@ -316,7 +333,7 @@ let stopReason = "stop";
     await new Promise(resolve => setTimeout(resolve, 10));
   }}
   content = [{{ type: "text", text: `Finished parallel ${{suffix}}.` }}];
-{SPEAKER_TURNS}{COMPACTION_TURNS}{AUTOMATION_TURNS}{AGENT_TURNS}}} else if (prompt === "First.") {{
+{SPEAKER_TURNS}{COMPACTION_TURNS}{AUTOMATION_TURNS}{AGENT_TURNS}{STEER_TURNS}}} else if (prompt === "First.") {{
   content = [{{ type: "text", text: "First response." }}];
 }} else if (prompt === "Second.") {{
   content = [{{ type: "text", text: "Second response." }}];

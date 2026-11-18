@@ -143,6 +143,7 @@ fn a_quiet_command_is_not_shown_and_a_failed_turn_says_so() {
         context,
         author,
         quiet: true,
+        steer: false,
         attachments,
     };
     let mut transcript = Transcript::default();

@@ -180,8 +180,9 @@ renoa.agent.turn-context.v1   { entries: [{ source, text }] }
 ```
 
 A prompt admitted with `turn_timing` records `renoa.agent.turn-timing.v1`
-instead. Either event belongs to exactly one user message from the same
-operation, and an operation has at most one of them. Duplicate, orphaned,
+instead. Either event belongs to the latest earlier user message of its
+operation: the one its command started with, or a steer (see Steering). A user
+message has at most one of them. Duplicate, orphaned,
 malformed, or unknown-version events fail closed. Context preparation appends
 the same `<turn_context>` block to that user message for every normal request,
 size estimate, and compaction summary: each entry sits in a
@@ -420,9 +421,22 @@ slice:
   dispatched from work that may have run; and
 - a new operation reconstructs prior session messages from the event log.
 
-Steering, follow-ups, approvals, parallel tool batches, transient streaming,
-and authoritative settlement of an unknown effect are not implemented by this
-runtime slice.
+Approvals, parallel tool batches, transient streaming, and authoritative
+settlement of an unknown effect are not implemented by this runtime slice.
+
+## Steering
+
+A steer is a message the kernel recorded for the running operation
+(`renoa-kernel-v0.md`, Steering). The loop takes pending steers in only where
+the operation is about to ask the model again, after the turn limit is checked:
+the persisted request of a model call in flight must still match the history,
+so nothing joins while that call runs. Each steer whose command is a person's
+prompt becomes a user message of the operation, followed by its own
+turn-context or turn-timing event, in one `AcceptSteers` decision; the next
+request then includes it. An operation started by a receipted prompt or a
+control takes none, since its exchange is replaced or never shown. A steer the
+loop leaves, or one pending when the operation ends, is released, and the Host
+runs it as its own command.
 
 ## Effect adapters and recovery
 

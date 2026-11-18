@@ -126,7 +126,7 @@ fn summary_input_keeps_the_durable_time_of_each_user_turn() {
                 Message::user_text("continue"),
             ),
         ],
-        &HashMap::from([(prior, TurnAnnotation::Timing(timing))]),
+        &HashMap::from([(0, TurnAnnotation::Timing(timing))]),
         None,
         "system",
         &[],

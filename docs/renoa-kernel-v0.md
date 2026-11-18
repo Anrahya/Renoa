@@ -26,8 +26,9 @@ local workspace edit without moving those concerns into the kernel.
 
 `observe_session(path, session_id)` is a non-owning, read-only projection for Host
 inventory. It opens only existing compatible storage, takes no writer lease and
-performs no migration; schema 3 is compatible because schema 4 changed only
-effects and added a view and trigger over them, none of which it reads. A single read transaction reports the session's agent,
+performs no migration; schemas 3 and 4 are compatible because schema 4 changed
+only effects and added a view and trigger over them, and schema 5 added only the
+table of steers, none of which it reads. A single read transaction reports the session's agent,
 event count, queued count, active operation and latest operation, without reading
 command, checkpoint or effect payloads. The projection describes committed state,
 not worker liveness: a running operation can remain after its owner disappears.
@@ -102,14 +103,16 @@ host / ACP / RCP node
 
 `LoopPlugin` is ordinary trusted Rust code. The kernel gives it an owned,
 read-only snapshot containing the exact command, durable semantic history,
-current checkpoint, frozen runtime manifest, and any newly settled effect
-batch. It has no kernel handle, SQLite connection, mutable store, model, tool,
+current checkpoint, frozen runtime manifest, any newly settled effect batch,
+and the operation's pending steers in the order recorded. It has no kernel handle, SQLite connection, mutable store, model, tool,
 filesystem, or network access. It returns one decision:
 
 - `InvokeEffects` with the next checkpoint and a non-empty ordered list of
   named bindings, exact JSON requests, and `SafeToReplay` or `NeverReplay`
   recovery classes;
 - `AppendEventsAndContinue` with the next checkpoint and semantic events;
+- `AcceptSteers` with the next checkpoint, the semantic events that carry the
+  steers, and the steers it takes in;
 - `WaitForInput` with the final checkpoint and semantic events;
 - `Complete` with the final checkpoint and semantic events; or
 - `Fail` with the final checkpoint, semantic events, and a reason.
@@ -210,6 +213,29 @@ dispatched is reported as not run, and possibly dispatched work is reported as
 possibly completed. Later sequential calls are reported as not run. These
 events are available to a future model turn without forcing another model call
 inside the cancelled operation.
+
+### Steering
+
+A steer is a command a caller asks to reach the operation of another command,
+its target, while that operation runs, instead of starting one of its own.
+`Kernel::request_steer` records it under its own command identity in one
+immediate transaction, before the target starts or while the target's
+operation is unfinished. Repeating the same steer, target and content returns
+its state; the same identity with another target or content is
+`SteerConflict`. It refuses a steer whose identity is already an operation's
+command, and a target whose operation finished, belongs to another session or
+is itself a steer; a refusal records nothing.
+
+The loop receives the pending steers of the active operation and decides
+where to take them in. `AcceptSteers` marks them accepted in the transaction
+that appends the events carrying them; a steer that is no longer pending for
+that operation fails the decision and commits nothing. A steer's state is
+derived, never written twice: accepted; released when it was not accepted and
+either its target's operation has an outcome or its own command was admitted
+as an operation; pending otherwise. `Kernel::steer_state` reports it. A
+released steer is an ordinary command. An accepted steer can never be admitted
+as an operation of its own (`SteerAccepted`), so a caller that cannot tell
+whether it was accepted submits it and learns the answer.
 
 ### Runtime manifest and checkpoint
 
@@ -424,11 +450,16 @@ The first complete slice must prove through the public seams:
 17. explicit unknown-effect abandonment validates the frozen runtime and
     gapless history, receives exact ordered settled/unknown child facts, never
     invokes an adapter, is idempotent after a lost reply, and releases queued
-    work atomically; and
+    work atomically;
 18. cancellation is persisted before signalling, targets one exact queued or
     active operation, prevents later dispatch when it wins, waits for started
     work to stop, preserves every child's certainty, closes loop-owned history,
-    and releases queued work atomically.
+    and releases queued work atomically; and
+19. a steer recorded before its target starts or during an effect reaches the
+    target's next decision, is accepted with its events in one commit, can
+    then never run as an operation of its own, is released to run on its own
+    when the operation ends without accepting it, and leaves nothing behind
+    when refused.
 
 The scripted loop and fake effect adapter are test boundaries only. They are
 not product policy or privileged kernel implementations.
@@ -517,12 +548,16 @@ fork or movement path plus idempotence, isolation, recovery, and fencing tests.
 16. Cancellation is an idempotent, exact-operation durable command. It is
     committed before signalling, cannot start new effects, and does not erase
     whether each child settled, never dispatched, or may have run.
+17. A steer is recorded under its own command identity for one target command,
+    accepted only by that command's operation through a loop decision that
+    commits it with the events carrying it, and otherwise released when that
+    operation ends. It is either accepted or runs as an operation, never both.
 
 ## Explicitly open decisions
 
 - authoritative settlement of `OutcomeUnknown` from an adapter receipt,
   callback, or status lookup tied to the stable effect identity;
-- steering, approval, and their ordering relative to commands and cancellation;
+- approval, and its ordering relative to commands, cancellation and steering;
 - RCP task-to-session provisioning and coordinator command positions;
 - event retention, deletion, indexing, and snapshot compaction;
 - kernel-enforced checkpoint size limits;

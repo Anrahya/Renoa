@@ -202,8 +202,10 @@ Cancellation is the first durable **control request**, not a queued operation.
 It has its own stable identity and target, and the session owner applies it
 without placing it behind later user commands. Its durable row proves admission;
 the targeted operation's state and output prove terminal application. Future
-approval resolution and steering follow the same control category only when
-implemented. Operation positions count only user commands. RCP ordering among
+approval resolution follows the same control category only when implemented.
+Steering is not a control request: a steer is a command recorded for the
+running operation, which the loop takes in before its next model call or
+releases to run in its own place (`renoa-kernel-v0.md`, Steering). Operation positions count only user commands. RCP ordering among
 different control types remains deferred to their integration slices.
 
 ## Command order
@@ -853,8 +855,9 @@ slices.
    exact effect persistence, cancellation, provider-overflow fallback, honest
    usage, and deterministic repeated-continuation tests. A real Grok 4.6 coding
    run crossed eleven activated checkpoints while retaining exact constraints;
-   its resulting code passed thirteen tests. Add steering only when a live
-   consumer defines its ordering behavior.
+   its resulting code passed thirteen tests. Steering followed for the
+   owner's chat in the apps: a steer joins the running turn before its next
+   model call or runs as its own command.
 8. Add cursor-based observation and the thin RCP/ACP adapters only after the
    local harness can complete real work safely.
 9. Design workspace checkpoints and host movement only after local continuity
@@ -889,7 +892,7 @@ lint, and workspace tests before the next begins.
   is already retry-safe with a caller-stable session ID.
 - Cursor-based output reads for the future RCP bridge.
 - The future idempotent-tool recovery contract and reconciliation UI.
-- Durable approval and steering operation shapes, plus the mapping from an RCP
+- Durable approval operation shapes, plus the mapping from an RCP
   cancellation command to the implemented standalone cancellation identity.
 - Product defaults beyond the implemented Pi-backed local host, and the
   evidence threshold for enabling a future provider-native compaction adapter.

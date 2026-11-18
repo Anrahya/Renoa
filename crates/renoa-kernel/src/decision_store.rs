@@ -6,6 +6,7 @@ use crate::{
     events::validate_new_events,
     operation_phase::OperationPhase,
     schema::{json_error, sqlite_error},
+    steering::accept_steers,
 };
 
 pub(crate) enum CommittedDecision {
@@ -22,43 +23,13 @@ impl Kernel {
         expected_transition: i64,
         decision: LoopDecision,
     ) -> Result<CommittedDecision, KernelError> {
-        let (checkpoint, events, phase, outcome) = match decision {
-            LoopDecision::AppendEventsAndContinue { checkpoint, events } => {
-                if events.is_empty() {
-                    return Err(KernelError::InvalidDecision(
-                        "append-and-continue requires at least one event".to_owned(),
-                    ));
-                }
-                (checkpoint, events, OperationPhase::NeedDecision, None)
-            }
-            LoopDecision::WaitForInput { checkpoint, events } => (
-                checkpoint,
-                events,
-                OperationPhase::Waiting,
-                Some(OperationOutcome::WaitingForInput),
-            ),
-            LoopDecision::Complete { checkpoint, events } => (
-                checkpoint,
-                events,
-                OperationPhase::Completed,
-                Some(OperationOutcome::Completed),
-            ),
-            LoopDecision::Fail {
-                checkpoint,
-                events,
-                reason,
-            } => (
-                checkpoint,
-                events,
-                OperationPhase::Failed,
-                Some(OperationOutcome::Failed { reason }),
-            ),
-            LoopDecision::InvokeEffects { .. } => {
-                return Err(KernelError::InvalidDecision(
-                    "effect batches must be committed through the effect store".to_owned(),
-                ));
-            }
-        };
+        let DecisionParts {
+            checkpoint,
+            events,
+            phase,
+            outcome,
+            steers,
+        } = decision_parts(decision)?;
         validate_new_events(&events)?;
         let mut connection = self.database.connection()?;
         let transaction = connection
@@ -67,6 +38,9 @@ impl Kernel {
         if cancellation_requested(&transaction, operation_id)? {
             transaction.commit().map_err(sqlite_error)?;
             return Ok(CommittedDecision::CancellationPending);
+        }
+        if !steers.is_empty() {
+            accept_steers(&transaction, session_id, operation_id, &steers)?;
         }
         append_events(&transaction, session_id, operation_id, &events)?;
         let checkpoint_json = serde_json::to_string(&checkpoint).map_err(json_error)?;
@@ -117,6 +91,76 @@ impl Kernel {
             None => CommittedDecision::Continue,
         })
     }
+}
+
+struct DecisionParts {
+    checkpoint: crate::Checkpoint,
+    events: Vec<crate::NewEvent>,
+    phase: OperationPhase,
+    outcome: Option<OperationOutcome>,
+    steers: Vec<crate::CommandId>,
+}
+
+/// What committing `decision` writes. An effect batch commits elsewhere.
+fn decision_parts(decision: LoopDecision) -> Result<DecisionParts, KernelError> {
+    let mut steers = Vec::new();
+    let (checkpoint, events, phase, outcome) = match decision {
+        LoopDecision::AppendEventsAndContinue { checkpoint, events } => {
+            if events.is_empty() {
+                return Err(KernelError::InvalidDecision(
+                    "append-and-continue requires at least one event".to_owned(),
+                ));
+            }
+            (checkpoint, events, OperationPhase::NeedDecision, None)
+        }
+        LoopDecision::AcceptSteers {
+            checkpoint,
+            events,
+            steers: accepted,
+        } => {
+            if events.is_empty() {
+                return Err(KernelError::InvalidDecision(
+                    "accepting steers requires the events that carry them".to_owned(),
+                ));
+            }
+            steers = accepted;
+            (checkpoint, events, OperationPhase::NeedDecision, None)
+        }
+        LoopDecision::WaitForInput { checkpoint, events } => (
+            checkpoint,
+            events,
+            OperationPhase::Waiting,
+            Some(OperationOutcome::WaitingForInput),
+        ),
+        LoopDecision::Complete { checkpoint, events } => (
+            checkpoint,
+            events,
+            OperationPhase::Completed,
+            Some(OperationOutcome::Completed),
+        ),
+        LoopDecision::Fail {
+            checkpoint,
+            events,
+            reason,
+        } => (
+            checkpoint,
+            events,
+            OperationPhase::Failed,
+            Some(OperationOutcome::Failed { reason }),
+        ),
+        LoopDecision::InvokeEffects { .. } => {
+            return Err(KernelError::InvalidDecision(
+                "effect batches must be committed through the effect store".to_owned(),
+            ));
+        }
+    };
+    Ok(DecisionParts {
+        checkpoint,
+        events,
+        phase,
+        outcome,
+        steers,
+    })
 }
 
 pub(crate) fn append_events(

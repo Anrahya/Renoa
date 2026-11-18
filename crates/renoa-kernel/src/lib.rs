@@ -17,6 +17,7 @@ mod request_release;
 mod runtime;
 mod schema;
 mod state;
+mod steering;
 mod unknown_effect;
 
 use std::{
@@ -46,6 +47,7 @@ pub use state::{
     Admission, Command, DriveResult, EffectBatchSnapshot, EffectSnapshot, EffectStatus,
     OperationOutcome, OperationSnapshot, OperationStatus, SessionSnapshot,
 };
+pub use steering::SteerState;
 use thiserror::Error;
 
 /// A caller-actionable class of kernel storage failure.
@@ -163,6 +165,15 @@ pub enum KernelError {
     },
     #[error("operation {0} is not active and cancellable")]
     OperationNotCancellable(OperationId),
+    #[error("steer {command_id} is already recorded with another target or content")]
+    SteerConflict { command_id: CommandId },
+    #[error("command {0} has no unfinished operation in this session to steer")]
+    SteerTargetUnavailable(CommandId),
+    #[error("command {command_id} was accepted as a steer of command {target}")]
+    SteerAccepted {
+        command_id: CommandId,
+        target: CommandId,
+    },
     #[error("operation {0} has a committed cancellation request")]
     CancellationPending(OperationId),
     #[error("session {0} already has an active driver")]

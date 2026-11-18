@@ -837,6 +837,15 @@ itself with `request_wake`. The Renoa node submits an agent's heartbeat runs
 quiet, and the coordinator makes an agent's message sent from a quiet command,
 and the answer to it, quiet too. It is omitted when false.
 
+Text input may also carry `"steer": true`: the principal asks for the text to
+join the turn already running on the task, before that turn's next model call,
+instead of waiting for it to end (`rcp-v0.md`, locked decision 28). Nothing
+else about the command changes: it is admitted, recorded and delivered like
+any other, and it ends `completed` with no events of its own when the running
+turn took it in. Text the running turn did not take in runs as its own command
+in queue order. A coordinator that predates the field ignores it, so the text
+waits its turn. It is omitted when false.
+
 Text input may also carry `attachments`: at most 10 files the principal
 uploaded to its Host first (`PUT /v1/host/uploads/{id}`, `renoa-host-v0.md`):
 
@@ -869,7 +878,7 @@ without running. It is omitted when empty.
 
 `request_id` correlates one connection attempt. `command_id` is the durable
 idempotency identity and must be reused with identical content, `context`,
-`author`, `quiet` and `attachments` included, after an uncertain response.
+`author`, `quiet`, `steer` and `attachments` included, after an uncertain response.
 
 ### Task event
 
@@ -1365,7 +1374,7 @@ round.
 ## Binding exclusions
 
 The binding defines no task-list pagination, live directory or target updates,
-application heartbeat or presence, steering, approval, artifact, binary-frame,
+application heartbeat or presence, approval, artifact, binary-frame,
 compression, HTTP/SSE, webhook, or public TLS deployment contract, and no live
 activity beyond visible text and single-line activity summaries. Adding any of those requires an operation contract first, then a
 binding and tests. The transport `ping` above is not an application heartbeat.

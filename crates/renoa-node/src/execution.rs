@@ -1,7 +1,11 @@
 //! Running one admitted command on its Host session, and scheduling the
 //! admitted commands of each task one at a time.
 
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use renoa_agent::ContentBlock;
 use renoa_kernel::AgentId;
@@ -23,10 +27,15 @@ use crate::{
     origin,
     projection::{closing_events, project_history},
     setup::SetupLinks,
+    steering::{RunningTasks, SteerInbox},
 };
 
 impl NodeRuntime {
-    async fn execute(self: Arc<Self>, record: ExecutionRecord) -> Result<(), NodeError> {
+    async fn execute(
+        self: Arc<Self>,
+        record: ExecutionRecord,
+        steers: SteerInbox,
+    ) -> Result<(), NodeError> {
         let command_id = record.command.command_id;
         let agent_id = AgentId::from_uuid(record.binding.agent_id);
         // Registered before the ledger is read, so a stop recorded from now on
@@ -61,14 +70,15 @@ impl NodeRuntime {
                 "session_id": record.binding.session_id,
             }),
         );
-        let (session, content, synthetic_tools) =
-            match self.prepare(&record, agent_id, request).await {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    self.finish_failed(command_id, error).await?;
-                    return Ok(());
-                }
-            };
+        let Some(Prepared {
+            session,
+            workspace,
+            synthetic_tools,
+            content,
+        }) = self.open_turn(&record, agent_id, request).await?
+        else {
+            return Ok(());
+        };
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
         let setup = Arc::new(SetupLinks::open(
@@ -88,15 +98,16 @@ impl NodeRuntime {
             )
             .await?,
         );
-        let result = run_request(
+        let run = run_request(
             request,
             content,
             &record,
             &session,
             Arc::clone(&events),
             cancellation,
-        )
-        .await?;
+        );
+        let offers = self.offer_steers(command_id, &session, &workspace, steers);
+        let result = while_offering(run, offers).await?;
         // A setup link that could not be delivered stopped the turn; its
         // reason is the command's outcome. The turn has settled (a tool runs
         // to its end even when cancelled), so every setup its calls saved is
@@ -129,16 +140,59 @@ impl NodeRuntime {
         Ok(())
     }
 
-    /// Opens the command's session and gathers what its turn receives. The
-    /// workspace call also refuses an agent that no longer exists, which ends
+    /// Opens the turn of `record`, or ends the command before any turn runs
+    /// and returns `None`: as failed when it cannot run, or as completed when
+    /// the turn before it took it in as a steer. Its message is then part of
+    /// that turn, so it has no reply of its own.
+    async fn open_turn(
+        &self,
+        record: &ExecutionRecord,
+        agent_id: AgentId,
+        request: Request,
+    ) -> Result<Option<Prepared>, NodeError> {
+        let command_id = record.command.command_id;
+        let mut prepared = match self.prepare(record, agent_id).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.finish_failed(command_id, error).await?;
+                return Ok(None);
+            }
+        };
+        if record.command.input.steer()
+            && prepared
+                .session
+                .steered(command_id.as_uuid())
+                .map_err(|error| NodeError::Task(format!("Host steer state failed: {error}")))?
+        {
+            let completed = ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            };
+            self.finish_unstarted(command_id, vec![completed]).await?;
+            return Ok(None);
+        }
+        if request == Request::Turn {
+            match turn_content(&self.host, &record.command, &prepared.workspace).await {
+                Ok(content) => prepared.content = content,
+                Err(error) => {
+                    let error =
+                        format!("An attached file could not be given to the agent: {error}");
+                    self.finish_failed(command_id, error).await?;
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(prepared))
+    }
+
+    /// Opens the command's session and finds its agent's files and the tools
+    /// whose calls show as activity. The workspace call also refuses an agent that no longer exists, which ends
     /// the execution as failed, with the returned reason, instead of stopping
     /// the node.
     async fn prepare(
         &self,
         record: &ExecutionRecord,
         agent_id: AgentId,
-        request: Request,
-    ) -> Result<(Arc<AgentSession>, Vec<ContentBlock>, HashSet<String>), String> {
+    ) -> Result<Prepared, String> {
         let workspace = self
             .host
             .agent_workspace(agent_id)
@@ -157,15 +211,12 @@ impl NodeRuntime {
             .synthetic_activity_tools()
             .await
             .map_err(|error| error.to_string())?;
-        let content = match request {
-            Request::Turn => turn_content(&self.host, &record.command, &workspace)
-                .await
-                .map_err(|error| {
-                    format!("An attached file could not be given to the agent: {error}")
-                })?,
-            Request::Compact => Vec::new(),
-        };
-        Ok((session, content, synthetic_tools))
+        Ok(Prepared {
+            session,
+            workspace,
+            synthetic_tools,
+            content: Vec::new(),
+        })
     }
 
     async fn finish_session_error(
@@ -210,10 +261,20 @@ impl NodeRuntime {
     }
 }
 
+/// The session a command runs on, where its agent's files are, the tools
+/// whose calls show as activity, and what its turn receives (nothing for a
+/// compaction).
+struct Prepared {
+    session: Arc<AgentSession>,
+    workspace: PathBuf,
+    synthetic_tools: HashSet<String>,
+    content: Vec<ContentBlock>,
+}
+
 /// What the agent receives for a turn: the command's text, then each attached
 /// file as the Host gives it ([`Uploads::attach`]). Text left blank beside an
 /// attachment is not sent.
-async fn turn_content(
+pub(crate) async fn turn_content(
     host: &LocalHost,
     command: &CommandEnvelope,
     workspace: &Path,
@@ -238,6 +299,17 @@ async fn turn_content(
         );
     }
     Ok(content)
+}
+
+/// Awaits `run` while `offers` hands steers to its turn. Offers end when the
+/// run does; an offer cut short is settled by the steer's own place in the queue.
+async fn while_offering<T>(run: impl Future<Output = T>, offers: impl Future<Output = ()>) -> T {
+    tokio::pin!(run, offers);
+    tokio::select! {
+        biased;
+        result = &mut run => result,
+        () = &mut offers => run.await,
+    }
 }
 
 /// Runs one admitted command on its session. A turn observes when its text was
@@ -304,20 +376,23 @@ pub(crate) struct ExecutionTask {
     result: Result<(), NodeError>,
 }
 
+/// Starts the first unfinished command of each task with none running. A
+/// command queued behind a running one may steer it (see [`crate::steering`]).
 pub(crate) async fn schedule_pending(
     runtime: Arc<NodeRuntime>,
     tasks: &mut JoinSet<ExecutionTask>,
-    running_tasks: &mut HashSet<TaskId>,
+    running_tasks: &mut RunningTasks,
 ) -> Result<(), NodeError> {
+    let mut held = HashSet::new();
     for record in runtime.state.load_unfinished().await? {
-        if running_tasks.contains(&record.task_id) {
+        if running_tasks.queue_behind(&record, &mut held) {
             continue;
         }
         let task_id = record.task_id;
-        running_tasks.insert(task_id);
+        let steers = running_tasks.start(&record);
         let runtime = Arc::clone(&runtime);
         tasks.spawn(async move {
-            let result = runtime.execute(record).await;
+            let result = Box::pin(runtime.execute(record, steers)).await;
             ExecutionTask { task_id, result }
         });
     }
@@ -326,9 +401,9 @@ pub(crate) async fn schedule_pending(
 
 pub(crate) fn finish_execution(
     completed: Result<ExecutionTask, JoinError>,
-    running_tasks: &mut HashSet<TaskId>,
+    running_tasks: &mut RunningTasks,
 ) -> Result<(), NodeError> {
     let completed = completed.map_err(|error| NodeError::Task(error.to_string()))?;
-    running_tasks.remove(&completed.task_id);
+    running_tasks.finish(completed.task_id);
     completed.result
 }

@@ -131,6 +131,7 @@ fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_pr
             context: Some("Discord channel #general (5)".to_owned()),
             author: renoa_protocol::Author::Principal,
             quiet: false,
+            steer: false,
             attachments: Vec::new(),
         },
     };
@@ -162,6 +163,7 @@ fn json_websocket_v16_text_input_carries_context_and_a_guest_author_only_when_pr
             context: None,
             author: renoa_protocol::Author::Guest,
             quiet: false,
+            steer: false,
             attachments: Vec::new(),
         },
     };
@@ -539,6 +541,7 @@ fn execute_delivery_contains_only_continuity_data() {
                 context: None,
                 author: renoa_protocol::Author::Principal,
                 quiet: false,
+                steer: false,
                 attachments: Vec::new(),
             },
             origin: None,

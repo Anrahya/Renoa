@@ -206,6 +206,23 @@ These decisions define RCP and are not ordinary implementation details:
     connection cannot lose it. Only a message continues an exchange; an answer
     starts nothing. The coordinator refuses a request more than 100 messages
     deep in one chain. That backstop is never shown to an agent.
+28. A principal may steer the turn running on a task: text input marked
+    `steer` asks to join that turn instead of waiting for it to end. A steer
+    is an ordinary command in every other way. The coordinator admits,
+    records and delivers it like any command, and the task's journal shows it
+    where it was submitted. The executor decides whether the running turn can
+    take it in. The Renoa node offers it to the running turn only when both are
+    the same principal's own messages and neither is a control such as
+    `/compact`, and only while no earlier message of the task waits, so a
+    steer never overtakes one; the turn takes it in before its next model
+    call, never during one. A steer that joined a turn ends `completed` with
+    no record of its own beyond its terminal, and the turn's answer is its
+    answer; if that turn then fails or is stopped, the steer still ends
+    `completed` and has no answer. One that did not join (the turn ended
+    first, it was stopped before the node offered it, or the node never
+    offered it) runs as its own command in queue order, and a stopped one
+    begins cancelled. A steer is answered by the turn it joined or by its own
+    turn, never by both.
 
 ## Vocabulary
 
@@ -1259,8 +1276,8 @@ assumption after context compaction:
   registry for one node hosting multiple harness configurations
 - Execution generations and safe rebinding messages
 - Task-list pagination and live directory updates
-- Steering, approval, and queued-follow-up semantics. Stopping one command is
-  defined by locked decision 24
+- Approval semantics. Stopping one command is defined by locked decision 24
+  and steering a running turn by locked decision 28
 - A waiting-on-owner task status and the next scheduled wake of a task, which
   no part of RCP produces yet
 - Snapshot, automatic retention, compaction, artifact, and blob behavior. An

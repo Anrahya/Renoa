@@ -55,6 +55,7 @@ fn definite_tool_adapter_failure_balances_the_assistant_calls() {
             serde_json::to_value(AgentCommand::text("test")).expect("command"),
         ),
         events: Vec::new(),
+        steers: Vec::new(),
         checkpoint: Some(
             checkpoint(LoopPhase::AwaitingTool {
                 model_turns: 1,

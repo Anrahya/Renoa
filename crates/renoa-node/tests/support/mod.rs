@@ -407,6 +407,18 @@ impl HostFixture {
             .expect("record the stop");
     }
 
+    /// Whether the node ledger admitted command `command_id`.
+    pub(crate) fn ledger_has_command(&self, command_id: CommandId) -> bool {
+        rusqlite::Connection::open(&self.ledger)
+            .expect("open node ledger")
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM host_node_executions WHERE command_id = ?1)",
+                [command_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("read the node ledger")
+    }
+
     /// Whether the node ledger still records `task_id`.
     pub(crate) fn ledger_has_task(&self, task_id: TaskId) -> bool {
         rusqlite::Connection::open(&self.ledger)
@@ -435,6 +447,25 @@ impl HostFixture {
         .iter()
         .map(|operation| operation.status)
         .collect()
+    }
+
+    /// Whether the task's Host kernel recorded command `steer` as a steer,
+    /// read beside the running node.
+    pub(crate) fn steer_recorded(&self, task_id: TaskId, steer: CommandId) -> bool {
+        let session_id = self.session_for(task_id);
+        rusqlite::Connection::open(
+            self.data
+                .join("sessions")
+                .join(session_id.to_string())
+                .join("kernel.sqlite3"),
+        )
+        .expect("open Host kernel database")
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM steer_requests WHERE command_id = ?1)",
+            [steer.to_string()],
+            |row| row.get(0),
+        )
+        .expect("read steers")
     }
 
     pub(crate) fn operation_count_for(&self, task_id: TaskId) -> usize {
@@ -805,6 +836,7 @@ pub(crate) async fn submit_placed_when_node_is_online(
             context: context.map(str::to_owned),
             author: Author::Principal,
             quiet: false,
+            steer: false,
             attachments: Vec::new(),
         },
     )

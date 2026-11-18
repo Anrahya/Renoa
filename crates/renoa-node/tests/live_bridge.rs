@@ -297,6 +297,7 @@ async fn a_guest_command_reads_no_profile_and_runs_no_tool_while_the_owners_does
                     context: None,
                     author,
                     quiet: false,
+                    steer: false,
                     attachments: Vec::new(),
                 },
             )

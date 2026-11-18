@@ -352,7 +352,9 @@ impl LocalSession {
     }
 }
 
-fn encode_command(command: AgentCommand) -> Result<serde_json::Value, LocalSessionError> {
+pub(super) fn encode_command(
+    command: AgentCommand,
+) -> Result<serde_json::Value, LocalSessionError> {
     serde_json::to_value(command).map_err(LocalSessionError::CommandEncoding)
 }
 

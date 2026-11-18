@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -27,6 +26,7 @@ use crate::{
     execution::{ExecutionTask, finish_execution, schedule_pending},
     live::LiveFrame,
     node_log,
+    steering::RunningTasks,
 };
 use publication::{Publication, refresh_publications, send_live, send_pending};
 
@@ -56,7 +56,7 @@ pub(crate) async fn serve_session(
     drain: &CancellationToken,
     commits: &mut watch::Receiver<u64>,
     tasks: &mut JoinSet<ExecutionTask>,
-    running: &mut HashSet<TaskId>,
+    running: &mut RunningTasks,
 ) -> Result<SessionEnd, NodeError> {
     let mut authenticated_at = None;
     let result = serve_session_inner(
@@ -92,7 +92,7 @@ async fn serve_session_inner(
     drain: &CancellationToken,
     commits: &mut watch::Receiver<u64>,
     tasks: &mut JoinSet<ExecutionTask>,
-    running: &mut HashSet<TaskId>,
+    running: &mut RunningTasks,
     authenticated_at: &mut Option<Instant>,
 ) -> Result<SessionEnd, NodeError> {
     let websocket = WebSocketConfig::default()
@@ -262,7 +262,7 @@ async fn handle_server_message(
     runtime: &Arc<NodeRuntime>,
     drain: &CancellationToken,
     tasks: &mut JoinSet<ExecutionTask>,
-    running: &mut HashSet<TaskId>,
+    running: &mut RunningTasks,
     publications: &mut HashMap<CommandId, Publication>,
     link: &mut LinkSession,
     host_calls: &mut HostCalls,
@@ -422,7 +422,7 @@ async fn handle_execute(
     runtime: &Arc<NodeRuntime>,
     drain: &CancellationToken,
     tasks: &mut JoinSet<ExecutionTask>,
-    running: &mut HashSet<TaskId>,
+    running: &mut RunningTasks,
     task_id: TaskId,
     command: CommandEnvelope,
 ) -> Result<(), NodeError> {

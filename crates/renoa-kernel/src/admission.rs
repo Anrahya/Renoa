@@ -144,6 +144,7 @@ impl Kernel {
             return Ok(admission);
         }
 
+        crate::steering::require_not_accepted(&transaction, command_id)?;
         if matches!(mode, AdmissionMode::RequireNoUnfinishedOperation) {
             require_no_unfinished_operation(&transaction, session_id)?;
         }

@@ -784,6 +784,7 @@ async fn send_attached(
             context: None,
             author: Author::Principal,
             quiet: false,
+            steer: false,
             attachments: vec![attachment],
         },
     )
