@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::Chats;
 use crate::{
-    chat::chat_task_id,
+    chat::app_chat_task_id,
     face::look::{Cheeks, Eyes, HairBack, HairColour, HairFront, Look, Skin, Tile, Wear},
     link::{Command, Update, host::Answer},
     sheets::Page,
@@ -200,7 +200,7 @@ impl Screen {
                 })
                 .unwrap();
         }
-        let task_id = chat_task_id(node_id, &format!("agent:{RENOA}"));
+        let task_id = app_chat_task_id(node_id, &format!("agent:{RENOA}"));
         for event in [
             said(
                 task_id,

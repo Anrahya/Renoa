@@ -77,6 +77,9 @@ enum class Speaker {
 
     /** Something that happened in the chat that no one typed here, such as a routine's run: one quiet line. */
     Event,
+
+    /** Another of the owner's agents messaging this one, or answering it; [ChatMessage.from] names it. */
+    OtherAgent,
 }
 
 /**
@@ -90,6 +93,8 @@ data class ChatMessage(
     val notSent: Boolean = false,
     /** The files the owner sent with the text. */
     val attachments: List<Attachment> = emptyList(),
+    /** For [Speaker.OtherAgent], the line over the text that says which agent it is. */
+    val from: String? = null,
 )
 
 /**

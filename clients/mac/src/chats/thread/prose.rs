@@ -4,14 +4,17 @@
 use std::{collections::BTreeSet, time::Duration};
 
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StyleRefinement, Styled as _, TestSupportExt as _,
+    Animation, AnimationExt as _, AnyElement, Entity, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, SharedString, StyleRefinement, Styled as _,
+    TestSupportExt as _,
     component::{
         Theme,
         clipboard::Clipboard,
         text::{TextView, TextViewStyle},
     },
-    div, ease_out_quint, relative, rems,
+    div, ease_out_quint,
+    prelude::FluentBuilder as _,
+    relative, rems,
 };
 use uuid::Uuid;
 
@@ -279,8 +282,57 @@ pub(super) fn escape_markdown(text: &str) -> String {
     out
 }
 
+/// Another of the owner's agents: a card on the agent's side, headed with
+/// who it is, so it never reads as the owner or as this chat's agent.
+pub(super) fn other_agent(index: usize, line: &Line, live: bool, palette: Palette) -> AnyElement {
+    let heading = line.speaker.heading().unwrap_or_default();
+    let card = div()
+        .max_w(relative(0.86))
+        .px(u(14.))
+        .py(u(10.))
+        .rounded(u(14.))
+        .bg(palette.card)
+        .border_1()
+        .border_color(palette.outline)
+        .flex()
+        .flex_col()
+        .gap(u(4.))
+        .child(
+            div()
+                .text_size(u(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.secondary)
+                .child(heading),
+        )
+        .when(!line.text.is_empty(), |card| {
+            card.child(
+                div()
+                    .text_size(u(14.))
+                    .line_height(u(21.))
+                    .text_color(palette.text_soft)
+                    .child(
+                        TextView::markdown(("other-agent", index), line.text.clone())
+                            .selectable(true)
+                            .style(TextViewStyle::default().paragraph_gap(rems(6. / 16.))),
+                    ),
+            )
+        });
+    let placed = div().w_full().flex().justify_start().child(card);
+    if !live {
+        return placed.into_any_element();
+    }
+    placed
+        .relative()
+        .with_animation(
+            ("arrive", index),
+            Animation::new(SETTLE).with_easing(ease_out_quint()),
+            |placed, t| placed.top(u(8. * (1. - t))).opacity(t),
+        )
+        .into_any_element()
+}
+
 /// Space above a row depending on whether the speaker switched.
-pub(super) fn row_top_padding(before: Option<Speaker>, current: Speaker) -> f32 {
+pub(super) fn row_top_padding(before: Option<&Speaker>, current: &Speaker) -> f32 {
     match before {
         None => 4.,
         Some(prev) if prev == current => 10.,

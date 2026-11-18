@@ -13,6 +13,8 @@ import kotlin.uuid.Uuid
 /**
  * The one chat the app keeps with an agent: a task whose identity every app of the owner derives
  * from the agent's node and target, so all of them, and a reinstall, open the same conversation.
+ * The coordinator delivers other agents' messages into it with the same derivation
+ * (`app_chat_task_id` in `renoa-rcp-wire`); a test there pins the vector [ChatJournalTest] pins.
  */
 internal fun chatTaskId(nodeId: Uuid, target: String): Uuid =
     Uuid.parse(UUID.nameUUIDFromBytes("renoa app chat v1\n$nodeId\n$target".toByteArray(Charsets.UTF_8)).toString())
@@ -73,14 +75,15 @@ internal class ChatJournal {
         when (val kind = event.kind) {
             is TaskEventKind.CommandSubmitted -> {
                 val input = kind.command.input as CommandInput.Text
+                val id = kind.command.commandId.toString()
+                val origin = kind.command.origin
                 val event = chatEvent(kind.command)
                 messages +=
-                    ChatMessage(
-                        kind.command.commandId.toString(),
-                        if (event == null) Speaker.Owner else Speaker.Event,
-                        event ?: input.text,
-                        attachments = input.attachments,
-                    )
+                    when {
+                        origin != null -> ChatMessage(id, Speaker.OtherAgent, input.text, from = agentHeading(origin))
+                        event != null -> ChatMessage(id, Speaker.Event, event)
+                        else -> ChatMessage(id, Speaker.Owner, input.text, attachments = input.attachments)
+                    }
                 latestCommand = kind.command.commandId
                 doing = null
                 unsent.remove(kind.command.commandId)

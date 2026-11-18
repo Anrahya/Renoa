@@ -194,8 +194,11 @@ These decisions define RCP and are not ordinary implementation details:
     sending node names the command its agent is executing; the coordinator
     derives who is speaking from that command, never from the request, and
     only for a command bound to the requesting node. The message becomes an
-    ordinary command, carrying its origin, on a thread task of the receiving
-    agent that the coordinator opens in the same transaction. The answer is
+    ordinary command, carrying its origin, in the owner's conversation with the
+    receiving agent: the task every app of the owner opens for that agent,
+    which the coordinator opens in the same transaction when no app has yet.
+    The receiving agent answers with that conversation in context, and the
+    owner sees the message there under the sender's name. The answer is
     admitted in the asker's task by the transaction that records the end of the
     message's execution, so a retried batch cannot answer twice and a lost
     connection cannot lose it. Only a message continues an exchange; an answer
@@ -703,12 +706,15 @@ decisions.
   takes the sending agent from that task's target and its name from the node's
   current advertisement. A node can therefore speak only for agents it executes,
   and an agent cannot name another sender.
-- **Thread.** The destination task is derived from the owner and both agents,
-  so the first and every later message from one agent to another reach one
-  conversation. The coordinator opens it in the transaction that admits the
-  command. Every refusal runs before the first write and leaves no task,
-  command, or record. The thread is an ordinary task of the owner: it appears
-  in `ListTasks`, any surface may attach to it, and the owner may delete it.
+- **Destination.** The destination task is the owner's conversation with the
+  receiving agent, whose identity every app derives from the agent's node and
+  target (`app_chat_task_id` in `renoa-rcp-wire`: the name-based UUID, MD5
+  version 3, of `"renoa app chat v1\n{node_id}\n{target}"`). Every message to
+  an agent, from any agent, lands in that one conversation, beside the owner's
+  own. The coordinator opens it in the transaction that admits the command
+  when no app opened it first, and an app's later `OpenTask` converges on it.
+  Every refusal runs before the first write and leaves no task, command, or
+  record.
 - **Origin.** The command's surface is `agent`. Its `origin` names the sending
   command, the sending agent and its name, the chain depth, and whether the
   command is a request, a reply, or a failure. Only the coordinator sets it: a
@@ -1032,7 +1038,8 @@ The current implementation demonstrates:
 - agent-to-agent messages: a node advertises named agents and lists its owner's,
   the Host offers `agent_roster` and `message_agent` to an agent through that
   node's coordinator link, the coordinator derives the sender from the command
-  the agent is executing, opens a thread task for the receiving agent, and
+  the agent is executing, delivers into the owner's conversation with the
+  receiving agent, and
   admits the answer in the asker's task in the transaction that records the
   receiver's ending, with a chain-depth backstop of 100 the agent never sees;
 - a Rust node that runs its Host's automation schedule through a second,
@@ -1189,8 +1196,9 @@ RCP v0 is not proven until deterministic tests cover at least:
     bad proof leaves no device (a bad proof does spend its one-use ceremony). An
     owner lists and revokes only their own apps, and a revoked app is
     disconnected.
-21. An agent message reaches a thread of the receiving agent under the sender
-    the coordinator derived; every refusal leaves no task, command, or record;
+21. An agent message reaches the owner's conversation with the receiving
+    agent, joining it when an app opened it first, under the sender the
+    coordinator derived; every refusal leaves no task, command, or record;
     an exact retry converges even after the destination or the sender's
     advertisement changed. The answer returns to the asker's task once,
     including a failure or cancellation and an asker whose node is offline, and

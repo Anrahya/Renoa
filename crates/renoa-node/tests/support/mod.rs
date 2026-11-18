@@ -45,7 +45,7 @@ pub(crate) struct TestSystem {
     pub(crate) url: String,
     pub(crate) task_id: TaskId,
     pub(crate) target: TargetRef,
-    node_id: NodeId,
+    pub(crate) node_id: NodeId,
     principal_id: PrincipalId,
     shutdown: CancellationToken,
     server: Option<tokio::task::JoinHandle<()>>,

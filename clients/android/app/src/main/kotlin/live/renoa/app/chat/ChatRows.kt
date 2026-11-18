@@ -7,6 +7,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -155,6 +156,25 @@ internal fun MessageRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        // Another agent's words are markdown too, outlined and headed with its name, so they read
+        // as neither the owner's nor this agent's.
+        Speaker.OtherAgent ->
+            Column(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 40.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(message.from.orEmpty(), style = Type.caption2.bold, color = Palette.secondary)
+                if (message.text.isNotBlank()) {
+                    Reply(
+                        message.text,
+                        parses.of(message.id, message.text),
+                        Modifier
+                            .clip(RoundedRectangle(RenoaShapes.Bubble))
+                            .border(1.dp, Palette.border, RoundedRectangle(RenoaShapes.Bubble))
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                }
+            }
         // The owner's own words stay plain; an agent's reply is markdown, in its bubble.
         Speaker.Agent -> {
             // One for both, so a diagram drawn while the reply arrives stays drawn once the reply is whole.

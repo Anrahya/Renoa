@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::{Profile, its_routines};
 use crate::{
-    chat::chat_task_id,
+    chat::app_chat_task_id,
     link::{Command, host::Answer},
     sheets::{Host, Loaded, Member, routines::held::Observation},
 };
@@ -53,7 +53,7 @@ fn chef() -> Member {
         host_id: CHEF,
         node_id,
         target: TargetRef::new("agent:chef"),
-        task_id: chat_task_id(node_id, "agent:chef"),
+        task_id: app_chat_task_id(node_id, "agent:chef"),
         look: None,
         primary: false,
     }

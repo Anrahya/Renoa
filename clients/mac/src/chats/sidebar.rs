@@ -14,7 +14,7 @@ use renoa_rcp_wire::{TargetSummary, TaskId};
 
 use super::Chats;
 use crate::{
-    chat::{Transcript, chat_task_id},
+    chat::{Transcript, app_chat_task_id},
     face::{self, Face, Look, Mood, blink},
     link::host_agent,
     stamp,
@@ -56,12 +56,14 @@ impl Chats {
         let open = self
             .agents
             .iter()
-            .position(|agent| Some(chat_task_id(agent.node_id, agent.target.as_str())) == chosen)
+            .position(|agent| {
+                Some(app_chat_task_id(agent.node_id, agent.target.as_str())) == chosen
+            })
             .filter(|_| !self.on_home);
         let now = Local::now();
         let has_pin_gap = self.agents.len() > 1;
         let rows = self.agents.iter().enumerate().flat_map(|(index, agent)| {
-            let task_id = chat_task_id(agent.node_id, agent.target.as_str());
+            let task_id = app_chat_task_id(agent.node_id, agent.target.as_str());
             let transcript = self.transcripts.get(&task_id);
             let working = transcript.is_some_and(Transcript::working);
             let doing = transcript
@@ -327,7 +329,7 @@ impl Chats {
     /// How long until any listed agent's eyes open or shut.
     pub(super) fn next_blink(&self) -> Duration {
         let seeds = self.agents.iter().map(|agent| {
-            chat_task_id(agent.node_id, agent.target.as_str())
+            app_chat_task_id(agent.node_id, agent.target.as_str())
                 .as_uuid()
                 .as_u128()
         });
@@ -338,7 +340,7 @@ impl Chats {
     /// one the Host names, or while it names none that is listed, the first
     /// listed, as on the phone (`mainAgent` in the Android app's `Badge.kt`).
     pub(super) fn face(&self, agent: &TargetSummary) -> (Option<Look>, bool) {
-        let task_id = chat_task_id(agent.node_id, agent.target.as_str());
+        let task_id = app_chat_task_id(agent.node_id, agent.target.as_str());
         let named = |agent: &TargetSummary| {
             host_agent(agent.target.as_str()).is_some_and(|id| Some(id) == self.main)
         };

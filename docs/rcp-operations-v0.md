@@ -492,13 +492,15 @@ checks, in order:
 8. The receiving node is online (`NodeOffline`) and advertises the target
    (`NotFound`).
 
-Only then does it commit the thread task if it does not yet exist, the command
-with its `CommandSubmitted` record, and its pending execution delivery, and
-return `CommandAccepted`. The thread's identity derives from the principal and
-both agents, so every message from one agent to another lands in one task. A
-rejected message leaves no task, command, or record. The command's surface is
-`agent` and its `origin` carries `from_command`, the sender's target and name,
-the depth, and the kind `request`.
+Only then does it commit the destination task if it does not yet exist, the
+command with its `CommandSubmitted` record, and its pending execution delivery,
+and return `CommandAccepted`. The destination is the owner's conversation with
+the receiving agent, the task every app opens for it (`app_chat_task_id`), so a
+message lands beside the owner's own; an existing task under that identity must
+have the same principal, node, and target (`Conflict`). A rejected message
+leaves no task, command, or record. The command's surface is `agent` and its
+`origin` carries `from_command`, the sender's target and name, the depth, and
+the kind `request`.
 
 The reason of each refusal above, and of a reused message identity, is written
 for the agent that will read it: whole sentences that say what was wrong and
@@ -666,7 +668,7 @@ task sequence. A timestamp never determines order.
 | `TargetList` | No mutation; the returned targets belong to online nodes the principal owns |
 | `TaskOpened` | The task and its principal, node, and target binding |
 | `Attached` | No mutation; authorization and a replay high-water mark were resolved |
-| `CommandAccepted` | Command, command record, and pending execution delivery; for `SendAgentMessage` also the thread task |
+| `CommandAccepted` | Command, command record, and pending execution delivery; for `SendAgentMessage` also the destination task when no app opened it |
 | `StopAccepted` (`requested`) | The command's stop record and its pending delivery to the node |
 | `StopAccepted` (`already_ended`) | No mutation; the command's execution had already terminated |
 | `ExecutionAcknowledged` | Removal of the pending coordinator delivery |

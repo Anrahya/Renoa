@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::{Chats, overlay::Up};
 use crate::{
-    chat::{Speaker, chat_task_id},
+    chat::{Speaker, app_chat_task_id},
     face::look::PLAIN,
     link::{Command, Update},
     test_events::{executed, said},
@@ -78,7 +78,7 @@ fn the_chats_follow_the_first_agent_show_its_turn_and_send_what_the_owner_types(
 ) {
     let (window, chats, mut asked, updates) = open(cx);
     let node_id = NodeId::new();
-    let task_id = chat_task_id(node_id, "renoa");
+    let task_id = app_chat_task_id(node_id, "renoa");
     updates.send(Update::Linked(true)).unwrap();
     updates
         .send(Update::Agents(vec![TargetSummary {
@@ -123,7 +123,7 @@ fn the_chats_follow_the_first_agent_show_its_turn_and_send_what_the_owner_types(
         assert_eq!(
             lines
                 .iter()
-                .map(|line| (line.speaker, line.text.as_str()))
+                .map(|line| (line.speaker.clone(), line.text.as_str()))
                 .collect::<Vec<_>>(),
             [
                 (Speaker::Owner, "What's for dinner?"),
@@ -179,8 +179,8 @@ fn each_chat_keeps_its_own_draft_and_a_refused_message_returns_to_its_chat(
     let (window, chats, mut asked, updates) = open(cx);
     let node_id = NodeId::new();
     let (cook, shopper) = (agent(node_id, "Cook"), agent(node_id, "Shopper"));
-    let cook_chat = chat_task_id(node_id, "cook");
-    let shopper_chat = chat_task_id(node_id, "shopper");
+    let cook_chat = app_chat_task_id(node_id, "cook");
+    let shopper_chat = app_chat_task_id(node_id, "shopper");
     updates
         .send(Update::Agents(vec![cook.clone(), shopper.clone()]))
         .unwrap();
@@ -291,7 +291,7 @@ fn what_the_owner_types_waits_while_renoa_is_away(cx: &mut TestAppContext) {
 fn a_chat_shows_what_its_agent_is_for_until_something_is_said(cx: &mut TestAppContext) {
     let (_window, chats, _asked, updates) = open(cx);
     let node_id = NodeId::new();
-    let task_id = chat_task_id(node_id, "ada");
+    let task_id = app_chat_task_id(node_id, "ada");
     updates
         .send(Update::Agents(vec![agent(node_id, "Ada")]))
         .unwrap();
@@ -468,7 +468,7 @@ fn an_agents_page_opens_from_its_chat_and_leads_to_its_chat_and_the_apps(cx: &mu
     let (window, chats, mut asked, updates) = open(cx);
     let node_id = NodeId::new();
     let chef = format!("agent:{}", Uuid::from_u128(0xc1));
-    let task_id = chat_task_id(node_id, &chef);
+    let task_id = app_chat_task_id(node_id, &chef);
     updates
         .send(Update::Agents(vec![
             agent(node_id, "Cook"),
@@ -590,7 +590,7 @@ fn each_key_settings_lists_does_what_it_says(cx: &mut TestAppContext) {
     let (window, chats, _asked, updates) = open(cx);
     let node_id = NodeId::new();
     let chef = format!("agent:{}", Uuid::from_u128(0xc1));
-    let chef_chat = chat_task_id(node_id, &chef);
+    let chef_chat = app_chat_task_id(node_id, &chef);
     updates
         .send(Update::Agents(vec![
             TargetSummary {
@@ -758,7 +758,7 @@ fn the_wheel_over_a_sheet_leaves_the_chat_behind_it_alone(cx: &mut TestAppContex
         .send(Update::Agents(vec![agent(node_id, "Chef")]))
         .unwrap();
     // A chat long enough to scroll.
-    let task_id = chat_task_id(node_id, "chef");
+    let task_id = app_chat_task_id(node_id, "chef");
     for at in 0..40 {
         updates
             .send(Update::Event(Box::new(said(
@@ -950,7 +950,7 @@ fn reply_links_open_shared_files_web_urls_show_errors_and_leave_malformed_plain(
 
     let (window, chats, mut asked, updates) = open(cx);
     let node_id = NodeId::new();
-    let task_id = chat_task_id(node_id, "renoa");
+    let task_id = app_chat_task_id(node_id, "renoa");
     updates.send(Update::Linked(true)).unwrap();
     updates
         .send(Update::Agents(vec![agent(node_id, "Renoa")]))

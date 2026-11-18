@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::{Home, soonest};
 use crate::{
-    chat::chat_task_id,
+    chat::app_chat_task_id,
     link::{Command, host::Answer},
     sheets::{Member, routines::held::Observation},
 };
@@ -43,7 +43,7 @@ fn deals_node() -> NodeId {
 }
 
 fn deals_chat() -> TaskId {
-    chat_task_id(deals_node(), "agent:deals")
+    app_chat_task_id(deals_node(), "agent:deals")
 }
 
 /// The message an answer sends, after the chat it opens first.

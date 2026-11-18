@@ -47,7 +47,7 @@ class ChatJournalTest {
 
     private fun delta(sequence: Long, text: String) = chat.live(command, LiveActivity.TextDelta(sequence, text))
 
-    /** Only the owner's own words are their messages; a routine's run and another agent's message are quiet lines. */
+    /** Only the owner's own words are their messages; a routine's run is a quiet line, and another agent's words show under its name. */
     @Test
     fun whatNoOneTypedHereShowsAsALineNotTheOwnersMessage() {
         val run = Uuid.random()
@@ -63,10 +63,26 @@ class ChatJournalTest {
             listOf(
                 Speaker.Event to "Routine ran · Daily AO3 status check",
                 Speaker.Event to "A routine ran",
-                Speaker.Event to "Groky replied",
+                Speaker.OtherAgent to "Here are three posts.",
                 Speaker.Owner to "(not a run) hello",
             ),
             chat.conversation.messages.map { it.speaker to it.text },
+        )
+        assertEquals("Groky replied", chat.conversation.messages[2].from)
+    }
+
+    /** A message from another agent lands in this chat, headed with who sent it, and its answers likewise. */
+    @Test
+    fun anotherAgentsMessageShowsItsTextUnderItsName() {
+        journal.submitted(Uuid.random(), "Got a film for tonight?", surface = "agent", origin = AgentOrigin("Media Centre", AgentMessageKind.Request))
+        journal.submitted(Uuid.random(), "", surface = "agent", origin = AgentOrigin("Chef", AgentMessageKind.Failure))
+        journal.events.forEach(::record)
+        assertEquals(
+            listOf(
+                Triple(Speaker.OtherAgent, "Message from Media Centre", "Got a film for tonight?"),
+                Triple(Speaker.OtherAgent, "Chef couldn't answer", ""),
+            ),
+            chat.conversation.messages.map { Triple(it.speaker, it.from, it.text) },
         )
     }
 

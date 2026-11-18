@@ -19,7 +19,7 @@ use super::{
 };
 
 use crate::{
-    chat::chat_task_id,
+    chat::app_chat_task_id,
     link::host_agent,
     sheets::{
         self, Host, Member, Page, SheetEvent, apps::AppsSheet, memory::Memory, profile::Profile,
@@ -72,7 +72,7 @@ impl Chats {
                     host_id,
                     node_id: agent.node_id,
                     target: agent.target.clone(),
-                    task_id: chat_task_id(agent.node_id, agent.target.as_str()),
+                    task_id: app_chat_task_id(agent.node_id, agent.target.as_str()),
                     look,
                     primary,
                 })
@@ -118,7 +118,7 @@ impl Chats {
         self.agents
             .iter()
             .any(|agent| {
-                chat_task_id(agent.node_id, agent.target.as_str()) == task_id
+                app_chat_task_id(agent.node_id, agent.target.as_str()) == task_id
                     && host_agent(agent.target.as_str()).is_some()
             })
             .then_some(task_id)
@@ -205,7 +205,7 @@ impl Chats {
         if let Some(index) = self
             .agents
             .iter()
-            .position(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == task_id)
+            .position(|agent| app_chat_task_id(agent.node_id, agent.target.as_str()) == task_id)
         {
             self.open_agent(index, window, cx);
         }
@@ -228,7 +228,7 @@ impl Chats {
             .map(|(index, agent)| {
                 let (look, primary) = self.face(agent);
                 Place::Agent {
-                    task_id: chat_task_id(agent.node_id, agent.target.as_str()),
+                    task_id: app_chat_task_id(agent.node_id, agent.target.as_str()),
                     name: agent.name.clone().into(),
                     look,
                     primary,

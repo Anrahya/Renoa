@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use renoa_node::RenoaNode;
 use renoa_protocol::{AgentMessageKind, CommandEnvelope, CommandId, ExecutionEventKind};
-use renoa_rcp_wire::{TaskEvent, TaskEventKind};
+use renoa_rcp_wire::{TaskEvent, TaskEventKind, app_chat_task_id};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
@@ -83,22 +83,27 @@ async fn an_agent_messages_another_and_the_answer_returns_to_its_conversation() 
             "{events:#?}"
         );
 
-        // The receiving agent holds the exchange in a thread the owner sees.
+        // The message lands in the owner's conversation with the receiving agent.
         let tasks = list_tasks(&system).await;
-        let thread = tasks
+        let chat = tasks
             .iter()
             .find(|task| task.target == agent_target(beta))
-            .expect("Beta has a thread for the message");
+            .expect("Beta's chat holds the message");
+        assert_eq!(
+            chat.task_id,
+            app_chat_task_id(system.node_id, agent_target(beta).as_str()),
+            "the chat every app of the owner opens with Beta"
+        );
         let mut reader = system.connect_surface().await;
-        // The thread already ended its turn, so a full replay holds all of it.
-        attach_after(&mut reader, thread.task_id, None)
+        // Beta already ended its turn, so a full replay holds all of it.
+        attach_after(&mut reader, chat.task_id, None)
             .await
-            .expect("the thread holds the exchange");
-        let thread_events = collect_through_terminal(&mut reader).await;
-        let request = submitted(&thread_events)
+            .expect("the chat holds the exchange");
+        let chat_events = collect_through_terminal(&mut reader).await;
+        let request = submitted(&chat_events)
             .into_iter()
             .next()
-            .expect("the message is the thread's first command");
+            .expect("the message is the chat's first command");
         assert_eq!(
             reply.origin.expect("origin").from_command,
             request.command_id,
@@ -165,7 +170,7 @@ async fn a_wrong_name_is_answered_with_the_agents_there_are_and_a_correct_call()
                 .await
                 .iter()
                 .all(|task| task.target == system.target),
-            "a refused message opens no thread"
+            "a refused message opens no task"
         );
 
         node_shutdown.cancel();
