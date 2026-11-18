@@ -446,7 +446,10 @@ async fn an_image_too_large_to_show_is_still_copied() {
         .expect("attached");
     assert_eq!(
         texts(&blocks),
-        ["Attached file: attachments/big.jpg (3.7 MB)."]
+        [
+            "Attached image: attachments/big.jpg (3.7 MB). It is not included here because \
+             its data does not decode as an image, so the file may be damaged."
+        ]
     );
     assert_eq!(blocks.len(), 1, "not shown");
     assert_eq!(
@@ -482,7 +485,9 @@ async fn a_high_res_image_upload_keeps_full_bytes_on_disk_and_shows_resized_jpeg
     assert_eq!(
         texts(&blocks),
         [format!(
-            "Attached image, included here so you can see it: attachments/poster.png ({expected_size})."
+            "Attached image, included here so you can see it: attachments/poster.png \
+             ({expected_size}). It was scaled down from 2400x1800, so small text or fine \
+             detail may be unreadable; crop the part you need with bash and look at that."
         )]
     );
     assert_eq!(

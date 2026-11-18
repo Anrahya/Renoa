@@ -289,7 +289,10 @@ impl AgentLoop {
         provider_message: Option<&str>,
     ) -> Result<LoopDecision, LoopError> {
         let capacity = format!(
-            "context cannot be reduced below the provider payload limit: estimated {estimated_bytes} bytes, dispatch limit {dispatch_limit_bytes} bytes"
+            "the conversation is too large to send: its messages and images come to \
+             {estimated_bytes} bytes against a limit of {dispatch_limit_bytes} bytes, and \
+             nothing older can be summarized to make room; start a new conversation, or \
+             send fewer or smaller images"
         );
         Self::limit_failure(capacity, provider_message)
     }

@@ -1,12 +1,15 @@
 //! Images an agent is shown: known by their bytes, bounded in resolution and
 //! encoded size for model APIs without altering files on disk.
 
-use std::io::Cursor;
+use std::{
+    io::Cursor,
+    sync::{Mutex, PoisonError},
+};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use image::{
-    DynamicImage, GenericImageView as _, ImageDecoder as _, ImageFormat, ImageReader, Limits,
-    RgbImage, codecs::jpeg::JpegEncoder, imageops::FilterType, metadata::Orientation,
+    DynamicImage, GenericImageView as _, ImageDecoder as _, ImageError, ImageFormat, ImageReader,
+    Limits, RgbImage, codecs::jpeg::JpegEncoder, imageops::FilterType, metadata::Orientation,
 };
 use renoa_agent::ContentBlock;
 
@@ -32,9 +35,17 @@ const PASSTHROUGH_IMAGE_BYTES: usize = 200 * 1_024;
 /// [`MAX_INLINE_IMAGE_BYTES`].
 const JPEG_QUALITIES: [u8; 4] = [82, 70, 55, 40];
 
-/// Upper bounds for decoding untrusted inputs without decompression-bomb OOMs.
+/// The widest or tallest image decoded.
 const MAX_DECODE_DIMENSION: u32 = 16_384;
-const MAX_DECODE_ALLOC_BYTES: u64 = 128 * 1024 * 1024;
+
+/// The largest decoded raster, checked against the decoder's own size before
+/// any pixel buffer is allocated: a 64-megapixel RGB photo fits. The decoder
+/// limit also bounds what the PNG decoder allocates while decoding.
+const MAX_DECODE_ALLOC_BYTES: u64 = 192 * 1024 * 1024;
+
+/// One image is decoded at a time, so concurrent reads, uploads and tool
+/// results never hold more than one raster of [`MAX_DECODE_ALLOC_BYTES`].
+static DECODING: Mutex<()> = Mutex::new(());
 
 /// One model-ready inline image normalized from raw source bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +55,74 @@ pub(crate) struct ShownImage {
     pub(crate) bytes: usize,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    /// The upright size of the source, before any downscale.
+    pub(crate) source_width: u32,
+    pub(crate) source_height: u32,
     pub(crate) normalized: bool,
+}
+
+impl ShownImage {
+    /// Whether the image was made smaller than its source, so fine detail
+    /// such as small text may not be legible.
+    pub(crate) fn downscaled(&self) -> bool {
+        (self.width, self.height) != (self.source_width, self.source_height)
+    }
+
+    /// A line that says the image was made smaller, or `None` at full size.
+    pub(crate) fn scale_note(&self) -> Option<String> {
+        self.downscaled().then(|| {
+            format!(
+                "It was scaled down from {}x{}, so small text or fine detail may be unreadable; \
+                 crop the part you need with bash and look at that.",
+                self.source_width, self.source_height
+            )
+        })
+    }
+}
+
+/// Why an image cannot be shown inline, worded for the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImageRefusal {
+    /// The source file is larger than [`MAX_SOURCE_IMAGE_BYTES`].
+    TooLarge { bytes: usize },
+    /// Not a JPEG, PNG, GIF or WebP image.
+    Unsupported,
+    /// The bytes do not decode as the image they claim to be.
+    Undecodable,
+    /// Decoding would allocate more than [`MAX_DECODE_ALLOC_BYTES`].
+    TooManyPixels { size: Option<(u32, u32)> },
+    /// Still over [`MAX_INLINE_IMAGE_BYTES`] at the lowest JPEG quality.
+    TooDense,
+    /// The JPEG encoder refused the decoded raster.
+    Unencodable,
+}
+
+impl ImageRefusal {
+    /// Why, as the end of a sentence.
+    pub(crate) fn reason(self) -> String {
+        match self {
+            Self::TooLarge { bytes } => format!(
+                "the file is {}, over the {} an image read takes",
+                shown_size(bytes),
+                shown_size(MAX_SOURCE_IMAGE_BYTES)
+            ),
+            Self::Unsupported => "it is not a JPEG, PNG, GIF or WebP image".to_owned(),
+            Self::Undecodable => {
+                "its data does not decode as an image, so the file may be damaged".to_owned()
+            }
+            Self::TooManyPixels {
+                size: Some((width, height)),
+            } => format!("it is {width}x{height} pixels, more than can be decoded at once"),
+            Self::TooManyPixels { size: None } => {
+                "it has more pixels than can be decoded at once".to_owned()
+            }
+            Self::Unencodable => "it could not be re-encoded as a JPEG".to_owned(),
+            Self::TooDense => format!(
+                "it does not compress under {} even at low quality",
+                shown_size(MAX_INLINE_IMAGE_BYTES)
+            ),
+        }
+    }
 }
 
 /// The media type of a JPEG, PNG, GIF or WebP image, read from its first bytes.
@@ -64,47 +142,45 @@ pub(crate) fn image_type(bytes: &[u8]) -> Option<&'static str> {
 
 /// Normalizes `bytes` for inline model viewing: keeps compact `<= 1536px`
 /// images untouched, and downscales larger or heavier images to `<= 1536px` JPEG.
-pub(crate) fn show_image(bytes: &[u8]) -> Option<ShownImage> {
+///
+/// # Errors
+///
+/// Returns why the image cannot be shown.
+pub(crate) fn show_image(bytes: &[u8]) -> Result<ShownImage, ImageRefusal> {
     if bytes.len() > MAX_SOURCE_IMAGE_BYTES {
-        return None;
+        return Err(ImageRefusal::TooLarge { bytes: bytes.len() });
     }
-    let mime_type = image_type(bytes)?;
+    let mime_type = image_type(bytes).ok_or(ImageRefusal::Unsupported)?;
     let format = match mime_type {
         "image/jpeg" => ImageFormat::Jpeg,
         "image/png" => ImageFormat::Png,
         "image/gif" => ImageFormat::Gif,
         "image/webp" => ImageFormat::WebP,
-        _ => return None,
+        _ => return Err(ImageRefusal::Unsupported),
     };
-    let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
-    let mut limits = Limits::no_limits();
-    limits.max_image_width = Some(MAX_DECODE_DIMENSION);
-    limits.max_image_height = Some(MAX_DECODE_DIMENSION);
-    limits.max_alloc = Some(MAX_DECODE_ALLOC_BYTES);
-    reader.limits(limits);
-
-    let mut decoder = reader.into_decoder().ok()?;
-    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
-    let mut raster = DynamicImage::from_decoder(decoder).ok()?;
-    raster.apply_orientation(orientation);
+    let _decoding = DECODING.lock().unwrap_or_else(PoisonError::into_inner);
+    let (raster, orientation) = decode(bytes, format)?;
     let (width, height) = raster.dimensions();
     if width == 0 || height == 0 {
-        return None;
+        return Err(ImageRefusal::Undecodable);
     }
 
     let fits_edge = width <= MAX_IMAGE_LONG_EDGE && height <= MAX_IMAGE_LONG_EDGE;
+    let original = || ShownImage {
+        block: ContentBlock::image(STANDARD.encode(bytes), mime_type),
+        mime_type,
+        bytes: bytes.len(),
+        width,
+        height,
+        source_width: width,
+        source_height: height,
+        normalized: false,
+    };
     if fits_edge
         && bytes.len() <= PASSTHROUGH_IMAGE_BYTES
         && orientation == Orientation::NoTransforms
     {
-        return Some(ShownImage {
-            block: ContentBlock::image(STANDARD.encode(bytes), mime_type),
-            mime_type,
-            bytes: bytes.len(),
-            width,
-            height,
-            normalized: false,
-        });
+        return Ok(original());
     }
 
     let resized = if fits_edge {
@@ -127,47 +203,70 @@ pub(crate) fn show_image(bytes: &[u8]) -> Option<ShownImage> {
         && bytes.len() <= MAX_INLINE_IMAGE_BYTES
         && encoded.len() >= bytes.len()
     {
-        return Some(ShownImage {
-            block: ContentBlock::image(STANDARD.encode(bytes), mime_type),
-            mime_type,
-            bytes: bytes.len(),
-            width,
-            height,
-            normalized: false,
-        });
+        return Ok(original());
     }
 
-    Some(ShownImage {
+    Ok(ShownImage {
         bytes: encoded.len(),
         block: ContentBlock::image(STANDARD.encode(&encoded), "image/jpeg"),
         mime_type: "image/jpeg",
         width: out_width,
         height: out_height,
+        source_width: width,
+        source_height: height,
         normalized: true,
     })
 }
 
-/// `bytes` as an image block, normalized for the model.
-pub(crate) fn inline_image(bytes: &[u8]) -> Option<ContentBlock> {
-    show_image(bytes).map(|shown| shown.block)
+/// Decodes the first frame upright. The decoder reports the size of the
+/// raster it would produce before allocating it, and an image over the
+/// bounds is refused there: not every codec enforces [`Limits::max_alloc`].
+fn decode(bytes: &[u8], format: ImageFormat) -> Result<(DynamicImage, Orientation), ImageRefusal> {
+    let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
+    let mut limits = Limits::no_limits();
+    limits.max_alloc = Some(MAX_DECODE_ALLOC_BYTES);
+    reader.limits(limits);
+    let mut decoder = reader.into_decoder().map_err(|error| refusal(&error))?;
+    let (width, height) = decoder.dimensions();
+    if width > MAX_DECODE_DIMENSION
+        || height > MAX_DECODE_DIMENSION
+        || decoder.total_bytes() > MAX_DECODE_ALLOC_BYTES
+    {
+        return Err(ImageRefusal::TooManyPixels {
+            size: Some((width, height)),
+        });
+    }
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut raster = DynamicImage::from_decoder(decoder).map_err(|error| refusal(&error))?;
+    raster.apply_orientation(orientation);
+    Ok((raster, orientation))
+}
+
+fn refusal(error: &ImageError) -> ImageRefusal {
+    match error {
+        ImageError::Limits(_) => ImageRefusal::TooManyPixels { size: None },
+        _ => ImageRefusal::Undecodable,
+    }
 }
 
 /// Normalizes every [`ContentBlock::Image`] in tool output returned by an
-/// external adapter, omitting unreadable or oversized images with a text note.
+/// external adapter, replacing one that cannot be shown with a note that says why.
 pub(crate) fn normalize_tool_content(content: Vec<ContentBlock>) -> Vec<ContentBlock> {
     content
         .into_iter()
         .map(|block| match block {
             ContentBlock::Image { data, mime_type } => {
-                if let Ok(raw) = STANDARD.decode(&data)
-                    && let Some(shown) = show_image(&raw)
-                {
-                    return shown.block;
+                let shown = STANDARD
+                    .decode(&data)
+                    .map_err(|_| ImageRefusal::Undecodable)
+                    .and_then(|raw| show_image(&raw));
+                match shown {
+                    Ok(shown) => shown.block,
+                    Err(refusal) => ContentBlock::text(format!(
+                        "[an image ({mime_type}) was left out because {}]",
+                        refusal.reason()
+                    )),
                 }
-                ContentBlock::text(format!(
-                    "[omitted {mime_type} image that could not be prepared within {}]",
-                    shown_size(MAX_INLINE_IMAGE_BYTES)
-                ))
             }
             text @ ContentBlock::Text { .. } => text,
         })
@@ -193,16 +292,18 @@ fn flatten_to_white_rgb(image: DynamicImage) -> RgbImage {
     rgb
 }
 
-fn encode_bounded_jpeg(rgb: &RgbImage) -> Option<Vec<u8>> {
+fn encode_bounded_jpeg(rgb: &RgbImage) -> Result<Vec<u8>, ImageRefusal> {
     for quality in JPEG_QUALITIES {
         let mut jpeg = Vec::new();
         let mut encoder = JpegEncoder::new_with_quality(&mut jpeg, quality);
-        encoder.encode_image(rgb).ok()?;
+        encoder
+            .encode_image(rgb)
+            .map_err(|_| ImageRefusal::Unencodable)?;
         if jpeg.len() <= MAX_INLINE_IMAGE_BYTES {
-            return Some(jpeg);
+            return Ok(jpeg);
         }
     }
-    None
+    Err(ImageRefusal::TooDense)
 }
 
 /// A file size as a person reads it.
@@ -258,104 +359,4 @@ pub(crate) mod test_fixtures {
 }
 
 #[cfg(test)]
-mod tests {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use image::{GenericImageView as _, ImageFormat, ImageReader};
-    use renoa_agent::ContentBlock;
-    use std::io::Cursor;
-
-    use super::{
-        MAX_IMAGE_LONG_EDGE, MAX_INLINE_IMAGE_BASE64_BYTES, MAX_INLINE_IMAGE_BYTES,
-        MAX_SOURCE_IMAGE_BYTES, image_type, inline_image, normalize_tool_content, show_image,
-        shown_size, test_fixtures,
-    };
-
-    #[test]
-    fn images_are_known_by_their_bytes() {
-        assert_eq!(image_type(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
-        assert_eq!(image_type(b"\x89PNG\r\n\x1a\n...."), Some("image/png"));
-        assert_eq!(image_type(b"GIF89a.."), Some("image/gif"));
-        assert_eq!(image_type(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
-        assert_eq!(image_type(b"%PDF-1.7"), None);
-    }
-
-    #[test]
-    fn small_crisp_images_keep_their_original_bytes_and_format() {
-        let png = test_fixtures::encode_rgb(320, 200, ImageFormat::Png);
-        let shown = show_image(&png).expect("small crisp png is shown");
-        assert!(!shown.normalized);
-        assert_eq!(shown.mime_type, "image/png");
-        assert_eq!((shown.width, shown.height), (320, 200));
-        assert_eq!(shown.bytes, png.len());
-    }
-
-    #[test]
-    fn oversized_dimensions_and_rgba_pngs_are_resized_and_compressed_to_jpeg() {
-        let rgba_png = test_fixtures::encode_rgba_png(2_400, 1_800);
-        let shown = show_image(&rgba_png).expect("oversized rgba png normalizes");
-        assert!(shown.normalized);
-        assert_eq!(shown.mime_type, "image/jpeg");
-        assert_eq!((shown.width, shown.height), (MAX_IMAGE_LONG_EDGE, 1_152));
-        let ContentBlock::Image { data, mime_type } = shown.block else {
-            panic!("expected image block");
-        };
-        assert_eq!(mime_type, "image/jpeg");
-        assert!(data.len() <= MAX_INLINE_IMAGE_BASE64_BYTES);
-        let raw = STANDARD.decode(data).expect("valid base64");
-        let decoded = ImageReader::with_format(Cursor::new(&raw), ImageFormat::Jpeg)
-            .decode()
-            .expect("valid jpeg");
-        assert_eq!(decoded.dimensions(), (1_536, 1_152));
-        let top_left = decoded.get_pixel(0, 0);
-        assert!(
-            top_left.0[0] >= 235 && top_left.0[1] >= 235 && top_left.0[2] >= 235,
-            "transparent region should composite onto white, got {top_left:?}"
-        );
-    }
-
-    #[test]
-    fn heavy_1024px_png_above_passthrough_threshold_is_compressed() {
-        let heavy_png = test_fixtures::encode_rgb(1_024, 1_024, ImageFormat::Png);
-        assert!(heavy_png.len() > 200 * 1_024);
-        let shown = show_image(&heavy_png).expect("heavy png normalizes");
-        assert!(shown.normalized);
-        assert_eq!(shown.mime_type, "image/jpeg");
-        assert_eq!((shown.width, shown.height), (1_024, 1_024));
-        assert!(shown.bytes < heavy_png.len());
-        assert!(shown.bytes <= MAX_INLINE_IMAGE_BYTES);
-    }
-
-    #[test]
-    fn corrupt_or_oversized_sources_do_not_produce_inline_blocks() {
-        let mut corrupt = vec![0; 128];
-        corrupt[..3].copy_from_slice(&[0xFF, 0xD8, 0xFF]);
-        assert!(inline_image(&corrupt).is_none());
-
-        let too_large = vec![0; MAX_SOURCE_IMAGE_BYTES + 1];
-        assert!(inline_image(&too_large).is_none());
-    }
-
-    #[test]
-    fn mcp_content_normalization_shrinks_valid_images_and_drops_corrupt_ones() {
-        let big_png = test_fixtures::encode_rgb(2_000, 1_000, ImageFormat::Png);
-        let out = normalize_tool_content(vec![
-            ContentBlock::text("kept"),
-            ContentBlock::image(STANDARD.encode(big_png), "image/png"),
-            ContentBlock::image("aW1hZ2U=", "image/png"),
-        ]);
-        assert_eq!(out.len(), 3);
-        assert_eq!(out[0], ContentBlock::text("kept"));
-        assert!(matches!(
-            &out[1],
-            ContentBlock::Image { mime_type, .. } if mime_type == "image/jpeg"
-        ));
-        assert!(matches!(&out[2], ContentBlock::Text { text } if text.contains("omitted")));
-    }
-
-    #[test]
-    fn sizes_read_plainly() {
-        assert_eq!(shown_size(900), "900 bytes");
-        assert_eq!(shown_size(312 * 1024 - 5), "312 KB");
-        assert_eq!(shown_size(3 * 1_048_576 + 524_288), "3.5 MB");
-    }
-}
+mod tests;

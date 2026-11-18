@@ -93,7 +93,12 @@ reachable even when the activated prompt and tool schemas alone exceed it.
 budget (`RequestByteBudget` via `with_request_byte_budget`), triggering automatic
 compaction and trimming retained tails on serialized byte size alongside tokens,
 and failing with `PayloadLimitExceeded` if an indivisible request exceeds its
-dispatch byte ceiling.
+dispatch byte ceiling. The byte ceiling is Renoa's own bound on the model-visible
+JSON, not a provider's documented payload limit. Compaction the request does not
+need to be dispatched is skipped when it would summarize tool results the model
+has not answered yet, or when the messages it keeps would still be over a
+trigger, so a large new image is seen before it can be summarized and an
+oversized message does not start a summary at every step.
 
 The same strategy boundary owns user-requested compaction. It borrows one
 already-decoded idle `ContextInput` and returns either an exact summary plan, an

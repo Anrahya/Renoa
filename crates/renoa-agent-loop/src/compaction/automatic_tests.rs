@@ -513,3 +513,97 @@ fn compaction_required_and_explicit_compaction_enforce_byte_dispatch_limits() {
         }
     ));
 }
+
+fn image_byte_strategy() -> CompactingContextStrategy {
+    let limits = CompactionLimits::new(nz(400_000), 10_000, nz(80_000), nz(10_000))
+        .expect("valid token limits")
+        .with_request_byte_budget(nz(20_000), nz(8_000), nz(3_500))
+        .expect("valid byte limits");
+    CompactingContextStrategy::new(
+        limits,
+        NonZeroU32::new(2).expect("attempts"),
+        Arc::new(FixedSizer(1_000)),
+    )
+}
+
+fn image_message(tag: &str, data_len: usize) -> Message {
+    Message::User {
+        content: vec![
+            ContentBlock::text(tag),
+            ContentBlock::image("a".repeat(data_len), "image/jpeg"),
+        ],
+    }
+}
+
+/// An image a tool just returned lands on a history over the byte trigger.
+/// The request still fits the dispatch limit, so the model sees the image
+/// rather than a summary of it.
+#[test]
+fn an_unanswered_tool_image_is_not_summarized_away_by_optional_compaction() {
+    let first = OperationId::new();
+    let second = OperationId::new();
+    let active = OperationId::new();
+    let entries = vec![
+        (first, image_message("img-1", 2_500)),
+        (first, assistant_text("ok-1")),
+        (second, image_message("img-2", 2_500)),
+        (second, assistant_text("ok-2")),
+        (active, Message::user_text("look at the screenshot")),
+        (
+            active,
+            Message::Assistant {
+                content: vec![AssistantContent::tool_call(ToolCall {
+                    id: "c1".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: json!({}),
+                    thought_signature: None,
+                    namespace: None,
+                })],
+                stop_reason: StopReason::ToolUse,
+                usage: None,
+                metadata: AssistantMetadata::default(),
+            },
+        ),
+        (
+            active,
+            Message::Tool {
+                result: ToolResult {
+                    call_id: "c1".to_owned(),
+                    name: "read".to_owned(),
+                    content: vec![ContentBlock::image("s".repeat(4_000), "image/jpeg")],
+                    details: None,
+                    is_error: false,
+                    closing: None,
+                },
+            },
+        ),
+    ];
+    let prep = image_byte_strategy()
+        .prepare(context(active, entries))
+        .expect("prepare context");
+    let ContextPreparation::Model { messages } = prep else {
+        panic!("the unanswered image must reach the model: {prep:?}");
+    };
+    assert!(
+        matches!(messages.last(), Some(Message::Tool { result }) if result.call_id == "c1"),
+        "{messages:?}"
+    );
+}
+
+/// A new message that is itself over the byte trigger leaves a request over
+/// the trigger whatever is summarized, so compacting would only repeat at
+/// every step; it is dispatched while it fits the dispatch limit.
+#[test]
+fn compaction_that_cannot_get_under_the_trigger_is_skipped() {
+    let first = OperationId::new();
+    let active = OperationId::new();
+    let entries = vec![
+        (first, image_message("img-1", 2_500)),
+        (first, assistant_text("ok-1")),
+        (active, image_message("huge", 9_000)),
+    ];
+    let prep = image_byte_strategy()
+        .prepare(context(active, entries))
+        .expect("prepare context");
+    assert!(matches!(prep, ContextPreparation::Model { .. }), "{prep:?}");
+}

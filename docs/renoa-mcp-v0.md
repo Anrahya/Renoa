@@ -570,8 +570,8 @@ For a complete result:
 - ordered MCP image blocks are normalized into ordered Renoa image blocks:
   compact `<= 1536px`, `<= 200 KiB` images keep their original data and media
   type, larger or heavier valid images are normalized to `<= 1536px` JPEG, and
-  unreadable or over-limit images are omitted with a text note so they cannot
-  wedge model dispatch;
+  unreadable or over-limit images are replaced with a text note that says why,
+  so they cannot wedge model dispatch;
 - mixed text and image order and duplicate blocks are preserved;
 - `isError: true` becomes a normal settled `ToolResult` with `is_error: true`,
   preserving actionable server content for the model;

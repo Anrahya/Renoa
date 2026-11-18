@@ -214,12 +214,14 @@ async fn read_image(path: &PathBuf, shown_path: &str) -> Result<Option<ToolOutpu
     let shown = tokio::task::spawn_blocking(move || show_image(&bytes))
         .await
         .map_err(|error| ToolError::internal(format!("image normalization failed: {error}")))?
-        .ok_or_else(|| {
+        .map_err(|refusal| {
             ToolError::invalid_input(format!(
-                "{shown_path} could not be prepared as an inline {mime_type} image."
+                "{shown_path} is a {mime_type} image that cannot be shown because {}. \
+                 Make a smaller copy with bash and read that.",
+                refusal.reason()
             ))
         })?;
-    let description = if shown.normalized {
+    let mut description = if shown.normalized {
         format!(
             "{shown_path} is an image ({}, shown as {}x{} {} {}), shown here.",
             shown_size(original_bytes),
@@ -234,6 +236,7 @@ async fn read_image(path: &PathBuf, shown_path: &str) -> Result<Option<ToolOutpu
             shown_size(original_bytes)
         )
     };
+    description.extend(shown.scale_note().map(|note| format!(" {note}")));
     Ok(Some(ToolOutput {
         content: vec![ContentBlock::text(description), shown.block],
         details: Some(json!({
