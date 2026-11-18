@@ -1,13 +1,15 @@
 //! A node sends a message for an agent it executes to another agent of the
 //! same owner.
 //!
-//! The message becomes a command in a thread task of the destination agent.
-//! The coordinator derives who sent it, never the request: the sender is the
-//! agent of the task that holds `from_command`, and that task must be bound to
-//! the requesting node. The destination task is derived from the pair of
-//! agents and opened in the same transaction as the command, so the first and
-//! every later message reach one conversation, and a refusal leaves no task,
-//! command or record. The answer comes back through [`crate::agent_replies`].
+//! The message becomes a command in the owner's conversation with the
+//! destination agent, the one every app of the owner opens
+//! ([`app_chat_task_id`]), so the agent answers with that conversation in
+//! context and the owner sees the message there. The coordinator derives who
+//! sent it, never the request: the sender is the agent of the task that holds
+//! `from_command`, and that task must be bound to the requesting node. The
+//! conversation is opened in the same transaction as the command when no app
+//! opened it yet, so a refusal leaves no task, command or record. The answer
+//! comes back through [`crate::agent_replies`].
 
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ use renoa_protocol::{
     AgentMessageKind, AgentOrigin, CommandEnvelope, CommandId, CommandInput, PrincipalId,
     SurfaceRef, TargetCard, TargetRef,
 };
+use renoa_rcp_wire::app_chat_task_id;
 use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::mpsc;
@@ -79,21 +82,6 @@ pub(crate) fn derived_id(value: &str) -> Uuid {
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&digest[..16]);
     Uuid::from_bytes(bytes)
-}
-
-/// The thread task in which `to` receives messages from `from`.
-fn thread_task_id(
-    principal_id: PrincipalId,
-    from: (NodeId, &TargetRef),
-    to: (NodeId, &TargetRef),
-) -> TaskId {
-    TaskId::from_uuid(derived_id(&format!(
-        "renoa.agent.thread.v1:{principal_id}:{}:{}:{}:{}",
-        from.0,
-        from.1.as_str(),
-        to.0,
-        to.1.as_str()
-    )))
 }
 
 /// Admits `message` for `node_id` and answers with `command_accepted`, or
@@ -255,11 +243,7 @@ fn admit_in(
             "An agent cannot message itself. Choose a different agent.",
         ));
     }
-    let task_id = thread_task_id(
-        principal_id,
-        (node_id, &source.target),
-        (message.to_node, &message.to_target),
-    );
+    let task_id = app_chat_task_id(message.to_node, message.to_target.as_str());
     let command_with = |name: String| CommandEnvelope {
         command_id: message.message_id,
         principal_id,
@@ -278,19 +262,25 @@ fn admit_in(
     };
     // A durable admission outranks today's availability, and a rename since,
     // so an uncertain retry observes its original result.
+    // The stored task is compared by its binding, not its identity, so a
+    // message admitted under an earlier derivation still converges.
     if let Some((stored, stored_task, pending)) = stored_message(transaction, message.message_id)? {
         let stored_name = stored
             .origin
             .as_ref()
             .map(|origin| origin.name.clone())
             .unwrap_or_default();
-        if stored != command_with(stored_name) || stored_task != task_id.to_string() {
+        let stored_task = TaskId::from_uuid(stored_task.parse().map_err(id_error)?);
+        let bound = load_task(transaction, stored_task)?;
+        if stored != command_with(stored_name)
+            || (bound.node_id, &bound.target) != (message.to_node, &message.to_target)
+        {
             return Err(ControlError::conflict(
                 "That message was already sent with different content. Send the new content as a new message.",
             ));
         }
         return Ok(MessageAdmission::Existing {
-            task_id,
+            task_id: stored_task,
             from_task,
             command: stored,
             pending,
@@ -320,7 +310,7 @@ fn admit_in(
         }
         Some(_) => {}
     }
-    open_thread(
+    open_chat(
         transaction,
         &TaskSpec {
             task_id,
@@ -369,7 +359,7 @@ fn message_depth(
     Ok(depth)
 }
 
-/// The command `message_id` admitted earlier, the thread task it went to, and
+/// The command `message_id` admitted earlier, the task it went to, and
 /// whether its delivery is still pending.
 fn stored_message(
     transaction: &Transaction<'_>,
@@ -432,9 +422,10 @@ fn load_source(
     Ok((task_id, task, command))
 }
 
-/// Opens the thread task, or checks that an earlier opening has the binding
-/// this message needs.
-fn open_thread(transaction: &Transaction<'_>, task: &TaskSpec) -> Result<(), ControlError> {
+/// Opens the owner's conversation with the destination agent, or checks that
+/// the one an app or an earlier message opened has the binding this message
+/// needs.
+fn open_chat(transaction: &Transaction<'_>, task: &TaskSpec) -> Result<(), ControlError> {
     let existing = transaction
         .query_row(
             "SELECT principal_id, node_id, target_json FROM tasks WHERE task_id = ?1",

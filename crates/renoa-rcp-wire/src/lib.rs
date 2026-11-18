@@ -18,7 +18,7 @@ pub use device_sign_in::{
     DEVICE_REQUESTS_PATH, DeviceRequest, DeviceRequestCode, IdentityRefusal, RequestingDevice,
     device_proof_message, device_request_message,
 };
-pub use ids::{DeviceId, NodeId, TaskEventId, TaskId};
+pub use ids::{DeviceId, NodeId, TaskEventId, TaskId, app_chat_task_id};
 pub use messages::{ClientMessage, JSON_WS_VERSION, MAX_APPLICATION_MESSAGE_BYTES, ServerMessage};
 pub use notices::{DeviceNoticeKey, HeldNotice, NoticeKey, SealedNotice};
 pub use records::{

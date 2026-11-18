@@ -6,29 +6,39 @@ use std::{
     time::{Duration, Instant},
 };
 
-use md5::{Digest as _, Md5};
 use renoa_protocol::{
-    CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, LiveActivity,
+    AgentMessageKind, CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, LiveActivity,
     normalize_activity,
 };
-use renoa_rcp_wire::{NodeId, TaskEvent, TaskEventKind, TaskId};
-use uuid::Builder;
-
-/// The chat task every app of the owner opens with the agent `target` on
-/// `node_id`: MD5 of the text below with the version 3 bits set, as Java's
-/// `UUID.nameUUIDFromBytes` makes it, so the phone and the Mac share one
-/// conversation.
-pub fn chat_task_id(node_id: NodeId, target: &str) -> TaskId {
-    let text = format!("renoa app chat v1\n{}\n{target}", node_id.as_uuid());
-    let digest: [u8; 16] = Md5::digest(text.as_bytes()).into();
-    TaskId::from_uuid(Builder::from_md5_bytes(digest).into_uuid())
-}
+pub use renoa_rcp_wire::app_chat_task_id;
+use renoa_rcp_wire::{TaskEvent, TaskEventKind};
 
 /// Who said a line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Speaker {
     Owner,
+    /// The agent of this chat.
     Agent,
+    /// Another of the owner's agents, messaging the agent of this chat or
+    /// answering it.
+    OtherAgent {
+        name: String,
+        kind: AgentMessageKind,
+    },
+}
+
+impl Speaker {
+    /// The line over what another agent said, naming it.
+    pub fn heading(&self) -> Option<String> {
+        let Self::OtherAgent { name, kind } = self else {
+            return None;
+        };
+        Some(match kind {
+            AgentMessageKind::Request => format!("Message from {name}"),
+            AgentMessageKind::Reply => format!("{name} replied"),
+            AgentMessageKind::Failure => format!("{name} couldn't answer"),
+        })
+    }
 }
 
 /// One line of a chat.
@@ -114,11 +124,26 @@ impl Transcript {
                     author,
                     ..
                 } = &command.input;
-                self.latest_command = Some(command.command_id);
-                self.doing = None;
-                // Another agent's message and a quiet command are not the owner speaking.
-                if !quiet && author.is_principal() && command.origin.is_none() {
-                    // New until its time says otherwise.
+                // Commands run one at a time in the order they arrive, so one
+                // that comes in while another runs, such as another agent's
+                // message, waits: the running one keeps its activity.
+                if self
+                    .latest_command
+                    .is_none_or(|latest| self.terminated.contains(&latest))
+                {
+                    self.latest_command = Some(command.command_id);
+                    self.doing = None;
+                }
+                // Each is new until its time says otherwise.
+                if let Some(origin) = &command.origin {
+                    // Shown even when quiet, so the agent's answer reads as one.
+                    let speaker = Speaker::OtherAgent {
+                        name: origin.name.clone(),
+                        kind: origin.kind,
+                    };
+                    self.say(speaker, text, false, None, true);
+                } else if !quiet && author.is_principal() {
+                    // A quiet command is not the owner speaking.
                     self.say(Speaker::Owner, text, false, None, true);
                 }
                 None
@@ -199,9 +224,11 @@ impl Transcript {
         self.doing = None;
     }
 
+    /// Adds a line, unless it says nothing. Another agent's line always
+    /// shows: its heading says something even when its text is empty.
     fn say(&mut self, speaker: Speaker, text: &str, failed: bool, at_ms: Option<i64>, fresh: bool) {
         let text = text.trim();
-        if !text.is_empty() {
+        if !text.is_empty() || matches!(speaker, Speaker::OtherAgent { .. }) {
             self.lines.push(Line {
                 speaker,
                 text: text.to_owned(),

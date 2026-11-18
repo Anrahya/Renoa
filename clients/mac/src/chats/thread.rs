@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use super::{Chats, Row};
 use crate::{
-    chat::{Speaker, Transcript, chat_task_id},
+    chat::{Speaker, Transcript, app_chat_task_id},
     face::{Face, Look, Mood},
     link::Command,
     stamp,
@@ -62,7 +62,7 @@ impl Chats {
         let listed = task_id.and_then(|task_id| {
             self.agents
                 .iter()
-                .find(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == task_id)
+                .find(|agent| app_chat_task_id(agent.node_id, agent.target.as_str()) == task_id)
         });
         let (look, primary) = listed.map_or((None, false), |agent| self.face(agent));
         let agent = Agent {
@@ -404,12 +404,13 @@ fn row(
     )
     .then(|| at.map(|at_ms| stamp::long(at_ms, &Local::now())))
     .flatten();
-    let top_pad = prose::row_top_padding(row.before.as_ref().map(|b| b.speaker), line.speaker);
+    let top_pad = prose::row_top_padding(row.before.as_ref().map(|b| &b.speaker), &line.speaker);
     let said = match line.speaker {
         Speaker::Owner => prose::owner(index, &line, row.live, palette),
         Speaker::Agent => {
             prose::agent_line(index, &line, &row.failed_shares, row.live, chats, palette)
         }
+        Speaker::OtherAgent { .. } => prose::other_agent(index, &line, row.live, palette),
     };
     div()
         .w_full()

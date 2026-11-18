@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::Chats;
-use crate::chat::chat_task_id;
+use crate::chat::app_chat_task_id;
 use crate::{
     home::{Home, HomeEvent},
     theme::Palette,
@@ -41,7 +41,7 @@ impl Chats {
     pub(super) fn agent_index(&self, task: TaskId) -> Option<usize> {
         self.agents
             .iter()
-            .position(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == task)
+            .position(|agent| app_chat_task_id(agent.node_id, agent.target.as_str()) == task)
     }
 
     /// Drops the chats of agents no longer listed from Ctrl+Tab's walk.
@@ -49,7 +49,7 @@ impl Chats {
         let listed: Vec<TaskId> = self
             .agents
             .iter()
-            .map(|agent| chat_task_id(agent.node_id, agent.target.as_str()))
+            .map(|agent| app_chat_task_id(agent.node_id, agent.target.as_str()))
             .collect();
         self.recent.keep(|task| listed.contains(&task));
     }
@@ -61,7 +61,7 @@ impl Chats {
             return;
         };
         self.recent
-            .opened(chat_task_id(agent.node_id, agent.target.as_str()));
+            .opened(app_chat_task_id(agent.node_id, agent.target.as_str()));
         self.show_agent(index, window, cx);
     }
 

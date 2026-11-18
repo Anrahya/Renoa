@@ -47,7 +47,7 @@ class ChatJournalTest {
 
     private fun delta(sequence: Long, text: String) = chat.live(command, LiveActivity.TextDelta(sequence, text))
 
-    /** Only the owner's own words are their messages; a routine's run and another agent's message are quiet lines. */
+    /** Only the owner's own words are their messages; a routine's run is a quiet line, and another agent's words show under its name. */
     @Test
     fun whatNoOneTypedHereShowsAsALineNotTheOwnersMessage() {
         val run = Uuid.random()
@@ -63,10 +63,26 @@ class ChatJournalTest {
             listOf(
                 Speaker.Event to "Routine ran · Daily AO3 status check",
                 Speaker.Event to "A routine ran",
-                Speaker.Event to "Groky replied",
+                Speaker.OtherAgent to "Here are three posts.",
                 Speaker.Owner to "(not a run) hello",
             ),
             chat.conversation.messages.map { it.speaker to it.text },
+        )
+        assertEquals("Groky replied", chat.conversation.messages[2].from)
+    }
+
+    /** A message from another agent lands in this chat, headed with who sent it, and its answers likewise. */
+    @Test
+    fun anotherAgentsMessageShowsItsTextUnderItsName() {
+        journal.submitted(Uuid.random(), "Got a film for tonight?", surface = "agent", origin = AgentOrigin("Media Centre", AgentMessageKind.Request))
+        journal.submitted(Uuid.random(), "", surface = "agent", origin = AgentOrigin("Chef", AgentMessageKind.Failure))
+        journal.events.forEach(::record)
+        assertEquals(
+            listOf(
+                Triple(Speaker.OtherAgent, "Message from Media Centre", "Got a film for tonight?"),
+                Triple(Speaker.OtherAgent, "Chef couldn't answer", ""),
+            ),
+            chat.conversation.messages.map { Triple(it.speaker, it.from, it.text) },
         )
     }
 
@@ -97,6 +113,25 @@ class ChatJournalTest {
         assertEquals(listOf(Speaker.Owner to "hello", Speaker.Agent to "hi", Speaker.Agent to "how are you?"), chat.conversation.messages.map { it.speaker to it.text })
         assertEquals(listOf(command.toString(), "$command-0", "$command-1"), chat.conversation.messages.map { it.id })
         assertEquals(AgentState.Resting, chat.state)
+        assertNull(chat.running)
+    }
+
+    /** Another agent's message queues behind the owner's running turn: stop and the activity line stay on the owner's turn. */
+    @Test
+    fun aMessageQueuedBehindTheRunningTurnDoesNotTakeItsStopOrActivity() {
+        val message = Uuid.random()
+        record(journal.submitted(command, "Plan dinner."))
+        record(journal.executed(command, ExecutionEventKind.TurnStarted))
+        record(journal.submitted(message, "Got a film?", surface = "agent", origin = AgentOrigin("Media Centre", AgentMessageKind.Request)))
+        assertEquals(command, chat.running, "the owner's turn is the one running")
+
+        chat.live(command, LiveActivity.Activity("Checking the fridge"))
+        chat.live(message, LiveActivity.Activity("Not started"))
+        assertEquals("Checking the fridge", chat.glance.doing)
+
+        record(journal.ended(command))
+        assertEquals(message, chat.running, "then the message runs")
+        record(journal.ended(message))
         assertNull(chat.running)
     }
 
@@ -265,13 +300,15 @@ class ChatJournalTest {
     }
 
     @Test
-    fun textDeltaAndResetStillUpdateForAnOlderRunningCommandWhileActivityStaysOnLatest() {
+    fun theOlderRunningCommandKeepsItsTextAndActivityWhileTheNextWaits() {
         val next = Uuid.random()
         record(journal.submitted(command, "first"))
         record(journal.submitted(next, "second"))
 
-        chat.live(command, LiveActivity.Activity("From older"))
+        chat.live(next, LiveActivity.Activity("From the queued one"))
         assertNull(chat.glance.doing)
+        chat.live(command, LiveActivity.Activity("From older"))
+        assertEquals("From older", chat.glance.doing)
 
         delta(0, "Earlier reply")
         assertEquals(StreamingReply("$command-0", "Earlier reply"), chat.conversation.streaming)

@@ -7,7 +7,7 @@ use gpui_kit::{
 };
 
 use super::Chats;
-use crate::{chat::chat_task_id, face::Face, theme::Palette};
+use crate::{chat::app_chat_task_id, face::Face, theme::Palette};
 
 use crate::theme::u;
 
@@ -19,7 +19,7 @@ impl Chats {
             let agent = self
                 .agents
                 .iter()
-                .find(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == *task)?;
+                .find(|agent| app_chat_task_id(agent.node_id, agent.target.as_str()) == *task)?;
             let (look, primary) = self.face(agent);
             Some(
                 div()

@@ -26,7 +26,7 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct AgentReply {
     pub(crate) task_id: TaskId,
-    /// The thread task whose execution ended, and so produced the answer.
+    /// The task whose execution ended, and so produced the answer.
     pub(crate) from_task: TaskId,
     /// The node that executes the asker's task.
     pub(crate) node_id: NodeId,

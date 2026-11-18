@@ -12,7 +12,7 @@ use renoa_protocol::{
 };
 use renoa_rcp_wire::{
     ClientMessage, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
-    TargetSummary, TaskEvent, TaskEventKind, TaskId,
+    TargetSummary, TaskEvent, TaskEventKind, TaskId, app_chat_task_id,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -250,7 +250,7 @@ impl World {
 }
 
 #[tokio::test]
-async fn a_message_reaches_a_thread_of_the_agent_with_the_senders_identity() {
+async fn a_message_reaches_the_owners_chat_with_the_agent_with_the_senders_identity() {
     let mut world = World::start().await;
     let first = CommandId::new();
     assert_eq!(
@@ -266,6 +266,11 @@ async fn a_message_reaches_a_thread_of_the_agent_with_the_senders_identity() {
     let ServerMessage::Execute { task_id, command } = receive(&mut world.research).await else {
         panic!("Research should receive the message");
     };
+    assert_eq!(
+        task_id,
+        app_chat_task_id(world.research_node, RESEARCH),
+        "the message lands in the conversation the owner's apps open"
+    );
     assert_eq!(command.command_id, first);
     assert_eq!(command.principal_id, world.system.owner);
     assert_eq!(command.surface, SurfaceRef::new("agent"));
@@ -281,7 +286,7 @@ async fn a_message_reaches_a_thread_of_the_agent_with_the_senders_identity() {
     assert_eq!(origin.depth, 1);
     assert_eq!(origin.kind, AgentMessageKind::Request);
 
-    // A surface of the owner finds the thread and reads the same record.
+    // A surface of the owner finds the chat and reads the same record.
     send(
         &mut world.surface,
         &ClientMessage::ListTasks { request_id: 3 },
@@ -302,7 +307,7 @@ async fn a_message_reaches_a_thread_of_the_agent_with_the_senders_identity() {
             if command.command_id == first && command.origin.is_some()
     ));
 
-    // A later message from the same agent reaches the same thread.
+    // A later message reaches the same chat.
     let second = CommandId::new();
     let from_second_command = world.asked;
     world
@@ -316,6 +321,60 @@ async fn a_message_reaches_a_thread_of_the_agent_with_the_senders_identity() {
         panic!("Research should receive the second message");
     };
     assert_eq!((again, command.command_id), (task_id, second));
+    world.system.stop().await;
+}
+
+#[tokio::test]
+async fn a_message_joins_the_chat_the_owner_already_opened() {
+    let mut world = World::start().await;
+    let chat = app_chat_task_id(world.research_node, RESEARCH);
+    send(
+        &mut world.surface,
+        &ClientMessage::OpenTask {
+            request_id: 3,
+            task_id: chat,
+            node_id: world.research_node,
+            target: TargetRef::new(RESEARCH),
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut world.surface).await,
+        ServerMessage::TaskOpened {
+            request_id: 3,
+            task_id: chat,
+        }
+    );
+    let owners = CommandId::new();
+    submit(&mut world.surface, chat, owners, "Hi Research.").await;
+    let ServerMessage::Execute { .. } = receive(&mut world.research).await else {
+        panic!("Research should receive the owner's command");
+    };
+
+    let message = CommandId::new();
+    world
+        .message_research(world.asked, message, "What is the answer?")
+        .await;
+    let ServerMessage::Execute { task_id, command } = receive(&mut world.research).await else {
+        panic!("Research should receive the message");
+    };
+    assert_eq!((task_id, command.command_id), (chat, message));
+    let replayed = attach_all(&mut world.surface, chat).await;
+    let submitted = replayed
+        .iter()
+        .filter_map(|event| match &event.kind {
+            TaskEventKind::CommandSubmitted { command } => Some(command.command_id),
+            TaskEventKind::ExecutionEvent { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(submitted, [owners, message], "one conversation, in order");
+    assert_eq!(
+        world
+            .system
+            .count("SELECT COUNT(*) FROM tasks WHERE target_json LIKE '%agent:research%'"),
+        1,
+        "no second task was opened for the message"
+    );
     world.system.stop().await;
 }
 
@@ -481,6 +540,107 @@ fn refusals<'a>(
             "Shorten it",
         ),
     ]
+}
+
+/// A message admitted before deliveries moved into the owner's chat sits in a
+/// task of its own; its exact retry still converges on it.
+#[tokio::test]
+async fn a_retry_converges_on_a_message_stored_in_an_earlier_task() {
+    let mut world = World::start().await;
+    let id = CommandId::new();
+    world.message_research(world.asked, id, "Ask once.").await;
+    let ServerMessage::Execute { task_id, .. } = receive(&mut world.research).await else {
+        panic!("Research should receive the message");
+    };
+    acknowledge(&mut world.research, task_id, id).await;
+    let earlier = TaskId::new();
+    world
+        .system
+        .create_task(earlier, world.research_node, RESEARCH)
+        .await;
+    world
+        .system
+        .database()
+        .execute(
+            "UPDATE commands SET task_id = ?1 WHERE command_id = ?2",
+            [earlier.to_string(), id.to_string()],
+        )
+        .expect("move the message");
+
+    let before = world.system.footprint();
+    assert_eq!(
+        world.message_research(world.asked, id, "Ask once.").await,
+        ServerMessage::CommandAccepted {
+            request_id: 7,
+            command_id: id,
+        }
+    );
+    assert_eq!(world.system.footprint(), before, "the retry added nothing");
+    world.system.stop().await;
+}
+
+/// An identity already bound to another agent is refused before anything is
+/// written.
+#[tokio::test]
+async fn a_chat_identity_bound_elsewhere_is_refused_without_residue() {
+    let mut world = World::start().await;
+    world
+        .system
+        .create_task(
+            app_chat_task_id(world.research_node, RESEARCH),
+            world.desk_node,
+            DESK,
+        )
+        .await;
+    let before = world.system.footprint();
+    let ServerMessage::Error { code, message, .. } = world
+        .message_research(world.asked, CommandId::new(), "What is the answer?")
+        .await
+    else {
+        panic!("the message is refused");
+    };
+    assert_eq!(code, ErrorCode::Conflict);
+    assert_worded_for_an_agent("a chat identity in use", &message);
+    assert_eq!(world.system.footprint(), before, "the refusal left residue");
+    world.system.stop().await;
+}
+
+/// The coordinator opens the chat for a message that arrives first; an app
+/// opening it afterwards converges on it, even with the agent's node offline.
+#[tokio::test]
+async fn an_app_opening_the_chat_after_a_message_converges_on_it() {
+    let mut world = World::start().await;
+    let message = CommandId::new();
+    world
+        .message_research(world.asked, message, "What is the answer?")
+        .await;
+    let chat = app_chat_task_id(world.research_node, RESEARCH);
+    disconnect(&mut world.research).await;
+    wait_for_targets(&mut world.surface, 1).await;
+    send(
+        &mut world.surface,
+        &ClientMessage::OpenTask {
+            request_id: 3,
+            task_id: chat,
+            node_id: world.research_node,
+            target: TargetRef::new(RESEARCH),
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut world.surface).await,
+        ServerMessage::TaskOpened {
+            request_id: 3,
+            task_id: chat,
+        }
+    );
+    let replayed = attach_all(&mut world.surface, chat).await;
+    assert!(matches!(
+        &replayed[..],
+        [TaskEvent { kind: TaskEventKind::CommandSubmitted { command }, .. }]
+            if command.command_id == message
+    ));
+    world.system.stop().await;
 }
 
 #[tokio::test]
@@ -911,8 +1071,8 @@ async fn the_answer_returns_to_the_askers_task_once() {
         ));
 
         // The same batch again is acknowledged and answers nothing twice.
-        let thread = world.chat_thread(request);
-        publish(&mut world.research, thread, request, events).await;
+        let task = world.task_of(request);
+        publish(&mut world.research, task, request, events).await;
         assert!(
             timeout(Duration::from_millis(300), world.desk.next())
                 .await
@@ -1150,7 +1310,7 @@ async fn a_chain_is_stopped_at_the_backstop_and_the_last_answer_still_returns() 
     assert_eq!(system.footprint(), before, "the refusal left residue");
 
     // The answer to the deepest request starts nothing, so it is not refused.
-    let thread = TaskId::from_uuid(
+    let chat = TaskId::from_uuid(
         system
             .database()
             .query_row(
@@ -1158,14 +1318,14 @@ async fn a_chain_is_stopped_at_the_backstop_and_the_last_answer_still_returns() 
                 [previous.to_string()],
                 |row| row.get::<_, String>(0),
             )
-            .expect("thread of the deepest request")
+            .expect("task of the deepest request")
             .parse()
             .expect("task id"),
     );
-    acknowledge(&mut node, thread, previous).await;
+    acknowledge(&mut node, chat, previous).await;
     publish(
         &mut node,
-        thread,
+        chat,
         previous,
         transcript(
             vec![ExecutionEventKind::AssistantMessage {
@@ -1183,8 +1343,8 @@ async fn a_chain_is_stopped_at_the_backstop_and_the_last_answer_still_returns() 
 }
 
 impl World {
-    /// The thread task that holds `request`.
-    fn chat_thread(&self, request: CommandId) -> TaskId {
+    /// The task that holds `request`.
+    fn task_of(&self, request: CommandId) -> TaskId {
         TaskId::from_uuid(
             self.system
                 .database()
@@ -1193,7 +1353,7 @@ impl World {
                     [request.to_string()],
                     |row| row.get::<_, String>(0),
                 )
-                .expect("thread of the request")
+                .expect("task of the request")
                 .parse()
                 .expect("task id"),
         )

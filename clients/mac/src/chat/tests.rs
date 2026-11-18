@@ -1,19 +1,80 @@
-use renoa_protocol::{CommandInput, ExecutionEventKind, ExecutionTerminal};
-use renoa_rcp_wire::{NodeId, TaskId};
-use uuid::Uuid;
+use renoa_protocol::{AgentMessageKind, CommandInput, ExecutionEventKind, ExecutionTerminal};
+use renoa_rcp_wire::TaskId;
 
-use super::{Line, Speaker, Transcript, chat_task_id};
-use crate::test_events::{MINUTE_MS, executed, said};
+use super::{Line, Speaker, Transcript};
+use crate::test_events::{MINUTE_MS, executed, from_agent, said};
 
 #[test]
-fn the_chat_is_the_one_the_phone_opens() {
-    // The vector Android's ChatJournalTest pins for the same node and target.
-    let node = NodeId::from_uuid(Uuid::parse_str("00000000-0000-4000-8000-000000000001").unwrap());
+fn another_agents_message_and_answers_show_under_its_name() {
+    let task_id = TaskId::new();
+    let mut transcript = Transcript::default();
+    for event in [
+        from_agent(
+            task_id,
+            0,
+            "Media Centre",
+            AgentMessageKind::Request,
+            "Got a film for tonight?",
+        ),
+        executed(task_id, 1, ExecutionEventKind::TurnStarted),
+        executed(
+            task_id,
+            2,
+            ExecutionEventKind::AssistantMessage {
+                text: "Try Arrival.".to_owned(),
+            },
+        ),
+        from_agent(
+            task_id,
+            3,
+            "Media Centre",
+            AgentMessageKind::Reply,
+            "Queued it.",
+        ),
+        from_agent(task_id, 4, "Chef", AgentMessageKind::Failure, ""),
+    ] {
+        transcript.apply(&event, 0);
+    }
+    let shown = transcript
+        .lines()
+        .iter()
+        .map(|line| (line.speaker.heading(), line.text.as_str()))
+        .collect::<Vec<_>>();
     assert_eq!(
-        chat_task_id(node, "renoa").as_uuid(),
-        Uuid::parse_str("0ae02263-c173-3623-8a84-ed64ab6d1fbf").unwrap()
+        shown,
+        [
+            (
+                Some("Message from Media Centre".to_owned()),
+                "Got a film for tonight?"
+            ),
+            (None, "Try Arrival."),
+            (Some("Media Centre replied".to_owned()), "Queued it."),
+            (Some("Chef couldn't answer".to_owned()), ""),
+        ]
     );
-    assert_ne!(chat_task_id(node, "renoa"), chat_task_id(node, "kaede"));
+    assert_eq!(
+        transcript.lines()[0].at_ms,
+        Some(MINUTE_MS),
+        "the message takes the time the agent began answering it"
+    );
+}
+
+#[test]
+fn a_quiet_message_from_another_agent_still_shows() {
+    let task_id = TaskId::new();
+    let mut transcript = Transcript::default();
+    let mut event = from_agent(
+        task_id,
+        0,
+        "Media Centre",
+        AgentMessageKind::Request,
+        "Ping",
+    );
+    if let renoa_rcp_wire::TaskEventKind::CommandSubmitted { command } = &mut event.kind {
+        command.input = CommandInput::from_text("Ping").quiet_if(true);
+    }
+    transcript.apply(&event, 0);
+    assert_eq!(transcript.lines().len(), 1);
 }
 
 fn line(speaker: Speaker, text: &str, minute: i64) -> Line {
@@ -289,4 +350,56 @@ fn transcript_tracks_plain_activity_from_tools_and_live_frames_and_clears_it() {
         },
     ));
     assert_eq!(transcript.doing(), None);
+}
+
+#[test]
+fn a_message_queued_behind_the_running_turn_leaves_it_its_activity() {
+    use renoa_protocol::{CommandId, ExecutionEvent, ExecutionEventId, ExecutionId, LiveActivity};
+    use renoa_rcp_wire::{TaskEvent, TaskEventId, TaskEventKind};
+
+    let task_id = TaskId::new();
+    let running = CommandId::new();
+    let started = TaskEvent {
+        event_id: TaskEventId::new(),
+        task_id,
+        sequence: 1,
+        kind: TaskEventKind::ExecutionEvent {
+            command_id: running,
+            event: ExecutionEvent {
+                event_id: ExecutionEventId::new(),
+                execution_id: ExecutionId::new(),
+                sequence: 1,
+                recorded_at_ms: MINUTE_MS,
+                kind: ExecutionEventKind::TurnStarted,
+            },
+        },
+    };
+    let mut transcript = Transcript::default();
+    transcript.apply(
+        &said(task_id, 0, CommandInput::from_text("Plan dinner.")),
+        0,
+    );
+    transcript.apply(&started, 0);
+    let doing = LiveActivity::Activity {
+        text: "Checking the fridge".to_owned(),
+    };
+    assert!(transcript.apply_live(running, &doing));
+    transcript.apply(
+        &from_agent(
+            task_id,
+            2,
+            "Media Centre",
+            AgentMessageKind::Request,
+            "Got a film?",
+        ),
+        0,
+    );
+    assert_eq!(transcript.doing(), Some("Checking the fridge"));
+    let more = LiveActivity::Activity {
+        text: "Reading the recipe".to_owned(),
+    };
+    assert!(
+        transcript.apply_live(running, &more),
+        "the queued message does not take the running turn's activity"
+    );
 }

@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    chat::{Line, Transcript, chat_task_id},
+    chat::{Line, Transcript, app_chat_task_id},
     face::Look,
     home::Home,
     link::{Command, Update, host_agent},
@@ -216,14 +216,14 @@ impl Chats {
                 purpose,
             } => {
                 self.purposes
-                    .insert(chat_task_id(node_id, &target), purpose.into());
+                    .insert(app_chat_task_id(node_id, &target), purpose.into());
             }
             Update::Look {
                 node_id,
                 target,
                 look,
             } => {
-                self.looks.insert(chat_task_id(node_id, &target), look);
+                self.looks.insert(app_chat_task_id(node_id, &target), look);
             }
             Update::Main(main) => {
                 self.main = main;
@@ -312,10 +312,9 @@ impl Chats {
             self.select(0, window, cx);
         }
         if let Some(chosen) = &mut self.chosen
-            && let Some(agent) = self
-                .agents
-                .iter()
-                .find(|agent| chat_task_id(agent.node_id, agent.target.as_str()) == chosen.task_id)
+            && let Some(agent) = self.agents.iter().find(|agent| {
+                app_chat_task_id(agent.node_id, agent.target.as_str()) == chosen.task_id
+            })
         {
             chosen.name = agent.name.clone().into();
         }
@@ -327,7 +326,7 @@ impl Chats {
         let Some(agent) = self.agents.get(index) else {
             return;
         };
-        let task_id = chat_task_id(agent.node_id, agent.target.as_str());
+        let task_id = app_chat_task_id(agent.node_id, agent.target.as_str());
         if self.chosen_task() == Some(task_id) {
             return;
         }
