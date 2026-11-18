@@ -57,6 +57,7 @@ fn answered(asked: Vec<Command>) -> (TaskId, String, tokio::sync::oneshot::Sende
         Command::Send {
             task_id,
             text,
+            steer: false,
             sent: Some(took),
         },
     ] = <[Command; 2]>::try_from(asked)

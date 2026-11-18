@@ -124,8 +124,12 @@ impl Chats {
             &composer,
             window,
             |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { shift: false, .. } = event {
-                    this.send(window, cx);
+                if let InputEvent::PressEnter {
+                    shift: false,
+                    secondary,
+                } = event
+                {
+                    this.send(!secondary, window, cx);
                 }
             },
         )
@@ -410,7 +414,9 @@ impl Chats {
         });
     }
 
-    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Sends what the composer holds: with `steer` (Enter), into the agent's
+    /// running turn, if any; without (Ctrl+Enter), as a turn of its own.
+    fn send(&mut self, steer: bool, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).value().trim().to_owned();
         let Some(task_id) = self.chosen_task() else {
             return;
@@ -422,6 +428,7 @@ impl Chats {
         let _ = self.commands.send(Command::Send {
             task_id,
             text,
+            steer,
             sent: None,
         });
         self.unsent.remove(&task_id);
