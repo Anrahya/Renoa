@@ -25,6 +25,7 @@ mod context;
 mod execution;
 mod memory_job;
 mod note_pass;
+mod steering;
 mod waiting;
 
 /// One durable Agent session assembled from one canonical agent definition.

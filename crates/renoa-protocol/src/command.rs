@@ -98,6 +98,12 @@ pub enum CommandInput {
         /// heartbeat's run is quiet. Omitted on the wire when it is not.
         #[serde(default, skip_serializing_if = "is_loud")]
         quiet: bool,
+        /// Whether the text should join the turn already running on its task,
+        /// before that turn's next model call, instead of waiting for it to
+        /// end. The executor decides whether it can; text it does not take
+        /// in runs as its own command afterward. Omitted on the wire when not.
+        #[serde(default, skip_serializing_if = "is_queued")]
+        steer: bool,
         /// Files the principal uploaded to its Host for this text. Omitted on
         /// the wire when there are none.
         #[serde(
@@ -115,6 +121,14 @@ pub enum CommandInput {
 )]
 const fn is_loud(quiet: &bool) -> bool {
     !*quiet
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde passes the field by reference"
+)]
+const fn is_queued(steer: &bool) -> bool {
+    !*steer
 }
 
 /// Who wrote a command's text. The coordinator authenticates only the
@@ -148,6 +162,7 @@ impl CommandInput {
             context: None,
             author: Author::Principal,
             quiet: false,
+            steer: false,
             attachments: Vec::new(),
         }
     }
@@ -184,6 +199,13 @@ impl CommandInput {
     pub const fn quiet(&self) -> bool {
         match self {
             Self::Text { quiet, .. } => *quiet,
+        }
+    }
+
+    #[must_use]
+    pub const fn steer(&self) -> bool {
+        match self {
+            Self::Text { steer, .. } => *steer,
         }
     }
 

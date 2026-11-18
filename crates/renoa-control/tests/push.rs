@@ -1279,6 +1279,7 @@ async fn the_records_of_a_quiet_command_wake_no_one() {
         context: None,
         author: Author::Principal,
         quiet: true,
+        steer: false,
         attachments: Vec::new(),
     };
 

@@ -1,8 +1,8 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use renoa_local::{HostFeed, LocalHost};
 use renoa_protocol::{TargetCard, TargetRef};
-use renoa_rcp_wire::{DeviceCredentials, ErrorCode, TaskId};
+use renoa_rcp_wire::{DeviceCredentials, ErrorCode};
 use thiserror::Error;
 use tokio::{
     sync::{broadcast, watch},
@@ -24,6 +24,7 @@ use crate::{
     node_store::{NodeStore, NodeStoreError, TargetBinding},
     owner_wakes,
     session::{SessionEnd, serve_session},
+    steering::RunningTasks,
     stop::RunningTurns,
 };
 
@@ -161,7 +162,7 @@ impl RenoaNode {
     /// schedule's failures are logged and retried, never returned.
     pub async fn run(mut self, shutdown: CancellationToken) -> Result<(), NodeError> {
         let mut tasks = JoinSet::new();
-        let mut running_tasks = HashSet::new();
+        let mut running_tasks = RunningTasks::default();
         schedule_pending(Arc::clone(&self.runtime), &mut tasks, &mut running_tasks).await?;
         let mut commits = self.runtime.commits.subscribe();
         let wakes = tokio::spawn(owner_wakes::run(
@@ -234,7 +235,7 @@ impl RenoaNode {
         shutdown: &CancellationToken,
         commits: &mut watch::Receiver<u64>,
         tasks: &mut JoinSet<ExecutionTask>,
-        running_tasks: &mut HashSet<TaskId>,
+        running_tasks: &mut RunningTasks,
     ) -> Result<(), NodeError> {
         let mut backoff = ReconnectBackoff::new();
         loop {
@@ -322,7 +323,7 @@ async fn wait_to_reconnect(
     shutdown: &CancellationToken,
     runtime: Arc<NodeRuntime>,
     tasks: &mut JoinSet<ExecutionTask>,
-    running_tasks: &mut HashSet<TaskId>,
+    running_tasks: &mut RunningTasks,
     reconnect_delay: Duration,
 ) -> Result<bool, NodeError> {
     let delay = sleep(reconnect_delay);

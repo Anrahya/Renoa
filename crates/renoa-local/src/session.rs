@@ -9,6 +9,7 @@ use thiserror::Error;
 
 mod execution;
 mod outcome;
+mod steering;
 pub(crate) use execution::PromptAdmission;
 #[cfg(test)]
 mod timing_tests;

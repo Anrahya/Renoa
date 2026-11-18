@@ -151,6 +151,17 @@ impl Kernel {
     }
 }
 
+impl Kernel {
+    /// Where steer `command_id` stands, or `None` when it was never recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure.
+    pub fn steer_state(&self, command_id: CommandId) -> Result<Option<SteerState>, KernelError> {
+        steer_state(&self.database.connection()?, command_id)
+    }
+}
+
 /// The derived state of steer `command_id`, if it was ever recorded.
 pub(crate) fn steer_state(
     connection: &rusqlite::Connection,
