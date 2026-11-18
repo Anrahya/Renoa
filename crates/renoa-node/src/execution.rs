@@ -392,7 +392,7 @@ pub(crate) async fn schedule_pending(
         let steers = running_tasks.start(&record);
         let runtime = Arc::clone(&runtime);
         tasks.spawn(async move {
-            let result = runtime.execute(record, steers).await;
+            let result = Box::pin(runtime.execute(record, steers)).await;
             ExecutionTask { task_id, result }
         });
     }
