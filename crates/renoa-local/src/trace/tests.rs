@@ -37,7 +37,7 @@ async fn emit_content(trace: &super::TraceRun, secret: &str) {
         },
         AgentEvent::ModelProviderRequest {
             invocation_id: "model".to_owned(),
-            payload: json!({ "messages": [secret] }),
+            bytes: json!({ "messages": [secret] }).to_string().len(),
         },
         AgentEvent::MessageUpdate {
             content_index: 0,
@@ -227,7 +227,9 @@ async fn trace_records_model_timing_and_normalized_usage() {
     trace
         .emit(AgentEvent::ModelProviderRequest {
             invocation_id: invocation_id.clone(),
-            payload: json!({ "model": "grok-code", "messages": ["exact payload"] }),
+            bytes: json!({ "model": "grok-code", "messages": ["exact payload"] })
+                .to_string()
+                .len(),
         })
         .await;
     trace

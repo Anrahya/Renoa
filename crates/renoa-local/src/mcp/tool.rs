@@ -152,16 +152,34 @@ impl Tool for ExecuteTool {
             )
             .await
             {
-                Ok(result) => Ok(ToolOutput {
-                    content: result.content,
-                    details: Some(execution_details(
-                        &reference,
-                        &selected,
-                        result.details.as_ref(),
-                    )),
-                    is_error: result.is_error,
-                    closing: None,
-                }),
+                Ok(result) => {
+                    let has_image = result
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, renoa_agent::ContentBlock::Image { .. }));
+                    let content = if has_image {
+                        let raw = result.content;
+                        tokio::task::spawn_blocking(move || {
+                            crate::images::normalize_tool_content(raw)
+                        })
+                        .await
+                        .map_err(|error| {
+                            ToolError::internal(format!("image normalization task failed: {error}"))
+                        })?
+                    } else {
+                        result.content
+                    };
+                    Ok(ToolOutput {
+                        content,
+                        details: Some(execution_details(
+                            &reference,
+                            &selected,
+                            result.details.as_ref(),
+                        )),
+                        is_error: result.is_error,
+                        closing: None,
+                    })
+                }
                 Err(error) => map_failure(&reference, &selected, error),
             }
         })

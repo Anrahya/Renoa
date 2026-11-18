@@ -116,7 +116,7 @@ pub(super) fn serve_one_chat_completion(listener: &TcpListener) {
 
 fn read_complete_http_request(stream: &mut std::net::TcpStream) -> std::io::Result<Vec<u8>> {
     let mut data = Vec::new();
-    let mut buffer = [0_u8; 1024];
+    let mut buffer = [0_u8; 16_384];
     loop {
         let read = stream.read(&mut buffer)?;
         if read == 0 {

@@ -36,13 +36,13 @@ impl<'a> SamplingObserver<'a> {
 
     async fn record(&mut self, event: ModelEvent) -> Option<ModelResponse> {
         match event {
-            ModelEvent::ProviderRequest { payload } => {
+            ModelEvent::ProviderRequest { bytes } => {
                 self.provider_traffic = true;
                 emit_event(
                     self.sink,
                     AgentEvent::ModelProviderRequest {
                         invocation_id: self.invocation_id.clone(),
-                        payload,
+                        bytes,
                     },
                 )
                 .await;

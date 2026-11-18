@@ -67,7 +67,7 @@ async fn first_output_deadline_is_enforced_on_the_real_record_reader() {
 async fn diagnostic_traffic_does_not_disable_the_idle_deadline() {
     let (mut writer, reader) = tokio::io::duplex(512);
     writer
-        .write_all(b"{\"event\":\"provider_request\",\"payload\":{}}\n")
+        .write_all(b"{\"event\":\"provider_request\",\"bytes\":2}\n")
         .await
         .expect("write diagnostic record");
     let (sender, _receiver) = mpsc::channel(1);

@@ -2,7 +2,10 @@ use std::{num::NonZeroU32, sync::Arc};
 
 use renoa_agent::{Message, ModelRequest, ModelResponse};
 
-use super::{CompactionLimits, CompactionPlanner, ContextSizer, checkpoint_message, validation};
+use super::{
+    CompactionLimits, CompactionPlanner, ContextSizer, byte_budget::request_visible_json_bytes,
+    checkpoint_message, validation,
+};
 use crate::context::{
     CompactionValidationError, ContextInput, ContextPreparation, ContextProjector, ContextStrategy,
     ContextStrategyError, ExplicitCompactionPreparation,
@@ -146,9 +149,28 @@ impl ContextStrategy for CompactingContextStrategy {
             .get();
         let below_automatic_trigger = estimated_input_tokens < automatic_compaction_input_tokens
             || automatic_compaction_input_tokens == dispatch_limit_tokens;
+        let byte_budget = self.planner.limits.request_byte_budget();
+        let candidate_bytes = byte_budget
+            .is_some()
+            .then(|| request_visible_json_bytes(&candidate))
+            .transpose()
+            .map_err(|error| {
+                ContextStrategyError::new(format!("measure request bytes: {error}"))
+            })?;
+        let below_byte_trigger = byte_budget
+            .zip(candidate_bytes)
+            .is_none_or(|(budget, bytes)| {
+                bytes < budget.automatic_compaction_bytes().get()
+                    || budget.automatic_compaction_bytes() == budget.dispatch_limit_bytes()
+            });
+        let over_byte_dispatch = byte_budget
+            .zip(candidate_bytes)
+            .is_some_and(|(budget, bytes)| bytes > budget.dispatch_limit_bytes().get());
         if !input.compaction_required()
             && estimated_input_tokens <= dispatch_limit_tokens
             && below_automatic_trigger
+            && below_byte_trigger
+            && !over_byte_dispatch
         {
             return Ok(ContextPreparation::Model {
                 messages: candidate.messages,
@@ -171,10 +193,18 @@ impl ContextStrategy for CompactingContextStrategy {
                 max_attempts: self.max_attempts,
             },
             None if !input.compaction_required()
-                && estimated_input_tokens <= dispatch_limit_tokens =>
+                && estimated_input_tokens <= dispatch_limit_tokens
+                && !over_byte_dispatch =>
             {
                 ContextPreparation::Model {
                     messages: candidate.messages,
+                }
+            }
+            None if over_byte_dispatch && estimated_input_tokens <= dispatch_limit_tokens => {
+                ContextPreparation::PayloadLimitExceeded {
+                    estimated_bytes: candidate_bytes.unwrap_or(0),
+                    dispatch_limit_bytes: byte_budget
+                        .map_or(0, |budget| budget.dispatch_limit_bytes().get()),
                 }
             }
             None => ContextPreparation::CapacityExceeded {
@@ -189,12 +219,28 @@ impl ContextStrategy for CompactingContextStrategy {
         input: &ContextInput,
     ) -> Result<ExplicitCompactionPreparation, ContextStrategyError> {
         let current = self.projected_idle_messages(input)?;
-        let estimated_input_tokens = self.estimate_request(input, current);
+        let candidate = ModelRequest {
+            system_prompt: input.system_prompt().to_owned(),
+            messages: current,
+            tools: input.tools().to_vec(),
+        };
+        let estimated_input_tokens = self.sizer.estimate_input_tokens(&candidate);
         if Self::checkpoint_is_current(input) {
             return Ok(ExplicitCompactionPreparation::UpToDate {
                 estimated_input_tokens,
             });
         }
+        let byte_budget = self.planner.limits.request_byte_budget();
+        let candidate_bytes = byte_budget
+            .is_some()
+            .then(|| request_visible_json_bytes(&candidate))
+            .transpose()
+            .map_err(|error| {
+                ContextStrategyError::new(format!("measure request bytes: {error}"))
+            })?;
+        let over_byte_dispatch = byte_budget
+            .zip(candidate_bytes)
+            .is_some_and(|(budget, bytes)| bytes > budget.dispatch_limit_bytes().get());
         let plan = self
             .planner
             .plan_explicit(input, input.active_checkpoint(), self.sizer.as_ref())
@@ -203,6 +249,11 @@ impl ContextStrategy for CompactingContextStrategy {
             Some(plan) => ExplicitCompactionPreparation::Compact {
                 plan,
                 max_attempts: self.max_attempts,
+            },
+            None if over_byte_dispatch => ExplicitCompactionPreparation::PayloadLimitExceeded {
+                estimated_bytes: candidate_bytes.unwrap_or(0),
+                dispatch_limit_bytes: byte_budget
+                    .map_or(0, |budget| budget.dispatch_limit_bytes().get()),
             },
             None => ExplicitCompactionPreparation::CapacityExceeded {
                 estimated_input_tokens,

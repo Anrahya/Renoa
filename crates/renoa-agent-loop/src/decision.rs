@@ -148,6 +148,10 @@ impl AgentLoop {
             } => {
                 Self::context_capacity_failure(estimated_input_tokens, dispatch_limit_tokens, None)
             }
+            ContextPreparation::PayloadLimitExceeded {
+                estimated_bytes,
+                dispatch_limit_bytes,
+            } => Self::context_payload_failure(estimated_bytes, dispatch_limit_bytes, None),
         }
     }
 
@@ -330,7 +334,8 @@ impl AgentLoop {
             ContextPreparation::Compact { .. } => Err(LoopError::new(
                 "context strategy changed a persisted model request into a compaction request",
             )),
-            ContextPreparation::CapacityExceeded { .. } => Err(LoopError::new(
+            ContextPreparation::CapacityExceeded { .. }
+            | ContextPreparation::PayloadLimitExceeded { .. } => Err(LoopError::new(
                 "context strategy changed a persisted model request into a capacity failure",
             )),
         }

@@ -143,7 +143,7 @@ export interface WireErrorDiagnostic {
 }
 
 export type WireStreamRecord =
-  | { readonly event: "provider_request"; readonly payload: JsonValue }
+  | { readonly event: "provider_request"; readonly bytes: number }
   | {
       readonly event: "provider_response";
       readonly status: number;

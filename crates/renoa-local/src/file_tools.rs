@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     atomic_file::{content_hash, replace},
-    images::{MAX_INLINE_IMAGE_BYTES, image_type, inline_image, shown_size},
+    images::{MAX_IMAGE_LONG_EDGE, MAX_SOURCE_IMAGE_BYTES, image_type, show_image, shown_size},
     output::{HeadOutput, MAX_TOOL_OUTPUT_BYTES, MAX_TOOL_OUTPUT_LINES, truncation_notice},
     tool_error::io_error,
     tool_input::{bounded_limit, decode, non_empty},
@@ -95,9 +95,11 @@ impl ReadFile {
                 description: format!(
                     "Read UTF-8 text from a workspace file. Line offsets are 1-based. \
                      Output is capped at 2,000 lines or 50 KiB; continue with the returned offset. \
-                     A JPEG, PNG, GIF or WebP image up to {} is returned as the image itself, \
-                     so you can look at it; offset and limit do not apply to it.",
-                    shown_size(MAX_INLINE_IMAGE_BYTES)
+                     A JPEG, PNG, GIF or WebP image up to {} is returned as the image itself \
+                     (normalized to {}px on the long edge when larger), so you can look at it; \
+                     offset and limit do not apply to it.",
+                    shown_size(MAX_SOURCE_IMAGE_BYTES),
+                    MAX_IMAGE_LONG_EDGE,
                 ),
                 input_schema: object_schema(
                     &["path"],
@@ -184,32 +186,64 @@ async fn read_image(path: &PathBuf, shown_path: &str) -> Result<Option<ToolOutpu
         .map_err(|error| io_error("read file", &error, false))?
         .len();
     let size = usize::try_from(size).unwrap_or(usize::MAX);
-    if size > MAX_INLINE_IMAGE_BYTES {
+    if size > MAX_SOURCE_IMAGE_BYTES {
         return Err(ToolError::invalid_input(format!(
-            "{shown_path} is a {mime_type} image of {}; an image you are shown is at most {}. \
+            "{shown_path} is a {mime_type} image of {}; an image source read is at most {}. \
              Make a smaller copy with bash and read that.",
             shown_size(size),
-            shown_size(MAX_INLINE_IMAGE_BYTES)
+            shown_size(MAX_SOURCE_IMAGE_BYTES)
         )));
     }
-    let bytes = tokio::fs::read(path)
+    let mut bytes = head;
+    let remaining_cap = u64::try_from(MAX_SOURCE_IMAGE_BYTES.saturating_sub(bytes.len()))
+        .unwrap_or(0)
+        .saturating_add(1);
+    (&mut file)
+        .take(remaining_cap)
+        .read_to_end(&mut bytes)
         .await
         .map_err(|error| io_error("read file", &error, false))?;
-    // The file may have changed since its first bytes were read.
-    let Some(image) = inline_image(&bytes) else {
+    if bytes.len() > MAX_SOURCE_IMAGE_BYTES {
         return Err(ToolError::invalid_input(format!(
-            "{shown_path} changed while it was read; read it again."
+            "{shown_path} is a {mime_type} image larger than {}; \
+             make a smaller copy with bash and read that.",
+            shown_size(MAX_SOURCE_IMAGE_BYTES)
         )));
+    }
+    let original_bytes = bytes.len();
+    let shown = tokio::task::spawn_blocking(move || show_image(&bytes))
+        .await
+        .map_err(|error| ToolError::internal(format!("image normalization failed: {error}")))?
+        .ok_or_else(|| {
+            ToolError::invalid_input(format!(
+                "{shown_path} could not be prepared as an inline {mime_type} image."
+            ))
+        })?;
+    let description = if shown.normalized {
+        format!(
+            "{shown_path} is an image ({}, shown as {}x{} {} {}), shown here.",
+            shown_size(original_bytes),
+            shown.width,
+            shown.height,
+            shown.mime_type,
+            shown_size(shown.bytes),
+        )
+    } else {
+        format!(
+            "{shown_path} is an image ({}), shown here.",
+            shown_size(original_bytes)
+        )
     };
     Ok(Some(ToolOutput {
-        content: vec![
-            ContentBlock::text(format!(
-                "{shown_path} is an image ({}), shown here.",
-                shown_size(bytes.len())
-            )),
-            image,
-        ],
-        details: Some(json!({ "path": path, "mime_type": mime_type, "bytes": bytes.len() })),
+        content: vec![ContentBlock::text(description), shown.block],
+        details: Some(json!({
+            "path": path,
+            "mime_type": shown.mime_type,
+            "bytes": shown.bytes,
+            "original_bytes": original_bytes,
+            "width": shown.width,
+            "height": shown.height,
+        })),
         is_error: false,
         closing: None,
     }))

@@ -37,6 +37,7 @@ uuid.workspace = true
 renoa-control = { path = "../renoa-control", version = "0.1.0" }
 # Opens sealed notices with a stored key, which ring cannot hold.
 aws-lc-rs.workspace = true
+image.workspace = true
 jiff.workspace = true
 mnem.workspace = true
 nix.workspace = true

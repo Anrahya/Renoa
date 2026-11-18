@@ -86,10 +86,10 @@ impl TraceState {
             } => self.model_started(invocation_id, &request, occurred_at_ms, elapsed_us),
             AgentEvent::ModelProviderRequest {
                 invocation_id,
-                payload,
+                bytes,
             } => TraceEntry::new("model", "provider_request", occurred_at_ms, elapsed_us)
                 .correlation(invocation_id)
-                .payload(&json!({ "bytes": payload.to_string().len() })),
+                .payload(&json!({ "bytes": bytes })),
             AgentEvent::ModelProviderResponse {
                 invocation_id,
                 status,

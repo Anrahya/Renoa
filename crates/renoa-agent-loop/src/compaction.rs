@@ -8,6 +8,7 @@ use crate::{ContextInput, ContextProjector, ContextStrategyError};
 
 #[cfg(test)]
 mod automatic_tests;
+mod byte_budget;
 mod format;
 mod planning;
 mod strategy;
@@ -15,12 +16,13 @@ mod strategy;
 mod tests;
 mod validation;
 
+pub use byte_budget::RequestByteBudget;
 pub use strategy::CompactingContextStrategy;
 
 const CHECKPOINT_PREFIX: &str = "[CONTEXT CHECKPOINT]\n";
 const CHECKPOINT_SUFFIX: &str = "\n[END CONTEXT CHECKPOINT]";
 
-/// Validated token limits used by pure compaction planning.
+/// Validated token and optional request-byte limits used by pure compaction planning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactionLimits {
     dispatch_limit: NonZeroU64,
@@ -28,6 +30,7 @@ pub struct CompactionLimits {
     target_input: NonZeroU64,
     tail_budget: NonZeroU64,
     max_summary: NonZeroU64,
+    byte_budget: Option<RequestByteBudget>,
 }
 
 impl CompactionLimits {
@@ -72,7 +75,44 @@ impl CompactionLimits {
             target_input: target_input_tokens,
             tail_budget: tail_budget_tokens,
             max_summary: max_summary_tokens,
+            byte_budget: None,
         })
+    }
+
+    /// Also triggers automatic compaction and trims retained tails based on
+    /// serialized model-visible JSON request byte size.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an automatic byte trigger above `dispatch_limit_bytes` or a
+    /// retained-tail byte budget that is not strictly below the automatic
+    /// byte trigger.
+    pub fn with_request_byte_budget(
+        mut self,
+        dispatch_limit_bytes: NonZeroU64,
+        automatic_compaction_bytes: NonZeroU64,
+        tail_budget_bytes: NonZeroU64,
+    ) -> Result<Self, CompactionLimitsError> {
+        if automatic_compaction_bytes > dispatch_limit_bytes {
+            return Err(CompactionLimitsError::AutomaticBytesAboveDispatchLimit {
+                automatic_compaction_bytes: automatic_compaction_bytes.get(),
+                dispatch_limit_bytes: dispatch_limit_bytes.get(),
+            });
+        }
+        if tail_budget_bytes >= automatic_compaction_bytes {
+            return Err(
+                CompactionLimitsError::TailBytesNotBelowAutomaticCompaction {
+                    tail_budget_bytes: tail_budget_bytes.get(),
+                    automatic_compaction_bytes: automatic_compaction_bytes.get(),
+                },
+            );
+        }
+        self.byte_budget = Some(RequestByteBudget::new(
+            dispatch_limit_bytes,
+            automatic_compaction_bytes,
+            tail_budget_bytes,
+        ));
+        Ok(self)
     }
 
     /// Starts automatic compaction before the provider's hard dispatch limit.
@@ -122,6 +162,12 @@ impl CompactionLimits {
 
     const fn max_summary_tokens(self) -> NonZeroU64 {
         self.max_summary
+    }
+
+    /// Returns the optional serialized request byte budget.
+    #[must_use]
+    pub const fn request_byte_budget(self) -> Option<RequestByteBudget> {
+        self.byte_budget
     }
 }
 
@@ -334,7 +380,7 @@ fn checkpoint_message(summary: &str) -> Message {
     Message::user_text(format!("{CHECKPOINT_PREFIX}{summary}{CHECKPOINT_SUFFIX}"))
 }
 
-/// Invalid ordering among compaction token limits.
+/// Invalid ordering among compaction token or request-byte limits.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CompactionLimitsError {
@@ -372,6 +418,20 @@ pub enum CompactionLimitsError {
     TargetNotBelowAutomaticCompaction {
         target_input_tokens: u64,
         automatic_compaction_input_tokens: u64,
+    },
+    #[error(
+        "automatic compaction byte trigger ({automatic_compaction_bytes}) must not exceed the dispatch byte limit ({dispatch_limit_bytes})"
+    )]
+    AutomaticBytesAboveDispatchLimit {
+        automatic_compaction_bytes: u64,
+        dispatch_limit_bytes: u64,
+    },
+    #[error(
+        "retained-tail byte budget ({tail_budget_bytes}) must be below the automatic compaction byte trigger ({automatic_compaction_bytes})"
+    )]
+    TailBytesNotBelowAutomaticCompaction {
+        tail_budget_bytes: u64,
+        automatic_compaction_bytes: u64,
     },
 }
 

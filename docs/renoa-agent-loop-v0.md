@@ -89,6 +89,12 @@ alone. The automatic planner and the summary validator enforce one slice each,
 so fixed request overhead is charged exactly once and a checkpoint budget stays
 reachable even when the activated prompt and tool schemas alone exceed it.
 
+`CompactionLimits` can also bind an optional serialized model-visible JSON byte
+budget (`RequestByteBudget` via `with_request_byte_budget`), triggering automatic
+compaction and trimming retained tails on serialized byte size alongside tokens,
+and failing with `PayloadLimitExceeded` if an indivisible request exceeds its
+dispatch byte ceiling.
+
 The same strategy boundary owns user-requested compaction. It borrows one
 already-decoded idle `ContextInput` and returns either an exact summary plan, an
 up-to-date estimate that requires no model call, or an explicit capacity

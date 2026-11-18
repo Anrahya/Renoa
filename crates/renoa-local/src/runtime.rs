@@ -27,6 +27,9 @@ pub(crate) const MAX_OUTPUT_TOKENS: NonZeroU32 = NonZeroU32::new(32_768).unwrap(
 const COMPACTION_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(2).unwrap();
 pub(crate) const MAX_CHECKPOINT_TOKENS: u64 = 16_384;
 pub(crate) const MIN_CONTEXT_SAFETY_TOKENS: u64 = 8_192;
+const REQUEST_DISPATCH_LIMIT_BYTES: NonZeroU64 = NonZeroU64::new(20 * 1_024 * 1_024).unwrap();
+const AUTOMATIC_COMPACTION_BYTES: NonZeroU64 = NonZeroU64::new(8 * 1_024 * 1_024).unwrap();
+const COMPACTION_TAIL_BYTES: NonZeroU64 = NonZeroU64::new(3 * 1_024 * 1_024).unwrap();
 
 /// Provider, model, and instruction inputs for one local coding runtime.
 pub struct LocalRuntimeConfig {
@@ -345,15 +348,15 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
     })
 }
 
-pub(crate) fn context_binding(
-    model: &Arc<BridgeModel>,
-    skill_context: Option<&SkillRuntimeContext>,
+pub(crate) fn compaction_limits(
+    provider_context: NonZeroU64,
+    max_output: NonZeroU32,
     automatic_compaction: Option<crate::AutomaticCompaction>,
     working_input_limit: Option<NonZeroU64>,
-) -> Result<ContextBinding, LocalRuntimeError> {
+) -> Result<(CompactionSettings, CompactionLimits), LocalRuntimeError> {
     let settings = compaction_settings(
-        model.context_window_tokens(),
-        model.max_output_tokens(),
+        provider_context,
+        max_output,
         automatic_compaction,
         working_input_limit,
     )?;
@@ -363,15 +366,38 @@ pub(crate) fn context_binding(
         settings.target,
         settings.max_summary,
     )?
-    .with_automatic_compaction_input_tokens(settings.automatic_compaction)?;
+    .with_automatic_compaction_input_tokens(settings.automatic_compaction)?
+    .with_request_byte_budget(
+        REQUEST_DISPATCH_LIMIT_BYTES,
+        AUTOMATIC_COMPACTION_BYTES,
+        COMPACTION_TAIL_BYTES,
+    )?;
+    Ok((settings, limits))
+}
+
+pub(crate) fn context_binding(
+    model: &Arc<BridgeModel>,
+    skill_context: Option<&SkillRuntimeContext>,
+    automatic_compaction: Option<crate::AutomaticCompaction>,
+    working_input_limit: Option<NonZeroU64>,
+) -> Result<ContextBinding, LocalRuntimeError> {
+    let (settings, limits) = compaction_limits(
+        model.context_window_tokens(),
+        model.max_output_tokens(),
+        automatic_compaction,
+        working_input_limit,
+    )?;
     let skill_revision = skill_context.map_or("none", |context| context.revision.as_str());
     let revision = format!(
-        "renoa.context.compaction.v1/context-{}/reserved-{}/automatic-{}/target-{}/summary-{}/attempts-{}/skills-{}/receipts-{}",
+        "renoa.context.compaction.v2/context-{}/reserved-{}/automatic-{}/target-{}/summary-{}/bytes-{}-{}-{}/attempts-{}/skills-{}/receipts-{}",
         settings.context,
         settings.reserved,
         settings.automatic_compaction,
         settings.target,
         settings.max_summary,
+        REQUEST_DISPATCH_LIMIT_BYTES,
+        AUTOMATIC_COMPACTION_BYTES,
+        COMPACTION_TAIL_BYTES,
         COMPACTION_ATTEMPT_LIMIT,
         skill_revision,
         crate::plugins::host::memory::note_pass::RECEIPT_REVISION,

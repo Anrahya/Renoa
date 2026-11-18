@@ -102,6 +102,10 @@ impl AgentLoop {
             } => {
                 Self::context_capacity_failure(estimated_input_tokens, dispatch_limit_tokens, None)
             }
+            ExplicitCompactionPreparation::PayloadLimitExceeded {
+                estimated_bytes,
+                dispatch_limit_bytes,
+            } => Self::context_payload_failure(estimated_bytes, dispatch_limit_bytes, None),
         }
     }
 
@@ -254,6 +258,14 @@ impl AgentLoop {
                 dispatch_limit_tokens,
                 Some(provider_message),
             ),
+            ContextPreparation::PayloadLimitExceeded {
+                estimated_bytes,
+                dispatch_limit_bytes,
+            } => Self::context_payload_failure(
+                estimated_bytes,
+                dispatch_limit_bytes,
+                Some(provider_message),
+            ),
             ContextPreparation::Model { .. } => Self::compaction_failure(format!(
                 "provider rejected model context, but the configured context strategy produced no compaction plan: {provider_message}"
             )),
@@ -268,10 +280,26 @@ impl AgentLoop {
         let capacity = format!(
             "context cannot be reduced below the provider limit: estimated {estimated_input_tokens} input tokens, dispatch limit {dispatch_limit_tokens}"
         );
+        Self::limit_failure(capacity, provider_message)
+    }
+
+    pub(super) fn context_payload_failure(
+        estimated_bytes: u64,
+        dispatch_limit_bytes: u64,
+        provider_message: Option<&str>,
+    ) -> Result<LoopDecision, LoopError> {
+        let capacity = format!(
+            "context cannot be reduced below the provider payload limit: estimated {estimated_bytes} bytes, dispatch limit {dispatch_limit_bytes} bytes"
+        );
+        Self::limit_failure(capacity, provider_message)
+    }
+
+    fn limit_failure(
+        capacity: String,
+        provider_message: Option<&str>,
+    ) -> Result<LoopDecision, LoopError> {
         let reason = match provider_message {
-            Some(message) => {
-                format!("provider rejected model context: {message}; {capacity}")
-            }
+            Some(message) => format!("provider rejected model context: {message}; {capacity}"),
             None => capacity,
         };
         Self::compaction_failure(reason)

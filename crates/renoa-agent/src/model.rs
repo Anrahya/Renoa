@@ -63,9 +63,9 @@ pub enum AssistantDelta {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelEvent {
-    /// Exact provider payload after adapter translation and before dispatch.
+    /// Serialized provider request size in bytes recorded before dispatch.
     ProviderRequest {
-        payload: serde_json::Value,
+        bytes: usize,
     },
     /// Redacted transport metadata received before the response body is consumed.
     ProviderResponse {

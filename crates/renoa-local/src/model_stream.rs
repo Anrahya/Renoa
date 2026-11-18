@@ -292,9 +292,9 @@ impl StreamReadState {
         }
         self.idle_deadline = tokio::time::Instant::now() + self.deadlines.idle;
         Ok(match decode_record(encoded)? {
-            StreamRecord::ProviderRequest { payload } => {
+            StreamRecord::ProviderRequest { bytes } => {
                 self.provider_traffic = true;
-                Some(ModelEvent::ProviderRequest { payload })
+                Some(ModelEvent::ProviderRequest { bytes })
             }
             StreamRecord::ProviderResponse { status, headers } => {
                 self.provider_traffic = true;
@@ -406,7 +406,7 @@ fn decode_record(encoded: &[u8]) -> Result<StreamRecord, ModelError> {
 #[serde(tag = "event", rename_all = "snake_case")]
 enum StreamRecord {
     ProviderRequest {
-        payload: serde_json::Value,
+        bytes: usize,
     },
     ProviderResponse {
         status: u16,

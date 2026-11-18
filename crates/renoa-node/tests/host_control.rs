@@ -819,13 +819,33 @@ async fn a_photo_uploaded_through_the_relay_reaches_the_agent_and_its_workspace(
     within(Box::pin(async {
         let f = Fixture::serving().await;
         let (id, _) = make_agent(&f, &creation()).await;
-        let photo: Vec<u8> = [0xFF, 0xD8, 0xFF, 0xE0]
-            .into_iter()
-            .chain(
-                (0..renoa_local::UPLOAD_PART_BYTES)
-                    .map(|index| u8::try_from(index % 199).expect("a byte")),
+        let mut img = image::RgbImage::new(560, 560);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            let mix = x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(2_246_822_519);
+            *pixel = image::Rgb([
+                u8::try_from((mix ^ (mix >> 16)) % 256).expect("byte"),
+                u8::try_from(((mix >> 8) ^ (mix >> 24)) % 256).expect("byte"),
+                u8::try_from(((mix >> 4) ^ (mix >> 20)) % 256).expect("byte"),
+            ]);
+        }
+        let mut photo = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut photo, 95)
+            .encode_image(&img)
+            .expect("encode multi-part jpeg fixture");
+        assert!(
+            photo.len() > renoa_local::UPLOAD_PART_BYTES,
+            "fixture must span multiple upload parts: {}",
+            photo.len()
+        );
+        let size = if photo.len() < 1_048_576 {
+            format!("{} KB", photo.len().div_ceil(1024))
+        } else {
+            format!(
+                "{}.{} MB",
+                photo.len() / 1_048_576,
+                photo.len() % 1_048_576 * 10 / 1_048_576
             )
-            .collect();
+        };
         let attachment = Attachment::new(upload(&f, &photo).await, "fridge.jpg".into(), "image/jpeg".into())
             .expect("attachment");
         let mut surface = f.system.connect_surface().await;
@@ -848,7 +868,10 @@ async fn a_photo_uploaded_through_the_relay_reaches_the_agent_and_its_workspace(
             )),
             "the journal shows what was attached"
         );
-        let line = json!({"type": "text", "text": "Attached image, included here so you can see it: attachments/fridge.jpg (513 KB)."});
+        let line = json!({
+            "type": "text",
+            "text": format!("Attached image, included here so you can see it: attachments/fridge.jpg ({size}).")
+        });
         let content = last_user_content(&f);
         assert_eq!(content[..2], [json!({"type": "text", "text": "What can I cook?"}), line.clone()]);
         // The Host's own turn context follows what the owner sent.
@@ -856,7 +879,8 @@ async fn a_photo_uploaded_through_the_relay_reaches_the_agent_and_its_workspace(
         assert!(content[3]["text"].as_str().is_some_and(|text| text.starts_with("<turn_context>")));
         assert_eq!((&content[2]["type"], &content[2]["mime_type"]), (&json!("image"), &json!("image/jpeg")));
         let shown = STANDARD.decode(content[2]["data"].as_str().expect("image data")).expect("base64");
-        assert!(shown == photo, "the model saw {} bytes, not the photo's {}", shown.len(), photo.len());
+        assert!(shown.starts_with(&[0xFF, 0xD8, 0xFF]), "shown copy must remain a valid JPEG");
+        assert!(shown.len() < photo.len(), "normalized copy must shrink from {} to {}", photo.len(), shown.len());
         let attachments = f.host.agent_workspace(id).await.expect("workspace").join("attachments");
         assert_eq!(std::fs::read(attachments.join("fridge.jpg")).expect("the copy"), photo);
 

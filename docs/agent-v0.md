@@ -53,7 +53,7 @@ policy.
 One `Model::stream` call is one logical model effect for an exact request. Its
 stream may expose:
 
-- the exact translated provider request;
+- the serialized byte size of the translated provider request;
 - redacted response status and headers;
 - indexed visible, reasoning, or tool-call deltas;
 - adapter retry diagnostics; and
