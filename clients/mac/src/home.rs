@@ -216,6 +216,7 @@ impl Home {
         let send = Command::Send {
             task_id: chat,
             text,
+            steer: false,
             sent: Some(sent),
         };
         if self.commands.send(follow).is_err() || self.commands.send(send).is_err() {

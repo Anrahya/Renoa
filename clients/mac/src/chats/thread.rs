@@ -31,6 +31,9 @@ use crate::{
 /// The widest the conversation runs.
 const COLUMN: f32 = 680.;
 
+/// Shown over the composer while the agent works and something is typed.
+const STEER_HINT: &str = "Enter tells it now · Ctrl+Enter sends it once it's done";
+
 /// The height of the name over the conversation, which the lines scroll under.
 const HEADER: f32 = 76.;
 
@@ -74,9 +77,12 @@ impl Chats {
         let purpose = task_id.and_then(|task_id| self.purposes.get(&task_id).cloned());
         let working = self.transcript().is_some_and(Transcript::working);
         let empty = chosen.is_some() && self.rows() == 0 && !working;
-        let notice = task_id
-            .filter(|task_id| self.unsent.contains(task_id))
-            .map(|_| "Your message didn't send. Try again.");
+        let sendable = self.linked && !self.composer.read(cx).value().trim().is_empty();
+        let notice = if task_id.is_some_and(|task_id| self.unsent.contains(&task_id)) {
+            Some(("Your message didn't send. Try again.", palette.danger))
+        } else {
+            (working && sendable).then_some((STEER_HINT, palette.secondary))
+        };
         // Rows read the chat as they are drawn; only the visible ones are.
         let chats = cx.entity().downgrade();
         let speaking = agent.clone();
@@ -104,7 +110,6 @@ impl Chats {
                 .shadow_md()
         })
         .flex_1();
-        let sendable = self.linked && !self.composer.read(cx).value().trim().is_empty();
         let focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
         div()
             .flex_1()
@@ -132,12 +137,12 @@ impl Chats {
                     palette,
                 ))
             })
-            .when_some(notice, |column, notice| {
+            .when_some(notice, |column, (notice, colour)| {
                 column.child(centred(
                     div()
                         .px(u(20.))
                         .pb(u(4.))
-                        .text_color(palette.danger)
+                        .text_color(colour)
                         .text_size(u(12.))
                         .child(notice),
                 ))
@@ -179,8 +184,9 @@ impl Chats {
                             ),
                     )
                     .child(
-                        send_button(sendable, palette)
-                            .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+                        send_button(sendable, palette).on_click(
+                            cx.listener(|this, _, window, cx| this.send(true, window, cx)),
+                        ),
                     ),
             ))
     }

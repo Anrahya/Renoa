@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use renoa_protocol::{CommandId, CommandInput, TargetRef};
+use renoa_protocol::{Author, CommandId, CommandInput, TargetRef};
 use renoa_rcp_client::{ClientError, Connection};
 use renoa_rcp_wire::{NodeId, TaskId};
 use tokio::sync::{mpsc, oneshot};
@@ -31,6 +31,7 @@ pub(super) struct Outgoing {
     pub(super) task_id: TaskId,
     pub(super) command_id: CommandId,
     pub(super) text: String,
+    pub(super) steer: bool,
     pub(super) sent: Option<oneshot::Sender<bool>>,
 }
 
@@ -74,7 +75,14 @@ pub(super) async fn flush(
     updates: &mpsc::UnboundedSender<Update>,
 ) -> Result<(), ClientError> {
     while let Some(next) = outbox.front() {
-        let input = CommandInput::from_text(next.text.clone());
+        let input = CommandInput::Text {
+            text: next.text.clone(),
+            context: None,
+            author: Author::Principal,
+            quiet: false,
+            steer: next.steer,
+            attachments: Vec::new(),
+        };
         let submitted = within(connection.submit(next.task_id, next.command_id, input)).await;
         let took = settled(connection, submitted).await?;
         let Some(done) = outbox.pop_front() else {

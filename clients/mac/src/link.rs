@@ -130,6 +130,10 @@ pub enum Command {
     Send {
         task_id: TaskId,
         text: String,
+        /// Joins the turn the agent is running, before its next model call,
+        /// instead of waiting for a turn of its own (`false`). With no turn
+        /// running, it runs as any message does.
+        steer: bool,
         /// Told whether Renoa took the message (`true`) or refused it; it
         /// is kept across reconnects until one or the other.
         sent: Option<oneshot::Sender<bool>>,
@@ -185,12 +189,14 @@ impl Kept {
             Command::Send {
                 task_id,
                 text,
+                steer,
                 sent,
             } => {
                 self.outbox.push_back(Outgoing {
                     task_id,
                     command_id: CommandId::new(),
                     text,
+                    steer,
                     sent,
                 });
                 None

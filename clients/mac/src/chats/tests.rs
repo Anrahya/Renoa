@@ -161,15 +161,33 @@ fn the_chats_follow_the_first_agent_show_its_turn_and_send_what_the_owner_types(
     let Ok(Command::Send {
         task_id: sent_to,
         text,
+        steer: true,
         sent: None,
     }) = chat_command(&mut asked)
     else {
-        panic!("Enter sends the message");
+        panic!("Enter sends the message to join any running turn");
     };
     assert_eq!((sent_to, text.as_str()), (task_id, "Make it vegetarian"));
     chats.read_with(cx, |chats, cx| {
         assert!(chats.composer.read(cx).value().is_empty())
     });
+
+    cx.update_window(window, |_, window, cx| {
+        window.input("Then a dessert", cx);
+        window.press("ctrl-enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let Ok(Command::Send {
+        text,
+        steer: false,
+        sent: None,
+        ..
+    }) = chat_command(&mut asked)
+    else {
+        panic!("Ctrl+Enter sends the message to wait for its own turn");
+    };
+    assert_eq!(text, "Then a dessert");
 }
 
 #[gpui_kit::test]

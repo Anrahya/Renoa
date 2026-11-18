@@ -238,6 +238,7 @@ async fn a_message_cut_off_by_a_broken_connection_is_sent_again_under_the_same_i
         .send(Command::Send {
             task_id: running.task_id,
             text: "Make it vegetarian".to_owned(),
+            steer: true,
             sent: None,
         })
         .expect("send");
@@ -263,7 +264,12 @@ async fn a_message_cut_off_by_a_broken_connection_is_sent_again_under_the_same_i
     assert_eq!(sent[0].1, running.task_id);
     assert_eq!(sent[0].1, sent[1].1);
     assert_eq!(sent[0].2, sent[1].2, "one id, so Renoa admits it once");
-    assert_eq!(sent[0].3, CommandInput::from_text("Make it vegetarian"));
+    assert!(
+        sent[0].3.steer(),
+        "a steer goes out as one: {:?}",
+        sent[0].3
+    );
+    assert_eq!(sent[0].3.text(), "Make it vegetarian");
     assert_eq!(sent[0].3, sent[1].3);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(hear(&heard, 2, is_submit).await.len(), 2, "sent no more");
@@ -294,6 +300,7 @@ async fn a_refused_message_comes_back_and_the_connection_stays() {
         .send(Command::Send {
             task_id: running.task_id,
             text: "Hello".to_owned(),
+            steer: false,
             sent: None,
         })
         .expect("send");
@@ -352,6 +359,7 @@ async fn a_long_replay_does_not_hold_up_the_reply_it_came_with() {
         .send(Command::Send {
             task_id: running.task_id,
             text: "Hello".to_owned(),
+            steer: false,
             sent: None,
         })
         .expect("send");
@@ -551,6 +559,7 @@ async fn a_host_that_never_answers_holds_up_no_message() {
         .send(Command::Send {
             task_id: running.task_id,
             text: "Still there?".to_owned(),
+            steer: false,
             sent: None,
         })
         .expect("send");
@@ -644,6 +653,7 @@ async fn a_sender_that_asks_hears_whether_its_message_was_taken_and_the_chat_doe
             .send(Command::Send {
                 task_id: running.task_id,
                 text: text.to_owned(),
+                steer: false,
                 sent: Some(sent),
             })
             .expect("send");
