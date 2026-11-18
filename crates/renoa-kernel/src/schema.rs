@@ -2,9 +2,9 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
-use crate::{KernelError, StoreError, request_release};
+use crate::{KernelError, StoreError, request_release, steering::STEER_REQUESTS};
 
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 pub(crate) const OPERATION_STATE_VERSION: u32 = 1;
 
 const SCHEMA: &str = "CREATE TABLE agents (
@@ -276,13 +276,19 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
         if version <= 2 {
             migrate_v2_to_v3(connection)?;
         }
-        request_release::migrate_v3_to_v4(connection)?;
+        if version <= 3 {
+            request_release::migrate_v3_to_v4(connection)?;
+        }
+        migrate_v4_to_v5(connection)?;
         return validate_current(connection);
     }
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sqlite_error)?;
     transaction.execute_batch(SCHEMA).map_err(sqlite_error)?;
+    transaction
+        .execute_batch(STEER_REQUESTS)
+        .map_err(sqlite_error)?;
     request_release::install(&transaction)?;
     transaction
         .pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -296,6 +302,20 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
 fn validate_current(connection: &Connection) -> Result<(), KernelError> {
     validate_database(connection)?;
     request_release::require_installed(connection)
+}
+
+/// Schema 5 adds the table of steers; no existing row changes.
+fn migrate_v4_to_v5(connection: &mut Connection) -> Result<(), KernelError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sqlite_error)?;
+    transaction
+        .execute_batch(STEER_REQUESTS)
+        .map_err(sqlite_error)?;
+    transaction
+        .pragma_update(None, "user_version", 5_u32)
+        .map_err(sqlite_error)?;
+    transaction.commit().map_err(sqlite_error)
 }
 
 fn migrate_v1_to_v2(connection: &mut Connection) -> Result<(), KernelError> {
@@ -446,7 +466,7 @@ mod tests {
         assert_eq!(pragma_text(&connection, "journal_mode"), "wal");
         assert_eq!(pragma_integer(&connection, "synchronous"), 2);
         assert_eq!(pragma_integer(&connection, "busy_timeout"), 5_000);
-        assert_eq!(pragma_integer(&connection, "user_version"), 4);
+        assert_eq!(pragma_integer(&connection, "user_version"), 5);
     }
 
     #[test]
@@ -523,6 +543,7 @@ mod tests {
         connection
             .execute_batch(
                 "PRAGMA foreign_keys = OFF;
+                 DROP TABLE steer_requests;
                  DROP TRIGGER release_finished_effect_requests;
                  DROP VIEW finished_effect_requests;
                  DROP TABLE effects;
@@ -598,7 +619,7 @@ mod tests {
         drop(migrated);
 
         let connection = open_connection(&database).expect("inspect migration");
-        assert_eq!(pragma_integer(&connection, "user_version"), 4);
+        assert_eq!(pragma_integer(&connection, "user_version"), 5);
         let cancellation_table: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -678,6 +699,7 @@ mod tests {
         connection
             .execute_batch(
                 "PRAGMA foreign_keys = OFF;
+                 DROP TABLE steer_requests;
                  DROP TRIGGER release_finished_effect_requests;
                  DROP VIEW finished_effect_requests;
                  ALTER TABLE effects RENAME TO effects_v3;

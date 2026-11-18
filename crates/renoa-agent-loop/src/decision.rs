@@ -14,6 +14,7 @@ mod code_mode;
 mod compaction;
 mod effect_input;
 mod interruption;
+mod steering;
 
 #[cfg(test)]
 mod tests;
@@ -122,6 +123,9 @@ impl AgentLoop {
                 events: Vec::new(),
                 reason: format!("model exceeded the configured turn limit of {limit}"),
             });
+        }
+        if let Some(decision) = steering::accept_steers(model_turns, input)? {
+            return Ok(decision);
         }
         match self.prepare_context(input.operation_id, &input.events, false)? {
             ContextPreparation::Model { messages } => {

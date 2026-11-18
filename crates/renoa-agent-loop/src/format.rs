@@ -141,7 +141,11 @@ pub(crate) fn context_input(
 ) -> Result<ContextInput, LoopError> {
     let mut entries = Vec::new();
     let mut message_sequences = HashSet::new();
+    // Turn timing or context belongs to the user message of its operation
+    // just before it: the anchor a command starts with, or a steer.
+    let mut latest_user = HashMap::new();
     let mut annotations = HashMap::new();
+    let mut annotated = HashSet::new();
     let mut receipted = HashSet::new();
     let mut checkpoint: Option<ActivatedCheckpoint> = None;
     for event in events {
@@ -158,6 +162,9 @@ pub(crate) fn context_input(
                     event.sequence
                 )));
             }
+            if matches!(message, Message::User { .. }) {
+                latest_user.insert(event.operation_id, event.sequence);
+            }
             entries.push((
                 ContextOrigin::new(event.operation_id, event.sequence),
                 message,
@@ -169,12 +176,18 @@ pub(crate) fn context_input(
             )));
         } else if receipts::mark(event, &mut receipted)? {
         } else if let Some(annotation) = decode_annotation(event)? {
-            if annotations.insert(event.operation_id, annotation).is_some() {
+            let Some(&sequence) = latest_user.get(&event.operation_id) else {
                 return Err(LoopError::new(format!(
-                    "operation {} has more than one turn timing or context event",
+                    "operation {} has turn timing or context before any user message",
                     event.operation_id
                 )));
+            };
+            if annotations.insert(sequence, annotation).is_some() {
+                return Err(LoopError::new(format!(
+                    "user message {sequence} has more than one turn timing or context event"
+                )));
             }
+            annotated.insert(event.operation_id);
         } else if event.kind == CONTEXT_CHECKPOINT_EVENT_KIND {
             checkpoint = Some(activated_checkpoint(
                 event,
@@ -202,7 +215,7 @@ pub(crate) fn context_input(
             })?;
         }
     }
-    receipts::unannotated(&receipted, &annotations)?;
+    receipts::unannotated(&receipted, &annotated)?;
     let entries = receipts::replace(
         entries,
         &receipted,
@@ -210,7 +223,7 @@ pub(crate) fn context_input(
         strategy,
         checkpoint.as_mut(),
     )?;
-    finish_context_input(
+    Ok(ContextInput::new(
         active_operation_id,
         entries,
         &annotations,
@@ -218,7 +231,7 @@ pub(crate) fn context_input(
         system_prompt,
         tools,
         compaction_required,
-    )
+    ))
 }
 
 /// The checkpoint `event` activates: a nonempty summary through an earlier
@@ -289,45 +302,4 @@ fn decode_annotation(event: &SemanticEvent) -> Result<Option<TurnAnnotation>, Lo
         }
     }
     Ok(None)
-}
-
-fn finish_context_input(
-    active_operation_id: renoa_kernel::OperationId,
-    entries: Vec<(ContextOrigin, Message)>,
-    annotations: &HashMap<renoa_kernel::OperationId, TurnAnnotation>,
-    checkpoint: Option<ActivatedCheckpoint>,
-    system_prompt: &str,
-    tools: &[ToolSpec],
-    compaction_required: bool,
-) -> Result<ContextInput, LoopError> {
-    validate_annotations(&entries, annotations)?;
-    Ok(ContextInput::new(
-        active_operation_id,
-        entries,
-        annotations,
-        checkpoint,
-        system_prompt,
-        tools,
-        compaction_required,
-    ))
-}
-
-fn validate_annotations(
-    entries: &[(ContextOrigin, Message)],
-    annotations: &HashMap<renoa_kernel::OperationId, TurnAnnotation>,
-) -> Result<(), LoopError> {
-    for operation_id in annotations.keys() {
-        let user_messages = entries
-            .iter()
-            .filter(|(origin, message)| {
-                origin.operation_id() == *operation_id && matches!(message, Message::User { .. })
-            })
-            .count();
-        if user_messages != 1 {
-            return Err(LoopError::new(format!(
-                "operation {operation_id} turn timing or context does not belong to exactly one user message"
-            )));
-        }
-    }
-    Ok(())
 }

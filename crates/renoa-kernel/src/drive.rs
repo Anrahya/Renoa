@@ -320,6 +320,11 @@ impl Kernel {
                 }
             }
         }
+        let steers = crate::steering::pending_steers(
+            &self.database.connection()?,
+            session_id,
+            active.command.command_id(),
+        )?;
         Ok(LoopInput {
             agent_id: active.agent_id,
             session_id,
@@ -329,6 +334,7 @@ impl Kernel {
             events,
             checkpoint: active.checkpoint.clone(),
             effect_batch,
+            steers,
         })
     }
 

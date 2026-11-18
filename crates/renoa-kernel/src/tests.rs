@@ -6,6 +6,7 @@ use std::sync::{
 use tempfile::tempdir;
 
 mod request_release;
+mod steering;
 
 use crate::{
     AgentId, CancellationId, CancellationInput, CancellationTransition, Checkpoint, Command,

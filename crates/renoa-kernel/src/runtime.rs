@@ -6,8 +6,8 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentId, CancellationInput, CancellationTransition, Command, EffectBatchId, EffectId,
-    KernelError, OperationId, SemanticEvent, SessionId,
+    AgentId, CancellationInput, CancellationTransition, Command, CommandId, EffectBatchId,
+    EffectId, KernelError, OperationId, SemanticEvent, SessionId,
 };
 
 /// Opaque loop-owned durable state.
@@ -209,6 +209,9 @@ pub struct LoopInput {
     pub events: Vec<SemanticEvent>,
     pub checkpoint: Option<Checkpoint>,
     pub effect_batch: Option<SettledEffectBatch>,
+    /// Steers recorded for this operation and not yet accepted, in the order
+    /// recorded. [`LoopDecision::AcceptSteers`] takes them in.
+    pub steers: Vec<Command>,
 }
 
 /// A plugin failure that left the durable decision state unchanged.
@@ -289,6 +292,13 @@ pub enum LoopDecision {
         checkpoint: Checkpoint,
         events: Vec<NewEvent>,
     },
+    /// Appends `events`, which carry `steers`, marks those steers accepted
+    /// in the same commit, and continues.
+    AcceptSteers {
+        checkpoint: Checkpoint,
+        events: Vec<NewEvent>,
+        steers: Vec<CommandId>,
+    },
     WaitForInput {
         checkpoint: Checkpoint,
         events: Vec<NewEvent>,
@@ -309,6 +319,7 @@ impl LoopDecision {
         match self {
             Self::InvokeEffects { checkpoint, .. }
             | Self::AppendEventsAndContinue { checkpoint, .. }
+            | Self::AcceptSteers { checkpoint, .. }
             | Self::WaitForInput { checkpoint, .. }
             | Self::Complete { checkpoint, .. }
             | Self::Fail { checkpoint, .. } => checkpoint,

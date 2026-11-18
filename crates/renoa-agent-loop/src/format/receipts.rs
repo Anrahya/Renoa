@@ -8,16 +8,13 @@
 //! moves to that end, since the summary it activated already covers the part
 //! before it. The operation being prepared always sees its own exchange.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use renoa_agent::Message;
 use renoa_kernel::{LoopError, OperationId, SemanticEvent};
 
 use super::{RECEIPTED_EVENT_KIND, RECEIPTED_EVENT_PREFIX};
-use crate::{
-    context::{ActivatedCheckpoint, ContextOrigin, ContextStrategy},
-    turn_context::TurnAnnotation,
-};
+use crate::context::{ActivatedCheckpoint, ContextOrigin, ContextStrategy};
 
 /// Whether `event` is a receipted marker, recording its operation in
 /// `receipted`. An operation is marked once, and only this version is known.
@@ -47,11 +44,11 @@ pub(super) fn mark(
 /// prompt carries neither.
 pub(super) fn unannotated(
     receipted: &HashSet<OperationId>,
-    annotations: &HashMap<OperationId, TurnAnnotation>,
+    annotated: &HashSet<OperationId>,
 ) -> Result<(), LoopError> {
     if receipted
         .iter()
-        .any(|operation| annotations.contains_key(operation))
+        .any(|operation| annotated.contains(operation))
     {
         return Err(LoopError::new(
             "a receipted operation cannot carry turn timing or context",

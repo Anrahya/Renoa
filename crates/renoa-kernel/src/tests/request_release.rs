@@ -188,6 +188,7 @@ async fn schema_three_releases_finished_requests_and_reclaims_their_space() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE steer_requests;
              DROP TRIGGER release_finished_effect_requests;
              DROP VIEW finished_effect_requests;
              ALTER TABLE effects RENAME TO effects_v4;
@@ -252,7 +253,7 @@ async fn schema_three_releases_finished_requests_and_reclaims_their_space() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("read upgraded storage");
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(free, 0, "the released space is returned");
     assert!(pages < pages_before, "{pages} pages, {pages_before} before");
 }

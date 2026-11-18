@@ -80,7 +80,7 @@ impl ContextInput {
     pub(crate) fn new(
         active_operation_id: OperationId,
         entries: Vec<(ContextOrigin, Message)>,
-        annotations: &HashMap<OperationId, TurnAnnotation>,
+        annotations: &HashMap<u64, TurnAnnotation>,
         checkpoint: Option<ActivatedCheckpoint>,
         system_prompt: &str,
         tools: &[ToolSpec],
@@ -89,7 +89,7 @@ impl ContextInput {
         let (origins, messages) = entries
             .into_iter()
             .map(|(origin, message)| {
-                let message = match annotations.get(&origin.operation_id) {
+                let message = match annotations.get(&origin.sequence) {
                     Some(annotation) => annotation.append_to(&message),
                     None => message,
                 };
