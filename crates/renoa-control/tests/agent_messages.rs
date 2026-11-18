@@ -542,6 +542,107 @@ fn refusals<'a>(
     ]
 }
 
+/// A message admitted before deliveries moved into the owner's chat sits in a
+/// task of its own; its exact retry still converges on it.
+#[tokio::test]
+async fn a_retry_converges_on_a_message_stored_in_an_earlier_task() {
+    let mut world = World::start().await;
+    let id = CommandId::new();
+    world.message_research(world.asked, id, "Ask once.").await;
+    let ServerMessage::Execute { task_id, .. } = receive(&mut world.research).await else {
+        panic!("Research should receive the message");
+    };
+    acknowledge(&mut world.research, task_id, id).await;
+    let earlier = TaskId::new();
+    world
+        .system
+        .create_task(earlier, world.research_node, RESEARCH)
+        .await;
+    world
+        .system
+        .database()
+        .execute(
+            "UPDATE commands SET task_id = ?1 WHERE command_id = ?2",
+            [earlier.to_string(), id.to_string()],
+        )
+        .expect("move the message");
+
+    let before = world.system.footprint();
+    assert_eq!(
+        world.message_research(world.asked, id, "Ask once.").await,
+        ServerMessage::CommandAccepted {
+            request_id: 7,
+            command_id: id,
+        }
+    );
+    assert_eq!(world.system.footprint(), before, "the retry added nothing");
+    world.system.stop().await;
+}
+
+/// An identity already bound to another agent is refused before anything is
+/// written.
+#[tokio::test]
+async fn a_chat_identity_bound_elsewhere_is_refused_without_residue() {
+    let mut world = World::start().await;
+    world
+        .system
+        .create_task(
+            app_chat_task_id(world.research_node, RESEARCH),
+            world.desk_node,
+            DESK,
+        )
+        .await;
+    let before = world.system.footprint();
+    let ServerMessage::Error { code, message, .. } = world
+        .message_research(world.asked, CommandId::new(), "What is the answer?")
+        .await
+    else {
+        panic!("the message is refused");
+    };
+    assert_eq!(code, ErrorCode::Conflict);
+    assert_worded_for_an_agent("a chat identity in use", &message);
+    assert_eq!(world.system.footprint(), before, "the refusal left residue");
+    world.system.stop().await;
+}
+
+/// The coordinator opens the chat for a message that arrives first; an app
+/// opening it afterwards converges on it, even with the agent's node offline.
+#[tokio::test]
+async fn an_app_opening_the_chat_after_a_message_converges_on_it() {
+    let mut world = World::start().await;
+    let message = CommandId::new();
+    world
+        .message_research(world.asked, message, "What is the answer?")
+        .await;
+    let chat = app_chat_task_id(world.research_node, RESEARCH);
+    disconnect(&mut world.research).await;
+    wait_for_targets(&mut world.surface, 1).await;
+    send(
+        &mut world.surface,
+        &ClientMessage::OpenTask {
+            request_id: 3,
+            task_id: chat,
+            node_id: world.research_node,
+            target: TargetRef::new(RESEARCH),
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut world.surface).await,
+        ServerMessage::TaskOpened {
+            request_id: 3,
+            task_id: chat,
+        }
+    );
+    let replayed = attach_all(&mut world.surface, chat).await;
+    assert!(matches!(
+        &replayed[..],
+        [TaskEvent { kind: TaskEventKind::CommandSubmitted { command }, .. }]
+            if command.command_id == message
+    ));
+    world.system.stop().await;
+}
+
 #[tokio::test]
 async fn a_refused_message_leaves_no_task_command_or_record() {
     let mut world = World::start().await;

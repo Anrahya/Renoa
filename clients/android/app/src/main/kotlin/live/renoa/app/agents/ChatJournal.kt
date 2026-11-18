@@ -54,6 +54,9 @@ internal class ChatJournal {
     private val recorded = HashMap<Uuid, Int>()
     private var latestCommand: Uuid? = null
 
+    /** Every command in the order the journal admitted it, which is the order the node runs them in. */
+    private val submitted = mutableListOf<Uuid>()
+
     /** Messages the owner sent that the coordinator has not admitted yet, by command. */
     private val unsent = LinkedHashMap<Uuid, Outgoing>()
 
@@ -85,6 +88,7 @@ internal class ChatJournal {
                         else -> ChatMessage(id, Speaker.Owner, input.text, attachments = input.attachments)
                     }
                 latestCommand = kind.command.commandId
+                submitted += kind.command.commandId
                 doing = null
                 unsent.remove(kind.command.commandId)
                 notSent.remove(kind.command.commandId)
@@ -123,11 +127,11 @@ internal class ChatJournal {
     fun live(commandId: Uuid, activity: LiveActivity) {
         if (commandId in terminals) return
         if (activity is LiveActivity.Activity) {
-            if (latestCommand != null && commandId != latestCommand) return
+            if (running.let { it != null && commandId != it }) return
             doing = sanitizeActivity(activity.text)
             return
         }
-        if (activity is LiveActivity.TextReset && (latestCommand == null || commandId == latestCommand)) {
+        if (activity is LiveActivity.TextReset && running.let { it == null || commandId == it }) {
             doing = null
         }
         val current = draft?.takeIf { it.commandId == commandId }
@@ -205,9 +209,13 @@ internal class ChatJournal {
             }
         }
 
-    /** The command a stop would end: the latest one, while it runs. */
+    /**
+     * The command a stop would end: the one the node is running or runs next. Commands run one at a
+     * time in the order they were admitted, so it is the first after the last one that ended; another
+     * agent's message can queue behind it, and stopping must not reach that one instead.
+     */
     val running: Uuid?
-        get() = latestCommand?.takeIf { it !in terminals }
+        get() = submitted.subList(submitted.indexOfLast { it in terminals } + 1, submitted.size).firstOrNull()
 
     val glance: Glance
         get() {

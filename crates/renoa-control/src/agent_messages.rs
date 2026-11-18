@@ -262,19 +262,25 @@ fn admit_in(
     };
     // A durable admission outranks today's availability, and a rename since,
     // so an uncertain retry observes its original result.
+    // The stored task is compared by its binding, not its identity, so a
+    // message admitted under an earlier derivation still converges.
     if let Some((stored, stored_task, pending)) = stored_message(transaction, message.message_id)? {
         let stored_name = stored
             .origin
             .as_ref()
             .map(|origin| origin.name.clone())
             .unwrap_or_default();
-        if stored != command_with(stored_name) || stored_task != task_id.to_string() {
+        let stored_task = TaskId::from_uuid(stored_task.parse().map_err(id_error)?);
+        let bound = load_task(transaction, stored_task)?;
+        if stored != command_with(stored_name)
+            || (bound.node_id, &bound.target) != (message.to_node, &message.to_target)
+        {
             return Err(ControlError::conflict(
                 "That message was already sent with different content. Send the new content as a new message.",
             ));
         }
         return Ok(MessageAdmission::Existing {
-            task_id,
+            task_id: stored_task,
             from_task,
             command: stored,
             pending,

@@ -197,8 +197,10 @@ These decisions define RCP and are not ordinary implementation details:
     ordinary command, carrying its origin, in the owner's conversation with the
     receiving agent: the task every app of the owner opens for that agent,
     which the coordinator opens in the same transaction when no app has yet.
-    The receiving agent answers with that conversation in context, and the
-    owner sees the message there under the sender's name. The answer is
+    The receiving agent answers with that conversation in context, so its
+    answer can draw on what the owner said there; only agents of the same
+    owner can message it. The owner sees the message there under the sender's
+    name. The answer is
     admitted in the asker's task by the transaction that records the end of the
     message's execution, so a retried batch cannot answer twice and a lost
     connection cannot lose it. Only a message continues an exchange; an answer
@@ -713,6 +715,10 @@ decisions.
   an agent, from any agent, lands in that one conversation, beside the owner's
   own. The coordinator opens it in the transaction that admits the command
   when no app opened it first, and an app's later `OpenTask` converges on it.
+  The derivation is the apps' convention, held once in the wire crate; an app
+  that derived its chat differently would not show the messages its agent
+  received, though they would still be delivered and answered. A message stored
+  in an earlier task under the same agent still converges on an exact retry.
   Every refusal runs before the first write and leaves no task, command, or
   record.
 - **Origin.** The command's surface is `agent`. Its `origin` names the sending

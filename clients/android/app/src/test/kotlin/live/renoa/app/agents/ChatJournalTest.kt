@@ -116,6 +116,25 @@ class ChatJournalTest {
         assertNull(chat.running)
     }
 
+    /** Another agent's message queues behind the owner's running turn: stop and the activity line stay on the owner's turn. */
+    @Test
+    fun aMessageQueuedBehindTheRunningTurnDoesNotTakeItsStopOrActivity() {
+        val message = Uuid.random()
+        record(journal.submitted(command, "Plan dinner."))
+        record(journal.executed(command, ExecutionEventKind.TurnStarted))
+        record(journal.submitted(message, "Got a film?", surface = "agent", origin = AgentOrigin("Media Centre", AgentMessageKind.Request)))
+        assertEquals(command, chat.running, "the owner's turn is the one running")
+
+        chat.live(command, LiveActivity.Activity("Checking the fridge"))
+        chat.live(message, LiveActivity.Activity("Not started"))
+        assertEquals("Checking the fridge", chat.glance.doing)
+
+        record(journal.ended(command))
+        assertEquals(message, chat.running, "then the message runs")
+        record(journal.ended(message))
+        assertNull(chat.running)
+    }
+
     @Test
     fun aFailedTurnLeavesTheAgentStuckAndACancelledOneLeavesItResting() {
         record(journal.submitted(command, "go"))
@@ -281,13 +300,15 @@ class ChatJournalTest {
     }
 
     @Test
-    fun textDeltaAndResetStillUpdateForAnOlderRunningCommandWhileActivityStaysOnLatest() {
+    fun theOlderRunningCommandKeepsItsTextAndActivityWhileTheNextWaits() {
         val next = Uuid.random()
         record(journal.submitted(command, "first"))
         record(journal.submitted(next, "second"))
 
-        chat.live(command, LiveActivity.Activity("From older"))
+        chat.live(next, LiveActivity.Activity("From the queued one"))
         assertNull(chat.glance.doing)
+        chat.live(command, LiveActivity.Activity("From older"))
+        assertEquals("From older", chat.glance.doing)
 
         delta(0, "Earlier reply")
         assertEquals(StreamingReply("$command-0", "Earlier reply"), chat.conversation.streaming)

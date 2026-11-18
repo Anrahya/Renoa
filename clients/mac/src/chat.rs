@@ -124,8 +124,16 @@ impl Transcript {
                     author,
                     ..
                 } = &command.input;
-                self.latest_command = Some(command.command_id);
-                self.doing = None;
+                // Commands run one at a time in the order they arrive, so one
+                // that comes in while another runs, such as another agent's
+                // message, waits: the running one keeps its activity.
+                if self
+                    .latest_command
+                    .is_none_or(|latest| self.terminated.contains(&latest))
+                {
+                    self.latest_command = Some(command.command_id);
+                    self.doing = None;
+                }
                 // Each is new until its time says otherwise.
                 if let Some(origin) = &command.origin {
                     // Shown even when quiet, so the agent's answer reads as one.

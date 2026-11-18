@@ -351,3 +351,55 @@ fn transcript_tracks_plain_activity_from_tools_and_live_frames_and_clears_it() {
     ));
     assert_eq!(transcript.doing(), None);
 }
+
+#[test]
+fn a_message_queued_behind_the_running_turn_leaves_it_its_activity() {
+    use renoa_protocol::{CommandId, ExecutionEvent, ExecutionEventId, ExecutionId, LiveActivity};
+    use renoa_rcp_wire::{TaskEvent, TaskEventId, TaskEventKind};
+
+    let task_id = TaskId::new();
+    let running = CommandId::new();
+    let started = TaskEvent {
+        event_id: TaskEventId::new(),
+        task_id,
+        sequence: 1,
+        kind: TaskEventKind::ExecutionEvent {
+            command_id: running,
+            event: ExecutionEvent {
+                event_id: ExecutionEventId::new(),
+                execution_id: ExecutionId::new(),
+                sequence: 1,
+                recorded_at_ms: MINUTE_MS,
+                kind: ExecutionEventKind::TurnStarted,
+            },
+        },
+    };
+    let mut transcript = Transcript::default();
+    transcript.apply(
+        &said(task_id, 0, CommandInput::from_text("Plan dinner.")),
+        0,
+    );
+    transcript.apply(&started, 0);
+    let doing = LiveActivity::Activity {
+        text: "Checking the fridge".to_owned(),
+    };
+    assert!(transcript.apply_live(running, &doing));
+    transcript.apply(
+        &from_agent(
+            task_id,
+            2,
+            "Media Centre",
+            AgentMessageKind::Request,
+            "Got a film?",
+        ),
+        0,
+    );
+    assert_eq!(transcript.doing(), Some("Checking the fridge"));
+    let more = LiveActivity::Activity {
+        text: "Reading the recipe".to_owned(),
+    };
+    assert!(
+        transcript.apply_live(running, &more),
+        "the queued message does not take the running turn's activity"
+    );
+}

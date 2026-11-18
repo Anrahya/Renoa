@@ -12,7 +12,9 @@ const MAX_NAME_BYTES: usize = 100;
 
 /// Who the Host treats as speaking `command`. Another agent's message talks to
 /// no person, so it runs with every tool and no `USER.md`, never with the
-/// owner's.
+/// owner's. It runs in the owner's conversation with this agent, so the
+/// history it reads, and the answer the sender gets, can hold what the owner
+/// said there.
 pub(crate) fn speaker(command: &CommandEnvelope) -> Speaker {
     match (&command.origin, command.input.author()) {
         (Some(_), _) => Speaker::Unidentified,
