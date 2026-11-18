@@ -70,46 +70,14 @@ impl NodeRuntime {
                 "session_id": record.binding.session_id,
             }),
         );
-        let Prepared {
+        let Some(Prepared {
             session,
             workspace,
             synthetic_tools,
-        } = match self.prepare(&record, agent_id).await {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.finish_failed(command_id, error).await?;
-                return Ok(());
-            }
-        };
-        // A steer the turn before it took in has no turn of its own: its
-        // message is part of that turn, so it ends as completed with no reply.
-        if record.command.input.steer()
-            && session
-                .steered(command_id.as_uuid())
-                .map_err(|error| NodeError::Task(format!("Host steer state failed: {error}")))?
-        {
-            self.finish_unstarted(
-                command_id,
-                vec![ExecutionEventKind::ExecutionTerminated {
-                    terminal: ExecutionTerminal::Completed,
-                }],
-            )
-            .await?;
+            content,
+        }) = self.open_turn(&record, agent_id, request).await?
+        else {
             return Ok(());
-        }
-        let content = match request {
-            Request::Turn => match turn_content(&self.host, &record.command, &workspace).await {
-                Ok(content) => content,
-                Err(error) => {
-                    self.finish_failed(
-                        command_id,
-                        format!("An attached file could not be given to the agent: {error}"),
-                    )
-                    .await?;
-                    return Ok(());
-                }
-            },
-            Request::Compact => Vec::new(),
         };
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
@@ -139,12 +107,7 @@ impl NodeRuntime {
             cancellation,
         );
         let offers = self.offer_steers(command_id, &session, &workspace, steers);
-        tokio::pin!(run, offers);
-        let result = tokio::select! {
-            biased;
-            result = &mut run => result,
-            () = &mut offers => run.await,
-        }?;
+        let result = while_offering(run, offers).await?;
         // A setup link that could not be delivered stopped the turn; its
         // reason is the command's outcome. The turn has settled (a tool runs
         // to its end even when cancelled), so every setup its calls saved is
@@ -177,8 +140,52 @@ impl NodeRuntime {
         Ok(())
     }
 
-    /// Opens the command's session and gathers what its turn receives. The
-    /// workspace call also refuses an agent that no longer exists, which ends
+    /// Opens the turn of `record`, or ends the command before any turn runs
+    /// and returns `None`: as failed when it cannot run, or as completed when
+    /// the turn before it took it in as a steer. Its message is then part of
+    /// that turn, so it has no reply of its own.
+    async fn open_turn(
+        &self,
+        record: &ExecutionRecord,
+        agent_id: AgentId,
+        request: Request,
+    ) -> Result<Option<Prepared>, NodeError> {
+        let command_id = record.command.command_id;
+        let mut prepared = match self.prepare(record, agent_id).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.finish_failed(command_id, error).await?;
+                return Ok(None);
+            }
+        };
+        if record.command.input.steer()
+            && prepared
+                .session
+                .steered(command_id.as_uuid())
+                .map_err(|error| NodeError::Task(format!("Host steer state failed: {error}")))?
+        {
+            let completed = ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            };
+            self.finish_unstarted(command_id, vec![completed]).await?;
+            return Ok(None);
+        }
+        if request == Request::Turn {
+            match turn_content(&self.host, &record.command, &prepared.workspace).await {
+                Ok(content) => prepared.content = content,
+                Err(error) => {
+                    let error =
+                        format!("An attached file could not be given to the agent: {error}");
+                    self.finish_failed(command_id, error).await?;
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(prepared))
+    }
+
+    /// Opens the command's session and finds its agent's files and the tools
+    /// whose calls show as activity. The workspace call also refuses an agent that no longer exists, which ends
     /// the execution as failed, with the returned reason, instead of stopping
     /// the node.
     async fn prepare(
@@ -208,6 +215,7 @@ impl NodeRuntime {
             session,
             workspace,
             synthetic_tools,
+            content: Vec::new(),
         })
     }
 
@@ -253,12 +261,14 @@ impl NodeRuntime {
     }
 }
 
-/// The session a command runs on, where its agent's files are, and the tools
-/// whose calls show as activity.
+/// The session a command runs on, where its agent's files are, the tools
+/// whose calls show as activity, and what its turn receives (nothing for a
+/// compaction).
 struct Prepared {
     session: Arc<AgentSession>,
     workspace: PathBuf,
     synthetic_tools: HashSet<String>,
+    content: Vec<ContentBlock>,
 }
 
 /// What the agent receives for a turn: the command's text, then each attached
@@ -289,6 +299,17 @@ pub(crate) async fn turn_content(
         );
     }
     Ok(content)
+}
+
+/// Awaits `run` while `offers` hands steers to its turn. Offers end when the
+/// run does; an offer cut short is settled by the steer's own place in the queue.
+async fn while_offering<T>(run: impl Future<Output = T>, offers: impl Future<Output = ()>) -> T {
+    tokio::pin!(run, offers);
+    tokio::select! {
+        biased;
+        result = &mut run => result,
+        () = &mut offers => run.await,
+    }
 }
 
 /// Runs one admitted command on its session. A turn observes when its text was

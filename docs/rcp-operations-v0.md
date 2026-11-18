@@ -439,6 +439,14 @@ A command that another agent caused carries an `origin` (see
 `SendAgentMessage`). The adapter decides how its agent is told who the message
 is from; RCP gives the origin no other meaning.
 
+A command whose text input is marked `steer` asks to join the turn running on
+its task (`rcp-v0.md`, locked decision 28). The node admits and acknowledges it
+like any command. The Renoa node also offers it to the running turn when both
+are the principal's own messages, and offers again after a restart; the Host
+keeps the first record. When the steer's own place in the queue comes, the node
+ends it `completed` with no other records if the turn took it in, and runs it
+as its own turn otherwise. The Pi node runs every steer as its own turn.
+
 The receiving adapter resolves the task's harness configuration locally. RCP
 does not carry or interpret an agent identifier, instructions, model selection,
 tools, or capability policy. The Rust and Pi adapters consume this same
@@ -743,8 +751,7 @@ correlation value is a binding concern.
 ## Deliberately undefined
 
 Task-list pagination, live directory and target updates, user-facing task
-metadata, a waiting-on-owner task status, a next-wake time, steering,
-approvals, task rebinding, executor generations, snapshots, artifact transfer,
+metadata, a waiting-on-owner task status, a next-wake time, approvals, task rebinding, executor generations, snapshots, artifact transfer,
 and live activity beyond visible text are not operations yet. Harness provisioning and permission policy stay outside RCP. A generic
 durable interaction flow for approval responses remains undefined until a
 harness and surface consume it. An agent's question to its owner is not one:

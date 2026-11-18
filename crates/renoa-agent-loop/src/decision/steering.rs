@@ -5,6 +5,8 @@
 //! history, so nothing may join it while that call runs. Each accepted steer
 //! becomes a user message of this operation, with its own time and context.
 
+use std::num::NonZeroU32;
+
 use renoa_agent::Message;
 use renoa_kernel::{LoopDecision, LoopError, LoopInput};
 
@@ -15,16 +17,31 @@ use crate::{
     },
 };
 
+/// What happens before the operation's next model call, if not the call:
+/// failing at the turn limit, or else taking pending steers in. The limit
+/// comes first, so a failing operation leaves its steers to run on their own.
+pub(super) fn before_model_call(
+    max_model_turns: Option<NonZeroU32>,
+    model_turns: u32,
+    input: &LoopInput,
+) -> Result<Option<LoopDecision>, LoopError> {
+    if let Some(limit) = max_model_turns.filter(|limit| model_turns >= limit.get()) {
+        return Ok(Some(LoopDecision::Fail {
+            checkpoint: checkpoint(LoopPhase::Terminal)?,
+            events: Vec::new(),
+            reason: format!("model exceeded the configured turn limit of {limit}"),
+        }));
+    }
+    accept_steers(model_turns, input)
+}
+
 /// The decision that takes `input`'s pending steers in, if any can be.
 ///
 /// An operation started by a receipted prompt or by a control command takes
 /// none: its exchange is replaced or never shown, and the steer would vanish
 /// with it. A steer that is not a person's prompt stays pending, so the Host
 /// runs it as its own command once this operation ends.
-pub(super) fn accept_steers(
-    model_turns: u32,
-    input: &LoopInput,
-) -> Result<Option<LoopDecision>, LoopError> {
+fn accept_steers(model_turns: u32, input: &LoopInput) -> Result<Option<LoopDecision>, LoopError> {
     if input.steers.is_empty() || !takes_steers(input)? {
         return Ok(None);
     }

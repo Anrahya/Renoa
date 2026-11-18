@@ -38,9 +38,9 @@ impl LocalSession {
         match self.kernel.request_steer(self.session_id, target, command) {
             Ok(state) => Ok(state),
             // Recorded between the read above and this write.
-            Err(KernelError::SteerConflict { .. }) => self
-                .steer_state(steer)?
-                .ok_or_else(|| KernelError::Corrupt("a conflicting steer is absent".to_owned()).into()),
+            Err(KernelError::SteerConflict { .. }) => self.steer_state(steer)?.ok_or_else(|| {
+                KernelError::Corrupt("a conflicting steer is absent".to_owned()).into()
+            }),
             Err(error) => Err(error.into()),
         }
     }

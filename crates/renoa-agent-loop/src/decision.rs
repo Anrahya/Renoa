@@ -113,18 +113,9 @@ impl AgentLoop {
                 "a model-ready checkpoint cannot have a settled effect",
             ));
         }
-        if let Some(limit) = self
-            .config
-            .max_model_turns
-            .filter(|limit| model_turns >= limit.get())
+        if let Some(decision) =
+            steering::before_model_call(self.config.max_model_turns, model_turns, input)?
         {
-            return Ok(LoopDecision::Fail {
-                checkpoint: checkpoint(LoopPhase::Terminal)?,
-                events: Vec::new(),
-                reason: format!("model exceeded the configured turn limit of {limit}"),
-            });
-        }
-        if let Some(decision) = steering::accept_steers(model_turns, input)? {
             return Ok(decision);
         }
         match self.prepare_context(input.operation_id, &input.events, false)? {
