@@ -925,6 +925,45 @@ http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
     assert_eq!(resp["env_port"], started.port.to_string());
 }
 
+#[test]
+fn host_addresses_come_from_fib_trie_without_a_netlink_socket() {
+    let sample = "Main:
+  +-- 0.0.0.0/0 3 0 5
+     |-- 0.0.0.0
+        /0 universe UNICAST
+     +-- 192.168.1.0/24 2 0 2
+        |-- 192.168.1.0
+           /24 link UNICAST
+        |-- 192.168.1.7
+           /32 host LOCAL
+Local:
+  +-- 100.64.0.0/10 4 0 11
+     |-- 100.78.152.5
+        /32 host LOCAL
+     |-- 100.100.100.100
+        /32 link UNICAST
+";
+    let found: Vec<String> = super::sandbox::local_addresses(sample)
+        .into_iter()
+        .map(|ip| ip.to_string())
+        .collect();
+    assert_eq!(found, ["100.78.152.5", "192.168.1.7"]);
+
+    // On this machine the trie names the same addresses getifaddrs does.
+    let trie = fs::read_to_string("/proc/net/fib_trie").expect("fib_trie");
+    let from_trie = super::sandbox::local_addresses(&trie);
+    let from_interfaces: std::collections::BTreeSet<_> = nix::ifaddrs::getifaddrs()
+        .expect("getifaddrs")
+        .filter_map(|interface| {
+            interface
+                .address?
+                .as_sockaddr_in()
+                .map(nix::sys::socket::SockaddrIn::ip)
+        })
+        .collect();
+    assert_eq!(from_trie, from_interfaces);
+}
+
 /// One IPv4 address the host holds outside loopback, for egress probes.
 fn host_non_loopback_ipv4() -> Option<std::net::Ipv4Addr> {
     nix::ifaddrs::getifaddrs()

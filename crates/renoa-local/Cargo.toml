@@ -17,7 +17,7 @@ getrandom.workspace = true
 globset.workspace = true
 jiff.workspace = true
 mnem.workspace = true
-nix = { workspace = true, features = ["dir", "fs", "net", "user"] }
+nix = { workspace = true, features = ["dir", "fs", "user"] }
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
 renoa-agent-loop = { path = "../renoa-agent-loop", version = "0.1.0" }
 renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol", version = "0.1.0" }
@@ -43,6 +43,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+# getifaddrs, to check the addresses read from /proc/net/fib_trie.
+nix = { workspace = true, features = ["net"] }
 renoa-control = { path = "../renoa-control", version = "0.1.0" }
 renoa-rcp-wire = { path = "../renoa-rcp-wire", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
