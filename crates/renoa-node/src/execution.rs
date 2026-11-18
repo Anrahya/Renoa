@@ -383,8 +383,9 @@ pub(crate) async fn schedule_pending(
     tasks: &mut JoinSet<ExecutionTask>,
     running_tasks: &mut RunningTasks,
 ) -> Result<(), NodeError> {
+    let mut held = HashSet::new();
     for record in runtime.state.load_unfinished().await? {
-        if running_tasks.queue_behind(&record) {
+        if running_tasks.queue_behind(&record, &mut held) {
             continue;
         }
         let task_id = record.task_id;

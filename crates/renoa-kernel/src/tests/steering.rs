@@ -28,9 +28,9 @@ fn command(text: &str) -> Command {
     Command::new(CommandId::new(), serde_json::json!({ "text": text }))
 }
 
-/// Runs one effect, then completes. Before each decision it accepts every
-/// pending steer, so a steer recorded while the effect runs reaches the next
-/// decision.
+/// Runs one effect and records that it settled, then completes. Pending
+/// steers are accepted at any decision with no settled effect waiting, so a
+/// steer recorded while the effect runs reaches the decision after it.
 struct SteeredLoop;
 
 impl LoopPlugin for SteeredLoop {
@@ -40,6 +40,12 @@ impl LoopPlugin for SteeredLoop {
             .as_ref()
             .and_then(|checkpoint| checkpoint.state()["step"].as_u64())
             .unwrap_or(0);
+        if input.effect_batch.is_some() {
+            return Ok(LoopDecision::AppendEventsAndContinue {
+                checkpoint: Checkpoint::new(1, serde_json::json!({ "step": 2 })),
+                events: vec![NewEvent::new("settled", serde_json::json!(true))],
+            });
+        }
         if !input.steers.is_empty() {
             return Ok(LoopDecision::AcceptSteers {
                 checkpoint: Checkpoint::new(1, serde_json::json!({ "step": step })),
@@ -62,7 +68,7 @@ impl LoopPlugin for SteeredLoop {
             });
         }
         Ok(LoopDecision::Complete {
-            checkpoint: Checkpoint::new(1, serde_json::json!({ "step": 2 })),
+            checkpoint: Checkpoint::new(1, serde_json::json!({ "step": 3 })),
             events: vec![NewEvent::new("done", serde_json::json!(true))],
         })
     }
@@ -145,6 +151,7 @@ async fn a_steer_recorded_during_an_effect_reaches_the_next_decision() {
     assert_eq!(
         kinds,
         vec![
+            ("settled".to_owned(), serde_json::json!(true)),
             (
                 "steer".to_owned(),
                 serde_json::json!({ "text": "make it shorter" })
@@ -386,4 +393,71 @@ fn schema_four_gains_the_table_of_steers() {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version");
     assert_eq!(version, 5);
+}
+
+/// Runs one effect, then tries to accept steers instead of deciding on it.
+struct SkippingLoop;
+
+impl LoopPlugin for SkippingLoop {
+    fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
+        if input.effect_batch.is_none() {
+            return Ok(LoopDecision::InvokeEffects {
+                checkpoint: Checkpoint::new(1, serde_json::json!({ "step": 1 })),
+                effects: vec![EffectRequest {
+                    binding: "work".to_owned(),
+                    request: serde_json::json!({}),
+                    recovery: EffectRecovery::SafeToReplay,
+                }],
+            });
+        }
+        Ok(LoopDecision::AcceptSteers {
+            checkpoint: Checkpoint::new(1, serde_json::json!({ "step": 1 })),
+            events: vec![NewEvent::new("steer", serde_json::json!({}))],
+            steers: input.steers.iter().map(Command::command_id).collect(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_settled_effect_is_decided_on_before_any_steer_is_accepted() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let session_id = session(&kernel);
+    let target = command("target");
+    kernel
+        .submit_exclusive(session_id, target.clone())
+        .expect("submit");
+    let steer = command("steer");
+    kernel
+        .request_steer(session_id, target.command_id(), steer.clone())
+        .expect("record steer");
+    let release = Arc::new(Notify::new());
+    release.notify_one();
+    let runtime = Runtime::new(
+        LoopBinding::new("skipping-loop", "1", Arc::new(SkippingLoop)),
+        1,
+        "skipping-config-1",
+        vec![EffectBinding::new(
+            "work",
+            "1",
+            Arc::new(GatedAdapter {
+                started: Arc::new(Notify::new()),
+                release,
+            }),
+        )],
+    )
+    .expect("valid runtime");
+
+    // Without the refusal the loop would accept, rerun its effect and repeat.
+    let driven = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        kernel.drive(session_id, &runtime),
+    )
+    .await
+    .expect("the refusal ends the drive");
+    assert!(matches!(driven, Err(KernelError::InvalidDecision(_))));
+    assert_eq!(
+        kernel.steer_state(steer.command_id()).expect("state"),
+        Some(SteerState::Pending)
+    );
 }

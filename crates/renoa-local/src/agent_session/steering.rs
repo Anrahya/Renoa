@@ -15,7 +15,10 @@ impl AgentSession {
     /// joins that turn before its next model call, with the context a message
     /// of `speaker` gets.
     ///
-    /// The caller decides that `speaker` may steer that turn. An offer of a
+    /// The caller decides that `speaker` may steer that turn. A steer is
+    /// framed with its own time and context but is not a prompt of its own:
+    /// it answers no open ask, and the next prompt measures the time since
+    /// the previous message from the turn's own message. An offer of a
     /// steer already recorded returns its state without recomputing it, so
     /// retries converge. A steer the turn never takes ([`SteerState::Released`])
     /// runs as its own command afterward; one it took

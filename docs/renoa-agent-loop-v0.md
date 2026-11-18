@@ -180,8 +180,8 @@ renoa.agent.turn-context.v1   { entries: [{ source, text }] }
 ```
 
 A prompt admitted with `turn_timing` records `renoa.agent.turn-timing.v1`
-instead. Either event belongs to the user message of its operation just before
-it: the one its command started with, or a steer (see Steering). A user
+instead. Either event belongs to the latest earlier user message of its
+operation: the one its command started with, or a steer (see Steering). A user
 message has at most one of them. Duplicate, orphaned,
 malformed, or unknown-version events fail closed. Context preparation appends
 the same `<turn_context>` block to that user message for every normal request,

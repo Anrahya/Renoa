@@ -190,3 +190,77 @@ async fn a_message_sent_during_the_last_model_call_runs_as_its_own_turn() {
     .await
     .expect("the late message finishes in time");
 }
+
+#[tokio::test]
+async fn a_steer_stopped_before_it_is_offered_never_joins_the_turn() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+        let mut surface = system.connect_surface().await;
+        attach(&mut surface, system.task_id).await;
+
+        let running = CommandId::new();
+        submit_when_node_is_online(
+            &mut surface,
+            system.task_id,
+            running,
+            "Render, then listen.",
+        )
+        .await;
+        wait_for_path(&fixture.started()).await;
+        let stopped = CommandId::new();
+        // Recorded as a stop that reached the node ahead of its command.
+        fixture.record_stop_in_ledger(system.task_id, stopped);
+        let mut sender = system.connect_surface().await;
+        submit_input_when_node_is_online(
+            &mut sender,
+            system.task_id,
+            stopped,
+            steer("Keep it short."),
+        )
+        .await;
+        while !fixture.ledger_has_command(stopped) {
+            sleep(Duration::from_millis(10)).await;
+        }
+        fixture.release();
+
+        let ended = std::cell::Cell::new(0);
+        let events = collect_until(&mut surface, |event| {
+            if matches!(event.kind, ExecutionEventKind::ExecutionTerminated { .. }) {
+                ended.set(ended.get() + 1);
+            }
+            ended.get() == 2
+        })
+        .await;
+        assert!(
+            execution_kinds(&events, running).contains(&ExecutionEventKind::AssistantMessage {
+                text: "Rendered without changes.".to_owned()
+            }),
+            "the running turn never saw the stopped steer"
+        );
+        assert!(matches!(
+            execution_kinds(&events, stopped).last(),
+            Some(ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Cancelled { .. }
+            })
+        ));
+        assert!(!fixture.steer_recorded(system.task_id, stopped));
+
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("the stopped steer finishes in time");
+}

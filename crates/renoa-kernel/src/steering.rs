@@ -233,13 +233,21 @@ pub(crate) fn accept_steers(
             "accepting steers requires at least one steer".to_owned(),
         ));
     }
-    let target = transaction
+    let (target, settled_effect) = transaction
         .query_row(
-            "SELECT command_id FROM operations WHERE operation_id = ?1",
+            "SELECT command_id, input_effect_batch_id IS NOT NULL
+             FROM operations WHERE operation_id = ?1",
             [operation_id.to_string()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
         )
         .map_err(sqlite_error)?;
+    // Accepting continues the operation and clears its settled effect batch,
+    // which the loop must decide on first.
+    if settled_effect {
+        return Err(KernelError::InvalidDecision(
+            "steers cannot be accepted while a settled effect awaits its decision".to_owned(),
+        ));
+    }
     for steer in steers {
         let changed = transaction
             .execute(

@@ -222,6 +222,8 @@ const STEER_TURNS: &str = r#"} else if (prompt === "Render, then listen." && too
   stopReason = "tool_use";
 } else if (prompt === "Keep it short." && toolResults.length === 1) {
   content = [{ type: "text", text: "Kept it short." }];
+} else if (prompt === "Render, then listen." && toolResults.length === 1) {
+  content = [{ type: "text", text: "Rendered without changes." }];
 } else if (prompt === "Too late.") {
   content = [{ type: "text", text: "Answered on its own." }];
 "#;

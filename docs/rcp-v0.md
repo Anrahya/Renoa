@@ -213,12 +213,16 @@ These decisions define RCP and are not ordinary implementation details:
     where it was submitted. The executor decides whether the running turn can
     take it in. The Renoa node offers it to the running turn only when both are
     the same principal's own messages and neither is a control such as
-    `/compact`; the turn takes it in before its next model call, never during
-    one. A steer that joined a turn ends `completed` with no record of its
-    own beyond its terminal: its answer is that turn's. One that did not join
-    (the turn ended first, or the node never offered it) runs as its own
-    command in queue order. So a steer is never lost and never answered
-    twice, and its terminal follows the running command's.
+    `/compact`, and only while no earlier message of the task waits, so a
+    steer never overtakes one; the turn takes it in before its next model
+    call, never during one. A steer that joined a turn ends `completed` with
+    no record of its own beyond its terminal, and the turn's answer is its
+    answer; if that turn then fails or is stopped, the steer still ends
+    `completed` and has no answer. One that did not join (the turn ended
+    first, it was stopped before the node offered it, or the node never
+    offered it) runs as its own command in queue order, and a stopped one
+    begins cancelled. A steer is answered by the turn it joined or by its own
+    turn, never by both.
 
 ## Vocabulary
 

@@ -442,8 +442,10 @@ is from; RCP gives the origin no other meaning.
 A command whose text input is marked `steer` asks to join the turn running on
 its task (`rcp-v0.md`, locked decision 28). The node admits and acknowledges it
 like any command. The Renoa node also offers it to the running turn when both
-are the principal's own messages, and offers again after a restart; the Host
-keeps the first record. When the steer's own place in the queue comes, the node
+are the principal's own messages and no earlier message of the task waits, and
+offers again after a restart; the Host keeps the first record. A steer stopped
+before the node offers it is never offered; a stop that comes after the turn
+took it in is too late. When the steer's own place in the queue comes, the node
 ends it `completed` with no other records if the turn took it in, and runs it
 as its own turn otherwise. The Pi node runs every steer as its own turn.
 

@@ -855,9 +855,9 @@ slices.
    exact effect persistence, cancellation, provider-overflow fallback, honest
    usage, and deterministic repeated-continuation tests. A real Grok 4.6 coding
    run crossed eleven activated checkpoints while retaining exact constraints;
-   its resulting code passed thirteen tests. Steering followed once the
-   Android app needed it: a steer joins the running turn before its next model
-   call or runs as its own command.
+   its resulting code passed thirteen tests. Steering followed for the
+   owner's chat in the apps: a steer joins the running turn before its next
+   model call or runs as its own command.
 8. Add cursor-based observation and the thin RCP/ACP adapters only after the
    local harness can complete real work safely.
 9. Design workspace checkpoints and host movement only after local continuity

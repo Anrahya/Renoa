@@ -56,15 +56,26 @@ impl RunningTasks {
         inbox
     }
 
-    /// Whether a command runs on `task_id`. If it does and `queued` may steer
-    /// it, `queued` is sent to its turn once.
-    pub(crate) fn queue_behind(&mut self, queued: &ExecutionRecord) -> bool {
+    /// Whether a command runs on the task of `queued`, which is then queued
+    /// behind it. If `queued` may steer that command and no earlier queued
+    /// message of the task waits (`held` names the tasks where one does), it
+    /// is sent to the running turn once. A steer never overtakes an earlier
+    /// message: that message is answered first, in queue order. Records come
+    /// in admission order, the running command first.
+    pub(crate) fn queue_behind(
+        &mut self,
+        queued: &ExecutionRecord,
+        held: &mut HashSet<TaskId>,
+    ) -> bool {
         let Some(running) = self.0.get_mut(&queued.task_id) else {
             return false;
         };
-        if may_steer(&running.command, &queued.command)
-            && running.sent.insert(queued.command.command_id)
-        {
+        if queued.command.command_id == running.command.command_id {
+            return true;
+        }
+        if held.contains(&queued.task_id) || !may_steer(&running.command, &queued.command) {
+            held.insert(queued.task_id);
+        } else if running.sent.insert(queued.command.command_id) {
             // A closed inbox means the turn has ended: the steer runs on its own.
             let _ended = running.steers.send(queued.clone());
         }
@@ -106,22 +117,12 @@ impl NodeRuntime {
     ) {
         while let Some(steer) = inbox.recv().await {
             let command = &steer.command;
-            let offered = match crate::execution::turn_content(&self.host, command, workspace).await
-            {
-                Ok(content) => match TurnObservation::now() {
-                    Ok(observation) => session
-                        .steer(
-                            running.as_uuid(),
-                            command.command_id.as_uuid(),
-                            content,
-                            origin::observed(command, observation),
-                            origin::speaker(command),
-                        )
-                        .await
-                        .map(|state| format!("{state:?}").to_lowercase())
-                        .map_err(|error| error.to_string()),
-                    Err(error) => Err(error.to_string()),
-                },
+            // A steer stopped before it is offered never joins. A stop that
+            // comes after the turn took it in is too late: its message is part
+            // of that turn, and it ends completed.
+            let offered = match self.state.stop_requested(command.command_id).await {
+                Ok(true) => Ok("stopped".to_owned()),
+                Ok(false) => self.offer(running, session, workspace, command).await,
                 Err(error) => Err(error.to_string()),
             };
             let (level, fields) = match offered {
@@ -140,6 +141,33 @@ impl NodeRuntime {
             );
         }
     }
+
+    /// Offers `command` to the turn of `running`; the state it is recorded in.
+    async fn offer(
+        &self,
+        running: CommandId,
+        session: &AgentSession,
+        workspace: &Path,
+        command: &CommandEnvelope,
+    ) -> Result<String, String> {
+        match crate::execution::turn_content(&self.host, command, workspace).await {
+            Ok(content) => match TurnObservation::now() {
+                Ok(observation) => session
+                    .steer(
+                        running.as_uuid(),
+                        command.command_id.as_uuid(),
+                        content,
+                        origin::observed(command, observation),
+                        origin::speaker(command),
+                    )
+                    .await
+                    .map(|state| format!("{state:?}").to_lowercase())
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            },
+            Err(error) => Err(error.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -149,7 +177,62 @@ mod tests {
         PrincipalId, SurfaceRef, TargetRef,
     };
 
-    use super::may_steer;
+    use std::collections::HashSet;
+
+    use renoa_protocol::ExecutionId;
+    use renoa_rcp_wire::TaskId;
+
+    use super::{RunningTasks, may_steer};
+    use crate::node_store::{ExecutionRecord, TargetBinding};
+
+    fn record(task_id: TaskId, command: CommandEnvelope) -> ExecutionRecord {
+        ExecutionRecord {
+            admission_sequence: 0,
+            task_id,
+            execution_id: ExecutionId::from_uuid(command.command_id.as_uuid()),
+            command,
+            binding: TargetBinding {
+                target: "agent:test".to_owned(),
+                agent_id: uuid::Uuid::nil(),
+                session_id: uuid::Uuid::nil(),
+                workspace: std::path::PathBuf::new(),
+            },
+            admission_acked: true,
+            terminal: false,
+            published_through: None,
+        }
+    }
+
+    #[test]
+    fn a_steer_joins_only_ahead_of_no_earlier_message_and_never_its_own_turn() {
+        let owner = PrincipalId::new();
+        let task = TaskId::new();
+        let running = record(
+            task,
+            command(owner, "Make a video.", Author::Principal, true),
+        );
+        let first = record(task, command(owner, "Shorter.", Author::Principal, true));
+        let queued = record(
+            task,
+            command(owner, "Then a poster.", Author::Principal, false),
+        );
+        let later = record(task, command(owner, "Blue.", Author::Principal, true));
+        let mut tasks = RunningTasks::default();
+        let mut inbox = tasks.start(&running);
+        let mut held = HashSet::new();
+
+        for queued in [&running, &first, &queued, &later, &first] {
+            assert!(tasks.queue_behind(queued, &mut held));
+        }
+
+        let sent = inbox.try_recv().expect("the first steer is sent");
+        assert_eq!(sent.command.command_id, first.command.command_id);
+        assert!(
+            inbox.try_recv().is_err(),
+            "the running command, a repeat and a steer behind a queued message are not sent"
+        );
+        assert!(!tasks.queue_behind(&record(TaskId::new(), later.command), &mut held));
+    }
 
     fn command(principal: PrincipalId, text: &str, author: Author, steer: bool) -> CommandEnvelope {
         CommandEnvelope {
