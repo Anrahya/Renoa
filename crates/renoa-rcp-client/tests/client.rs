@@ -6,7 +6,7 @@ use renoa_protocol::{
     CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
     ExecutionTerminal, LiveActivity, PrincipalId, SurfaceRef, TargetRef,
 };
-use renoa_rcp_client::{ClientError, Connection, Events, SurfaceEvent};
+use renoa_rcp_client::{ClientError, Connection, Events, StopOutcome, SurfaceEvent};
 use renoa_rcp_wire::{
     ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, JSON_WS_VERSION,
     NodeId, ServerMessage, TaskEvent, TaskEventKind, TaskId,
@@ -293,6 +293,114 @@ async fn unsolicited_live_activity_without_attach_live_fails_with_protocol_error
         .expect_err("unsolicited live activity must error");
     assert!(matches!(err, ClientError::Protocol(_)), "{err:?}");
     server.await.expect("fake coordinator finished");
+}
+
+#[tokio::test]
+async fn stop_command_requests_cancellation_and_reports_already_ended_after_completion() {
+    let system = System::start().await;
+    let mut node = system.node().await;
+    let (surface, mut events) = system.surface().await;
+    let task_id = system.open(&surface).await;
+    assert_eq!(surface.attach(task_id, None).await, Ok(None));
+
+    let running = CommandId::new();
+    surface
+        .submit(
+            task_id,
+            running,
+            CommandInput::from_text("Run a long build."),
+        )
+        .await
+        .expect("submit running command");
+    let ServerMessage::Execute { command, .. } = receive(&mut node).await else {
+        panic!("expected Execute for running command");
+    };
+    assert_eq!(command.command_id, running);
+    send(
+        &mut node,
+        &ClientMessage::AcknowledgeExecution {
+            task_id,
+            command_id: running,
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut node).await,
+        ServerMessage::ExecutionAcknowledged {
+            command_id: running
+        }
+    );
+
+    let outcome = surface
+        .stop_command(task_id, running)
+        .await
+        .expect("stop running command");
+    assert_eq!(outcome, StopOutcome::Requested);
+    assert_eq!(
+        receive(&mut node).await,
+        ServerMessage::Stop {
+            task_id,
+            command_id: running,
+        }
+    );
+    send(
+        &mut node,
+        &ClientMessage::AcknowledgeStop {
+            task_id,
+            command_id: running,
+        },
+    )
+    .await;
+    publish_events(
+        &mut node,
+        task_id,
+        running,
+        vec![
+            ExecutionEventKind::ExecutionStarted,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Cancelled {
+                    reason: "Stopped by owner.".to_owned(),
+                },
+            },
+        ],
+    )
+    .await;
+    let _submitted = next(&mut events).await;
+    let _started = next(&mut events).await;
+    let terminated = next(&mut events).await;
+    assert!(matches!(
+        terminated.kind,
+        TaskEventKind::ExecutionEvent { event, .. }
+            if matches!(
+                event.kind,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Cancelled { .. }
+                }
+            )
+    ));
+
+    let completed = CommandId::new();
+    surface
+        .submit(task_id, completed, CommandInput::from_text("Quick check."))
+        .await
+        .expect("submit completed command");
+    execute(&mut node, task_id, completed).await;
+    let _ = next(&mut events).await;
+    let _ = next(&mut events).await;
+    let _ = next(&mut events).await;
+
+    let ended = surface
+        .stop_command(task_id, completed)
+        .await
+        .expect("stop completed command");
+    assert_eq!(ended, StopOutcome::AlreadyEnded);
+
+    let missing = surface
+        .stop_command(TaskId::new(), running)
+        .await
+        .expect_err("stop unknown task");
+    assert_eq!(missing.code(), Some(ErrorCode::NotFound));
+    system.stop().await;
 }
 
 struct System {

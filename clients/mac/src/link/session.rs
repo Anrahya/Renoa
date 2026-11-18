@@ -9,11 +9,36 @@ use std::{
 };
 
 use renoa_protocol::{Author, CommandId, CommandInput, TargetRef};
-use renoa_rcp_client::{ClientError, Connection};
+use renoa_rcp_client::{ClientError, Connection, StopOutcome};
 use renoa_rcp_wire::{NodeId, TaskId};
 use tokio::sync::{mpsc, oneshot};
 
 use super::Update;
+
+/// Why stopping an active command did not confirm a stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopProblem {
+    /// Coordinator explicitly refused the stop request.
+    Refused,
+    /// The stop may or may not have landed (offline, timeout, or link dropped).
+    Uncertain,
+}
+
+/// Sends one stop request on the current connection and maps any refusal or
+/// lost-link outcome for the requesting view.
+pub(super) async fn request_stop(
+    connection: Connection,
+    task_id: TaskId,
+    command_id: CommandId,
+    answered: oneshot::Sender<Result<StopOutcome, StopProblem>>,
+) {
+    let reply = match within(connection.stop_command(task_id, command_id)).await {
+        Ok(outcome) => Ok(outcome),
+        Err(ClientError::Rejected { .. }) => Err(StopProblem::Refused),
+        Err(_) => Err(StopProblem::Uncertain),
+    };
+    let _ = answered.send(reply);
+}
 
 /// How long a call may wait for Renoa before the link counts as lost, as the
 /// Android app waits (`Timeouts.reply`).
