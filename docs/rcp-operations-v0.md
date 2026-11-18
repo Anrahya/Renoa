@@ -646,7 +646,9 @@ The current durable event kinds are `ExecutionStarted`, `TurnStarted`,
 They are the intersection proven by Renoa's Rust engine and Pi. Token deltas,
 provider metadata, usage, reasoning blocks, and native harness messages are not
 durable RCP records. Visible text deltas are relayed only as ephemeral
-`LiveActivity`.
+`LiveActivity`. The Renoa node records an image in a tool's output by its media
+type only: its data stays in the agent's own journal, so replaying a task never
+carries images no surface shows.
 
 ## Durable task records
 

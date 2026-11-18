@@ -52,10 +52,23 @@ pub(crate) fn project_tool_start(call: &ToolCall, synthetic_activity: bool) -> E
     }
 }
 
+/// A tool's result as a surface records it. An image the agent was shown is
+/// named, not copied: its data would make every surface replay megabytes it
+/// never shows, and the agent's own journal keeps the image.
 pub(crate) fn project_tool_result(result: ToolResult) -> Result<ExecutionEventKind, NodeError> {
     let output = match result.content.as_slice() {
         [ContentBlock::Text { text }] => text.clone(),
-        content => serde_json::to_string(content)?,
+        content => serde_json::to_string(
+            &content
+                .iter()
+                .map(|block| match block {
+                    ContentBlock::Text { .. } => block.clone(),
+                    ContentBlock::Image { mime_type, .. } => {
+                        ContentBlock::text(format!("[an image ({mime_type}) is not recorded here]"))
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )?,
     };
     Ok(ExecutionEventKind::ToolFinished {
         call_id: result.call_id,
@@ -115,7 +128,33 @@ mod tests {
     use renoa_protocol::ExecutionEventKind;
     use serde_json::json;
 
-    use super::project_history;
+    use super::{project_history, project_tool_result};
+
+    #[test]
+    fn a_tool_image_is_named_but_its_data_is_not_recorded() {
+        let ExecutionEventKind::ToolFinished { output, .. } =
+            project_tool_result(renoa_agent::ToolResult {
+                call_id: "c1".to_owned(),
+                name: "read_file".to_owned(),
+                content: vec![
+                    renoa_agent::ContentBlock::text("frame.jpg is an image, shown here."),
+                    renoa_agent::ContentBlock::Image {
+                        data: "QUJD".repeat(1000),
+                        mime_type: "image/jpeg".to_owned(),
+                    },
+                ],
+                details: None,
+                is_error: false,
+                closing: None,
+            })
+            .expect("project tool result")
+        else {
+            panic!("a tool result projects as tool_finished");
+        };
+        assert!(!output.contains("QUJD"), "{output}");
+        assert!(output.contains("frame.jpg is an image"));
+        assert!(output.contains("an image (image/jpeg) is not recorded here"));
+    }
 
     #[test]
     fn project_history_only_extracts_and_strips_synthetic_activity() {
