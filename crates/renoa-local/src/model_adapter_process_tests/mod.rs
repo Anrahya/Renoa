@@ -40,25 +40,20 @@ const LOOPBACK_MODEL: &str = "deepseek-flash";
 /// Pi's published catalog for the `deepseek` provider, as the adapter's pinned dependency installs it.
 const LOOPBACK_CATALOG: &str = "adapters/model-provider-node/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json";
 
-#[tokio::test]
-async fn rust_launches_the_compiled_adapter_for_deepseek_and_consumes_its_protocol() {
+async fn load_loopback_bridge_model(
+    directory: &Path,
+    address: std::net::SocketAddr,
+) -> BridgeModel {
     let workspace = workspace_root();
     let adapter = compiled_adapter(&workspace);
     let catalog = workspace.join(LOOPBACK_CATALOG);
-    let directory = tempdir().expect("temporary directory");
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
-    let address = listener.local_addr().expect("fake provider address");
-    let server = thread::spawn(move || serve_one_chat_completion(&listener));
-
     let mut model = load_catalog_model(&catalog, LOOPBACK_MODEL);
     model["baseUrl"] = json!(format!("http://127.0.0.1:{}/v1", address.port()));
     let spec = serde_json::to_string(&model).expect("encode loopback model spec");
-
-    let auth_store = directory.path().join("pi-auth.sqlite");
+    let auth_store = directory.join("pi-auth.sqlite");
     write_api_key_store(&auth_store);
-    let trampoline = write_loopback_trampoline(directory.path(), &adapter);
-
-    let model = BridgeModel::load_with_spec(
+    let trampoline = write_loopback_trampoline(directory, &adapter);
+    BridgeModel::load_with_spec(
         &trampoline,
         LOOPBACK_PROVIDER,
         LOOPBACK_MODEL,
@@ -68,7 +63,16 @@ async fn rust_launches_the_compiled_adapter_for_deepseek_and_consumes_its_protoc
         NonZeroU32::new(32_768).expect("non-zero output cap"),
     )
     .await
-    .expect("compiled adapter describe");
+    .expect("compiled adapter describe")
+}
+
+#[tokio::test]
+async fn rust_launches_the_compiled_adapter_for_deepseek_and_consumes_its_protocol() {
+    let directory = tempdir().expect("temporary directory");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+    let address = listener.local_addr().expect("fake provider address");
+    let server = thread::spawn(move || serve_one_chat_completion(&listener));
+    let model = load_loopback_bridge_model(directory.path(), address).await;
 
     let sampled = sample_model(
         &model,
@@ -102,6 +106,52 @@ async fn rust_launches_the_compiled_adapter_for_deepseek_and_consumes_its_protoc
     );
 }
 
+#[tokio::test]
+async fn requests_over_16_mib_complete_through_the_compiled_adapter() {
+    let directory = tempdir().expect("temporary directory");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+    let address = listener.local_addr().expect("fake provider address");
+    let server = thread::spawn(move || serve_one_chat_completion(&listener));
+    let model = load_loopback_bridge_model(directory.path(), address).await;
+
+    let sink = RecordingAgentEvents::default();
+    let large_body = "x".repeat(17 * 1_024 * 1_024);
+    let sampled = sample_model(
+        &model,
+        ModelRequest {
+            system_prompt: "Be precise.".to_owned(),
+            messages: vec![renoa_agent::Message::User {
+                content: vec![ContentBlock::text(large_body)],
+            }],
+            tools: Vec::new(),
+        },
+        CancellationToken::new(),
+        Some(&sink),
+    )
+    .await;
+    let _ = std::net::TcpStream::connect(address);
+    server.join().expect("fake provider thread");
+    let sampled = sampled.expect("17 MiB request must not trip the stdout cap");
+
+    assert_eq!(sampled.response.stop_reason, StopReason::Stop);
+    let events = sink.0.lock().expect("recorded events");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        renoa_agent::AgentEvent::ModelProviderRequest { bytes, .. } if *bytes > 17 * 1_024 * 1_024
+    )));
+}
+
+#[derive(Default)]
+struct RecordingAgentEvents(Mutex<Vec<renoa_agent::AgentEvent>>);
+
+impl renoa_agent::AgentEventSink for RecordingAgentEvents {
+    fn emit(&self, event: renoa_agent::AgentEvent) -> renoa_agent::BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.0.lock().expect("event lock").push(event);
+        })
+    }
+}
+
 /// Builds a loopback runner over the compiled adapter and a fresh session with
 /// one admitted text command, ready for a single `drive`.
 async fn loopback_turn(
@@ -109,28 +159,7 @@ async fn loopback_turn(
     address: std::net::SocketAddr,
     system_prompt: &str,
 ) -> (Kernel, SessionId, renoa_kernel::Runtime) {
-    let workspace = workspace_root();
-    let adapter = compiled_adapter(&workspace);
-    let catalog = workspace.join(LOOPBACK_CATALOG);
-    let mut model = load_catalog_model(&catalog, LOOPBACK_MODEL);
-    model["baseUrl"] = json!(format!("http://127.0.0.1:{}/v1", address.port()));
-    let spec = serde_json::to_string(&model).expect("encode loopback model spec");
-    let auth_store = directory.join("pi-auth.sqlite");
-    write_api_key_store(&auth_store);
-    let trampoline = write_loopback_trampoline(directory, &adapter);
-    let model = Arc::new(
-        BridgeModel::load_with_spec(
-            &trampoline,
-            LOOPBACK_PROVIDER,
-            LOOPBACK_MODEL,
-            &auth_store,
-            Some(spec),
-            None,
-            NonZeroU32::new(32_768).expect("non-zero output cap"),
-        )
-        .await
-        .expect("compiled adapter describe"),
-    );
+    let model = Arc::new(load_loopback_bridge_model(directory, address).await);
     let revision = format!(
         "renoa-model-provider-node/v1/{LOOPBACK_PROVIDER}/{LOOPBACK_MODEL}/{}/reasoning-{}",
         model.binding_id(),

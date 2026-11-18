@@ -5,7 +5,11 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
 use super::{EditFile, MAX_FILE_WRITE_BYTES, ReadFile, ReadFileInput, WriteFile, read_page};
-use crate::{images::MAX_INLINE_IMAGE_BYTES, output::MAX_TOOL_OUTPUT_BYTES, tool_input::decode};
+use crate::{
+    images::{MAX_IMAGE_LONG_EDGE, MAX_SOURCE_IMAGE_BYTES, shown_size, test_fixtures},
+    output::MAX_TOOL_OUTPUT_BYTES,
+    tool_input::decode,
+};
 
 #[tokio::test]
 async fn read_page_uses_one_based_offsets_and_returns_a_continuation() {
@@ -159,7 +163,7 @@ async fn a_dangling_symlink_cannot_redirect_a_workspace_write() {
 }
 
 #[tokio::test]
-async fn an_image_is_read_as_the_image_itself_and_one_too_large_says_what_to_do() {
+async fn an_image_is_read_as_the_image_itself_and_large_ones_are_resized_not_refused() {
     let directory = tempdir().expect("temporary directory");
     let root = Arc::new(directory.path().to_path_buf());
     let read = ReadFile::new(Arc::clone(&root));
@@ -172,7 +176,8 @@ async fn an_image_is_read_as_the_image_itself_and_one_too_large_says_what_to_do(
         )
     };
     // Known by its bytes, whatever its name says.
-    let png = [&b"\x89PNG\r\n\x1a\n"[..], &[3; 100]].concat();
+    let png = test_fixtures::encode_rgb(32, 24, image::ImageFormat::Png);
+    let expected_size = shown_size(png.len());
     fs::write(directory.path().join("photo.dat"), &png).expect("write image");
     let shown = call("photo.dat").await.expect("image result is definite");
     assert!(!shown.is_error);
@@ -183,17 +188,54 @@ async fn an_image_is_read_as_the_image_itself_and_one_too_large_says_what_to_do(
     else {
         panic!("an image read is a line and the image: {:?}", shown.content)
     };
-    assert_eq!(text, "photo.dat is an image (108 bytes), shown here.");
+    assert_eq!(
+        text,
+        &format!("photo.dat is an image ({expected_size}), shown here.")
+    );
     assert_eq!(mime_type, "image/png");
     assert_eq!(
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).expect("base64"),
         png
     );
 
-    let mut large = vec![0; MAX_INLINE_IMAGE_BYTES + 1];
-    large[..3].copy_from_slice(&[0xFF, 0xD8, 0xFF]);
-    fs::write(directory.path().join("large.jpg"), &large).expect("write large image");
-    let refused = call("large.jpg").await.expect("refusal is definite");
+    // A high-res PNG larger than the old 3.75 MiB inline cap is normalized and shown,
+    // while leaving the workspace file untouched.
+    let large_png = test_fixtures::encode_rgb(2_400, 1_800, image::ImageFormat::Png);
+    fs::write(directory.path().join("huge.png"), &large_png).expect("write large image");
+    let shown_large = call("huge.png").await.expect("normalized image is shown");
+    assert!(!shown_large.is_error);
+    let [
+        ContentBlock::Text { text },
+        ContentBlock::Image { mime_type, data },
+    ] = &shown_large.content[..]
+    else {
+        panic!(
+            "normalized image must return text + image: {:?}",
+            shown_large.content
+        );
+    };
+    assert!(text.contains("shown as 1536x1152 image/jpeg"), "{text}");
+    assert_eq!(mime_type, "image/jpeg");
+    let decoded_raw =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).expect("base64");
+    assert!(decoded_raw.len() < large_png.len());
+    let dims = image::ImageReader::with_format(
+        std::io::Cursor::new(&decoded_raw),
+        image::ImageFormat::Jpeg,
+    )
+    .into_dimensions()
+    .expect("jpeg dims");
+    assert_eq!(dims, (MAX_IMAGE_LONG_EDGE, 1_152));
+    assert_eq!(
+        fs::read(directory.path().join("huge.png")).expect("disk intact"),
+        large_png
+    );
+
+    let mut oversized_source = vec![0; MAX_SOURCE_IMAGE_BYTES + 1];
+    oversized_source[..3].copy_from_slice(&[0xFF, 0xD8, 0xFF]);
+    fs::write(directory.path().join("huge_source.jpg"), &oversized_source)
+        .expect("write oversized");
+    let refused = call("huge_source.jpg").await.expect("refusal is definite");
     assert!(refused.is_error);
     assert!(
         result_text(&refused.content).contains("Make a smaller copy with bash"),

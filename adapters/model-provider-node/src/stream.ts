@@ -1,10 +1,9 @@
 import type {
-  JsonValue,
   WireErrorDiagnostic,
   WireModelRequest,
   WireStreamRecord,
 } from "./contract.js";
-import { ProviderFailure, classifyError, redactHeaders, redactSecrets } from "./errors.js";
+import { ProviderFailure, classifyError, redactHeaders } from "./errors.js";
 import {
   MAX_ATTEMPTS,
   MAX_RATE_LIMIT_ATTEMPTS,
@@ -211,7 +210,7 @@ async function runAttempt(
     onPayload: async (payload: unknown) => {
       await invocation.emit({
         event: "provider_request",
-        payload: diagnosticValue(payload),
+        bytes: serializedByteLength(payload),
       });
       return undefined;
     },
@@ -387,12 +386,9 @@ function contentDelta(
   }
 }
 
-function diagnosticValue(value: unknown): JsonValue {
-  const encoded = JSON.stringify(redactSecrets(value));
-  if (encoded === undefined) {
-    return null;
-  }
-  return JSON.parse(encoded) as JsonValue;
+function serializedByteLength(value: unknown): number {
+  const encoded = JSON.stringify(value);
+  return encoded === undefined ? 4 : Buffer.byteLength(encoded);
 }
 
 function diagnosticFromFailure(error: ProviderFailure): WireErrorDiagnostic {

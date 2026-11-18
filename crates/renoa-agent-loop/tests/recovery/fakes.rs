@@ -178,12 +178,7 @@ impl Model for CompletesAfterCancelModel {
                 match step {
                     0 => {
                         invoked.notify_one();
-                        Some((
-                            Ok(ModelEvent::ProviderRequest {
-                                payload: serde_json::json!({ "dispatched": true }),
-                            }),
-                            1,
-                        ))
+                        Some((Ok(ModelEvent::ProviderRequest { bytes: 21 }), 1))
                     }
                     1 => {
                         cancellation.cancelled().await;
@@ -212,7 +207,7 @@ impl Model for PostDispatchResetModel {
     ) -> ModelEventStream<'_> {
         stream::iter([
             Ok(ModelEvent::ProviderRequest {
-                payload: serde_json::json!({ "dispatched": true }),
+                bytes: 21,
             }),
             Err(ModelError::classified(
                 ModelErrorKind::Network,

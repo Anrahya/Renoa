@@ -59,14 +59,15 @@ if (process.env.RENOA_MODEL_ACTION === "describe") {
   process.exit(0);
 }
 const request = JSON.parse(input);
+const encodedProviderRequest = JSON.stringify({
+  model: process.env.RENOA_MODEL,
+  system_prompt: request.system_prompt,
+  messages: request.messages,
+  tools: request.tools
+});
 process.stdout.write(JSON.stringify({
   event: "provider_request",
-  payload: {
-    model: process.env.RENOA_MODEL,
-    system_prompt: request.system_prompt,
-    messages: request.messages,
-    tools: request.tools
-  }
+  bytes: Buffer.byteLength(encodedProviderRequest)
 }) + "\n");
 process.stdout.write(JSON.stringify({
   event: "provider_response",

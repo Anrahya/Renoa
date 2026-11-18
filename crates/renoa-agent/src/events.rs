@@ -42,7 +42,7 @@ pub enum AgentEvent {
     },
     ModelProviderRequest {
         invocation_id: String,
-        payload: serde_json::Value,
+        bytes: usize,
     },
     ModelProviderResponse {
         invocation_id: String,

@@ -313,7 +313,8 @@ fn texts(blocks: &[ContentBlock]) -> Vec<String> {
 async fn an_attached_image_is_copied_once_and_shown() {
     let fixture = fixture();
     let owner = Uuid::new_v4();
-    let jpeg = [&[0xFF, 0xD8, 0xFF, 0xE0][..], &[7; 600]].concat();
+    let jpeg = crate::images::test_fixtures::encode_rgb(32, 24, image::ImageFormat::Jpeg);
+    let expected_size = crate::images::shown_size(jpeg.len());
     let id = uploaded(&fixture, owner, &jpeg).await;
     let attach = || {
         fixture
@@ -323,7 +324,9 @@ async fn an_attached_image_is_copied_once_and_shown() {
     let blocks = attach().await.expect("attached");
     assert_eq!(
         texts(&blocks),
-        ["Attached image, included here so you can see it: attachments/fridge.jpg (604 bytes)."]
+        [format!(
+            "Attached image, included here so you can see it: attachments/fridge.jpg ({expected_size})."
+        )]
     );
     assert!(matches!(
         &blocks[1],
@@ -419,7 +422,8 @@ async fn an_attachments_link_out_of_the_workspace_is_refused() {
 async fn an_image_too_large_to_show_is_still_copied() {
     let fixture = fixture();
     let owner = Uuid::new_v4();
-    // Its base64 is just over the 5 MiB a model is shown.
+    // Undecodable bytes with JPEG magic headers past the old 5 MiB base64 cutoff
+    // still copy to disk even though they cannot be shown as an inline image.
     let size = 5 * 1024 * 1024 / 4 * 3 + 1;
     let jpeg = [&[0xFF, 0xD8, 0xFF, 0xE0][..], &vec![7; size - 4]].concat();
     let id = Uuid::new_v4();
@@ -442,11 +446,66 @@ async fn an_image_too_large_to_show_is_still_copied() {
         .expect("attached");
     assert_eq!(
         texts(&blocks),
-        ["Attached file: attachments/big.jpg (3.7 MB)."]
+        [
+            "Attached image: attachments/big.jpg (3.7 MB). It is not included here because \
+             its data does not decode as an image, so the file may be damaged."
+        ]
     );
     assert_eq!(blocks.len(), 1, "not shown");
     assert_eq!(
         fs::read(fixture.workspace.join("attachments/big.jpg")).expect("copy"),
         jpeg
     );
+}
+
+#[tokio::test]
+async fn a_high_res_image_upload_keeps_full_bytes_on_disk_and_shows_resized_jpeg() {
+    let fixture = fixture();
+    let owner = Uuid::new_v4();
+    let png = crate::images::test_fixtures::encode_rgb(2_400, 1_800, image::ImageFormat::Png);
+    let expected_size = crate::images::shown_size(png.len());
+    let id = Uuid::new_v4();
+    fixture
+        .uploads
+        .start(owner, id, png.len() as u64, sha256(&png))
+        .await
+        .expect("start");
+    for (index, chunk) in (0..).zip(png.chunks(PART)) {
+        fixture
+            .uploads
+            .put_part(owner, id, index, chunk.to_vec())
+            .await
+            .expect("part");
+    }
+    let blocks = fixture
+        .uploads
+        .attach(owner, id, "poster.png".into(), fixture.workspace.clone())
+        .await
+        .expect("attached");
+    assert_eq!(
+        texts(&blocks),
+        [format!(
+            "Attached image, included here so you can see it: attachments/poster.png \
+             ({expected_size}). It was scaled down from 2400x1800, so small text or fine \
+             detail may be unreadable; crop the part you need with bash and look at that."
+        )]
+    );
+    assert_eq!(
+        fs::read(fixture.workspace.join("attachments/poster.png")).expect("copy"),
+        png
+    );
+    let ContentBlock::Image { mime_type, data } = &blocks[1] else {
+        panic!("expected resized image block");
+    };
+    assert_eq!(mime_type, "image/jpeg");
+    let shown_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).expect("base64");
+    assert!(shown_bytes.len() < png.len());
+    let dims = image::ImageReader::with_format(
+        std::io::Cursor::new(&shown_bytes),
+        image::ImageFormat::Jpeg,
+    )
+    .into_dimensions()
+    .expect("jpeg dims");
+    assert_eq!(dims, (crate::images::MAX_IMAGE_LONG_EDGE, 1_152));
 }

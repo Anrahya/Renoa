@@ -12,7 +12,6 @@ use renoa_agent::{
     InferenceOutcome, Model, ModelError, ModelErrorKind, ModelEvent, ModelEventStream,
     ModelRequest, ModelResponse, SamplingError, StopReason, sample_model,
 };
-use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
@@ -275,8 +274,8 @@ async fn model_diagnostics_preserve_provider_flow_and_one_correlation_id() {
     assert_eq!(observed, &request);
     assert!(matches!(
         &events[1],
-        AgentEvent::ModelProviderRequest { invocation_id: id, payload }
-            if id == invocation_id && payload == &json!({ "wire": "exact" })
+        AgentEvent::ModelProviderRequest { invocation_id: id, bytes }
+            if id == invocation_id && *bytes == 17
     ));
     assert!(matches!(
         &events[2],
@@ -370,12 +369,7 @@ impl Model for CompletesAfterCancelModel {
             let cancellation = cancellation.clone();
             async move {
                 match step {
-                    0 => Some((
-                        Ok(ModelEvent::ProviderRequest {
-                            payload: json!({ "dispatched": true }),
-                        }),
-                        1,
-                    )),
+                    0 => Some((Ok(ModelEvent::ProviderRequest { bytes: 21 }), 1)),
                     1 => {
                         cancellation.cancelled().await;
                         Some((
@@ -413,12 +407,7 @@ impl Model for HangAfterDispatchModel {
                     cancellation.cancelled().await;
                     None
                 } else {
-                    Some((
-                        Ok(ModelEvent::ProviderRequest {
-                            payload: json!({ "dispatched": true }),
-                        }),
-                        true,
-                    ))
+                    Some((Ok(ModelEvent::ProviderRequest { bytes: 21 }), true))
                 }
             }
         })
@@ -435,9 +424,7 @@ impl Model for DiagnosticModel {
         _cancellation: CancellationToken,
     ) -> ModelEventStream<'_> {
         stream::iter([
-            Ok(ModelEvent::ProviderRequest {
-                payload: json!({ "wire": "exact" }),
-            }),
+            Ok(ModelEvent::ProviderRequest { bytes: 17 }),
             Ok(ModelEvent::ProviderResponse {
                 status: 200,
                 headers: BTreeMap::from([("x-request-id".to_owned(), "request-1".to_owned())]),

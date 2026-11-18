@@ -18,7 +18,7 @@ pub use code_mode::{
 };
 pub use compaction::{
     CompactingContextStrategy, CompactionCheckpoint, CompactionLimits, CompactionLimitsError,
-    CompactionPlan, CompactionPlanner, CompactionPlanningError, ContextSizer,
+    CompactionPlan, CompactionPlanner, CompactionPlanningError, ContextSizer, RequestByteBudget,
 };
 pub use configuration::{
     AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CodeModeBinding, ContextBinding,

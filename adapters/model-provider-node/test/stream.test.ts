@@ -234,3 +234,34 @@ test("only summarized-thinking providers and summary events tag reasoning deltas
     anthropicDir.close();
   }
 });
+
+test("provider_request reports serialized byte length without echoing multi-megabyte requests", async () => {
+  const server = await startFakeServer();
+  server.enqueue({ sse: successfulChat("oversized-ok") });
+  const directory = tempDir();
+  const payloadText = "x".repeat(17 * 1024 * 1024);
+  try {
+    const records = await runStream({
+      directory: directory.path,
+      provider: "opencode-go",
+      modelId: "glm-5.3",
+      baseUrl: server.baseUrl,
+      credential: { type: "api_key", key: "opencode-test-key" },
+      request: {
+        system_prompt: "Be concise.",
+        messages: [{ role: "user", content: [{ type: "text", text: payloadText }] }],
+        tools: [],
+      },
+    });
+    const providerRequest = records.find((record) => record.event === "provider_request");
+    assert.equal(providerRequest?.event, "provider_request");
+    if (providerRequest?.event === "provider_request") {
+      assert.ok(providerRequest.bytes > 17 * 1024 * 1024);
+      assert.ok(JSON.stringify(providerRequest).length < 128);
+    }
+    assert.equal(completedRecord(records).response.stop_reason, "stop");
+  } finally {
+    await server.close();
+    directory.close();
+  }
+});

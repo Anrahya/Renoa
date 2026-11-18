@@ -1,6 +1,9 @@
 use std::num::{NonZeroU32, NonZeroU64};
 
-use super::compaction_settings;
+use super::{
+    AUTOMATIC_COMPACTION_BYTES, COMPACTION_TAIL_BYTES, REQUEST_DISPATCH_LIMIT_BYTES,
+    compaction_limits, compaction_settings,
+};
 use crate::AutomaticCompaction;
 
 fn tokens(value: u64) -> NonZeroU64 {
@@ -45,4 +48,18 @@ fn a_policy_that_fits_is_used_as_stored() {
         400_000,
         "a target the model can take is not cut to three fifths"
     );
+}
+
+#[test]
+fn runtime_compaction_limits_bind_the_request_byte_budget() {
+    let (_, limits) = compaction_limits(tokens(1_000_000), OUTPUT, None, None).expect("limits");
+    let budget = limits
+        .request_byte_budget()
+        .expect("runtime must bind a byte budget");
+    assert_eq!(budget.dispatch_limit_bytes(), REQUEST_DISPATCH_LIMIT_BYTES);
+    assert_eq!(
+        budget.automatic_compaction_bytes(),
+        AUTOMATIC_COMPACTION_BYTES
+    );
+    assert_eq!(budget.tail_budget_bytes(), COMPACTION_TAIL_BYTES);
 }

@@ -4,7 +4,7 @@ use renoa_agent::{AssistantContent, Message, ModelRequest, ToolSpec};
 
 use super::{
     CompactionCheckpoint, CompactionLimits, CompactionPlan, CompactionPlanningError, ContextSizer,
-    format::summary_request,
+    byte_budget::request_visible_json_bytes, format::summary_request,
 };
 use crate::{ContextEntry, ContextInput, ContextProjector};
 
@@ -21,18 +21,21 @@ pub(super) fn select_plan(
     let anchor = active_user_anchor(&all_entries, context.active_operation_id())?;
     let entries = entries_after_checkpoint(&all_entries, checkpoint)?;
     let cuts = safe_cut_indices(entries, context.active_operation_id())?;
+    let byte_budget = limits.request_byte_budget();
     let Some((last_fitting, last_request)) = last_fitting_summary(
         entries,
         checkpoint,
         &cuts,
         limits.dispatch_limit_tokens().get(),
+        byte_budget.map(|budget| budget.dispatch_limit_bytes().get()),
         sizer,
     )?
     else {
         return Ok(None);
     };
     let sizing = TailSizing {
-        budget: limits.tail_budget_tokens().get(),
+        budget_tokens: limits.tail_budget_tokens().get(),
+        budget_bytes: byte_budget.map(|budget| budget.tail_budget_bytes().get()),
         request_shape: TailRequestShape {
             system_prompt,
             tools,
@@ -60,11 +63,13 @@ pub(super) fn select_explicit_plan(
     require_no_active_messages(&all_entries, context.active_operation_id())?;
     let entries = entries_after_checkpoint(&all_entries, checkpoint)?;
     let cuts = safe_cut_indices(entries, context.active_operation_id())?;
+    let byte_budget = limits.request_byte_budget();
     let Some((selected, summary_request)) = last_fitting_summary(
         entries,
         checkpoint,
         &cuts,
         limits.dispatch_limit_tokens().get(),
+        byte_budget.map(|budget| budget.dispatch_limit_bytes().get()),
         sizer,
     )?
     else {
@@ -168,7 +173,8 @@ fn last_fitting_summary(
     entries: &[ContextEntry<'_>],
     checkpoint: Option<CompactionCheckpoint<'_>>,
     cuts: &[usize],
-    dispatch_limit: u64,
+    dispatch_limit_tokens: u64,
+    dispatch_limit_bytes: Option<u64>,
     sizer: &dyn ContextSizer,
 ) -> Result<Option<(usize, ModelRequest)>, CompactionPlanningError> {
     let mut first_unknown = 0;
@@ -177,7 +183,7 @@ fn last_fitting_summary(
     while first_unknown < first_oversized {
         let position = first_unknown + (first_oversized - first_unknown) / 2;
         let request = summary_at(entries, checkpoint, cuts[position])?;
-        if sizer.estimate_input_tokens(&request) <= dispatch_limit {
+        if request_fits(sizer, &request, dispatch_limit_tokens, dispatch_limit_bytes)? {
             best = Some((position, request));
             first_unknown = position + 1;
         } else {
@@ -204,13 +210,35 @@ fn first_tail_within_budget(
                 .project(request.messages)
                 .map_err(CompactionPlanningError::Projection)?;
         }
-        if sizing.sizer.estimate_input_tokens(&request) <= sizing.budget {
+        if request_fits(
+            sizing.sizer,
+            &request,
+            sizing.budget_tokens,
+            sizing.budget_bytes,
+        )? {
             first_fitting = position;
         } else {
             first_unknown = position + 1;
         }
     }
     Ok((first_fitting <= last_fitting).then_some(first_fitting))
+}
+
+fn request_fits(
+    sizer: &dyn ContextSizer,
+    request: &ModelRequest,
+    max_tokens: u64,
+    max_bytes: Option<u64>,
+) -> Result<bool, CompactionPlanningError> {
+    if sizer.estimate_input_tokens(request) > max_tokens {
+        return Ok(false);
+    }
+    let Some(limit) = max_bytes else {
+        return Ok(true);
+    };
+    let bytes =
+        request_visible_json_bytes(request).map_err(CompactionPlanningError::RequestEncoding)?;
+    Ok(bytes <= limit)
 }
 
 fn summary_at(
@@ -324,7 +352,8 @@ struct TailRequestShape<'a> {
 
 #[derive(Clone, Copy)]
 struct TailSizing<'a> {
-    budget: u64,
+    budget_tokens: u64,
+    budget_bytes: Option<u64>,
     request_shape: TailRequestShape<'a>,
     sizer: &'a dyn ContextSizer,
     projector: Option<&'a dyn ContextProjector>,

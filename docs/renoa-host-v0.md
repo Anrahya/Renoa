@@ -719,9 +719,12 @@ A command whose text input carries `attachments` (`rcp-json-ws-v0.md`) names
 completed uploads. The node copies each into the agent's workspace under
 `attachments/`, keeping the name unless another file holds it, then adding the
 start of the file's hash, and gives the turn the command's text, a line naming each
-copy, and each image (JPEG, PNG, GIF or WebP, known by its bytes, up to 5 MiB in
-base64) as an image block; an image's line says the image is included, so the
-model looks at it rather than at the path. A model without image input receives
+copy, and each image (JPEG, PNG, GIF or WebP, known by its bytes, up to 32 MiB source
+size and normalized to at most 1536px on the long edge as JPEG when larger or over 200 KiB,
+within 5 MiB base64) as an image block while keeping the raw uploaded bytes untouched in
+`attachments/`; an image's line says the image is included, so the
+model looks at it rather than at the path, and says when it was scaled down. An
+image that cannot be shown gets a line saying why instead. A model without image input receives
 the adapter's placeholder. An upload the command's principal did not complete becomes a line
 saying it did not arrive. Attaching the same upload again reuses the copy, so a
 retried turn copies nothing twice.
@@ -968,9 +971,13 @@ grep
 find
 ```
 
-`read_file` returns a JPEG, PNG, GIF or WebP file, known by its bytes and no larger
-than an image block may be, as a line and the image itself; a larger image is
-refused with a request to read a smaller copy.
+`read_file` returns a JPEG, PNG, GIF or WebP file up to 32 MiB, known by its bytes,
+as a line and the image itself, normalizing larger or heavier images to at most 1536px
+on the long edge as JPEG without changing the workspace file on disk, and says
+when it scaled one down. A larger or undecodable image file is refused with the
+reason. Decoding reads the image's size from its header first and refuses one
+whose raster would exceed 192 MiB (about 64 megapixels) or 16384 pixels on a side,
+whatever the codec, and decodes one image at a time.
 
 An explicit creation selection replaces the optional template's tools, including
 `tools: []`. Without a template or a selection, a new agent has no machine tools.

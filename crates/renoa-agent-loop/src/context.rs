@@ -182,10 +182,17 @@ pub enum ContextPreparation {
         plan: CompactionPlan,
         max_attempts: NonZeroU32,
     },
-    /// No safe summary prefix can make the current request dispatchable.
+    /// No safe summary prefix can make the current request dispatchable within
+    /// token capacity.
     CapacityExceeded {
         estimated_input_tokens: u64,
         dispatch_limit_tokens: u64,
+    },
+    /// No safe summary prefix can bring the serialized request within its byte
+    /// budget.
+    PayloadLimitExceeded {
+        estimated_bytes: u64,
+        dispatch_limit_bytes: u64,
     },
 }
 
@@ -200,10 +207,15 @@ pub enum ExplicitCompactionPreparation {
         plan: CompactionPlan,
         max_attempts: NonZeroU32,
     },
-    /// No safe summary prefix can be sent within the configured provider limit.
+    /// No safe summary prefix can be sent within the configured token limit.
     CapacityExceeded {
         estimated_input_tokens: u64,
         dispatch_limit_tokens: u64,
+    },
+    /// No safe summary prefix can be sent within the configured byte budget.
+    PayloadLimitExceeded {
+        estimated_bytes: u64,
+        dispatch_limit_bytes: u64,
     },
 }
 

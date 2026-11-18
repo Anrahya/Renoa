@@ -567,8 +567,11 @@ changes may be possible.
 For a complete result:
 
 - ordered MCP text blocks become ordered Renoa text blocks;
-- ordered MCP image blocks become ordered Renoa image blocks without changing
-  base64 data or media type;
+- ordered MCP image blocks are normalized into ordered Renoa image blocks:
+  compact `<= 1536px`, `<= 200 KiB` images keep their original data and media
+  type, larger or heavier valid images are normalized to `<= 1536px` JPEG, and
+  unreadable or over-limit images are replaced with a text note that says why,
+  so they cannot wedge model dispatch;
 - mixed text and image order and duplicate blocks are preserved;
 - `isError: true` becomes a normal settled `ToolResult` with `is_error: true`,
   preserving actionable server content for the model;
@@ -759,7 +762,8 @@ and the real process boundary:
    pages, and atomic refresh behave exactly as specified;
 4. JSON and SSE responses produce the same terminal result;
 5. valid `x-mcp-header` routing works and invalid declarations are isolated;
-6. ordered text/image content and duplicate blocks survive unchanged;
+6. ordered text/image content and duplicate blocks survive (`<= 1536px` / `<= 200 KiB`
+   images unchanged; larger valid images normalized for dispatch);
 7. unsupported, malformed, and over-limit results fail atomically;
 8. `isError` content reaches the model as a settled tool result;
 9. received HTTP failures preserve their safe status and server message, while

@@ -2,7 +2,10 @@ use std::{num::NonZeroU32, sync::Arc};
 
 use renoa_agent::{Message, ModelRequest, ModelResponse};
 
-use super::{CompactionLimits, CompactionPlanner, ContextSizer, checkpoint_message, validation};
+use super::{
+    CompactionLimits, CompactionPlanner, ContextSizer, byte_budget::request_visible_json_bytes,
+    checkpoint_message, validation,
+};
 use crate::context::{
     CompactionValidationError, ContextInput, ContextPreparation, ContextProjector, ContextStrategy,
     ContextStrategyError, ExplicitCompactionPreparation,
@@ -115,6 +118,59 @@ impl CompactingContextStrategy {
         })
     }
 
+    /// Whether compacting at `plan`, which the request does not need to be
+    /// dispatched, both keeps the newest tool results in front of the model
+    /// and brings what remains under the automatic triggers.
+    fn optional_compaction_helps(
+        &self,
+        input: &ContextInput,
+        plan: &super::CompactionPlan,
+    ) -> Result<bool, ContextStrategyError> {
+        let covered = plan.covered_through_sequence();
+        let unanswered_covered = input.entries().next_back().is_some_and(|last| {
+            matches!(last.message(), Message::Tool { .. }) && last.sequence() <= covered
+        });
+        if unanswered_covered {
+            return Ok(false);
+        }
+        let mut retained = Vec::new();
+        if let Some(anchor) = input
+            .entries()
+            .find(|entry| entry.operation_id() == input.active_operation_id())
+            .filter(|anchor| anchor.sequence() <= covered)
+        {
+            retained.push(anchor.message().clone());
+        }
+        retained.extend(
+            input
+                .entries()
+                .filter(|entry| entry.sequence() > covered)
+                .map(|entry| entry.message().clone()),
+        );
+        let tail = ModelRequest {
+            system_prompt: input.system_prompt().to_owned(),
+            messages: self.projector.project(retained)?,
+            tools: input.tools().to_vec(),
+        };
+        let limits = &self.planner.limits;
+        let token_trigger = limits.automatic_compaction_input_tokens();
+        if token_trigger != limits.dispatch_limit_tokens()
+            && self.sizer.estimate_input_tokens(&tail) >= token_trigger.get()
+        {
+            return Ok(false);
+        }
+        let Some(budget) = limits.request_byte_budget() else {
+            return Ok(true);
+        };
+        if budget.automatic_compaction_bytes() == budget.dispatch_limit_bytes() {
+            return Ok(true);
+        }
+        let tail_bytes = request_visible_json_bytes(&tail).map_err(|error| {
+            ContextStrategyError::new(format!("measure request bytes: {error}"))
+        })?;
+        Ok(tail_bytes < budget.automatic_compaction_bytes().get())
+    }
+
     fn checkpoint_is_current(input: &ContextInput) -> bool {
         let latest = input.entries().next_back().map(|entry| entry.sequence());
         match (latest, input.active_checkpoint()) {
@@ -146,9 +202,28 @@ impl ContextStrategy for CompactingContextStrategy {
             .get();
         let below_automatic_trigger = estimated_input_tokens < automatic_compaction_input_tokens
             || automatic_compaction_input_tokens == dispatch_limit_tokens;
+        let byte_budget = self.planner.limits.request_byte_budget();
+        let candidate_bytes = byte_budget
+            .is_some()
+            .then(|| request_visible_json_bytes(&candidate))
+            .transpose()
+            .map_err(|error| {
+                ContextStrategyError::new(format!("measure request bytes: {error}"))
+            })?;
+        let below_byte_trigger = byte_budget
+            .zip(candidate_bytes)
+            .is_none_or(|(budget, bytes)| {
+                bytes < budget.automatic_compaction_bytes().get()
+                    || budget.automatic_compaction_bytes() == budget.dispatch_limit_bytes()
+            });
+        let over_byte_dispatch = byte_budget
+            .zip(candidate_bytes)
+            .is_some_and(|(budget, bytes)| bytes > budget.dispatch_limit_bytes().get());
         if !input.compaction_required()
             && estimated_input_tokens <= dispatch_limit_tokens
             && below_automatic_trigger
+            && below_byte_trigger
+            && !over_byte_dispatch
         {
             return Ok(ContextPreparation::Model {
                 messages: candidate.messages,
@@ -165,16 +240,29 @@ impl ContextStrategy for CompactingContextStrategy {
                 self.projector.as_ref(),
             )
             .map_err(|error| ContextStrategyError::new(error.to_string()))?;
+        let dispatchable = !input.compaction_required()
+            && estimated_input_tokens <= dispatch_limit_tokens
+            && !over_byte_dispatch;
+        // Compaction the request could do without is skipped when it would
+        // summarize tool results the model has not answered yet, or would
+        // leave a request still over the trigger, and so run again next step.
+        let plan = match plan {
+            Some(plan) if dispatchable && !self.optional_compaction_helps(&input, &plan)? => None,
+            plan => plan,
+        };
         Ok(match plan {
             Some(plan) => ContextPreparation::Compact {
                 plan,
                 max_attempts: self.max_attempts,
             },
-            None if !input.compaction_required()
-                && estimated_input_tokens <= dispatch_limit_tokens =>
-            {
-                ContextPreparation::Model {
-                    messages: candidate.messages,
+            None if dispatchable => ContextPreparation::Model {
+                messages: candidate.messages,
+            },
+            None if over_byte_dispatch && estimated_input_tokens <= dispatch_limit_tokens => {
+                ContextPreparation::PayloadLimitExceeded {
+                    estimated_bytes: candidate_bytes.unwrap_or(0),
+                    dispatch_limit_bytes: byte_budget
+                        .map_or(0, |budget| budget.dispatch_limit_bytes().get()),
                 }
             }
             None => ContextPreparation::CapacityExceeded {
@@ -189,12 +277,28 @@ impl ContextStrategy for CompactingContextStrategy {
         input: &ContextInput,
     ) -> Result<ExplicitCompactionPreparation, ContextStrategyError> {
         let current = self.projected_idle_messages(input)?;
-        let estimated_input_tokens = self.estimate_request(input, current);
+        let candidate = ModelRequest {
+            system_prompt: input.system_prompt().to_owned(),
+            messages: current,
+            tools: input.tools().to_vec(),
+        };
+        let estimated_input_tokens = self.sizer.estimate_input_tokens(&candidate);
         if Self::checkpoint_is_current(input) {
             return Ok(ExplicitCompactionPreparation::UpToDate {
                 estimated_input_tokens,
             });
         }
+        let byte_budget = self.planner.limits.request_byte_budget();
+        let candidate_bytes = byte_budget
+            .is_some()
+            .then(|| request_visible_json_bytes(&candidate))
+            .transpose()
+            .map_err(|error| {
+                ContextStrategyError::new(format!("measure request bytes: {error}"))
+            })?;
+        let over_byte_dispatch = byte_budget
+            .zip(candidate_bytes)
+            .is_some_and(|(budget, bytes)| bytes > budget.dispatch_limit_bytes().get());
         let plan = self
             .planner
             .plan_explicit(input, input.active_checkpoint(), self.sizer.as_ref())
@@ -203,6 +307,11 @@ impl ContextStrategy for CompactingContextStrategy {
             Some(plan) => ExplicitCompactionPreparation::Compact {
                 plan,
                 max_attempts: self.max_attempts,
+            },
+            None if over_byte_dispatch => ExplicitCompactionPreparation::PayloadLimitExceeded {
+                estimated_bytes: candidate_bytes.unwrap_or(0),
+                dispatch_limit_bytes: byte_budget
+                    .map_or(0, |budget| budget.dispatch_limit_bytes().get()),
             },
             None => ExplicitCompactionPreparation::CapacityExceeded {
                 estimated_input_tokens,

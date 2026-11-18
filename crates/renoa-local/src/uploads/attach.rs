@@ -12,7 +12,7 @@ use renoa_agent::ContentBlock;
 use uuid::Uuid;
 
 use super::{FILE, UploadError, Uploads, read_record};
-use crate::images::{inline_image, shown_size};
+use crate::images::{ImageRefusal, show_image, shown_size};
 use crate::workspace::hex_sha256;
 
 /// The folder of an agent's workspace that attached files are copied into.
@@ -68,15 +68,22 @@ fn attach(
     let size = shown_size(bytes.len());
     // The line says the image is here, or a model may take the path for a
     // file it cannot open and never look at the image.
-    Ok(match inline_image(&bytes) {
-        Some(image) => vec![
-            ContentBlock::text(format!(
-                "Attached image, included here so you can see it: {path} ({size})."
-            )),
-            image,
-        ],
-        None => vec![ContentBlock::text(format!(
+    Ok(match show_image(&bytes) {
+        Ok(image) => {
+            let mut line =
+                format!("Attached image, included here so you can see it: {path} ({size}).");
+            if let Some(note) = image.scale_note() {
+                line = format!("{line} {note}");
+            }
+            vec![ContentBlock::text(line), image.block]
+        }
+        // Not an image at all: the file is simply attached.
+        Err(ImageRefusal::Unsupported) => vec![ContentBlock::text(format!(
             "Attached file: {path} ({size})."
+        ))],
+        Err(refusal) => vec![ContentBlock::text(format!(
+            "Attached image: {path} ({size}). It is not included here because {}.",
+            refusal.reason()
         ))],
     })
 }

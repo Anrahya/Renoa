@@ -19,6 +19,7 @@ futures-util = "0.3.33"
 flate2 = "1.1"
 getrandom = "0.4.3"
 globset = { version = "0.4.20", default-features = false }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 jiff = "0.2.35"
 mnem = { git = "https://github.com/Anrahya/mnem", rev = "b0dde791190db111ee76346beb2e8a95c33e150f" }
 nix = { version = "0.30", features = ["process", "signal", "user"] }
