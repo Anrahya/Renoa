@@ -37,9 +37,9 @@ else {
  const last=results.at(-1);if(last.is_error) throw Error(JSON.stringify(last));
  const value=JSON.parse(last.content[0].text);
  if(last.name==="plugin_search") {
-  const match=value.tool_matches?.find(match=>match.name===(prompt==="Activate a review skill."?"skill_load":"agent_manage")) ?? value;
+  const match=value.tool_matches?.find(match=>match.name===(prompt==="Activate a review skill."?"skill_load":"agent_manage")) ?? value.tools?.[0];
   if(!match.reference) throw Error("No exact reference");
-  if(!match.input_schema) call("exact-schema","plugin_search",{reference:match.reference});
+  if(!match.input_schema) call("exact-schema","plugin_search",{references:[match.reference]});
   else {
    const args=prompt==="Activate a review skill."?{name:"review"}:{action:"create",name:"Child",instructions:"Perform the assigned task.",tools:[]};
    if(code) call("create-child","code_mode",{source:(prompt==="Activate a review skill."?`await plugin(${JSON.stringify(value.tool_matches.find(tool=>tool.name==="skill_search").reference)}, {"query":"review"})\n`:"")+`result = await plugin(${JSON.stringify(match.reference)}, ${JSON.stringify(args)})\nresult`});

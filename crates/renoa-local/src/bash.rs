@@ -8,6 +8,8 @@ use serde_json::json;
 use tokio::{process::Command, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
+mod background;
+
 use crate::{
     output::{MAX_TOOL_OUTPUT_BYTES, MAX_TOOL_OUTPUT_LINES, tail},
     process::{CapturedTail, child_pid, configure, drain_tail, join_tail, stop_process_group},
@@ -35,7 +37,11 @@ impl Bash {
                     "Run one shell command in the workspace and wait for it to finish. \
 The default timeout is {DEFAULT_TIMEOUT_SECONDS} seconds; timeout_seconds may set it from 1 \
 to {MAX_TIMEOUT_SECONDS} seconds. Output is capped at 2,000 lines or 50 KiB, preserving the \
-final output."
+final output. For work that takes minutes, such as a render or a download, set background: \
+the call returns at once with a log file to check on, and the command runs for up to \
+timeout_seconds (default {}, at most {}).",
+                    background::DEFAULT_SECONDS,
+                    background::MAX_SECONDS,
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -44,9 +50,17 @@ final output."
                         "timeout_seconds": {
                             "type": "integer",
                             "minimum": 1,
-                            "maximum": MAX_TIMEOUT_SECONDS,
+                            "maximum": background::MAX_SECONDS,
                             "default": DEFAULT_TIMEOUT_SECONDS,
-                            "description": "Maximum execution time in seconds."
+                            "description": format!(
+                                "Maximum execution time in seconds: at most \
+                {MAX_TIMEOUT_SECONDS} unless background is set."
+                            )
+                        },
+                        "background": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Return at once and run the command in the background."
                         }
                     },
                     "required": ["command"],
@@ -63,6 +77,8 @@ struct BashInput {
     command: String,
     #[serde(default, deserialize_with = "deserialize_timeout")]
     timeout_seconds: Option<u64>,
+    #[serde(default)]
+    background: bool,
 }
 
 fn deserialize_timeout<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -86,7 +102,10 @@ impl Tool for Bash {
         Box::pin(async move {
             let input: BashInput = decode(call.arguments)?;
             non_empty("command", &input.command)?;
-            let timeout_seconds = resolve_timeout(input.timeout_seconds)?;
+            let timeout_seconds = resolve_timeout(input.timeout_seconds, input.background)?;
+            if input.background {
+                return background::start(&self.root, &input.command, timeout_seconds);
+            }
             let mut process = Command::new("/bin/bash");
             process
                 .args(["-lc", input.command.as_str()])
@@ -175,14 +194,24 @@ enum ProcessExit {
     Finished(std::process::ExitStatus),
 }
 
-fn resolve_timeout(requested: Option<u64>) -> Result<u64, ToolError> {
-    let seconds = requested.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
-    if !(1..=MAX_TIMEOUT_SECONDS).contains(&seconds) {
-        return Err(ToolError::invalid_input(format!(
-            "timeout_seconds must be between 1 and {MAX_TIMEOUT_SECONDS}"
-        )));
+fn resolve_timeout(requested: Option<u64>, background: bool) -> Result<u64, ToolError> {
+    let (default, max) = if background {
+        (background::DEFAULT_SECONDS, background::MAX_SECONDS)
+    } else {
+        (DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
+    };
+    let seconds = requested.unwrap_or(default);
+    if (1..=max).contains(&seconds) {
+        return Ok(seconds);
     }
-    Ok(seconds)
+    Err(ToolError::invalid_input(if background {
+        format!("timeout_seconds must be between 1 and {max}")
+    } else {
+        format!(
+            "timeout_seconds must be between 1 and {max}; for a longer command, set \
+background: true"
+        )
+    }))
 }
 
 async fn collect_completion(
@@ -275,9 +304,9 @@ mod tests {
             serde_json::json!({
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1800,
+                "maximum": 21600,
                 "default": 120,
-                "description": "Maximum execution time in seconds."
+                "description": "Maximum execution time in seconds: at most 1800 unless background is set."
             })
         );
     }

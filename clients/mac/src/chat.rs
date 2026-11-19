@@ -200,9 +200,8 @@ impl Transcript {
                         }
                         self.working = false;
                         self.doing = None;
-                        if let ExecutionTerminal::Failed { .. } = terminal {
-                            let text = "Something went wrong with that one.";
-                            self.say(Speaker::Agent, text, true, at_ms, fresh);
+                        if let ExecutionTerminal::Failed { error } = terminal {
+                            self.say(Speaker::Agent, failure_text(error), true, at_ms, fresh);
                         }
                     }
                     ExecutionEventKind::ToolStarted { activity, .. } => {
@@ -258,6 +257,17 @@ impl Transcript {
             });
             self.arrived.push(fresh.then(Instant::now));
         }
+    }
+}
+
+/// What a failed turn shows: only a notice the model adapter words for people
+/// (`adapters/model-provider-node`, `conciseMessage`) reaches the owner; any
+/// other failure is plumbing and shows as a plain apology.
+fn failure_text(error: &str) -> &str {
+    if error == "Vertex busy" {
+        error
+    } else {
+        "Something went wrong with that one."
     }
 }
 

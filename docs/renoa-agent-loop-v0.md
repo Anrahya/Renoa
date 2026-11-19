@@ -438,6 +438,19 @@ control takes none, since its exchange is replaced or never shown. A steer the
 loop leaves, or one pending when the operation ends, is released, and the Host
 runs it as its own command.
 
+## Keeping the person posted
+
+A person sees only the text an agent writes, so the loop reminds an agent that
+works quietly. When building a request, after three model steps in a row that
+called tools without any text, the last tool result of the third step carries a
+`<reminder>` asking the agent to say in a sentence or two what it has done and
+what comes next. A user message, which starts each operation and each steer,
+and any step with text count again from zero. The reminder is added to the
+request's final messages, after the context strategy compacts and projects
+them, and is never part of the journal. Its place depends only on the messages
+before it in the request, so later requests show it in the same place until
+compaction or a receipt rewrites the history before it.
+
 ## Effect adapters and recovery
 
 The model adapter decodes the exact persisted `ModelRequest`, invokes the

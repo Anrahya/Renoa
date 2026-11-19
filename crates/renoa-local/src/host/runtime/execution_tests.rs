@@ -166,13 +166,13 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             &bindings,
             "plugin_search",
             "schema",
-            json!({"reference":reference}),
+            json!({"references":[reference]}),
         )
         .await
         .expect("schema"),
     );
     assert_eq!(
-        exact["input_schema"]["properties"]["tools"]["items"]["enum"],
+        exact["tools"][0]["input_schema"]["properties"]["tools"]["items"]["enum"],
         json!([
             "read_file",
             "edit_file",

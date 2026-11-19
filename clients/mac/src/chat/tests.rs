@@ -169,6 +169,25 @@ fn a_quiet_command_is_not_shown_and_a_failed_turn_says_so() {
         !failure.text.contains("model unavailable"),
         "no plumbing reaches the owner"
     );
+
+    transcript.apply(
+        &executed(
+            TaskId::new(),
+            2,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Failed {
+                    error: "Vertex busy".to_owned(),
+                },
+            },
+        ),
+        0,
+    );
+    let busy = transcript.lines().last().expect("the busy line");
+    assert_eq!(
+        (busy.text.as_str(), busy.failed),
+        ("Vertex busy", true),
+        "a busy model provider says so"
+    );
 }
 
 #[test]

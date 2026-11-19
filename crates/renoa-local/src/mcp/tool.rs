@@ -75,7 +75,7 @@ impl ExecuteTool {
             command_id,
             spec: ToolSpec {
                 name: EXECUTE_TOOL.to_owned(),
-                description: "Execute one plugin MCP tool. Use an unchanged reference returned by plugin_search, and pass an arguments object matching that result's complete input_schema. If input_schema was absent, first call plugin_search with only reference. A stale reference fails; search again.".to_owned(),
+                description: "Execute one plugin MCP tool. Use an unchanged reference returned by plugin_search, and pass an arguments object matching that result's complete input_schema. If input_schema was absent, first call plugin_search with only references. A stale reference fails; search again.".to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {

@@ -8,6 +8,7 @@ mod context;
 mod decision;
 mod format;
 mod pending_tools;
+mod quiet;
 mod turn_context;
 mod turn_timing;
 

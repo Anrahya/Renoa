@@ -108,6 +108,7 @@ internal class ChatJournal {
                     }
                     is ExecutionEventKind.ExecutionTerminated -> {
                         terminals[kind.commandId] = activity.terminal
+                        failureNotice(activity.terminal)?.let { messages += ChatMessage("${kind.commandId}-failed", Speaker.Event, it) }
                         doing = null
                         if (draft?.commandId == kind.commandId) draft = null
                     }
@@ -256,3 +257,11 @@ internal class ChatJournal {
         private const val MAX_ACTIVITY_BYTES = 120
     }
 }
+
+/**
+ * What a failed turn says in the chat: only a notice the model adapter words for people
+ * (`adapters/model-provider-node`, `conciseMessage`). Any other failure is plumbing; the agent's
+ * stuck face says enough.
+ */
+private fun failureNotice(terminal: ExecutionTerminal): String? =
+    (terminal as? ExecutionTerminal.Failed)?.error?.takeIf { it == "Vertex busy" }

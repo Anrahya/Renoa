@@ -61,7 +61,10 @@ creation request replays unchanged.
 
 Each turn composes the system prompt from the stored definition in this order:
 the instructions; an `<identity>` block, `Your name is <name>.`, so a rename
-reaches the next turn; the `<purpose>` block; the `<job>` block; the agent's
+reaches the next turn; a `<keeping_posted>` block every agent gets, asking it to
+say what it is doing during longer work and to wait for slow things in short
+checks rather than one long call, so the person sees how it goes and can steer
+it between steps; the `<purpose>` block; the `<job>` block; the agent's
 `SOUL.md`; the person's `USER.md`, which renders empty, with the revision of
 empty content, until that person has a profile; the `<session_context>` block
 the person's plugins add, such as their `MIND.md`; and, when enabled, the
@@ -957,8 +960,9 @@ The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
 Targeted discovery comes before `*` browsing. Plugin
-cards and nested tools retain the 200-item limit; exact references return the
-full model-facing input schema.
+cards and nested tools retain the 200-item limit; an exact lookup of one or
+more references returns each full model-facing input schema and, where the
+server declares one, its output schema.
 
 The exact machine-tool selection contains only:
 
@@ -1023,7 +1027,16 @@ does not mean weakening existing adapter correctness or cancellation behavior.
 Model-visible output is bounded. Reads use one-based pagination; Bash preserves
 the final output and stops its process group after 120 seconds by default. A
 call may choose 1 through 1,800 seconds; timeout results include retained output
-and warn that partial changes may already exist. Every other built-in tool has
+and warn that partial changes may already exist. A call that sets `background`
+returns as soon as the command starts: the command runs in its own process
+group, writes stdout and stderr to `.renoa-jobs/<id>.log` in the workspace, and
+the call names that log and the group. A watcher owns the process. When the
+command ends, the watcher stops what it left in its group and appends one line
+saying how it ended; at the job's timeout (one hour by default, at most six) it
+stops the group; and when the Host shuts down its runtime, dropping the watcher
+kills the group, with no closing line. A Host killed outright cannot stop its
+jobs; on the VPS, the service's cgroup ends them with it. Logs stay in the
+workspace until something deletes them. Every other built-in tool has
 a 120-second Host deadline. A deadline or cancellation is not reported until
 the adapter has stopped its owned work. Grep and find return
 deterministic workspace-relative results and explicit truncation notices.
@@ -1135,8 +1148,13 @@ Host types; it does not construct a kernel `Runtime` or persist Host state.
 
 The Host always offers the plugin protocol described above. Targeted search
 returns compact plugin cards and up to three matching Host or MCP tools. A small
-preview schema is complete; otherwise an exact reference request returns the
-full schema within 64 KiB. Plugin cards and nested tool pages return at most
+preview schema is complete; otherwise an exact lookup returns it. Previews
+carry input schemas only. An exact lookup lists several references, so a model
+loads every tool of a chained Code Mode script in one call, and returns each
+tool's complete input schema plus its declared output schema, in the order
+asked, within 64 KiB. When the output schemas push a lookup past that boundary
+they are left out and `output_schemas_omitted` says so; when the input schemas
+alone exceed it, the lookup fails and asks for fewer references. Plugin cards and nested tool pages return at most
 200 items within 50 KiB. A missing MCP adapter fails remote execution visibly;
 it does not prevent Host plugins from running.
 

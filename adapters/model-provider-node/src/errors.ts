@@ -1,4 +1,5 @@
 import { providerDisplayName, type FailureCategory, type InferenceOutcome } from "./contract.js";
+import { headerMap, nestedRecord, numeric, parseFormattedHttpError, stringField } from "./error-body.js";
 import { boundProviderMessage, redactText } from "./redact.js";
 
 export { redactHeaders, redactSecrets, redactText } from "./redact.js";
@@ -124,6 +125,11 @@ export function classifyError(error: unknown, options: ClassifyOptions): Failure
 }
 
 function conciseMessage(provider: string, attempts: number, facts: FailureFacts): string {
+  // The owner reads this in the app; Google's quota is shared and clears on
+  // its own, so the cause is all they need.
+  if (provider === "google-vertex" && facts.category === "rate_limited") {
+    return "Vertex busy";
+  }
   const name = providerDisplayName(provider);
   const attemptWord = attempts === 1 ? "attempt" : "attempts";
   return `${name} request failed after ${attempts} ${attemptWord}: ${summarize(facts)}`;
@@ -410,28 +416,6 @@ function errnoFromMessage(message: string): string | undefined {
   return match?.[1]?.toUpperCase();
 }
 
-function parseFormattedHttpError(message: string): {
-  status?: number;
-  message: string;
-  body?: Record<string, unknown>;
-} {
-  const match = /^(\d{3}):\s*([\s\S]*)$/.exec(message);
-  if (match === null || match[1] === undefined || match[2] === undefined) {
-    return { message };
-  }
-  const status = Number(match[1]);
-  const rest = match[2];
-  try {
-    const parsed = JSON.parse(rest) as unknown;
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      return { status, message: rest, body: parsed as Record<string, unknown> };
-    }
-  } catch {
-    // The remainder is not JSON; keep it as the human-readable message.
-  }
-  return { status, message: rest };
-}
-
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -444,34 +428,4 @@ function errorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
-}
-
-function numeric(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function stringField(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function nestedRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function headerMap(value: unknown): Record<string, string> {
-  if (value instanceof Headers) {
-    return Object.fromEntries(value.entries());
-  }
-  if (typeof value !== "object" || value === null) {
-    return {};
-  }
-  const result: Record<string, string> = {};
-  for (const [key, nested] of Object.entries(value)) {
-    if (typeof nested === "string") {
-      result[key.toLowerCase()] = nested;
-    }
-  }
-  return result;
 }

@@ -1,8 +1,10 @@
 use std::str::FromStr as _;
 
-use super::{PREVIEW_LIMIT, PREVIEW_SCHEMA_BYTES, PluginSearchTool, ToolMatch, local, page};
+use super::{
+    PREVIEW_LIMIT, PREVIEW_SCHEMA_BYTES, PluginSearchTool, ToolMatch, exact::too_large, local, page,
+};
 use crate::{
-    mcp::{McpHostError, McpToolReference, McpToolSummary, rank_tools},
+    mcp::{McpHostError, McpToolReference, McpToolSummary, SCHEMA_LOOKUP_OUTPUT_BYTES, rank_tools},
     plugins::{
         PluginError,
         tool::output::{json_output, plugin_error},
@@ -32,6 +34,7 @@ impl PluginSearchTool {
                     name: tool.name().to_owned(),
                     description: tool.description().to_owned(),
                     input_schema: None,
+                    output_schema: None,
                 })
             })
             .collect::<Result<Vec<_>, ToolError>>()?;
@@ -62,6 +65,10 @@ impl PluginSearchTool {
         )?)
     }
 
+    /// Describes `references` in order. A preview skips references gone
+    /// stale and leaves out large and output schemas; an exact lookup fails on
+    /// any bad reference, naming it, and stops loading once the input schemas
+    /// alone pass the lookup boundary.
     pub(super) async fn describe_tools(
         &self,
         references: Vec<McpToolReference>,
@@ -75,12 +82,21 @@ impl PluginSearchTool {
         let expected = references.len();
         let resolved = tokio::task::spawn_blocking(move || {
             let mut resolved = Vec::with_capacity(references.len());
+            let mut input_bytes = 0;
             for reference in references {
                 match store
                     .resolve_agent_tools(&agent_id.to_string(), std::slice::from_ref(&reference))
                 {
                     Ok(mut tools) if tools.len() == 1 => {
-                        resolved.push((reference, tools.remove(0)));
+                        let tool = tools.remove(0);
+                        if !preview {
+                            input_bytes +=
+                                serde_json::to_vec(tool.tool().model_input_schema())?.len();
+                            if input_bytes > SCHEMA_LOOKUP_OUTPUT_BYTES {
+                                return Ok(None);
+                            }
+                        }
+                        resolved.push((reference, tool));
                     }
                     Ok(_) => {
                         return Err(McpHostError::Invalid(
@@ -88,14 +104,21 @@ impl PluginSearchTool {
                         ));
                     }
                     Err(McpHostError::Conflict(_) | McpHostError::NotFound(_)) if preview => {}
+                    Err(McpHostError::Conflict(message)) => {
+                        return Err(McpHostError::Conflict(format!("{reference}: {message}")));
+                    }
+                    Err(McpHostError::NotFound(message)) => {
+                        return Err(McpHostError::NotFound(format!("{reference}: {message}")));
+                    }
                     Err(error) => return Err(error),
                 }
             }
-            Ok(resolved)
+            Ok(Some(resolved))
         })
         .await
         .map_err(|error| ToolError::internal(format!("Host catalog task failed: {error}")))?
-        .map_err(|error| plugin_error(PluginError::Mcp(error), false))?;
+        .map_err(|error| plugin_error(PluginError::Mcp(error), false))?
+        .ok_or_else(|| too_large(expected))?;
         if !preview && resolved.len() != expected {
             return Err(ToolError::internal(
                 "Host catalog returned the wrong number of MCP tools",
@@ -123,6 +146,11 @@ impl PluginSearchTool {
                         resolved.tool().description().to_owned()
                     },
                     input_schema: include_schema.then(|| schema.clone()),
+                    output_schema: if preview {
+                        None
+                    } else {
+                        resolved.tool().output_schema().cloned()
+                    },
                 })
             })
             .collect()

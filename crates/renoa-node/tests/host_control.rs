@@ -2402,9 +2402,9 @@ else if(action==='stream') {
  else {
   const last=results.at(-1); if(last.is_error) throw Error(JSON.stringify(last));
   const value=last.name==='plugin_search' ? JSON.parse(last.content[0].text) : null;
-  const match=value?.tool_matches?.find(tool=>tool.name==='agent_documents') ?? value;
+  const match=value?.tool_matches?.find(tool=>tool.name==='agent_documents') ?? value?.tools?.[0];
   if(!value) reply([{type:'text',text:'Saved.'}],'stop');
-  else if(!match.input_schema) call('schema','plugin_search',{reference:match.reference});
+  else if(!match.input_schema) call('schema','plugin_search',{references:[match.reference]});
   else {
    const revision=request.system_prompt.match(/<user source=.USER\.md. revision=.([a-f0-9]{64})/)[1];
    call('save','tool_execute',{reference:match.reference,arguments:{document:'user',expected_revision:revision,content:'Vegetarian.\n'}});
