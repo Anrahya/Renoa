@@ -1312,7 +1312,7 @@ Attach whole connections to profiles, migrate existing per-tool selections,
 and read committed Host state on each registry call.
 
 Proof gate: 1,000 catalog entries still produce only two model API schemas;
-exact-reference search returns only the requested full schema; stale catalog references fail before
+an exact lookup returns only the requested tools' full schemas; stale catalog references fail before
 dispatch; a live registry object sees a newly committed attachment; and the
 real MCP result, error, uncertainty, restart, and secret boundaries remain
 unchanged.

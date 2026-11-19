@@ -960,8 +960,9 @@ The list does not follow the plugin switches, so a recovered command rebuilds
 the manifest it was admitted with; a call to a plugin that is off is refused.
 They stay findable through `plugin_search`, and Code Mode leaves them direct.
 Targeted discovery comes before `*` browsing. Plugin
-cards and nested tools retain the 200-item limit; exact references return the
-full model-facing input schema.
+cards and nested tools retain the 200-item limit; an exact lookup of one or
+more references returns each full model-facing input schema and, where the
+server declares one, its output schema.
 
 The exact machine-tool selection contains only:
 
@@ -1147,8 +1148,13 @@ Host types; it does not construct a kernel `Runtime` or persist Host state.
 
 The Host always offers the plugin protocol described above. Targeted search
 returns compact plugin cards and up to three matching Host or MCP tools. A small
-preview schema is complete; otherwise an exact reference request returns the
-full schema within 64 KiB. Plugin cards and nested tool pages return at most
+preview schema is complete; otherwise an exact lookup returns it. Previews
+carry input schemas only. An exact lookup lists several references, so a model
+loads every tool of a chained Code Mode script in one call, and returns each
+tool's complete input schema plus its declared output schema, in the order
+asked, within 64 KiB. When the output schemas push a lookup past that boundary
+they are left out and `output_schemas_omitted` says so; when the input schemas
+alone exceed it, the lookup fails and asks for fewer references. Plugin cards and nested tool pages return at most
 200 items within 50 KiB. A missing MCP adapter fails remote execution visibly;
 it does not prevent Host plugins from running.
 

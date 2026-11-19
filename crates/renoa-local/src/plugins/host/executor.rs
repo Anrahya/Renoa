@@ -20,7 +20,7 @@ pub(crate) fn binding(
     );
     let spec = ToolSpec {
         name: crate::capabilities::TOOL_EXECUTE.to_owned(),
-        description: "Invoke one enabled plugin tool. Copy the exact reference and full input_schema from plugin_search, and pass a matching arguments object. If input_schema was absent, first request plugin_search with reference alone. Stale references require a new search.".to_owned(),
+        description: "Invoke one enabled plugin tool. Copy the exact reference and full input_schema from plugin_search, and pass a matching arguments object. If input_schema was absent, first request plugin_search with references alone. Stale references require a new search.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {

@@ -474,9 +474,11 @@ Self-reported `serverInfo.name` is never identity.
 MCP names never become top-level model tool names. Every agent receives the small, provider-neutral Host plugin protocol:
 
 - `plugin_search` returns compact plugin cards and up to three matching MCP
-  tools for a targeted query. A small tool schema is included in full. If a
-  match has no `input_schema`, an exact reference request returns its complete
-  model-facing schema or fails at the 64 KiB bound; it never truncates a schema.
+  tools for a targeted query. A small tool schema is included in full. An exact
+  lookup lists one or more references and returns, in that order, each complete
+  model-facing input schema and any declared output schema within 64 KiB. It
+  drops the output schemas, saying so, before it fails; it never truncates a
+  schema, and a failed reference is named in the error.
   `*` browses the local library without schemas. An exact plugin id returns
   server and connection facts. An enabled connection id opens nested MCP tools.
   Each page returns at most 200 items within 50 KiB, with `next_offset` for
@@ -509,8 +511,9 @@ Search ranks deterministically and uses `*` for bounded browsing. A catalog may
 hold 1,024 entries, but the model API receives only the selected compact
 schemas rather than one schema per MCP method. An oversized exact lookup fails
 rather than truncating a JSON Schema. Transport-only `x-mcp-header` annotations, titles,
-icons, endpoints, protocol metadata, output schemas, and adapter bookkeeping
-remain outside model context. The resolved invocation retains the unmodified
+icons, endpoints, protocol metadata, and adapter bookkeeping remain outside
+model context. A declared output schema reaches the model only in an exact
+lookup, so a Code Mode script can read one call's result in the next. The resolved invocation retains the unmodified
 input schema so the adapter can project transport headers correctly.
 
 ## Frozen runtime identity
@@ -704,11 +707,11 @@ Discovery never loads schemas into model context. Every normal profile request
 carries the same two small registry specifications, independent of whether the
 Host has zero, ten, or one thousand external tools. Search returns at most 200
 short summaries per page; a targeted query includes up to three matching tool
-previews with complete small schemas. Exact reference lookup inserts the full
-model-facing schema into conversation history when needed, where normal context
-and compaction rules apply. Server instructions, endpoint
-URLs, cache hints, output schemas, adapter bookkeeping, and every unloaded
-schema remain outside.
+previews with complete small schemas. An exact lookup of one or more references
+inserts each full model-facing input schema, and any declared output schema,
+into conversation history when needed, where normal context and compaction
+rules apply. Server instructions, endpoint URLs, cache hints, adapter
+bookkeeping, and every unloaded schema remain outside.
 
 The exact `ToolCall` and settled `ToolResult` already belong to kernel-backed
 semantic history. Structured `ToolResult.details` remains available for Host
