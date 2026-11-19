@@ -23,6 +23,16 @@ const PROJECT_INSTRUCTIONS_FILE: &str = "AGENTS.md";
 const MAX_PROJECT_INSTRUCTIONS_BYTES: usize = 32 * 1024;
 const MAX_PROJECT_INSTRUCTIONS_BYTES_U64: u64 = 32 * 1024;
 
+/// Every agent's prompt asks it to say how long work goes, whatever its own
+/// instructions say: the person sees only what it writes, and a steer reaches
+/// it only between model calls. The agent loop reminds a quiet agent too.
+pub(super) const KEEPING_POSTED: &str = "\n\n<keeping_posted>\nWhen work takes more than a step or two, \
+keep whoever you are working for posted in a sentence or two at a time: say what you are about \
+to do before you start, and say when a step fails or the plan changes. When you wait for \
+something slow, say what you are waiting for and check on it in short steps of a minute or two \
+rather than one long wait, so they can see how it goes and steer you between steps.\n\
+</keeping_posted>";
+
 /// One agent's definition plus the state only the runtime needs.
 pub struct ResolvedAgentDefinition {
     definition: AgentDefinition,
@@ -123,6 +133,7 @@ impl ResolvedAgentDefinition {
             + documents.as_ref().map_or(0, String::len)
             + session_context.as_ref().map_or(0, String::len)
             + project.as_ref().map_or(0, String::len)
+            + KEEPING_POSTED.len()
             + 256;
         let mut prompt = String::with_capacity(capacity);
         prompt.push_str(base.trim_end());
@@ -131,6 +142,7 @@ impl ResolvedAgentDefinition {
         prompt.push_str("\n\n<identity>\nYour name is ");
         prompt.push_str(name);
         prompt.push_str(".\n</identity>");
+        prompt.push_str(KEEPING_POSTED);
         if let Some(purpose) = purpose {
             prompt.push_str("\n\n<purpose>\nWhat you were made for:\n");
             prompt.push_str(purpose.trim());

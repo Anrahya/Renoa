@@ -337,9 +337,11 @@ impl AgentLoop {
     }
 
     fn model_request(&self, messages: Vec<Message>) -> ModelRequest {
+        let mut messages = crate::context::model_visible_messages(messages);
+        crate::quiet::remind(&mut messages);
         ModelRequest {
             system_prompt: self.config.system_prompt.clone(),
-            messages: crate::context::model_visible_messages(messages),
+            messages,
             tools: self
                 .tools
                 .iter()

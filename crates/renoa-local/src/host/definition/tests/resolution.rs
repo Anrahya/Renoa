@@ -1,5 +1,5 @@
 use super::*;
-use crate::host::definition::resolve_definition;
+use crate::host::definition::{KEEPING_POSTED, resolve_definition};
 
 #[tokio::test]
 async fn a_document_preset_publishes_files_and_records_provenance() {
@@ -72,7 +72,9 @@ async fn resolution_composes_the_stored_definition_with_workspace_rules() {
     assert!(resolved.document_binding().is_none());
     assert_eq!(
         resolved.system_prompt(&workspace).expect("compose prompt"),
-        "Do the assigned job.\n\n<identity>\nYour name is Resolved.\n</identity>",
+        format!(
+            "Do the assigned job.\n\n<identity>\nYour name is Resolved.\n</identity>{KEEPING_POSTED}"
+        ),
         "resolution uses the stored instructions and name, never a preset"
     );
 
