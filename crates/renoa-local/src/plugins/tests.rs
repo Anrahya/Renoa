@@ -310,16 +310,12 @@ async fn stdio_plugin_package_discovers_and_executes_end_to_end() {
     assert_eq!(parsed["plugin_root"].as_str(), expected_root.to_str());
     assert_eq!(parsed["cwd"], parsed["plugin_root"]);
     // A server given PLUGIN_DATA finds it there, private to this user.
-    let data = directory
-        .path()
-        .join("plugin-data")
-        .join(inspected.digest());
-    let mode = std::os::unix::fs::PermissionsExt::mode(
-        &fs::metadata(&data)
-            .expect("plugin data exists")
-            .permissions(),
+    assert_private_dir(
+        &directory
+            .path()
+            .join("plugin-data")
+            .join(inspected.digest()),
     );
-    assert_eq!(mode & 0o777, 0o700);
 
     // Verify stored integration endpoint matches the RESOLVED stdio config digest,
     // distinct from the unresolved package mcp.json endpoint.
@@ -1162,4 +1158,11 @@ async fn a_stdio_connect_that_fails_removes_the_data_directory_it_made() {
         !data_dir.exists(),
         "the failed connect removed its data directory"
     );
+}
+
+fn assert_private_dir(path: &Path) {
+    let metadata = fs::metadata(path).expect("the directory exists");
+    assert!(metadata.is_dir());
+    let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions());
+    assert_eq!(mode & 0o777, 0o700, "{}", path.display());
 }
