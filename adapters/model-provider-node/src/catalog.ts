@@ -17,7 +17,7 @@ import {
 import { ANTHROPIC_BASE_URL } from "./providers/anthropic.js";
 import { DEEPSEEK_BASE_URL } from "./providers/deepseek.js";
 import { OPENROUTER_BASE_URL } from "./providers/openrouter.js";
-import { GEMINI_4_HYDROGEN, VERTEX_TEMPLATE_BASE_URL } from "./providers/google-vertex.js";
+import { GEMINI_4_HYDROGEN, GEMINI_4_NEON, VERTEX_TEMPLATE_BASE_URL } from "./providers/google-vertex.js";
 import { XAI_BASE_URL } from "./providers/xai.js";
 
 export interface CatalogEntry {
@@ -54,7 +54,7 @@ const PINNED_CATALOGS: Readonly<Record<ProviderId, Readonly<Record<string, objec
   "opencode-go": OPENCODE_GO_MODELS,
   deepseek: DEEPSEEK_MODELS,
   openrouter: OPENROUTER_MODELS,
-  "google-vertex": withEntry(GOOGLE_VERTEX_MODELS, GEMINI_4_HYDROGEN),
+  "google-vertex": withEntry(withEntry(GOOGLE_VERTEX_MODELS, GEMINI_4_HYDROGEN), GEMINI_4_NEON),
 };
 
 /** Adds a Renoa-pinned entry until Pi's own catalog lists that model. */
