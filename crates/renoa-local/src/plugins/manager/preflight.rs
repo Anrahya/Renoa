@@ -25,6 +25,10 @@ pub(super) fn resolve_server_stdio(
     Ok(Some(stdio.resolve_for_package(&root, &data)?))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one preflight for both add and connect: the caller, the stores, and the selection"
+)]
 pub(super) fn add_connection(
     catalog: &McpCatalogStore,
     store: &PluginStore,

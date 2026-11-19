@@ -140,10 +140,11 @@ impl PluginManager {
             && created_data
             && let Some(dir) = plugin_data_dir
         {
-            // A failed connect removes the data directory it made. Should that
-            // fail too, the connect error is the one to report: a retry adopts
-            // the directory left behind.
-            let _removal = tokio::task::spawn_blocking(move || fs::remove_dir_all(dir)).await;
+            // A failed connect removes the data directory it made while it is
+            // still empty, so one another connect has begun to use is kept.
+            // Should that fail, the connect error is the one to report: a
+            // retry adopts the directory left behind.
+            let _removal = tokio::task::spawn_blocking(move || fs::remove_dir(dir)).await;
         }
         connected
     }
@@ -237,7 +238,7 @@ impl PluginManager {
         };
         let plugin_data_dir = server
             .stdio()
-            .is_some_and(McpStdioConfig::uses_plugin_data)
+            .is_some_and(McpStdioConfig::exposes_plugin_dirs)
             .then(|| self.store.plugin_data_dir(plugin.digest()))
             .transpose()?;
         let auth = credential_auth(
@@ -369,25 +370,27 @@ struct PreparedConnection {
     plugin_data_dir: Option<PathBuf>,
 }
 
-/// Creates the package's data directory, private to this user, and says
-/// whether this call made it.
+/// Creates the package's data directory, private to this user from the
+/// start, and says whether this call made it.
 fn ensure_plugin_data_dir(path: &Path) -> Result<bool, PluginError> {
-    let created = !path.exists();
-    fs::create_dir_all(path).map_err(|source| PluginError::Io {
-        action: "create plugin data directory",
-        path: path.to_path_buf(),
-        source,
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|source| {
-            PluginError::Io {
-                action: "set plugin data directory permissions",
-                path: path.to_path_buf(),
-                source,
-            }
-        })?;
+    let io = |action| {
+        move |source| PluginError::Io {
+            action,
+            path: path.to_path_buf(),
+            source,
+        }
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io("create plugin data root"))?;
     }
-    Ok(created)
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    match builder.create(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => {
+            Ok(false)
+        }
+        Err(error) => Err(io("create plugin data directory")(error)),
+    }
 }

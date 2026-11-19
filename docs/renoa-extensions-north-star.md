@@ -1266,8 +1266,9 @@ Build a narrow Node adapter using the pinned official MCP TypeScript client.
 Support current Streamable HTTP, deterministic discovery, one tool call,
 bounded ordered results, cancellation, process supervision, and typed terminal
 errors. The initial proof is unauthenticated; the later Host-management slice
-adds OAuth without adding a second adapter. Do not add stdio, resources,
-prompts, apps, or tasks.
+adds OAuth without adding a second adapter. Do not add resources, prompts,
+apps, or tasks. Stdio came later, as a per-call transport in the same adapter
+(schema 57).
 
 Proof gate: deterministic local-server tests cover negotiation, discovery,
 invocation, malformed responses, timeouts before and after dispatch,

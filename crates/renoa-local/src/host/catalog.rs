@@ -229,18 +229,6 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             "this data root holds schema {observed}; the canonical agent cutover discards agent-owned state, so start it with `renoa-host <config.json> reset <backup-directory>`"
         )));
     }
-    let disable_fks = (28..SCHEMA_VERSION).contains(&observed);
-    if disable_fks {
-        connection.pragma_update(None, "foreign_keys", false)?;
-    }
-    let result = initialize_connection_inner(connection);
-    if disable_fks {
-        let _ = connection.pragma_update(None, "foreign_keys", true);
-    }
-    result
-}
-
-fn initialize_connection_inner(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version =
         transaction.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;

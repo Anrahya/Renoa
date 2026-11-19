@@ -6,10 +6,21 @@ use rusqlite::Transaction;
 use super::HostCatalogError;
 
 pub(super) fn upgrade(transaction: &Transaction<'_>) -> Result<(), HostCatalogError> {
+    // Connections reference integrations by name and without cascades, so the
+    // rebuild only defers their checks: dropping the table leaves them
+    // pending, and inserting each row back under the same name settles them
+    // before commit. Foreign keys stay on, so earlier steps keep their
+    // cascades.
     transaction.execute_batch(
-        "DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
+        "PRAGMA defer_foreign_keys = ON;
+        DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
 
-        CREATE TABLE mcp_integrations_v57 (
+        CREATE TEMP TABLE mcp_integrations_v56 AS
+            SELECT integration_id, kind, endpoint, request_headers_json
+            FROM mcp_integrations;
+        DROP TABLE mcp_integrations;
+
+        CREATE TABLE mcp_integrations (
             integration_id TEXT PRIMARY KEY CHECK (length(integration_id) > 0),
             kind TEXT NOT NULL CHECK (kind IN ('direct_streamable_http', 'direct_stdio')),
             endpoint TEXT NOT NULL CHECK (length(endpoint) > 0),
@@ -31,14 +42,12 @@ pub(super) fn upgrade(transaction: &Transaction<'_>) -> Result<(), HostCatalogEr
             )
         ) STRICT;
 
-        INSERT INTO mcp_integrations_v57(
+        INSERT INTO mcp_integrations(
             integration_id, kind, endpoint, request_headers_json, stdio_config_json
         )
         SELECT integration_id, kind, endpoint, request_headers_json, NULL
-        FROM mcp_integrations;
-
-        DROP TABLE mcp_integrations;
-        ALTER TABLE mcp_integrations_v57 RENAME TO mcp_integrations;
+        FROM mcp_integrations_v56;
+        DROP TABLE mcp_integrations_v56;
 
         CREATE TABLE plugin_mcp_servers_v57 (
             plugin_digest TEXT NOT NULL

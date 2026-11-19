@@ -111,12 +111,15 @@ impl McpStdioConfig {
         Ok(())
     }
 
-    pub(crate) fn uses_plugin_data(&self) -> bool {
-        let has_data = |value: &str| value.contains("${PLUGIN_DATA}");
-        has_data(&self.command)
-            || self.args.iter().any(|arg| has_data(arg))
-            || self.env.values().any(|value| has_data(value))
-            || self.cwd.as_deref().is_some_and(has_data)
+    /// Whether the server is given `PLUGIN_ROOT` and `PLUGIN_DATA`: it names
+    /// either one, or sets a working directory, which is always one of them.
+    pub(crate) fn exposes_plugin_dirs(&self) -> bool {
+        let names =
+            |value: &str| value.contains("${PLUGIN_ROOT}") || value.contains("${PLUGIN_DATA}");
+        names(&self.command)
+            || self.args.iter().any(|arg| names(arg))
+            || self.env.values().any(|value| names(value))
+            || self.cwd.is_some()
     }
 
     pub(crate) fn encoded(&self) -> Result<String, McpHostError> {
@@ -155,9 +158,6 @@ impl McpStdioConfig {
                 .replace("${PLUGIN_ROOT}", root_str)
                 .replace("${PLUGIN_DATA}", data_str)
         };
-        let references_vars =
-            |value: &str| value.contains("${PLUGIN_ROOT}") || value.contains("${PLUGIN_DATA}");
-
         let command = expand(&self.command);
         let args = self.args.iter().map(|arg| expand(arg)).collect::<Vec<_>>();
         let mut env = self
@@ -186,11 +186,7 @@ impl McpStdioConfig {
                 Some(text.to_owned())
             }
         };
-        let uses_plugin_vars = references_vars(&self.command)
-            || self.args.iter().any(|arg| references_vars(arg))
-            || self.env.values().any(|value| references_vars(value))
-            || self.cwd.is_some();
-        if uses_plugin_vars {
+        if self.exposes_plugin_dirs() {
             env.insert("PLUGIN_ROOT".to_owned(), root_str.to_owned());
             env.insert("PLUGIN_DATA".to_owned(), data_str.to_owned());
         }
@@ -307,3 +303,6 @@ fn validate_stdio_string(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

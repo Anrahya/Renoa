@@ -180,7 +180,8 @@ pub enum PluginSource {
         #[schemars(length(max = 64))]
         headers: Vec<PluginHeader>,
     },
-    /// A local stdio MCP server command. Audit the repository and command before adding.
+    /// A local stdio MCP server command. It runs on this machine, so connecting it needs
+    /// the bash tool; audit the repository and command before adding.
     StdioMcp {
         /// Plugin name: 1-64 lowercase ASCII letters, digits, dots, or hyphens.
         /// Start and end with a letter or digit; no consecutive dots or hyphens.

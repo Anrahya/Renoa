@@ -309,6 +309,17 @@ async fn stdio_plugin_package_discovers_and_executes_end_to_end() {
     let expected_root = directory.path().join("plugins").join(inspected.digest());
     assert_eq!(parsed["plugin_root"].as_str(), expected_root.to_str());
     assert_eq!(parsed["cwd"], parsed["plugin_root"]);
+    // A server given PLUGIN_DATA finds it there, private to this user.
+    let data = directory
+        .path()
+        .join("plugin-data")
+        .join(inspected.digest());
+    let mode = std::os::unix::fs::PermissionsExt::mode(
+        &fs::metadata(&data)
+            .expect("plugin data exists")
+            .permissions(),
+    );
+    assert_eq!(mode & 0o777, 0o700);
 
     // Verify stored integration endpoint matches the RESOLVED stdio config digest,
     // distinct from the unresolved package mcp.json endpoint.
@@ -889,155 +900,200 @@ fn assert_no_secret_in_database(database: &Path, secret: &str) {
     }
 }
 
-#[tokio::test]
-async fn only_an_agent_with_bash_connects_a_stdio_server_and_a_refusal_leaves_nothing() {
-    let repository = workspace_root();
-    let adapter = compiled_adapter(&repository);
+struct GateFixture {
+    directory: tempfile::TempDir,
+    bash_agent: renoa_kernel::AgentId,
+    agent: renoa_kernel::AgentId,
+    manager: PluginManager,
+    package_dir: PathBuf,
+    digest: String,
+}
+
+/// A Host with one agent granted bash, one without, and a stdio package.
+async fn gate_fixture() -> GateFixture {
+    let adapter = compiled_adapter(&workspace_root());
     let directory = tempdir().expect("temporary stdio gate fixture");
     let (bash_agent, _mcp, manager) = init_stdio_manager(directory.path(), adapter);
     let agent = test_agent_id(8);
     crate::test_agents::insert_agent(&directory.path().join("host.sqlite3"), &agent.to_string());
     let package_dir = directory.path().join("browse-fixture");
     write_stdio_browse_fixture(&package_dir);
-    let inspected = manager
+    let digest = manager
         .inspect(&package_dir)
         .await
-        .expect("inspect stdio package");
-    let add = |source: super::api::PluginSource, expected: Option<String>, server: Option<&str>| {
-        super::api::PluginRequest::Add {
-            source,
-            expected_digest: expected,
-            server: server.map(str::to_owned),
-            connection: Some("browse.local".to_owned()),
-            credential: None,
-            replace: false,
-        }
-    };
-    let invoke = |agent: renoa_kernel::AgentId, request, operation: &'static str| {
-        let manager = manager.clone();
-        let workspace = directory.path().to_path_buf();
-        async move {
-            manager
-                .invoke(
-                    &agent,
-                    &workspace,
-                    request,
-                    super::api::PluginInvocation {
-                        operation_id: operation,
-                        updates: None,
-                        cancellation: CancellationToken::new(),
-                    },
-                )
-                .await
-        }
-    };
-    let refused = |outcome: Result<super::api::PluginOutcome, PluginError>| match outcome {
-        Err(PluginError::Unavailable(message)) => assert!(message.contains("bash"), "{message}"),
-        other => panic!("expected the bash refusal, got {:?}", other.err()),
-    };
-
-    // The direct source and the package path are both refused before any
-    // install, so neither leaves a package, a connection, or plugin data.
-    refused(
-        invoke(
-            agent,
-            add(
-                super::api::PluginSource::StdioMcp {
-                    name: "direct-stdio".to_owned(),
-                    description: "Direct stdio MCP fixture.".to_owned(),
-                    server: "direct".to_owned(),
-                    command: "node".to_owned(),
-                    args: vec![
-                        package_dir
-                            .join("server.mjs")
-                            .to_string_lossy()
-                            .into_owned(),
-                    ],
-                    env: std::collections::BTreeMap::new(),
-                    cwd: None,
-                    documentation: None,
-                },
-                None,
-                None,
-            ),
-            "gate-direct",
-        )
-        .await,
-    );
-    refused(
-        invoke(
-            agent,
-            add(
-                super::api::PluginSource::Package {
-                    source_path: package_dir.clone(),
-                },
-                Some(inspected.digest().to_owned()),
-                Some("browse"),
-            ),
-            "gate-package",
-        )
-        .await,
-    );
-    assert!(
-        manager
-            .list_report()
-            .await
-            .expect("library")
-            .installed()
-            .is_empty()
-    );
-    assert!(!directory.path().join("plugin-data").exists());
-
-    // Installing only publishes the package; connecting it is what runs it.
-    invoke(
+        .expect("inspect stdio package")
+        .digest()
+        .to_owned();
+    GateFixture {
+        directory,
+        bash_agent,
         agent,
-        super::api::PluginRequest::Install {
-            source: super::api::PluginSource::Package {
-                source_path: package_dir.clone(),
-            },
-            expected_digest: inspected.digest().to_owned(),
-        },
-        "gate-install",
-    )
-    .await
-    .expect("install without running");
-    refused(
-        manager
+        manager,
+        package_dir,
+        digest,
+    }
+}
+
+impl GateFixture {
+    async fn invoke(
+        &self,
+        agent: renoa_kernel::AgentId,
+        request: super::api::PluginRequest,
+        operation: &str,
+    ) -> Result<super::api::PluginOutcome, PluginError> {
+        self.manager
+            .invoke(
+                &agent,
+                self.directory.path(),
+                request,
+                super::api::PluginInvocation {
+                    operation_id: operation,
+                    updates: None,
+                    cancellation: CancellationToken::new(),
+                },
+            )
+            .await
+    }
+
+    async fn connect(
+        &self,
+        agent: renoa_kernel::AgentId,
+    ) -> Result<crate::McpCatalogSnapshot, PluginError> {
+        self.manager
             .connect_profile(
                 &agent,
-                inspected.digest(),
+                &self.digest,
                 "browse",
                 "browse.local",
                 super::PluginCredential::None,
                 CancellationToken::new(),
             )
             .await
-            .map(|_| super::api::PluginOutcome::Enabled {
-                connection: String::new(),
-            }),
+    }
+}
+
+fn add_with_connection(
+    source: super::api::PluginSource,
+    expected_digest: Option<String>,
+    server: Option<&str>,
+) -> super::api::PluginRequest {
+    super::api::PluginRequest::Add {
+        source,
+        expected_digest,
+        server: server.map(str::to_owned),
+        connection: Some("browse.local".to_owned()),
+        credential: None,
+        replace: false,
+    }
+}
+
+fn assert_bash_refusal<T>(outcome: Result<T, PluginError>) {
+    match outcome {
+        Err(PluginError::Unavailable(message)) => assert!(message.contains("bash"), "{message}"),
+        Err(other) => panic!("expected the bash refusal, got {other:?}"),
+        Ok(_) => panic!("expected the bash refusal, but it connected"),
+    }
+}
+
+#[tokio::test]
+async fn an_agent_without_bash_cannot_add_a_stdio_server_and_the_refusal_leaves_nothing() {
+    let fixture = gate_fixture().await;
+    let direct = super::api::PluginSource::StdioMcp {
+        name: "direct-stdio".to_owned(),
+        description: "Direct stdio MCP fixture.".to_owned(),
+        server: "direct".to_owned(),
+        command: "node".to_owned(),
+        args: vec![
+            fixture
+                .package_dir
+                .join("server.mjs")
+                .to_string_lossy()
+                .into_owned(),
+        ],
+        env: std::collections::BTreeMap::new(),
+        cwd: None,
+        documentation: None,
+    };
+    assert_bash_refusal(
+        fixture
+            .invoke(
+                fixture.agent,
+                add_with_connection(direct, None, None),
+                "gate-direct",
+            )
+            .await,
+    );
+    let package = super::api::PluginSource::Package {
+        source_path: fixture.package_dir.clone(),
+    };
+    assert_bash_refusal(
+        fixture
+            .invoke(
+                fixture.agent,
+                add_with_connection(package, Some(fixture.digest.clone()), Some("browse")),
+                "gate-package",
+            )
+            .await,
     );
 
-    // Once an agent with bash connects it, any agent may use it.
-    manager
-        .connect_profile(
-            &bash_agent,
-            inspected.digest(),
-            "browse",
-            "browse.local",
-            super::PluginCredential::None,
-            CancellationToken::new(),
+    // Both are refused before any install.
+    let library = fixture.manager.list_report().await.expect("library");
+    assert!(library.installed().is_empty());
+    assert!(!fixture.directory.path().join("plugin-data").exists());
+}
+
+#[tokio::test]
+async fn only_an_agent_with_bash_connects_a_stdio_server_and_then_any_agent_may_use_it() {
+    let fixture = gate_fixture().await;
+    // Installing only publishes the package; connecting it is what runs it.
+    fixture
+        .invoke(
+            fixture.agent,
+            super::api::PluginRequest::Install {
+                source: super::api::PluginSource::Package {
+                    source_path: fixture.package_dir.clone(),
+                },
+                expected_digest: fixture.digest.clone(),
+            },
+            "gate-install",
         )
         .await
+        .expect("install without running");
+    assert_bash_refusal(fixture.connect(fixture.agent).await);
+    for (operation, replace) in [("gate-connect", false), ("gate-replace", true)] {
+        assert_bash_refusal(
+            fixture
+                .invoke(
+                    fixture.agent,
+                    super::api::PluginRequest::Connect {
+                        package_digest: fixture.digest.clone(),
+                        server: "browse".to_owned(),
+                        connection: "browse.local".to_owned(),
+                        credential: None,
+                        replace,
+                        restart: false,
+                        required_scope: None,
+                    },
+                    operation,
+                )
+                .await,
+        );
+    }
+
+    fixture
+        .connect(fixture.bash_agent)
+        .await
         .expect("an agent with bash connects the stdio server");
-    invoke(
-        agent,
-        super::api::PluginRequest::Enable {
-            connection: "browse.local".to_owned(),
-        },
-        "gate-enable",
-    )
-    .await
-    .expect("an agent without bash uses a connected stdio server");
+    fixture
+        .invoke(
+            fixture.agent,
+            super::api::PluginRequest::Enable {
+                connection: "browse.local".to_owned(),
+            },
+            "gate-enable",
+        )
+        .await
+        .expect("an agent without bash uses a connected stdio server");
 }
 
 #[tokio::test]

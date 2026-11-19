@@ -1650,7 +1650,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 56
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 57
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1687,7 +1687,9 @@ the shares agents keep, empty, every catalog below schema 54 gives every
 agent a look, oldest first, ties broken by agent id, and gains the pictures,
 empty, every catalog below schema 55 gains the published static site
 snapshots table (`host_sites`), empty, and every catalog below schema 56 gains
-the supervised live apps table (`host_apps`), empty. Live selections
+the supervised live apps table (`host_apps`), empty, and every catalog below
+schema 57 lets MCP integrations and package MCP servers keep a stdio launch
+(`direct_stdio`, `transport = 'stdio'`). Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
