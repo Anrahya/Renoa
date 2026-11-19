@@ -245,10 +245,12 @@ impl PluginManager {
         let servers = servers.to_vec();
         let preflight_request = connection_request.clone();
         let default_server = generated_server.clone();
+        let agent = *context.agent_id;
         tokio::task::spawn_blocking(move || {
             preflight::add_connection(
                 &catalog,
                 &store,
+                agent,
                 &digest,
                 &servers,
                 preflight_request.as_ref(),

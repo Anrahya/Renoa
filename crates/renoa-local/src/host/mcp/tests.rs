@@ -167,7 +167,11 @@ process.stdout.write(JSON.stringify({
     )
     .expect("create Host");
     let agent = renoa_kernel::AgentId::new();
-    crate::test_agents::insert_agent(&data.join("state/host.sqlite3"), &agent.to_string());
+    crate::test_agents::insert_agent_with_tools(
+        &data.join("state/host.sqlite3"),
+        &agent.to_string(),
+        &["bash"],
+    );
     host.config
         .plugins
         .invoke(

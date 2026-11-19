@@ -187,6 +187,7 @@ impl PluginManager {
         let preflight_catalog = self.mcp_catalog.clone();
         let preflight_store = self.store.clone();
         let preflight_digest = request.package_digest.to_owned();
+        let agent = *request.agent_id;
         let preflight_servers = plugin.mcp_servers().to_vec();
         let preflight_request = crate::plugins::PluginConnectionRequest::new(
             Some(request.connection_id.to_owned()),
@@ -198,6 +199,7 @@ impl PluginManager {
             super::preflight::add_connection(
                 &preflight_catalog,
                 &preflight_store,
+                agent,
                 &preflight_digest,
                 &preflight_servers,
                 Some(&preflight_request),

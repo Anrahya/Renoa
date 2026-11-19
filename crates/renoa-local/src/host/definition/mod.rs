@@ -39,6 +39,7 @@ pub use preset_move::PresetMove;
 use resolve::KEEPING_POSTED;
 pub use resolve::ResolvedAgentDefinition;
 pub(crate) use resolve::resolve_definition;
+pub(crate) use store::read_selection;
 
 /// The largest page a caller may request when listing agents.
 pub const MAX_AGENT_PAGE: usize = 20;

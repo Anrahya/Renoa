@@ -505,7 +505,7 @@ fn init_stdio_manager(
     let database = root.join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
     let agent_id = test_agent_id(7);
-    crate::test_agents::insert_agent(&database, &agent_id.to_string());
+    crate::test_agents::insert_agent_with_tools(&database, &agent_id.to_string(), &["bash"]);
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let skills = test_skill_store(&database, root);
     let manager = PluginManager::initialize(
@@ -887,4 +887,155 @@ fn assert_no_secret_in_database(database: &Path, secret: &str) {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn only_an_agent_with_bash_connects_a_stdio_server_and_a_refusal_leaves_nothing() {
+    let repository = workspace_root();
+    let adapter = compiled_adapter(&repository);
+    let directory = tempdir().expect("temporary stdio gate fixture");
+    let (bash_agent, _mcp, manager) = init_stdio_manager(directory.path(), adapter);
+    let agent = test_agent_id(8);
+    crate::test_agents::insert_agent(&directory.path().join("host.sqlite3"), &agent.to_string());
+    let package_dir = directory.path().join("browse-fixture");
+    write_stdio_browse_fixture(&package_dir);
+    let inspected = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect stdio package");
+    let add = |source: super::api::PluginSource, expected: Option<String>, server: Option<&str>| {
+        super::api::PluginRequest::Add {
+            source,
+            expected_digest: expected,
+            server: server.map(str::to_owned),
+            connection: Some("browse.local".to_owned()),
+            credential: None,
+            replace: false,
+        }
+    };
+    let invoke = |agent: renoa_kernel::AgentId, request, operation: &'static str| {
+        let manager = manager.clone();
+        let workspace = directory.path().to_path_buf();
+        async move {
+            manager
+                .invoke(
+                    &agent,
+                    &workspace,
+                    request,
+                    super::api::PluginInvocation {
+                        operation_id: operation,
+                        updates: None,
+                        cancellation: CancellationToken::new(),
+                    },
+                )
+                .await
+        }
+    };
+    let refused = |outcome: Result<super::api::PluginOutcome, PluginError>| match outcome {
+        Err(PluginError::Unavailable(message)) => assert!(message.contains("bash"), "{message}"),
+        other => panic!("expected the bash refusal, got {:?}", other.err()),
+    };
+
+    // The direct source and the package path are both refused before any
+    // install, so neither leaves a package, a connection, or plugin data.
+    refused(
+        invoke(
+            agent,
+            add(
+                super::api::PluginSource::StdioMcp {
+                    name: "direct-stdio".to_owned(),
+                    description: "Direct stdio MCP fixture.".to_owned(),
+                    server: "direct".to_owned(),
+                    command: "node".to_owned(),
+                    args: vec![
+                        package_dir
+                            .join("server.mjs")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ],
+                    env: std::collections::BTreeMap::new(),
+                    cwd: None,
+                    documentation: None,
+                },
+                None,
+                None,
+            ),
+            "gate-direct",
+        )
+        .await,
+    );
+    refused(
+        invoke(
+            agent,
+            add(
+                super::api::PluginSource::Package {
+                    source_path: package_dir.clone(),
+                },
+                Some(inspected.digest().to_owned()),
+                Some("browse"),
+            ),
+            "gate-package",
+        )
+        .await,
+    );
+    assert!(
+        manager
+            .list_report()
+            .await
+            .expect("library")
+            .installed()
+            .is_empty()
+    );
+    assert!(!directory.path().join("plugin-data").exists());
+
+    // Installing only publishes the package; connecting it is what runs it.
+    invoke(
+        agent,
+        super::api::PluginRequest::Install {
+            source: super::api::PluginSource::Package {
+                source_path: package_dir.clone(),
+            },
+            expected_digest: inspected.digest().to_owned(),
+        },
+        "gate-install",
+    )
+    .await
+    .expect("install without running");
+    refused(
+        manager
+            .connect_profile(
+                &agent,
+                inspected.digest(),
+                "browse",
+                "browse.local",
+                super::PluginCredential::None,
+                CancellationToken::new(),
+            )
+            .await
+            .map(|_| super::api::PluginOutcome::Enabled {
+                connection: String::new(),
+            }),
+    );
+
+    // Once an agent with bash connects it, any agent may use it.
+    manager
+        .connect_profile(
+            &bash_agent,
+            inspected.digest(),
+            "browse",
+            "browse.local",
+            super::PluginCredential::None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("an agent with bash connects the stdio server");
+    invoke(
+        agent,
+        super::api::PluginRequest::Enable {
+            connection: "browse.local".to_owned(),
+        },
+        "gate-enable",
+    )
+    .await
+    .expect("an agent without bash uses a connected stdio server");
 }

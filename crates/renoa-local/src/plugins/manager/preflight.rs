@@ -1,3 +1,5 @@
+use renoa_kernel::AgentId;
+
 use super::{default_connection_id, integration_id};
 use crate::{
     mcp::{
@@ -26,6 +28,7 @@ pub(super) fn resolve_server_stdio(
 pub(super) fn add_connection(
     catalog: &McpCatalogStore,
     store: &PluginStore,
+    agent: AgentId,
     digest: &str,
     servers: &[PluginMcpServer],
     request: Option<&PluginConnectionRequest>,
@@ -52,6 +55,22 @@ pub(super) fn add_connection(
                     .to_owned(),
             )),
         };
+    if server.stdio().is_some()
+        && !crate::capabilities::runs_commands(
+            &crate::host::definition::read_selection(
+                &crate::host::catalog::open_verified(catalog.path())?,
+                agent,
+            )?
+            .tools,
+        )
+    {
+        return Err(PluginError::Unavailable(
+            "a stdio MCP server runs a command on this machine, so connecting one needs the bash \
+             tool, which this agent does not have; ask the owner to grant this agent bash, or use \
+             a remote MCP server"
+                .to_owned(),
+        ));
+    }
     let connection = request
         .and_then(|request| request.id.clone())
         .unwrap_or_else(|| default_connection_id(digest, server.id()));

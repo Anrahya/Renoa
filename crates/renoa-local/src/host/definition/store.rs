@@ -245,7 +245,7 @@ pub(super) fn exists(connection: &Connection, agent: AgentId) -> Result<bool, Ho
     Ok(found.is_some())
 }
 
-pub(super) fn read_selection(
+pub(crate) fn read_selection(
     connection: &Connection,
     agent: AgentId,
 ) -> Result<AgentToolSelection, HostCatalogError> {
