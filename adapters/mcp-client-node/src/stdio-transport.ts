@@ -1,4 +1,3 @@
-import path from "node:path";
 import {
   StdioClientTransport,
   getDefaultEnvironment,
@@ -21,18 +20,17 @@ import type { CallExchangeTracker } from "./transport.js";
 import { invalid, requireObject } from "./wire-values.js";
 
 const STDIO_ENDPOINT = /^stdio:[a-f0-9]{64}$/;
+// Beyond the SDK's default environment (HOME, PATH, USER and the like), a
+// server inherits only where the person keeps its files and their locale.
+// Anything a particular server needs comes from its own `env`.
 const EXTRA_INHERITED_ENV_VARS = [
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
   "XDG_STATE_HOME",
   "XDG_CACHE_HOME",
-  "XDG_BIN_HOME",
   "LANG",
   "LC_ALL",
   "TZ",
-  "OPENCODE_BROWSER_TOOLS",
-  "OPENCODE_BROWSER_PORT",
-  "OPENCODE_BROWSER_HOME",
 ] as const;
 
 export function parseStdioEndpoint(raw: string): string {
@@ -278,20 +276,6 @@ export function buildStdioEnv(
     const value = process.env[key];
     if (value !== undefined && !value.startsWith("()")) {
       env[key] = value;
-    }
-  }
-  const fallbackHome =
-    process.env.HOME !== undefined && !process.env.HOME.startsWith("()")
-      ? process.env.HOME
-      : undefined;
-  const home = env.HOME ?? fallbackHome;
-  if (home !== undefined && home.length > 0) {
-    env.HOME = home;
-    const localBin = path.join(home, ".local", "bin");
-    const currentPath = env.PATH ?? "";
-    const segments = currentPath.split(path.delimiter).filter((item) => item.length > 0);
-    if (!segments.includes(localBin)) {
-      env.PATH = [localBin, ...segments].join(path.delimiter);
     }
   }
   if (customEnv !== undefined) {

@@ -432,3 +432,24 @@ test("does not treat a post-dispatch server notification as responseStarted and 
     rmSync(fixture.dir, { recursive: true, force: true });
   }
 });
+
+test("a stdio server inherits only the default environment and its own env", async () => {
+  const { buildStdioEnv } = await import("../src/stdio-transport.js");
+  const saved = { ...process.env };
+  try {
+    process.env.RENOA_FIXTURE_SECRET = "must-not-leak";
+    process.env.OPENCODE_BROWSER_PORT = "19988";
+    process.env.LANG = "en_GB.UTF-8";
+    const env = buildStdioEnv({ BROWSE_PORT: "19989" });
+    assert.equal(env.RENOA_FIXTURE_SECRET, undefined);
+    assert.equal(env.OPENCODE_BROWSER_PORT, undefined);
+    assert.equal(env.LANG, "en_GB.UTF-8");
+    assert.equal(env.BROWSE_PORT, "19989");
+    assert.equal(env.PATH, process.env.PATH, "PATH is passed through unchanged");
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in saved)) delete process.env[key];
+    }
+    Object.assign(process.env, saved);
+  }
+});

@@ -73,7 +73,14 @@ fn the_first_party_browse_package_is_a_supported_stdio_agent_plugin() {
     let stdio = server.stdio().expect("browse server uses stdio transport");
     assert_eq!(stdio.command, "browse");
     assert_eq!(stdio.args, vec!["mcp"]);
-    assert!(stdio.env.is_empty());
+    assert_eq!(
+        stdio
+            .env
+            .get("OPENCODE_BROWSER_AUTO_UPDATE")
+            .map(String::as_str),
+        Some("off"),
+        "browse keeps the installed version instead of updating itself"
+    );
     assert_eq!(stdio.cwd, None);
 
     let captured_skill =

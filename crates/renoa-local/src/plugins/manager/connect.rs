@@ -127,11 +127,37 @@ impl PluginManager {
         if cancellation.is_cancelled() {
             return Err(McpHostError::from(McpAdapterError::Cancelled).into());
         }
-        if let Some(dir) = plugin_data_dir {
-            tokio::task::spawn_blocking(move || ensure_plugin_data_dir(&dir)).await??;
+        let created_data = match plugin_data_dir.clone() {
+            Some(dir) => {
+                tokio::task::spawn_blocking(move || ensure_plugin_data_dir(&dir)).await??
+            }
+            None => false,
+        };
+        let connected = self
+            .discover_and_commit(&request, &adapter, &candidate, authorization, cancellation)
+            .await;
+        if connected.is_err()
+            && created_data
+            && let Some(dir) = plugin_data_dir
+        {
+            // A failed connect removes the data directory it made. Should that
+            // fail too, the connect error is the one to report: a retry adopts
+            // the directory left behind.
+            let _removal = tokio::task::spawn_blocking(move || fs::remove_dir_all(dir)).await;
         }
+        connected
+    }
+
+    async fn discover_and_commit(
+        &self,
+        request: &ProfileConnectionRequest<'_>,
+        adapter: &Path,
+        candidate: &McpConnectionCandidate,
+        authorization: Option<McpCredentialHeader>,
+        cancellation: CancellationToken,
+    ) -> Result<McpCatalogSnapshot, PluginError> {
         let snapshot = discover_cancellable(
-            &adapter,
+            adapter,
             candidate.connection_id(),
             candidate.endpoint(),
             candidate.request_headers(),
@@ -144,13 +170,9 @@ impl PluginManager {
         let agent_id = *request.agent_id;
         let committed = candidate.clone();
         let stored_snapshot = snapshot.clone();
+        let replace = request.replace;
         tokio::task::spawn_blocking(move || {
-            catalog.commit_connection(
-                &agent_id.to_string(),
-                &committed,
-                &stored_snapshot,
-                request.replace,
-            )
+            catalog.commit_connection(&agent_id.to_string(), &committed, &stored_snapshot, replace)
         })
         .await??;
         Ok(snapshot)
@@ -347,7 +369,10 @@ struct PreparedConnection {
     plugin_data_dir: Option<PathBuf>,
 }
 
-fn ensure_plugin_data_dir(path: &Path) -> Result<(), PluginError> {
+/// Creates the package's data directory, private to this user, and says
+/// whether this call made it.
+fn ensure_plugin_data_dir(path: &Path) -> Result<bool, PluginError> {
+    let created = !path.exists();
     fs::create_dir_all(path).map_err(|source| PluginError::Io {
         action: "create plugin data directory",
         path: path.to_path_buf(),
@@ -364,5 +389,5 @@ fn ensure_plugin_data_dir(path: &Path) -> Result<(), PluginError> {
             }
         })?;
     }
-    Ok(())
+    Ok(created)
 }

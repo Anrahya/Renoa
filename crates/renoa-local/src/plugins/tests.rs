@@ -1039,3 +1039,71 @@ async fn only_an_agent_with_bash_connects_a_stdio_server_and_a_refusal_leaves_no
     .await
     .expect("an agent without bash uses a connected stdio server");
 }
+
+#[tokio::test]
+async fn a_stdio_connect_that_fails_removes_the_data_directory_it_made() {
+    let repository = workspace_root();
+    let adapter = compiled_adapter(&repository);
+    let directory = tempdir().expect("temporary failing stdio fixture");
+    let (agent_id, _mcp, manager) = init_stdio_manager(directory.path(), adapter);
+    let package_dir = directory.path().join("missing-server");
+    write_stdio_browse_fixture(&package_dir);
+    fs::write(
+        package_dir.join("mcp.json"),
+        serde_json::to_vec_pretty(&json!({
+            "$schema": super::inspect::MCP_SCHEMA,
+            "mcpServers": {
+                "browse": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": ["${PLUGIN_ROOT}/missing.mjs"],
+                    "cwd": "${PLUGIN_DATA}"
+                }
+            }
+        }))
+        .expect("encode mcp.json"),
+    )
+    .expect("write mcp.json");
+    let inspected = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect failing stdio package");
+    let data_dir = directory
+        .path()
+        .join("plugin-data")
+        .join(inspected.digest());
+    manager
+        .invoke(
+            &agent_id,
+            directory.path(),
+            super::api::PluginRequest::Install {
+                source: super::api::PluginSource::Package {
+                    source_path: package_dir,
+                },
+                expected_digest: inspected.digest().to_owned(),
+            },
+            super::api::PluginInvocation {
+                operation_id: "failing-install",
+                updates: None,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .expect("install failing package");
+
+    let failed = manager
+        .connect_profile(
+            &agent_id,
+            inspected.digest(),
+            "browse",
+            "browse.missing",
+            super::PluginCredential::None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(failed.is_err(), "a server that never starts cannot connect");
+    assert!(
+        !data_dir.exists(),
+        "the failed connect removed its data directory"
+    );
+}
