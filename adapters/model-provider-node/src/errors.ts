@@ -124,6 +124,11 @@ export function classifyError(error: unknown, options: ClassifyOptions): Failure
 }
 
 function conciseMessage(provider: string, attempts: number, facts: FailureFacts): string {
+  // The owner reads this in the app; Google's quota is shared and clears on
+  // its own, so the cause is all they need.
+  if (provider === "google-vertex" && facts.category === "rate_limited") {
+    return "Vertex busy";
+  }
   const name = providerDisplayName(provider);
   const attemptWord = attempts === 1 ? "attempt" : "attempts";
   return `${name} request failed after ${attempts} ${attemptWord}: ${summarize(facts)}`;
@@ -417,7 +422,7 @@ function parseFormattedHttpError(message: string): {
 } {
   const match = /^(\d{3}):\s*([\s\S]*)$/.exec(message);
   if (match === null || match[1] === undefined || match[2] === undefined) {
-    return { message };
+    return googleError(message) ?? { message };
   }
   const status = Number(match[1]);
   const rest = match[2];
@@ -430,6 +435,35 @@ function parseFormattedHttpError(message: string): {
     // The remainder is not JSON; keep it as the human-readable message.
   }
   return { status, message: rest };
+}
+
+/**
+ * Google's SDK throws the response body itself as the message:
+ * `{"error":{"code":429,"message":...,"status":...}}`, and Pi's Vertex path
+ * may wrap that body once more as the inner `message`. The HTTP status is the
+ * error's numeric `code`; the message is the innermost one.
+ */
+function googleError(message: string): { status: number; message: string; body: Record<string, unknown> } | undefined {
+  const body = jsonObject(message);
+  const error = nestedRecord(body?.error);
+  const status = numeric(error?.code);
+  if (body === undefined || error === undefined || status === undefined || status < 100 || status > 599) {
+    return undefined;
+  }
+  const said = stringField(error.message) ?? message;
+  const inner = googleError(said);
+  return { status, message: inner?.message ?? said, body };
+}
+
+function jsonObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function errorMessage(error: unknown): string {

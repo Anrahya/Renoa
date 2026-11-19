@@ -40,6 +40,22 @@ export const GEMINI_4_HYDROGEN = {
   type: "chat",
 } as const;
 
+/**
+ * Gemini 4 Neon, released 2026-11-18 and not yet in the pinned Pi package.
+ * Google's model page gives the id, the `global` location, a 1,048,576-token
+ * window and 65,536 output tokens per segment. Input and output are Vertex's
+ * list price on OpenRouter; Google lists no cached-input rate yet, so the
+ * cache-read price assumes its usual tenth of input. Neon also has xhigh, but
+ * Pi's Google transport maps only up to high, as for Hydrogen. Remove this
+ * entry once the pinned Pi package lists the model.
+ */
+export const GEMINI_4_NEON = {
+  ...GEMINI_4_HYDROGEN,
+  id: "gemini-4-neon",
+  name: "Gemini 4 Neon",
+  cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+} as const;
+
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/u;
 const LOCATION = /^[a-z][a-z0-9-]{1,39}$/u;
 

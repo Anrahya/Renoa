@@ -140,12 +140,21 @@ class ChatJournalTest {
         record(journal.submitted(command, "go"))
         record(journal.ended(command, ExecutionTerminal.Failed("boom")))
         assertEquals(AgentState.Stuck, chat.state)
+        assertEquals(listOf(Speaker.Owner), chat.conversation.messages.map { it.speaker }, "plumbing stays out of the chat")
 
         val next = Uuid.random()
         record(journal.submitted(next, "again"))
         assertEquals(AgentState.Working, chat.state, "the latest command decides")
         record(journal.ended(next, ExecutionTerminal.Cancelled("stopped")))
         assertEquals(AgentState.Resting, chat.state)
+    }
+
+    @Test
+    fun aBusyModelProviderSaysSoInTheChat() {
+        record(journal.submitted(command, "go"))
+        record(journal.ended(command, ExecutionTerminal.Failed("Vertex busy")))
+        assertEquals(AgentState.Stuck, chat.state)
+        assertEquals(ChatMessage("$command-failed", Speaker.Event, "Vertex busy"), chat.conversation.messages.last())
     }
 
     @Test
