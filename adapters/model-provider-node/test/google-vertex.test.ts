@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { findCatalogModel, validateModelSpec } from "../src/catalog.js";
-import { ProviderFailure } from "../src/errors.js";
+import { classifyError, ProviderFailure } from "../src/errors.js";
 import { routedVertexModel } from "../src/providers/google-vertex.js";
 import { loadCatalog, loadRuntime } from "../src/runtime.js";
 import { streamModel } from "../src/stream.js";
@@ -209,4 +209,76 @@ test("Vertex thought summaries emit reasoning deltas tagged summarized", async (
     await server.close();
     directory.close();
   }
+});
+
+test("a busy Vertex says so and never reached the model", async () => {
+  const directory = tempDir();
+  const server = await startFakeServer();
+  const body = JSON.stringify({
+    error: {
+      code: 429,
+      message: "Resource exhausted. Please try again later.",
+      status: "RESOURCE_EXHAUSTED",
+    },
+  });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    server.enqueue({ status: 429, body });
+  }
+  createStore(directory.path, KEY, "google-vertex").close();
+  const spec = findCatalogModel("google-vertex", HYDROGEN)?.model;
+  assert.ok(spec);
+  const runtime = loadRuntime({
+    provider: "google-vertex",
+    modelId: HYDROGEN,
+    authStorePath: join(directory.path, "credentials.sqlite"),
+    modelSpec: { ...spec, baseUrl: `${server.origin}/v1/projects/renoa-test-project/locations/global` },
+    reasoningLevel: "medium",
+    allowLoopback: true,
+  });
+  let now = 0;
+  try {
+    await assert.rejects(
+      streamModel({
+        runtime,
+        request: userRequest(),
+        maxOutputTokens: 128,
+        signal: new AbortController().signal,
+        emit: () => undefined,
+        clock: {
+          now: () => now,
+          sleep: async (ms: number) => {
+            now += ms;
+          },
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderFailure);
+        assert.equal(error.category, "rate_limited");
+        assert.equal(error.httpStatus, 429);
+        assert.equal(error.inferenceOutcome, "known_not_started");
+        assert.equal(error.message, "Vertex busy");
+        return true;
+      },
+    );
+  } finally {
+    runtime.close();
+    await server.close();
+    directory.close();
+  }
+});
+
+test("a 429 Vertex body wrapped once more still reads as a rate limit Google refused", () => {
+  const body = JSON.stringify({
+    error: {
+      code: 429,
+      message: "Resource exhausted. Please try again later.",
+      status: "RESOURCE_EXHAUSTED",
+    },
+  });
+  const wrapped = JSON.stringify({ error: { message: body, code: 429, status: "Too Many Requests" } });
+  const facts = classifyError(new Error(wrapped), { outputExposed: false, cancelled: false, dispatched: true });
+  assert.equal(facts.category, "rate_limited");
+  assert.equal(facts.httpStatus, 429);
+  assert.equal(facts.inferenceOutcome, "known_not_started");
+  assert.equal(facts.rawMessage, "Resource exhausted. Please try again later.");
 });
