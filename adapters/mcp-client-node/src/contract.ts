@@ -57,6 +57,13 @@ export type WireOAuthRegistration =
 
 export type WireHeaders = Readonly<Record<string, string>>;
 
+export interface WireStdioTarget {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+  readonly cwd?: string;
+}
+
 export type AdapterRequest =
   | {
       readonly wire_version: typeof WIRE_VERSION;
@@ -64,6 +71,7 @@ export type AdapterRequest =
       readonly endpoint: string;
       readonly headers?: WireHeaders;
       readonly credential?: WireCredential;
+      readonly stdio?: WireStdioTarget;
     }
   | {
       readonly wire_version: typeof WIRE_VERSION;
@@ -72,6 +80,7 @@ export type AdapterRequest =
       readonly protocol_version: string;
       readonly headers?: WireHeaders;
       readonly credential?: WireCredential;
+      readonly stdio?: WireStdioTarget;
       readonly tool: FrozenMcpTool;
       readonly arguments: JsonObject;
     }

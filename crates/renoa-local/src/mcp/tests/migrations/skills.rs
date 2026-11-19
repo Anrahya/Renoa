@@ -167,6 +167,7 @@ fn version_four_catalog_removes_instruction_policy_without_losing_activations() 
 
 fn downgrade_to_v4_with_large_skill(path: &Path) {
     let connection = Connection::open(path).expect("open migration fixture");
+    crate::host::catalog::restore_schema_56(&connection);
     downgrade_skill_sources_to_v6_shape(&connection);
     connection
         .execute_batch(

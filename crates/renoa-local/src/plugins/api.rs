@@ -1,7 +1,7 @@
 //! Canonical requests for the Host plugin lifecycle. Tool schemas are projections
 //! of these types; callers cannot supply fields belonging to another operation.
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -179,6 +179,32 @@ pub enum PluginSource {
         #[serde(default)]
         #[schemars(length(max = 64))]
         headers: Vec<PluginHeader>,
+    },
+    /// A local stdio MCP server command. Audit the repository and command before adding.
+    StdioMcp {
+        /// Plugin name: 1-64 lowercase ASCII letters, digits, dots, or hyphens.
+        /// Start and end with a letter or digit; no consecutive dots or hyphens.
+        #[schemars(length(min = 1, max = 64))]
+        name: String,
+        /// Compact capability description of the local stdio MCP server.
+        description: String,
+        /// One stable server id for this command; preserve it when connecting later.
+        server: String,
+        /// Executable name on PATH or absolute binary path to run without a shell.
+        command: String,
+        /// Fixed command-line arguments passed directly to `command`.
+        #[serde(default)]
+        #[schemars(length(max = 256))]
+        args: Vec<String>,
+        /// Non-secret environment variables for the child process. Never pass secrets.
+        #[serde(default)]
+        env: BTreeMap<String, String>,
+        /// Optional working directory in Agent Plugins path form (`./...`, `${PLUGIN_ROOT}`, `${PLUGIN_DATA}`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        /// Optional official HTTPS documentation or repository URL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        documentation: Option<String>,
     },
     /// An Agent Plugins 1.0 directory. Paths may be absolute or relative to the workspace.
     Package { source_path: PathBuf },

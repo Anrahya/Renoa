@@ -5,9 +5,9 @@ use serde::Serialize;
 
 use super::{McpCatalogStore, load_catalog};
 use crate::mcp::{
-    McpConnectionAuth, McpHostError, ResolvedMcpTool,
+    McpConnectionAuth, McpHostError, McpStdioConfig, ResolvedMcpTool,
     registry::{McpToolReference, McpToolSummary},
-    validate_identity,
+    validate_connection_binding, validate_identity,
 };
 
 impl McpCatalogStore {
@@ -278,12 +278,30 @@ impl McpCatalogStore {
                 enabled.auth_header,
                 enabled.auth_prefix,
             )?;
+            let stdio = enabled
+                .stdio_config_json
+                .as_deref()
+                .map(McpStdioConfig::from_stored)
+                .transpose()?;
+            if catalog.endpoint() != enabled.endpoint {
+                return Err(McpHostError::Conflict(format!(
+                    "MCP catalog endpoint for '{}' no longer matches its connection configuration",
+                    reference.connection_id()
+                )));
+            }
+            validate_connection_binding(
+                &enabled.endpoint,
+                &catalog.request_headers,
+                stdio.as_ref(),
+                &auth,
+            )?;
             auth.validate_oauth_binding(reference.connection_id(), catalog.endpoint())?;
             tools.push(ResolvedMcpTool {
                 integration_id: enabled.integration_id,
                 connection_id: reference.connection_id().to_owned(),
                 endpoint: catalog.endpoint().to_owned(),
                 request_headers: catalog.request_headers.clone(),
+                stdio,
                 protocol_version: catalog.protocol_version().to_owned(),
                 adapter_revision: catalog.adapter_revision().to_owned(),
                 auth,
@@ -367,6 +385,8 @@ impl McpConnectionStatus {
 
 struct EnabledConnection {
     integration_id: String,
+    endpoint: String,
+    stdio_config_json: Option<String>,
     auth_kind: String,
     auth_hostname: Option<String>,
     auth_account: Option<String>,
@@ -383,26 +403,31 @@ fn enabled_connection(
 ) -> Result<EnabledConnection, McpHostError> {
     transaction
         .query_row(
-            "SELECT connection.integration_id, connection.auth_kind,
+            "SELECT connection.integration_id, integration.endpoint, integration.stdio_config_json,
+                    connection.auth_kind,
                     connection.auth_hostname, connection.auth_account,
                     connection.auth_credential_id, connection.oauth_registration_json,
                     connection.auth_header_name, connection.auth_header_prefix
              FROM host_agent_enabled_mcp_connections AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
+             JOIN mcp_integrations AS integration
+               ON integration.integration_id = connection.integration_id
              WHERE binding.agent_id = ?1 AND binding.connection_id = ?2
 ",
             params![agent_id, connection_id],
             |row| {
                 Ok(EnabledConnection {
                     integration_id: row.get(0)?,
-                    auth_kind: row.get(1)?,
-                    auth_hostname: row.get(2)?,
-                    auth_account: row.get(3)?,
-                    auth_credential_id: row.get(4)?,
-                    oauth_registration: row.get(5)?,
-                    auth_header: row.get(6)?,
-                    auth_prefix: row.get(7)?,
+                    endpoint: row.get(1)?,
+                    stdio_config_json: row.get(2)?,
+                    auth_kind: row.get(3)?,
+                    auth_hostname: row.get(4)?,
+                    auth_account: row.get(5)?,
+                    auth_credential_id: row.get(6)?,
+                    oauth_registration: row.get(7)?,
+                    auth_header: row.get(8)?,
+                    auth_prefix: row.get(9)?,
                 })
             },
         )

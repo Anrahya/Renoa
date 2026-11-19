@@ -8,7 +8,7 @@ pub use registry::McpConnectionStatus;
 
 use super::{
     McpCatalogSnapshot, McpCatalogTool, McpConnectionAuth, McpHostError, McpRequestHeaders,
-    validate_endpoint, validate_identity,
+    McpStdioConfig, validate_connection_binding, validate_endpoint, validate_identity,
 };
 use load::load_catalog;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -21,6 +21,7 @@ pub(crate) struct McpCatalogStore {
 pub(crate) struct McpConnectionConfig {
     pub(crate) endpoint: String,
     pub(crate) request_headers: McpRequestHeaders,
+    pub(crate) stdio: Option<McpStdioConfig>,
     pub(crate) auth: McpConnectionAuth,
 }
 
@@ -88,10 +89,17 @@ impl McpCatalogStore {
         validate_identity("integration", integration_id)?;
         validate_identity("connection", connection_id)?;
         validate_endpoint(endpoint)?;
+        validate_connection_binding(endpoint, request_headers, None, auth)?;
         auth.validate_oauth_binding(connection_id, endpoint)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_integration(&transaction, integration_id, endpoint, request_headers)?;
+        ensure_integration(
+            &transaction,
+            integration_id,
+            endpoint,
+            request_headers,
+            None,
+        )?;
         ensure_connection(&transaction, connection_id, integration_id, auth)?;
         transaction.commit()?;
         Ok(())
@@ -106,6 +114,7 @@ impl McpCatalogStore {
             .connection()?
             .query_row(
                 "SELECT integration.endpoint, integration.request_headers_json,
+                        integration.stdio_config_json,
                         connection.auth_kind, connection.auth_hostname,
                         connection.auth_account, connection.auth_credential_id,
                         connection.oauth_registration_json,
@@ -119,13 +128,14 @@ impl McpCatalogStore {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
                         row.get::<_, Option<String>>(6)?,
                         row.get::<_, Option<String>>(7)?,
                         row.get::<_, Option<String>>(8)?,
+                        row.get::<_, Option<String>>(9)?,
                     ))
                 },
             )
@@ -134,13 +144,21 @@ impl McpCatalogStore {
                 McpHostError::NotFound(format!("connection '{connection_id}' is not registered"))
             })?;
         let endpoint = stored.0;
+        let request_headers = McpRequestHeaders::from_stored(&stored.1)?;
+        let stdio = stored
+            .2
+            .as_deref()
+            .map(McpStdioConfig::from_stored)
+            .transpose()?;
         let auth = McpConnectionAuth::from_stored(
-            &stored.2, stored.3, stored.4, stored.5, stored.6, stored.7, stored.8,
+            &stored.3, stored.4, stored.5, stored.6, stored.7, stored.8, stored.9,
         )?;
+        validate_connection_binding(&endpoint, &request_headers, stdio.as_ref(), &auth)?;
         auth.validate_oauth_binding(connection_id, &endpoint)?;
         Ok(McpConnectionConfig {
             endpoint,
-            request_headers: McpRequestHeaders::from_stored(&stored.1)?,
+            request_headers,
+            stdio,
             auth,
         })
     }
@@ -289,10 +307,17 @@ fn ensure_integration(
     integration_id: &str,
     endpoint: &str,
     request_headers: &McpRequestHeaders,
+    stdio: Option<&McpStdioConfig>,
 ) -> Result<(), McpHostError> {
+    let expected_kind = if stdio.is_some() {
+        "direct_stdio"
+    } else {
+        "direct_streamable_http"
+    };
+    let encoded_stdio = stdio.map(McpStdioConfig::encoded).transpose()?;
     let existing = transaction
         .query_row(
-            "SELECT kind, endpoint, request_headers_json
+            "SELECT kind, endpoint, request_headers_json, stdio_config_json
              FROM mcp_integrations WHERE integration_id = ?1",
             [integration_id],
             |row| {
@@ -300,6 +325,7 @@ fn ensure_integration(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             },
         )
@@ -308,16 +334,28 @@ fn ensure_integration(
         None => {
             transaction.execute(
                 "INSERT INTO mcp_integrations(
-                    integration_id, kind, endpoint, request_headers_json
-                 ) VALUES (?1, 'direct_streamable_http', ?2, ?3)",
-                params![integration_id, endpoint, request_headers.encoded()?],
+                    integration_id, kind, endpoint, request_headers_json, stdio_config_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    integration_id,
+                    expected_kind,
+                    endpoint,
+                    request_headers.encoded()?,
+                    encoded_stdio,
+                ],
             )?;
             Ok(())
         }
-        Some((kind, stored_endpoint, stored_headers))
-            if kind == "direct_streamable_http"
+        Some((kind, stored_endpoint, stored_headers, stored_stdio))
+            if kind == expected_kind
                 && stored_endpoint == endpoint
-                && McpRequestHeaders::from_stored(&stored_headers)? == *request_headers =>
+                && McpRequestHeaders::from_stored(&stored_headers)? == *request_headers
+                && stored_stdio
+                    .as_deref()
+                    .map(McpStdioConfig::from_stored)
+                    .transpose()?
+                    .as_ref()
+                    == stdio =>
         {
             Ok(())
         }

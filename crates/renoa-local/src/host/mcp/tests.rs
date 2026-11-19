@@ -109,6 +109,104 @@ async fn gh_reference_resolves_only_for_adapter_stdin_and_never_enters_host_stat
     );
 }
 
+#[tokio::test]
+async fn refresh_mcp_catalog_passes_stdio_configuration_to_adapter() {
+    use std::collections::BTreeMap;
+
+    let directory = tempdir().expect("temporary stdio refresh fixture");
+    let fixtures = directory.path().join("fixtures");
+    let data = directory.path().join("data");
+    fs::create_dir(&fixtures).expect("create fixture directory");
+    let adapter = fixtures.join("fake-stdio-adapter.mjs");
+    fs::write(
+        &adapter,
+        r#"
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const request = JSON.parse(input);
+if (
+  request.wire_version !== 10 ||
+  request.action !== "discover" ||
+  request.stdio?.command !== "browse" ||
+  JSON.stringify(request.stdio?.args) !== JSON.stringify(["mcp"]) ||
+  request.headers !== undefined ||
+  request.credential !== undefined
+) {
+  process.stderr.write("unexpected request: " + JSON.stringify(request));
+  process.exit(9);
+}
+process.stdout.write(JSON.stringify({
+  wire_version: 10,
+  event: "discovered",
+  catalog: {
+    endpoint: request.endpoint,
+    protocol_version: "2026-07-28",
+    adapter_revision: "mcp-client-node-v0.11.0",
+    tools: [{
+      name: "execute",
+      description: "Run browser command.",
+      input_schema: {type: "object"},
+      model_input_schema: {type: "object"}
+    }],
+    rejected_tools: []
+  }
+}) + "\n");
+"#,
+    )
+    .expect("write fake stdio adapter");
+    let host = LocalHost::new(
+        &data,
+        LocalModelConfiguration::new(
+            fixtures.join("unused-model-adapter.mjs"),
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "unused-model",
+            fixtures.join("unused-credentials.sqlite3"),
+        ),
+        LocalHostAdapters::new(Some(&adapter)),
+    )
+    .expect("create Host");
+    let agent = renoa_kernel::AgentId::new();
+    crate::test_agents::insert_agent(&data.join("state/host.sqlite3"), &agent.to_string());
+    host.config
+        .plugins
+        .invoke(
+            &agent,
+            directory.path(),
+            crate::PluginRequest::Add {
+                source: crate::PluginSource::StdioMcp {
+                    name: "browse-refresh".to_owned(),
+                    description: "Fixture stdio refresh server.".to_owned(),
+                    server: "main".to_owned(),
+                    command: "browse".to_owned(),
+                    args: vec!["mcp".to_owned()],
+                    env: BTreeMap::new(),
+                    cwd: None,
+                    documentation: None,
+                },
+                expected_digest: None,
+                server: None,
+                connection: Some("browse.local".to_owned()),
+                credential: None,
+                replace: false,
+            },
+            crate::PluginInvocation {
+                operation_id: "stdio-refresh-add",
+                updates: None,
+                cancellation: tokio_util::sync::CancellationToken::new(),
+            },
+        )
+        .await
+        .expect("add and connect stdio plugin");
+
+    let refreshed = host
+        .refresh_mcp_catalog("browse.local")
+        .await
+        .expect("refresh stdio catalog");
+    assert_eq!(refreshed.tools().len(), 1);
+    assert_eq!(refreshed.tools()[0].name(), "execute");
+}
+
 fn compile_fake_gh(directory: &Path, arguments: &Path) -> std::path::PathBuf {
     let source = directory.join("fake-gh.rs");
     let executable = directory.join(if cfg!(windows) {
@@ -152,7 +250,7 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 if (
-  request.wire_version !== 9 ||
+  request.wire_version !== 10 ||
   request.action !== "discover" ||
   request.credential?.scheme !== "header" ||
   request.credential?.name !== "authorization" ||
@@ -162,12 +260,12 @@ if (
   Object.values(process.env).some(value => value?.includes({token}))
 ) process.exit(9);
 process.stdout.write(JSON.stringify({{
-  wire_version: 9,
+  wire_version: 10,
   event: "discovered",
   catalog: {{
     endpoint: request.endpoint,
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.10.0",
+    adapter_revision: "mcp-client-node-v0.11.0",
     tools: [{{
       name: "get_me",
       description: `token ${{request.credential.secret}}`,

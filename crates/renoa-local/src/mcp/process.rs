@@ -11,14 +11,13 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     AdapterCatalog, McpAdapterError, McpCatalogSnapshot, McpCredentialHeader, McpHostError,
-    McpRemoteFailure, McpRequestHeaders,
+    McpRemoteFailure, McpRequestHeaders, McpStdioConfig, WIRE_VERSION,
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
 #[cfg(test)]
 mod tests;
 
-const WIRE_VERSION: u32 = 9;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
@@ -28,6 +27,7 @@ pub(crate) async fn discover(
     connection_id: &str,
     endpoint: &str,
     request_headers: &McpRequestHeaders,
+    stdio: Option<&McpStdioConfig>,
     credential: Option<&McpCredentialHeader>,
 ) -> Result<McpCatalogSnapshot, McpHostError> {
     discover_cancellable(
@@ -35,6 +35,7 @@ pub(crate) async fn discover(
         connection_id,
         endpoint,
         request_headers,
+        stdio,
         credential,
         CancellationToken::new(),
     )
@@ -46,6 +47,7 @@ pub(crate) async fn discover_cancellable(
     connection_id: &str,
     endpoint: &str,
     request_headers: &McpRequestHeaders,
+    stdio: Option<&McpStdioConfig>,
     credential: Option<&McpCredentialHeader>,
     cancellation: CancellationToken,
 ) -> Result<McpCatalogSnapshot, McpHostError> {
@@ -57,6 +59,7 @@ pub(crate) async fn discover_cancellable(
         action: "discover",
         endpoint,
         headers: request_headers,
+        stdio,
         credential: credential.map(WireCredential::from),
     })
     .map_err(McpAdapterError::Encode)?;
@@ -73,6 +76,8 @@ struct DiscoverRequest<'a> {
     endpoint: &'a str,
     #[serde(skip_serializing_if = "McpRequestHeaders::is_empty")]
     headers: &'a McpRequestHeaders,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stdio: Option<&'a McpStdioConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     credential: Option<WireCredential<'a>>,
 }

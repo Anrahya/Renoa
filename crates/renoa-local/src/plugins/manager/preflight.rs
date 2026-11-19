@@ -2,16 +2,30 @@ use super::{default_connection_id, integration_id};
 use crate::{
     mcp::{
         McpCatalogStore, McpConnectionAuth, McpConnectionCandidate, McpHostError,
-        McpOAuthRegistration, McpRequestHeaders,
+        McpOAuthRegistration, McpRequestHeaders, McpStdioConfig,
     },
     plugins::{
         PluginConnectionRequest, PluginCredential, PluginError, PluginMcpServer,
-        PluginOAuthRegistration,
+        PluginOAuthRegistration, store::PluginStore,
     },
 };
 
+pub(super) fn resolve_server_stdio(
+    store: &PluginStore,
+    digest: &str,
+    server: &PluginMcpServer,
+) -> Result<Option<McpStdioConfig>, PluginError> {
+    let Some(stdio) = server.stdio() else {
+        return Ok(None);
+    };
+    let root = store.package_path(digest)?;
+    let data = store.plugin_data_dir(digest)?;
+    Ok(Some(stdio.resolve_for_package(&root, &data)?))
+}
+
 pub(super) fn add_connection(
     catalog: &McpCatalogStore,
+    store: &PluginStore,
     digest: &str,
     servers: &[PluginMcpServer],
     request: Option<&PluginConnectionRequest>,
@@ -42,23 +56,36 @@ pub(super) fn add_connection(
         .and_then(|request| request.id.clone())
         .unwrap_or_else(|| default_connection_id(digest, server.id()));
     crate::mcp::validate_identity("connection", &connection)?;
+    let stdio = resolve_server_stdio(store, digest, server)?;
+    if stdio.is_some()
+        && request.is_some_and(|request| !matches!(request.credential, PluginCredential::None))
+    {
+        return Err(PluginError::Invalid(
+            "stdio MCP servers do not accept HTTP credentials or OAuth; omit credential".to_owned(),
+        ));
+    }
+    let endpoint = match &stdio {
+        Some(resolved) => resolved.canonical_endpoint()?,
+        None => server.endpoint().to_owned(),
+    };
     let auth = preflight_auth(
         catalog,
         &connection,
-        server.endpoint(),
+        &endpoint,
         request.map(|request| &request.credential),
         request.is_some_and(|request| request.replace),
     )?;
     let candidate = McpConnectionCandidate::new(
         integration_id(digest, server.id()),
         connection,
-        server.endpoint().to_owned(),
+        endpoint,
         McpRequestHeaders::new(
             server
                 .request_headers()
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone())),
         )?,
+        stdio,
         auth,
     )?;
     catalog.preflight_connection(&candidate, request.is_some_and(|request| request.replace))?;

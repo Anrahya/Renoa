@@ -67,6 +67,7 @@ V0 supports exactly:
 - the modern stateless lifecycle and the SDK's legacy initialize/session
   lifecycle, selected during discovery and then frozen in the catalog;
 - Streamable HTTP `POST` responses as either JSON or request-scoped SSE;
+- local `stdio` MCP servers (`"type": "stdio"` in `mcp.json` or `source.kind = "stdio_mcp"` in `plugin_manage`), spawned per discover/call inside the adapter's process group with sanitized baseline environment and `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` resolution (first-party example: `plugins/browse`, backed by `anomalyco/browse`);
 - `server/discover`, paginated `tools/list`, and `tools/call`;
 - direct no-auth connections, exact `gh`-resolved bearer credentials, and named
   Secret Service credentials projected into a validated header and prefix;
@@ -888,19 +889,19 @@ and the real process boundary:
 
 ## Open decisions after this slice
 
-- compatibility outside the enumerated MCP revisions and stdio transport;
+- compatibility outside the enumerated MCP revisions;
 - credential revocation, cross-platform desktop secret stores, and cross-node
   secret synchronization;
-- future Host schema migrations beyond v13;
+- future Host schema migrations beyond v57;
 - catalog cache hints and list-change subscriptions;
 - progress projection;
 - schema dialects or custom keywords not accepted by the pinned SDK validator;
 - MCP resources, prompts, apps, tasks, and multi-round-trip input;
 - a safe invocation retry policy, only after service-specific idempotency and
   reconciliation can prove its duplicate semantics;
-- process pooling or multiplexing;
+- process pooling or multiplexing (including long-lived stdio MCP servers);
 - tool approval and permission policy; and
-- stdio or SSE Agent Plugin MCP entries.
+- legacy SSE Agent Plugin MCP entries.
 
 ## Evidence
 
@@ -916,6 +917,7 @@ OAuth 2.0 for Native Apps (RFC 8252), and MCP authorization revision
 - [OpenCode v2 at `dc4449df0d52199704ea4989a5a993ebbc605612`](https://github.com/anomalyco/opencode/tree/dc4449df0d52199704ea4989a5a993ebbc605612), MIT. Its discriminated local/remote MCP configuration, explicit lifecycle status, and connect/disconnect controls informed Renoa's exact management actions; Renoa keeps credentials in Secret Service and copied no source.
 - [Pi at `853a80d26c90a14c1886f0ebb8ffaae133ca2185`](https://github.com/badlogic/pi-mono/tree/853a80d26c90a14c1886f0ebb8ffaae133ca2185), MIT. Its exact TypeBox tool contracts and runtime tool registration were reviewed; Renoa retained its frozen durable bindings and copied no source.
 - [DeepSeek Harness at `cd5ef8148158c3a752a658978873241fdf8e2bbc`](https://github.com/deepseek-ai/deepseek-harness/tree/cd5ef8148158c3a752a658978873241fdf8e2bbc), MIT. Its atomic MCP generation replacement, failed-refresh retention, and bounded reconnect behavior informed Renoa's enable and hot-load lifecycle; no source was copied.
+- [OpenCode Browse at `28c9e59cb61a4674d6a6f06e39c8be95f73476d0`](https://github.com/anomalyco/browse/tree/28c9e59cb61a4674d6a6f06e39c8be95f73476d0), MIT. Consumed externally through `plugins/browse` over native stdio MCP (`browse mcp`); no upstream source was copied.
 - [Anthropic Tool Search documentation](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool). Its deferred-definition behavior and measured large-catalog context cost were reviewed; no source was copied.
 - [Agent Plugins 1.0 at `ff8ab5e392cc87bd88d87c060815a87490e51003`](https://github.com/agentplugins/agent-plugins-spec/tree/ff8ab5e392cc87bd88d87c060815a87490e51003), with CC-BY-4.0 specification text and Apache-2.0 schemas. Renoa consumes its package and MCP shapes without copying runtime source.
 - [Exa MCP server at `15ffb50519e719dc791cdc750ce5ed1934c0a1ed`](https://github.com/exa-labs/exa-mcp-server/tree/15ffb50519e719dc791cdc750ce5ed1934c0a1ed), MIT. Renoa copied no server source; its Agent Plugin endpoint, public source header, and bearer boundary form the first real package-shaped proof.

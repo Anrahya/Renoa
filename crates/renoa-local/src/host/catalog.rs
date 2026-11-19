@@ -12,6 +12,7 @@ mod cron_schedules;
 mod cutover;
 mod feed;
 mod main_agent;
+mod mcp_stdio;
 mod memory_dream;
 mod memory_note_pass;
 mod memory_plugin;
@@ -40,6 +41,8 @@ pub(crate) use feed::restore_schema_45;
 #[cfg(test)]
 pub(crate) use main_agent::restore_schema_41;
 #[cfg(test)]
+pub(crate) use mcp_stdio::restore_schema_56;
+#[cfg(test)]
 pub(crate) use memory_dream::restore_schema_43;
 #[cfg(test)]
 pub(crate) use memory_note_pass::restore_schema_44;
@@ -58,7 +61,7 @@ pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 #[cfg(test)]
 pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 56;
+const SCHEMA_VERSION: u32 = 57;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -212,6 +215,9 @@ fn upgrade(
     if version < 56 {
         crate::apps::initialize(transaction)?;
     }
+    if version < 57 {
+        mcp_stdio::upgrade(transaction)?;
+    }
     Ok(purged)
 }
 
@@ -223,6 +229,18 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             "this data root holds schema {observed}; the canonical agent cutover discards agent-owned state, so start it with `renoa-host <config.json> reset <backup-directory>`"
         )));
     }
+    let disable_fks = (28..SCHEMA_VERSION).contains(&observed);
+    if disable_fks {
+        connection.pragma_update(None, "foreign_keys", false)?;
+    }
+    let result = initialize_connection_inner(connection);
+    if disable_fks {
+        let _ = connection.pragma_update(None, "foreign_keys", true);
+    }
+    result
+}
+
+fn initialize_connection_inner(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version =
         transaction.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
@@ -232,7 +250,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=55 => {
+        28..=56 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],

@@ -415,6 +415,7 @@ fn commit_mcp(manager: &PluginManager, agent: AgentId, digest: &str, connection:
         connection.to_owned(),
         endpoint.to_owned(),
         crate::mcp::McpRequestHeaders::default(),
+        None,
         crate::mcp::McpConnectionAuth::None,
     )
     .unwrap();
@@ -730,6 +731,7 @@ async fn disabled_plugin_rejects_connect_and_authorize_before_oauth_effects() {
         "account".into(),
         "https://service.example/mcp".into(),
         crate::mcp::McpRequestHeaders::default(),
+        None,
         crate::mcp::McpConnectionAuth::oauth(
             "account",
             "https://service.example/mcp",

@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use serde_json::{Map, Value};
 use url::{Host, Url};
@@ -8,7 +11,7 @@ use super::{
     json,
 };
 use crate::{
-    mcp::{McpRequestHeaders, validate_identity},
+    mcp::{McpRequestHeaders, McpStdioConfig, valid_package_stdio_cwd, validate_identity},
     package_tree::{self, TreeLimits, UnsupportedEntryPolicy},
 };
 
@@ -226,8 +229,16 @@ fn parse_server(id: &str, value: &Value) -> Result<ServerDisposition, String> {
         .ok_or_else(|| "server type must be a string".to_owned())?;
     match transport {
         "stdio" => {
-            validate_stdio(object)?;
-            Ok(ServerDisposition::Unsupported(transport.to_owned()))
+            let stdio = parse_stdio_server(object)?;
+            let endpoint = stdio
+                .canonical_endpoint()
+                .map_err(|error| error.to_string())?;
+            Ok(ServerDisposition::Supported(PluginMcpServer {
+                id: id.to_owned(),
+                endpoint,
+                request_headers: BTreeMap::new(),
+                stdio: Some(stdio),
+            }))
         }
         "sse" => {
             parse_http_server(object, "sse")?;
@@ -239,6 +250,7 @@ fn parse_server(id: &str, value: &Value) -> Result<ServerDisposition, String> {
                 id: id.to_owned(),
                 endpoint,
                 request_headers: request_headers.values().clone(),
+                stdio: None,
             }))
         }
         _ => Err(format!("server type '{transport}' is unknown")),
@@ -278,53 +290,55 @@ fn parse_http_server(
     Ok((endpoint, request_headers))
 }
 
-fn validate_stdio(object: &Map<String, Value>) -> Result<(), String> {
+fn parse_stdio_server(object: &Map<String, Value>) -> Result<McpStdioConfig, String> {
     if object
         .keys()
         .any(|key| !matches!(key.as_str(), "type" | "command" | "args" | "env" | "cwd"))
     {
         return Err("stdio server contains an unknown field".to_owned());
     }
-    if object
+    let command = object
         .get("command")
         .and_then(Value::as_str)
-        .is_none_or(str::is_empty)
-    {
-        return Err("stdio server command must be a non-empty string".to_owned());
-    }
-    if object.get("args").is_some_and(|args| {
-        args.as_array()
-            .is_none_or(|args| args.iter().any(|argument| !argument.is_string()))
-    }) {
-        return Err("stdio server args must be an array of strings".to_owned());
-    }
-    if object.get("env").is_some_and(|env| {
-        env.as_object().is_none_or(|env| {
-            env.iter().any(|(name, value)| {
-                matches!(name.as_str(), "PLUGIN_ROOT" | "PLUGIN_DATA") || !value.is_string()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "stdio server command must be a non-empty string".to_owned())?
+        .to_owned();
+    let args = match object.get("args") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "stdio server args must be an array of strings".to_owned())
             })
-        })
-    }) {
-        return Err(
-            "stdio server env must contain string values and cannot replace PLUGIN_ROOT or PLUGIN_DATA"
-                .to_owned(),
-        );
-    }
-    if object
-        .get("cwd")
-        .is_some_and(|cwd| cwd.as_str().is_none_or(|cwd| !valid_stdio_cwd(cwd)))
-    {
-        return Err("stdio server cwd has an invalid Agent Plugins path form".to_owned());
-    }
-    Ok(())
-}
-
-fn valid_stdio_cwd(value: &str) -> bool {
-    value.starts_with("./")
-        || value == "${PLUGIN_ROOT}"
-        || value.starts_with("${PLUGIN_ROOT}/")
-        || value == "${PLUGIN_DATA}"
-        || value.starts_with("${PLUGIN_DATA}/")
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err("stdio server args must be an array of strings".to_owned()),
+    };
+    let env = match object.get("env") {
+        None => BTreeMap::new(),
+        Some(Value::Object(entries)) => {
+            let mut map = BTreeMap::new();
+            for (name, value) in entries {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| "stdio server env must contain string values".to_owned())?;
+                map.insert(name.clone(), text.to_owned());
+            }
+            map
+        }
+        Some(_) => return Err("stdio server env must be an object of strings".to_owned()),
+    };
+    let cwd = match object.get("cwd") {
+        None => None,
+        Some(Value::String(value)) if valid_package_stdio_cwd(value) => Some(value.clone()),
+        Some(_) => return Err("stdio server cwd has an invalid Agent Plugins path form".to_owned()),
+    };
+    let config = McpStdioConfig::new(command, args, env, cwd).map_err(|error| error.to_string())?;
+    config
+        .validate_package_env_keys()
+        .map_err(|error| error.to_string())?;
+    Ok(config)
 }
 
 pub(crate) fn validate_url(value: &str) -> Result<String, String> {

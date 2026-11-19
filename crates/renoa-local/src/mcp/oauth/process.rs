@@ -18,7 +18,7 @@ mod record;
 use capture::{drain, stop_and_capture, stop_and_discard};
 use record::parse_record;
 
-const WIRE_VERSION: u32 = 9;
+use crate::mcp::WIRE_VERSION;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;

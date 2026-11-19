@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "renoa.browse",
+  "version": "0.1.0",
+  "description": "Real Chromium browser automation backed by anomalyco/browse over native stdio MCP.",
+  "author": {
+    "name": "Renoa"
+  },
+  "homepage": "https://opencode.ai/browse",
+  "repository": "https://github.com/Anrahya/Renoa",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["browser", "browse", "chromium", "mcp", "opencode", "renoa", "stdio"]
+}

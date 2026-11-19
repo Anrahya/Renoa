@@ -193,9 +193,13 @@ impl PluginManager {
     ) -> Result<PluginAddOutcome, PluginError> {
         super::intake::require_active(&cancellation)?;
         validate_add_source(&source, expected.as_deref(), connection_request.is_some())?;
-        let connect_by_default = matches!(source, super::api::PluginSource::Mcp { .. });
+        let connect_by_default = matches!(
+            source,
+            super::api::PluginSource::Mcp { .. } | super::api::PluginSource::StdioMcp { .. }
+        );
         let generated_server = match &source {
-            super::api::PluginSource::Mcp { server, .. } => Some(server.clone()),
+            super::api::PluginSource::Mcp { server, .. }
+            | super::api::PluginSource::StdioMcp { server, .. } => Some(server.clone()),
             _ => None,
         };
         let receipt = super::intake::receipt(&source);
@@ -236,6 +240,7 @@ impl PluginManager {
             )));
         }
         let catalog = self.mcp_catalog.clone();
+        let store = self.store.clone();
         let digest = digest.to_owned();
         let servers = servers.to_vec();
         let preflight_request = connection_request.clone();
@@ -243,6 +248,7 @@ impl PluginManager {
         tokio::task::spawn_blocking(move || {
             preflight::add_connection(
                 &catalog,
+                &store,
                 &digest,
                 &servers,
                 preflight_request.as_ref(),
@@ -396,6 +402,7 @@ pub struct PluginAddOutcome {
 
 pub enum PluginSourceReceipt {
     Mcp,
+    StdioMcp,
     Package,
     Installed,
     Skill,
@@ -426,7 +433,9 @@ fn validate_add_source(
         return Err(PluginError::Invalid("installed package reuse activates that plugin revision; omit server, connection, credential, and replace, then use enable for an existing connection or connect for a new one".to_owned()));
     }
     match source {
-        super::api::PluginSource::Installed { .. } | super::api::PluginSource::Mcp { .. }
+        super::api::PluginSource::Installed { .. }
+        | super::api::PluginSource::Mcp { .. }
+        | super::api::PluginSource::StdioMcp { .. }
             if expected.is_some() =>
         {
             return Err(PluginError::Invalid(

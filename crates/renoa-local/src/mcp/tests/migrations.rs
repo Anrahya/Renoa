@@ -128,6 +128,7 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     drop(store);
 
     let connection = Connection::open(&path).expect("open migration fixture");
+    crate::host::catalog::restore_schema_56(&connection);
     connection
         .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
@@ -207,8 +208,9 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
     let path = store.path().to_owned();
     drop(store);
 
-    Connection::open(&path)
-        .expect("open migration fixture")
+    let connection = Connection::open(&path).expect("open migration fixture");
+    crate::host::catalog::restore_schema_56(&connection);
+    connection
         .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
              DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
@@ -278,8 +280,9 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
     let path = store.path().to_owned();
     drop(store);
 
-    Connection::open(&path)
-        .expect("open migration fixture")
+    let connection = Connection::open(&path).expect("open migration fixture");
+    crate::host::catalog::restore_schema_56(&connection);
+    connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
              DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
@@ -343,6 +346,7 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
     drop(store);
 
     let connection = Connection::open(&path).expect("open migration fixture");
+    crate::host::catalog::restore_schema_56(&connection);
     downgrade_skill_sources_to_v6_shape(&connection);
     connection
         .execute_batch(

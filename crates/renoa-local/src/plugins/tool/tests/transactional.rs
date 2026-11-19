@@ -269,7 +269,7 @@ fn write_failed_adapter(path: &std::path::Path) {
         r#"
 for await (const _chunk of process.stdin) {}
 process.stdout.write(JSON.stringify({
-  wire_version: 9,
+  wire_version: 10,
   event: "failed",
   failure: {
     kind: "incompatible_protocol",
@@ -297,7 +297,7 @@ for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 if (request.action !== 'oauth_discover') process.exit(18);
 process.stdout.write(JSON.stringify({
-  wire_version: 9,
+  wire_version: 10,
   event: 'failed',
   failure: {
     kind: 'protocol',

@@ -17,6 +17,7 @@ import {
 } from "./limits.js";
 import { parseOAuthRegistration } from "./oauth-registration-wire.js";
 import { isValidOAuthScope } from "./oauth-scope.js";
+import { parseOptionalStdio } from "./stdio-transport.js";
 import {
   invalid,
   requireBoolean,
@@ -75,16 +76,28 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
   if (request.action === "discover") {
     requireExactKeys(
       request,
-      ["wire_version", "action", "endpoint", "headers", "credential"],
+      ["wire_version", "action", "endpoint", "headers", "credential", "stdio"],
       "request",
-      ["headers", "credential"],
+      ["headers", "credential", "stdio"],
     );
+    const headers = optionalHeaders(request.headers);
+    const credential = optionalCredential(request.credential);
+    const stdio = parseOptionalStdio(request.stdio);
+    if (
+      stdio.stdio !== undefined &&
+      (headers.headers !== undefined || credential.credential !== undefined)
+    ) {
+      throw invalid(
+        "stdio discover requests cannot include HTTP headers or credentials",
+      );
+    }
     return {
       wire_version: WIRE_VERSION,
       action: "discover",
       endpoint: requireString(request.endpoint, "request.endpoint"),
-      ...optionalHeaders(request.headers),
-      ...optionalCredential(request.credential),
+      ...headers,
+      ...credential,
+      ...stdio,
     };
   }
   if (request.action === "call") {
@@ -97,12 +110,24 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         "protocol_version",
         "headers",
         "credential",
+        "stdio",
         "tool",
         "arguments",
       ],
       "request",
-      ["headers", "credential"],
+      ["headers", "credential", "stdio"],
     );
+    const headers = optionalHeaders(request.headers);
+    const credential = optionalCredential(request.credential);
+    const stdio = parseOptionalStdio(request.stdio);
+    if (
+      stdio.stdio !== undefined &&
+      (headers.headers !== undefined || credential.credential !== undefined)
+    ) {
+      throw invalid(
+        "stdio call requests cannot include HTTP headers or credentials",
+      );
+    }
     return {
       wire_version: WIRE_VERSION,
       action: "call",
@@ -111,8 +136,9 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         request.protocol_version,
         "request.protocol_version",
       ),
-      ...optionalHeaders(request.headers),
-      ...optionalCredential(request.credential),
+      ...headers,
+      ...credential,
+      ...stdio,
       tool: parseFrozenTool(request.tool),
       arguments: requireJsonObject(request.arguments, "request.arguments"),
     };

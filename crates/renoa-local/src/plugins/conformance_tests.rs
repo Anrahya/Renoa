@@ -49,3 +49,35 @@ fn the_first_party_google_drive_package_is_a_supported_agent_plugin() {
     assert_eq!(server.endpoint(), "https://drive.renoa.live/mcp");
     assert!(server.request_headers().is_empty());
 }
+
+#[test]
+fn the_first_party_browse_package_is_a_supported_stdio_agent_plugin() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/browse");
+    let inspection = super::inspect::inspect(&root)
+        .expect("inspect the repository browse package")
+        .inspection;
+
+    assert_eq!(inspection.metadata().name(), "renoa.browse");
+    assert_eq!(inspection.metadata().version(), Some("0.1.0"));
+    assert!(
+        inspection.notices().is_empty(),
+        "unexpected notices: {:?}",
+        inspection.notices()
+    );
+    let [server] = inspection.mcp_servers() else {
+        panic!("browse package must expose exactly one supported MCP server");
+    };
+    assert_eq!(server.id(), "browse");
+    assert!(crate::mcp::is_stdio_endpoint(server.endpoint()));
+    assert!(server.request_headers().is_empty());
+    let stdio = server.stdio().expect("browse server uses stdio transport");
+    assert_eq!(stdio.command, "browse");
+    assert_eq!(stdio.args, vec!["mcp"]);
+    assert!(stdio.env.is_empty());
+    assert_eq!(stdio.cwd, None);
+
+    let captured_skill =
+        crate::skills::package::capture(&root.join("skills/browse"), Some("browse"))
+            .expect("capture browse plugin skill");
+    assert_eq!(captured_skill.metadata.name, "browse");
+}

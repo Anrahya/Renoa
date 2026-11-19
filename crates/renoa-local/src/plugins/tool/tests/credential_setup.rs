@@ -541,7 +541,7 @@ const request = JSON.parse(input);
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 if (request.action === 'oauth_discover') {
   send({
-    wire_version: 9,
+    wire_version: 10,
     event: 'oauth_discovered',
     discovery: {
       mcp_endpoint: request.endpoint,
@@ -554,17 +554,17 @@ if (request.action === 'oauth_discover') {
 }
 if (request.action === 'oauth_token') {
   if (request.oauth_state.access_token !== 'oauth-access') {
-    send({wire_version:9,event:'oauth_refresh_required',oauth_state:request.oauth_state});
+    send({wire_version:10,event:'oauth_refresh_required',oauth_state:request.oauth_state});
     process.exit(0);
   }
-  send({wire_version:9,event:'oauth_authorized',authorization:{scheme:'bearer',token:'oauth-access'},oauth_state:request.oauth_state});
+  send({wire_version:10,event:'oauth_authorized',authorization:{scheme:'bearer',token:'oauth-access'},oauth_state:request.oauth_state});
   process.exit(0);
 }
 if (request.action === 'oauth_exchange') {
   if (request.authorization_code !== 'sign-in-code' ||
       request.registration?.client_id !== 'browser-client' ||
       request.registration?.client_secret !== 'browser-secret') process.exit(23);
-  send({wire_version:9,event:'oauth_authorized',authorization:{scheme:'bearer',token:'oauth-access'},oauth_state:{...request.oauth_state,access_token:'oauth-access'}});
+  send({wire_version:10,event:'oauth_authorized',authorization:{scheme:'bearer',token:'oauth-access'},oauth_state:{...request.oauth_state,access_token:'oauth-access'}});
   process.exit(0);
 }
 if (request.action === 'oauth_begin') {
@@ -573,7 +573,7 @@ if (request.action === 'oauth_begin') {
     const authorization = new URL('https://accounts.example/authorize');
     authorization.searchParams.set('state',request.csrf_state);
     authorization.searchParams.set('redirect_uri',request.redirect_uri);
-    send({wire_version:9,event:'oauth_redirect',authorization_url:authorization.href,oauth_state:{
+    send({wire_version:10,event:'oauth_redirect',authorization_url:authorization.href,oauth_state:{
       schema_version:1,mcp_endpoint:request.endpoint,csrf_state:request.csrf_state,
       redirect_uri:request.redirect_uri,authorization_url:authorization.href
     }});
@@ -585,7 +585,7 @@ if (request.action === 'oauth_begin') {
       request.registration?.client_id !== 'browser-client' ||
       request.registration?.client_secret !== 'browser-secret') process.exit(22);
   send({
-    wire_version: 9,
+    wire_version: 10,
     event: 'oauth_authorized',
     authorization: {scheme: 'bearer', token: 'oauth-access'},
     oauth_state: {
@@ -603,12 +603,12 @@ if (request.action !== 'discover' ||
     request.credential?.prefix !== 'Bearer ' ||
     !['browser-secret', 'oauth-access'].includes(request.credential?.secret)) process.exit(21);
 send({
-  wire_version: 9,
+  wire_version: 10,
   event: 'discovered',
   catalog: {
     endpoint: request.endpoint,
     protocol_version: '2026-07-28',
-    adapter_revision: 'mcp-client-node-v0.10.0',
+    adapter_revision: 'mcp-client-node-v0.11.0',
     tools: [{
       name: 'credential_test',
       description: 'Proves secure credential intake.',

@@ -1493,8 +1493,9 @@ remain later work and must preserve `rcp-v0.md`.
 - OAuth terminal-receipt garbage collection after a proven Host/kernel
   settlement boundary;
 - historical resolved-binding retention after catalog or profile changes;
-- when to add stdio MCP servers and how to constrain their process and
-  filesystem authority;
+- process pooling and optional OS sandboxing for stdio MCP servers (schema 57
+  adds per-call native `stdio` MCP support for both Agent Plugin `mcp.json`
+  entries and direct `plugin_manage` `source.kind = "stdio_mcp"`);
 - ancestor-directory skill discovery, explicit profile configuration, and
   garbage collection of installed revisions and session-pinned skills;
 - support for MCP resources, prompts, apps, tasks, or future protocol
@@ -1520,7 +1521,8 @@ The first direct MCP slice does not implement:
 - a public marketplace, package signing, automatic updates, rollback, removal,
   or garbage collection;
 - GUI credential entry, headless OAuth, or general secret synchronization;
-- stdio MCP servers;
+- long-lived pooled stdio MCP processes (stdio servers currently run per
+  discover/call inside the adapter's process group);
 - MCP resources, prompts, apps, tasks, sampling, or elicitation;
 - Waku extension settings or management UI;
 - a general permission system;

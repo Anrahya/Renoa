@@ -9,8 +9,8 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    CapturedPlugin, PluginError, PluginSourceReceipt, RemoteMcpSource, api::PluginSource,
-    generated::GeneratedMcpPlugin, inspect,
+    CapturedPlugin, PluginError, PluginSourceReceipt, RemoteMcpSource, StdioMcpSource,
+    api::PluginSource, generated::GeneratedMcpPlugin, inspect,
 };
 
 mod discovery;
@@ -208,6 +208,30 @@ fn capture_local_or_mcp(
             generated.write(staging.path())?;
             inspect::inspect(staging.path())
         }
+        PluginSource::StdioMcp {
+            name,
+            description,
+            server,
+            command,
+            args,
+            env,
+            cwd,
+            documentation,
+        } => {
+            let generated = GeneratedMcpPlugin::from_stdio(StdioMcpSource::new(
+                name,
+                description,
+                server,
+                command,
+                args,
+                env,
+                cwd,
+                documentation,
+            ))?;
+            let staging = scratch()?;
+            generated.write(staging.path())?;
+            inspect::inspect(staging.path())
+        }
         PluginSource::Installed { .. } => Err(PluginError::Invalid(
             "installed sources must be resolved through the library".to_owned(),
         )),
@@ -223,6 +247,7 @@ pub(super) fn receipt(source: &PluginSource) -> PluginSourceReceipt {
         PluginSource::Skill { .. } => PluginSourceReceipt::Skill,
         PluginSource::Github { .. } | PluginSource::SkillsSh { .. } => PluginSourceReceipt::Github,
         PluginSource::Mcp { .. } => PluginSourceReceipt::Mcp,
+        PluginSource::StdioMcp { .. } => PluginSourceReceipt::StdioMcp,
         PluginSource::Installed { .. } => PluginSourceReceipt::Installed,
     }
 }

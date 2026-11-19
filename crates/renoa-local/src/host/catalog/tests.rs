@@ -920,3 +920,148 @@ fn a_reset_from_schema_47_gives_the_feed_its_urgency_and_admits_every_plugin() {
             .unwrap_or_else(|error| panic!("{} is stored: {error}", plugin.id()));
     }
 }
+
+#[test]
+fn schema_56_upgrades_in_place_preserving_http_plugins_and_enabling_stdio() {
+    use crate::plugins::manager::integration_id;
+
+    const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const AGENT: &str = "00000000-0000-0000-0000-000000000001";
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("host.sqlite3");
+    initialize(&path).expect("initialize current catalog");
+    crate::test_agents::insert_agent(&path, AGENT);
+    let integration = integration_id(DIGEST, "main");
+    let connection = rusqlite::Connection::open(&path).expect("open catalog");
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO installed_plugins(plugin_digest, name) VALUES (?1, 'fixture')",
+            [DIGEST],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO plugin_mcp_servers(plugin_digest, server_id, integration_id, transport, endpoint, request_headers_json)
+             VALUES (?1, 'main', ?2, 'streamable_http', 'https://service.example/mcp', '{}')",
+            rusqlite::params![DIGEST, integration],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO mcp_integrations(integration_id, kind, endpoint, request_headers_json)
+             VALUES (?1, 'direct_streamable_http', 'https://service.example/mcp', '{}')",
+            [&integration],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO mcp_connections(connection_id, integration_id, auth_kind)
+             VALUES ('account', ?1, 'none')",
+            [&integration],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO host_agent_mcp_connections(agent_id, connection_id) VALUES (?1, 'account')",
+            [AGENT],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO host_plugin_admissions(package_digest) VALUES (?1)",
+            [DIGEST],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO host_agent_plugins(agent_id, plugin_id, package_digest, enabled)
+             VALUES (?1, ?2, ?2, 1)",
+            rusqlite::params![AGENT, DIGEST],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO host_agent_plugin_revisions(agent_id, plugin_id, package_digest)
+             VALUES (?1, ?2, ?2)",
+            rusqlite::params![AGENT, DIGEST],
+        )
+        .unwrap();
+    super::restore_schema_56(&connection);
+    connection
+        .execute_batch(
+            "UPDATE host_metadata SET schema_version = 56 WHERE singleton = 1;
+             PRAGMA user_version = 56;",
+        )
+        .unwrap();
+    drop(connection);
+
+    initialize(&path).expect("upgrade schema 56 to 57");
+    let upgraded = open_verified(&path).expect("open verified schema 57");
+    let enabled: Vec<String> = upgraded
+        .prepare("SELECT connection_id FROM host_agent_enabled_mcp_connections WHERE agent_id = ?1")
+        .unwrap()
+        .query_map([AGENT], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(enabled, vec!["account"]);
+    assert_stdio_check_constraints(&upgraded, DIGEST);
+}
+
+fn assert_stdio_check_constraints(upgraded: &rusqlite::Connection, digest: &str) {
+    const STDIO_ENDPOINT: &str =
+        "stdio:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    for (sql, reason) in [
+        (
+            "INSERT INTO mcp_integrations(integration_id, kind, endpoint, request_headers_json, stdio_config_json)
+             VALUES ('bad-null', 'direct_stdio', 'stdio:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '{}', NULL)",
+            "direct_stdio must require stdio_config_json",
+        ),
+        (
+            "INSERT INTO mcp_integrations(integration_id, kind, endpoint, request_headers_json, stdio_config_json)
+             VALUES ('bad-short', 'direct_stdio', 'stdio:abc', '{}', '{\"command\":\"browse\"}')",
+            "direct_stdio must require a 70-char stdio:<sha256> endpoint",
+        ),
+        (
+            "INSERT INTO mcp_integrations(integration_id, kind, endpoint, request_headers_json, stdio_config_json)
+             VALUES ('bad-headers', 'direct_stdio', 'stdio:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '{\"x-a\":\"1\"}', '{\"command\":\"browse\"}')",
+            "direct_stdio must require empty request_headers_json",
+        ),
+        (
+            "INSERT INTO plugin_mcp_servers(plugin_digest, server_id, integration_id, transport, endpoint, request_headers_json, stdio_config_json)
+             VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bad-null', 'int-null', 'stdio', 'stdio:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '{}', NULL)",
+            "plugin_mcp_servers stdio must require stdio_config_json",
+        ),
+        (
+            "INSERT INTO plugin_mcp_servers(plugin_digest, server_id, integration_id, transport, endpoint, request_headers_json, stdio_config_json)
+             VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bad-short', 'int-short', 'stdio', 'stdio:abc', '{}', '{\"command\":\"browse\"}')",
+            "plugin_mcp_servers stdio must require a 70-char stdio:<sha256> endpoint",
+        ),
+        (
+            "INSERT INTO plugin_mcp_servers(plugin_digest, server_id, integration_id, transport, endpoint, request_headers_json, stdio_config_json)
+             VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bad-headers', 'int-headers', 'stdio', 'stdio:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '{\"x-a\":\"1\"}', '{\"command\":\"browse\"}')",
+            "plugin_mcp_servers stdio must require empty request_headers_json",
+        ),
+    ] {
+        assert!(upgraded.execute(sql, []).is_err(), "{reason}");
+    }
+    upgraded
+        .execute(
+            "INSERT INTO mcp_integrations(integration_id, kind, endpoint, request_headers_json, stdio_config_json)
+             VALUES ('ok-stdio', 'direct_stdio', ?1, '{}', '{\"command\":\"browse\"}')",
+            [STDIO_ENDPOINT],
+        )
+        .expect("valid direct_stdio row");
+    upgraded
+        .execute(
+            "INSERT INTO plugin_mcp_servers(plugin_digest, server_id, integration_id, transport, endpoint, request_headers_json, stdio_config_json)
+             VALUES (?1, 'browse', 'int-browse', 'stdio', ?2, '{}', '{\"command\":\"browse\"}')",
+            rusqlite::params![digest, STDIO_ENDPOINT],
+        )
+        .expect("valid plugin_mcp_servers stdio row");
+}

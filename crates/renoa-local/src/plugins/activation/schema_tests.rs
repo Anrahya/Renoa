@@ -37,7 +37,7 @@ fn schema_30(path: &Path, selected: bool) {
     if selected {
         crate::test_agents::insert_agent(path, AGENT);
         let integration = integration_id(DIGEST, "main");
-        connection.execute("INSERT INTO mcp_integrations VALUES (?1,'direct_streamable_http','https://service.example/mcp','{}')",[integration.clone()]).unwrap();
+        connection.execute("INSERT INTO mcp_integrations(integration_id,kind,endpoint,request_headers_json) VALUES (?1,'direct_streamable_http','https://service.example/mcp','{}')",[integration.clone()]).unwrap();
         connection.execute("INSERT INTO mcp_connections(connection_id,integration_id,auth_kind) VALUES ('account',?1,'none')",[integration]).unwrap();
         connection.execute("INSERT INTO host_agent_mcp_connections(agent_id,connection_id) VALUES (?1,'account')",[AGENT]).unwrap();
     }
@@ -129,7 +129,7 @@ fn schema_32_plugin_activations_survive_the_in_place_upgrade() {
         )
         .unwrap();
     connection.execute("INSERT INTO plugin_mcp_servers(plugin_digest,server_id,integration_id,transport,endpoint,request_headers_json) VALUES (?1,'main',?2,'streamable_http','https://service.example/mcp','{}')",params![DIGEST,integration]).unwrap();
-    connection.execute("INSERT INTO mcp_integrations VALUES (?1,'direct_streamable_http','https://service.example/mcp','{}')",[&integration]).unwrap();
+    connection.execute("INSERT INTO mcp_integrations(integration_id,kind,endpoint,request_headers_json) VALUES (?1,'direct_streamable_http','https://service.example/mcp','{}')",[&integration]).unwrap();
     connection.execute("INSERT INTO mcp_connections(connection_id,integration_id,auth_kind) VALUES ('account',?1,'none')",[&integration]).unwrap();
     connection
         .execute(
