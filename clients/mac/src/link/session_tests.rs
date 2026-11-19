@@ -9,7 +9,8 @@ use std::{
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_protocol::{CommandInput, TargetRef};
+use renoa_protocol::{CommandId, CommandInput, TargetRef};
+use renoa_rcp_client::StopOutcome;
 use renoa_rcp_wire::{
     ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HostMethod,
     JSON_WS_VERSION, NodeId, ServerMessage, ShareLink, TargetSummary, TaskId,
@@ -23,7 +24,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 use uuid::Uuid;
 
 use super::{
-    Command, Endpoints, Pace, Update,
+    Command, Endpoints, Pace, StopProblem, Update,
     host::{Answer, HostCall},
     session,
 };
@@ -789,6 +790,156 @@ async fn a_share_link_request_resolves_against_endpoints_origin_or_none_on_refus
             .expect("answered offline")
             .expect("sender"),
         None
+    );
+    drop(commands);
+    let _ = timeout(Duration::from_secs(5), task).await;
+}
+
+#[tokio::test]
+async fn stop_command_forwards_stop_outcomes_refusal_and_offline_uncertainty() {
+    let running_cmd = CommandId::new();
+    let ended_cmd = CommandId::new();
+    let refused_cmd = CommandId::new();
+    let (endpoints, heard) = coordinator(Arc::new(move |_, frame| {
+        if let Some(replies) = chat_replies(frame) {
+            return replies;
+        }
+        let ClientMessage::StopCommand {
+            request_id,
+            command_id,
+            ..
+        } = frame
+        else {
+            panic!("unexpected frame {frame:?}");
+        };
+        if *command_id == running_cmd {
+            vec![reply(&ServerMessage::StopAccepted {
+                request_id: *request_id,
+                command_id: *command_id,
+                outcome: StopOutcome::Requested,
+            })]
+        } else if *command_id == ended_cmd {
+            vec![reply(&ServerMessage::StopAccepted {
+                request_id: *request_id,
+                command_id: *command_id,
+                outcome: StopOutcome::AlreadyEnded,
+            })]
+        } else {
+            vec![reply(&ServerMessage::Error {
+                request_id: Some(*request_id),
+                code: ErrorCode::NotFound,
+                message: "refused".to_owned(),
+            })]
+        }
+    }))
+    .await;
+
+    let mut running = start(endpoints);
+    while running
+        .updates
+        .recv()
+        .await
+        .is_some_and(|u| !matches!(u, Update::Linked(true)))
+    {}
+
+    let (tx, rx) = oneshot::channel();
+    running
+        .commands
+        .send(Command::Stop {
+            task_id: running.task_id,
+            command_id: running_cmd,
+            answered: tx,
+        })
+        .expect("send stop");
+    assert_eq!(
+        timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("stop answer")
+            .expect("sender"),
+        Ok(StopOutcome::Requested)
+    );
+
+    let (tx, rx) = oneshot::channel();
+    running
+        .commands
+        .send(Command::Stop {
+            task_id: running.task_id,
+            command_id: ended_cmd,
+            answered: tx,
+        })
+        .expect("send stop ended");
+    assert_eq!(
+        timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("ended answer")
+            .expect("sender"),
+        Ok(StopOutcome::AlreadyEnded)
+    );
+
+    let (tx, rx) = oneshot::channel();
+    running
+        .commands
+        .send(Command::Stop {
+            task_id: running.task_id,
+            command_id: refused_cmd,
+            answered: tx,
+        })
+        .expect("send stop refused");
+    assert_eq!(
+        timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("refused answer")
+            .expect("sender"),
+        Err(StopProblem::Refused)
+    );
+
+    let connections = heard.lock().expect("heard").iter().map(|(n, _)| *n).max();
+    assert_eq!(
+        connections,
+        Some(0),
+        "a refused stop does not drop the connection"
+    );
+    drop(running.commands);
+
+    let closed = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let offline_endpoints =
+        Endpoints::at(&format!("http://{}", closed.local_addr().expect("address")));
+    drop(closed);
+    let (commands, received) = mpsc::unbounded_channel();
+    let (sender, mut updates) = mpsc::unbounded_channel();
+    let credentials = DeviceCredentials {
+        device_id: DeviceId::new(),
+        credential: DeviceCredential::new("credential"),
+    };
+    let key = Arc::new(MacKey::generate().expect("key"));
+    let task = tokio::spawn(session(
+        offline_endpoints,
+        credentials,
+        key,
+        QUICK,
+        received,
+        sender,
+    ));
+    let Some(Update::Linked(false)) = timeout(Duration::from_secs(5), updates.recv())
+        .await
+        .expect("offline status")
+    else {
+        panic!("expected offline update");
+    };
+    let (tx, rx) = oneshot::channel();
+    commands
+        .send(Command::Stop {
+            task_id: running.task_id,
+            command_id: running_cmd,
+            answered: tx,
+        })
+        .expect("send stop offline");
+    assert_eq!(
+        timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("answered offline")
+            .expect("sender"),
+        Err(StopProblem::Uncertain)
     );
     drop(commands);
     let _ = timeout(Duration::from_secs(5), task).await;

@@ -2,8 +2,11 @@ use gpui_kit::{
     AnyWindowHandle, AppContext as _, Bounds, Entity, Point, TestAppContext, WindowBounds,
     WindowOptions, point, px, size, test::TestWindowExt as _,
 };
-use renoa_protocol::{CommandInput, ExecutionEventKind, ExecutionTerminal, TargetRef};
-use renoa_rcp_wire::{NodeId, TargetSummary};
+use renoa_protocol::{
+    CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
+    ExecutionTerminal, TargetRef,
+};
+use renoa_rcp_wire::{NodeId, TargetSummary, TaskEvent, TaskEventId, TaskEventKind};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -11,8 +14,8 @@ use super::{Chats, overlay::Up};
 use crate::{
     chat::{Speaker, app_chat_task_id},
     face::look::PLAIN,
-    link::{Command, Update},
-    test_events::{executed, said},
+    link::{Command, StopOutcome, StopProblem, Update},
+    test_events::{MINUTE_MS, executed, said},
 };
 
 type Opened = (
@@ -1161,4 +1164,122 @@ fn ctrl_tab_walks_only_the_chats_the_owner_opened(cx: &mut TestAppContext) {
     act(&|window, cx| window.press("ctrl-escape", cx), cx);
     act(&ctrl(false), cx);
     assert_eq!(chosen(cx).as_deref(), Some("Cy"));
+}
+
+#[gpui_kit::test]
+fn stop_button_cancels_active_turn_even_with_draft_and_surfaces_refusal(cx: &mut TestAppContext) {
+    let (window, chats, mut asked, updates) = open(cx);
+    let node_id = NodeId::new();
+    let task_id = app_chat_task_id(node_id, "renoa");
+    updates.send(Update::Linked(true)).unwrap();
+    updates
+        .send(Update::Agents(vec![agent(node_id, "Renoa")]))
+        .unwrap();
+    cx.run_until_parked();
+    while chat_command(&mut asked).is_ok() {}
+
+    let running_cmd = CommandId::new();
+    let execution_id = ExecutionId::new();
+    let exec_cmd = |seq: u64, kind: ExecutionEventKind| TaskEvent {
+        event_id: TaskEventId::new(),
+        task_id,
+        sequence: seq,
+        kind: TaskEventKind::ExecutionEvent {
+            command_id: running_cmd,
+            event: ExecutionEvent {
+                event_id: ExecutionEventId::new(),
+                execution_id,
+                sequence: seq,
+                recorded_at_ms: i64::try_from(seq).expect("seq") * MINUTE_MS,
+                kind,
+            },
+        },
+    };
+
+    updates
+        .send(Update::Event(Box::new(said(
+            task_id,
+            0,
+            CommandInput::from_text("Render clip"),
+        ))))
+        .unwrap();
+    updates
+        .send(Update::Event(Box::new(exec_cmd(
+            1,
+            ExecutionEventKind::TurnStarted,
+        ))))
+        .unwrap();
+    cx.run_until_parked();
+
+    // Stop still works when the owner has typed a draft in the composer.
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("composer", cx);
+        window.input("Half a follow-up", cx);
+        window.render_frame(cx);
+        window.click("stop", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let Ok(Command::Stop {
+        task_id: stopped_task,
+        command_id: stopped_cmd,
+        answered,
+    }) = chat_command(&mut asked)
+    else {
+        panic!("clicking stop must emit Command::Stop");
+    };
+    assert_eq!((stopped_task, stopped_cmd), (task_id, running_cmd));
+    chats.read_with(cx, |chats, _| {
+        assert!(chats.stopping.contains(&running_cmd));
+    });
+
+    // A refusal surfaces a notice and clears `stopping` so the owner can retry.
+    answered.send(Err(StopProblem::Refused)).unwrap();
+    cx.run_until_parked();
+    chats.read_with(cx, |chats, cx| {
+        assert!(!chats.stopping.contains(&running_cmd));
+        assert_eq!(
+            chats.stop_notices.get(&task_id).copied(),
+            Some("Couldn't stop that turn. Try again.")
+        );
+        assert_eq!(chats.composer.read(cx).value(), "Half a follow-up");
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("stop", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let Ok(Command::Stop { answered, .. }) = chat_command(&mut asked) else {
+        panic!("retry stop must emit Command::Stop");
+    };
+    answered.send(Ok(StopOutcome::Requested)).unwrap();
+    cx.run_until_parked();
+    chats.read_with(cx, |chats, _| {
+        assert!(chats.stopping.contains(&running_cmd));
+        assert!(!chats.stop_notices.contains_key(&task_id));
+    });
+
+    updates
+        .send(Update::Event(Box::new(exec_cmd(
+            2,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Cancelled {
+                    reason: "Stopped by owner.".to_owned(),
+                },
+            },
+        ))))
+        .unwrap();
+    cx.run_until_parked();
+
+    chats.read_with(cx, |chats, cx| {
+        assert!(!chats.transcripts[&task_id].working());
+        assert!(!chats.stopping.contains(&running_cmd));
+        assert!(!chats.stop_notices.contains_key(&task_id));
+        assert_eq!(chats.composer.read(cx).value(), "Half a follow-up");
+        assert_eq!(chats.scroller.read(cx).item_count(), 1);
+    });
 }

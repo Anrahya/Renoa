@@ -423,3 +423,81 @@ fn a_message_queued_behind_the_running_turn_leaves_it_its_activity() {
         "the queued message does not take the running turn's activity"
     );
 }
+
+#[test]
+fn transcript_tracks_running_command_across_queued_follow_up_and_cancellation() {
+    use renoa_protocol::{
+        CommandEnvelope, CommandId, ExecutionEvent, ExecutionEventId, ExecutionId, PrincipalId,
+        SurfaceRef, TargetRef,
+    };
+    use renoa_rcp_wire::{TaskEvent, TaskEventId, TaskEventKind};
+
+    let task_id = TaskId::new();
+    let first = CommandId::new();
+    let queued = CommandId::new();
+    let execution_id = ExecutionId::new();
+    let submitted = |seq: u64, cmd: CommandId, text: &str| TaskEvent {
+        event_id: TaskEventId::new(),
+        task_id,
+        sequence: seq,
+        kind: TaskEventKind::CommandSubmitted {
+            command: CommandEnvelope {
+                command_id: cmd,
+                principal_id: PrincipalId::new(),
+                surface: SurfaceRef::new("mac"),
+                target: TargetRef::new("renoa"),
+                input: CommandInput::from_text(text),
+                origin: None,
+            },
+        },
+    };
+    let exec_for = |seq: u64, cmd: CommandId, kind: ExecutionEventKind| TaskEvent {
+        event_id: TaskEventId::new(),
+        task_id,
+        sequence: seq,
+        kind: TaskEventKind::ExecutionEvent {
+            command_id: cmd,
+            event: ExecutionEvent {
+                event_id: ExecutionEventId::new(),
+                execution_id,
+                sequence: seq,
+                recorded_at_ms: i64::try_from(seq).expect("seq") * MINUTE_MS,
+                kind,
+            },
+        },
+    };
+
+    let mut transcript = Transcript::default();
+    assert_eq!(transcript.running_command(), None);
+    transcript.apply(&submitted(0, first, "First task"), 0);
+    assert_eq!(transcript.running_command(), None);
+
+    transcript.apply(
+        &exec_for(1, first, ExecutionEventKind::TurnStarted),
+        MINUTE_MS,
+    );
+    assert_eq!(transcript.running_command(), Some(first));
+
+    // A follow-up submitted while `first` runs must not hijack Stop away from `first`.
+    transcript.apply(&submitted(2, queued, "Queued note"), MINUTE_MS);
+    assert_eq!(transcript.running_command(), Some(first));
+
+    transcript.apply(
+        &exec_for(
+            3,
+            first,
+            ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Cancelled {
+                    reason: "Stopped by owner.".to_owned(),
+                },
+            },
+        ),
+        2 * MINUTE_MS,
+    );
+    assert!(!transcript.working());
+    assert_eq!(transcript.running_command(), None);
+    assert!(
+        transcript.lines().iter().all(|line| !line.failed),
+        "cancellation stops cleanly without a failure bubble"
+    );
+}

@@ -26,7 +26,7 @@ use renoa_rcp_wire::{
     ClientMessage, DeviceCredentials, ErrorCode, NodeId, ServerMessage, TargetSummary, TaskEvent,
     TaskId,
 };
-pub use renoa_rcp_wire::{HostMethod, ShareLink};
+pub use renoa_rcp_wire::{HostMethod, ShareLink, StopOutcome};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -352,6 +352,38 @@ impl Connection {
                 ..
             } if accepted == command_id => Ok(()),
             other => Err(unexpected("command_accepted", &other)),
+        }
+    }
+
+    /// Requests that the task's node stop executing `command_id`.
+    ///
+    /// Repeating the call is idempotent (`StopOutcome::Requested`), while
+    /// `StopOutcome::AlreadyEnded` reports that execution terminated before a
+    /// stop was recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport failure or the coordinator's refusal, such as
+    /// `NotFound`.
+    pub async fn stop_command(
+        &self,
+        task_id: TaskId,
+        command_id: CommandId,
+    ) -> Result<StopOutcome, ClientError> {
+        match self
+            .request(|request_id| ClientMessage::StopCommand {
+                request_id,
+                task_id,
+                command_id,
+            })
+            .await?
+        {
+            ServerMessage::StopAccepted {
+                command_id: accepted,
+                outcome,
+                ..
+            } if accepted == command_id => Ok(outcome),
+            other => Err(unexpected("stop_accepted", &other)),
         }
     }
 
