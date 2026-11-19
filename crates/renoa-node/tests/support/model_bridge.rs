@@ -83,10 +83,10 @@ const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for "))
     content = [{ type: "tool_call", id: "find-automations", name: "plugin_search", arguments: { query: "automation_manage" } }];
   } else if (turn.length === 1) {
     const match = found.tool_matches.find(tool => tool.name === "automation_manage");
-    content = [{ type: "tool_call", id: "describe-automations", name: "plugin_search", arguments: { reference: match.reference } }];
+    content = [{ type: "tool_call", id: "describe-automations", name: "plugin_search", arguments: { references: [match.reference] } }];
   } else if (turn.length === 2) {
     content = [{ type: "tool_call", id: "create-automation", name: "tool_execute", arguments: {
-      reference: found.reference,
+      reference: found.tools[0].reference,
       arguments: { action: "create", spec: {
         agent_id: agent, name: "Digest", prompt: standing,
         schedule: { kind: "cron", expression: "0 0 * * *", timezone: "UTC" }, enabled: false
@@ -240,10 +240,10 @@ const AGENT_TURNS: &str = r#"} else if (prompt.startsWith("Ask ")) {
     content = [{ type: "tool_call", id: "find-message", name: "plugin_search", arguments: { query: "message_agent" } }];
   } else if (turn.length === 1) {
     const match = found().tool_matches.find(tool => tool.name === "message_agent");
-    content = [{ type: "tool_call", id: "describe-message", name: "plugin_search", arguments: { reference: match.reference } }];
+    content = [{ type: "tool_call", id: "describe-message", name: "plugin_search", arguments: { references: [match.reference] } }];
   } else if (turn.length === 2) {
     content = [{ type: "tool_call", id: "send-message", name: "tool_execute", arguments: {
-      reference: found().reference,
+      reference: found().tools[0].reference,
       arguments: { to: agent, text: question }
     } }];
   } else {

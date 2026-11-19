@@ -1,8 +1,6 @@
-use std::{str::FromStr as _, sync::Arc};
+use std::sync::Arc;
 
-use renoa_agent::{
-    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
-};
+use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{AgentId, EffectRecovery};
 use serde::{Deserialize, Serialize};
@@ -14,13 +12,11 @@ use super::{
     tool::output::{json_output, plugin_error, registry_error_output},
 };
 use crate::{
-    mcp::{
-        McpConnectionStatus, McpToolReference, SCHEMA_LOOKUP_OUTPUT_BYTES, SEARCH_RESULT_LIMIT,
-        rank_tools,
-    },
+    mcp::{McpConnectionStatus, SEARCH_RESULT_LIMIT, rank_tools},
     output::MAX_TOOL_OUTPUT_BYTES,
 };
 
+mod exact;
 mod local;
 mod page;
 #[cfg(test)]
@@ -28,7 +24,7 @@ mod tests;
 mod tools;
 
 const TOOL_NAME: &str = crate::capabilities::PLUGIN_SEARCH;
-const BINDING_REVISION: &str = "renoa-plugin-search-v4";
+const BINDING_REVISION: &str = "renoa-plugin-search-v5";
 const PREVIEW_LIMIT: usize = 3;
 const PREVIEW_SCHEMA_BYTES: usize = 4 * 1024;
 
@@ -50,7 +46,7 @@ impl PluginSearchTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_owned(),
                 description: format!(
-                    "Search the Host plugin library. Start with a targeted query; use query=* only to browse. A targeted local search returns plugin cards and up to {PREVIEW_LIMIT} matching plugin tools with exact references. If a match includes input_schema, use that complete schema to call code_mode's Python plugin(reference, arguments), or tool_execute when Code Mode is absent. If input_schema is absent, call plugin_search with only reference to get the full schema before calling the tool. Pass plugin and query to search that plugin's enabled tools. An external plugin may span several enabled connections; each tool reference identifies its connection. Pass connection and query to search one account or endpoint. Pass an external plugin id without query to inspect its components and connection status. Tool pages contain up to {SEARCH_RESULT_LIMIT} items. source=official_mcp_registry researches external candidates and never installs them. A loaded catalog or configured credential does not guarantee a remote call will succeed."
+                    "Search the Host plugin library. Start with a targeted query; use query=* only to browse. A targeted local search returns plugin cards and up to {PREVIEW_LIMIT} matching plugin tools with exact references. If a match includes input_schema, use that complete schema to call code_mode's Python plugin(reference, arguments), or tool_execute when Code Mode is absent. Before chaining calls, or when input_schema is absent, call plugin_search with only references, listing every tool you will call: it returns each one's complete input_schema and, where its server declares one, its output_schema, so you can use one call's result in the next. Pass plugin and query to search that plugin's enabled tools. An external plugin may span several enabled connections; each tool reference identifies its connection. Pass connection and query to search one account or endpoint. Pass an external plugin id without query to inspect its components and connection status. Tool pages contain up to {SEARCH_RESULT_LIMIT} items. source=official_mcp_registry researches external candidates and never installs them. A loaded catalog or configured credential does not guarantee a remote call will succeed."
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -58,7 +54,7 @@ impl PluginSearchTool {
                         "query": {"type":"string", "minLength":1, "maxLength":256, "description":"Search text for local plugins, a selected plugin's tools, one connection's tools, or the official Registry. Use * only to browse locally. Omit when inspecting an external plugin's components, an exact reference, or a Registry name/version."},
                         "plugin": {"type":"string", "description":"Exact plugin id returned by local search. Pair with query to search its enabled tools. For an external plugin, omit query to inspect components and connection status. Do not combine with connection or reference."},
                         "connection": {"type":"string", "description":"Exact enabled connection id returned by add, connect, or plugin inspection. Pair with query to search its MCP tools and exact references; omit plugin and reference."},
-                        "reference": {"type":"string", "description":"Exact plugin tool reference returned by local search. Use alone to get its complete model-facing input_schema; never combine with query, plugin, connection, offset, or Registry fields."},
+                        "references": {"type":"array", "minItems":1, "items":{"type":"string"}, "description":"Exact plugin tool references returned by local search. Use alone to get each tool's complete input_schema and declared output_schema; never combine with query, plugin, connection, offset, or Registry fields."},
                         "offset": {"type":"integer", "minimum":0, "description":"Next offset returned by a local page; omit for the first page."},
                         "source": {"type":"string", "enum":["local", "official_mcp_registry"], "description":"Defaults to local. Use official_mcp_registry only to research an external MCP candidate."},
                         "registry_name": {"type":"string", "description":"Exact publisher/server name returned by official Registry search; pair with registry_version to inspect the external record."},
@@ -70,7 +66,7 @@ impl PluginSearchTool {
         }
     }
 
-    fn with_host_plugins(mut self, plugins: Arc<super::host::HostPlugins>) -> Self {
+    pub(crate) fn with_host_plugins(mut self, plugins: Arc<super::host::HostPlugins>) -> Self {
         self.host_plugins = Some(plugins);
         self
     }
@@ -144,7 +140,7 @@ impl PluginSearchTool {
                 "registry_name and registry_version require source=official_mcp_registry",
             ));
         }
-        if let Some(reference) = input.reference.as_deref() {
+        if let Some(references) = input.references.as_deref() {
             if input.query.is_some()
                 || input.plugin.is_some()
                 || input.connection.is_some()
@@ -152,10 +148,10 @@ impl PluginSearchTool {
                 || input.source.is_some()
             {
                 return Err(ToolError::invalid_input(
-                    "reference must be the only plugin_search argument",
+                    "references must be the only plugin_search argument",
                 ));
             }
-            return self.exact_reference(reference, cancellation).await;
+            return self.exact_references(references, cancellation).await;
         }
         if let Some(plugin) = input.plugin.as_deref()
             && super::host::HostPluginId::parse(plugin).is_some()
@@ -221,56 +217,6 @@ impl PluginSearchTool {
         }
     }
 
-    async fn exact_reference(
-        &self,
-        encoded: &str,
-        cancellation: CancellationToken,
-    ) -> Result<ToolOutput, ToolError> {
-        if encoded.starts_with("host:") {
-            let plugins = self
-                .host_plugins
-                .as_ref()
-                .ok_or_else(|| ToolError::not_found("Host plugins unavailable"))?;
-            let description = plugins.exact(encoded)?;
-            let encoded = serde_json::to_string(&description)
-                .map_err(|error| ToolError::internal(error.to_string()))?;
-            if encoded.len() > SCHEMA_LOOKUP_OUTPUT_BYTES {
-                return Err(ToolError::output_limit(
-                    "Host tool schema exceeds exact lookup boundary",
-                ));
-            }
-            return Ok(ToolOutput {
-                content: vec![ContentBlock::text(encoded)],
-                details: None,
-                is_error: false,
-                closing: None,
-            });
-        }
-        let reference = McpToolReference::from_str(encoded)
-            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
-        let mut tools = self.describe_tools(vec![reference], false).await?;
-        if cancellation.is_cancelled() {
-            return Err(ToolError::cancelled("plugin search was cancelled", false));
-        }
-        let tool = tools
-            .pop()
-            .ok_or_else(|| ToolError::internal("exact MCP tool was not resolved"))?;
-        let encoded = serde_json::to_string(&tool).map_err(|error| {
-            ToolError::internal(format!("MCP tool schema could not be encoded: {error}"))
-        })?;
-        if encoded.len() > SCHEMA_LOOKUP_OUTPUT_BYTES {
-            return Err(ToolError::output_limit(format!(
-                "exact MCP tool schema exceeds the {SCHEMA_LOOKUP_OUTPUT_BYTES}-byte output boundary"
-            )));
-        }
-        Ok(ToolOutput {
-            content: vec![ContentBlock::text(encoded)],
-            details: None,
-            is_error: false,
-            closing: None,
-        })
-    }
-
     async fn search_cards(
         &self,
         inventory: &local::Inventory,
@@ -308,6 +254,7 @@ impl PluginSearchTool {
                     } else {
                         None
                     },
+                    output_schema: None,
                 });
             }
         }
@@ -342,11 +289,11 @@ impl PluginSearchTool {
     ) -> Result<ToolOutput, ToolError> {
         if input.plugin.is_some()
             || input.connection.is_some()
-            || input.reference.is_some()
+            || input.references.is_some()
             || input.offset != 0
         {
             return Err(ToolError::invalid_input(
-                "official Registry search does not accept plugin, connection, reference, or offset",
+                "official Registry search does not accept plugin, connection, references, or offset",
             ));
         }
         match (input.query, input.registry_name, input.registry_version) {
@@ -411,7 +358,7 @@ struct SearchInput {
     query: Option<String>,
     plugin: Option<String>,
     connection: Option<String>,
-    reference: Option<String>,
+    references: Option<Vec<String>>,
     #[serde(default)]
     offset: usize,
     source: Option<String>,
@@ -426,6 +373,9 @@ struct ToolMatch {
     description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     input_schema: Option<Value>,
+    /// Only exact lookups carry it; previews stay small.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_schema: Option<Value>,
 }
 
 #[derive(Serialize)]

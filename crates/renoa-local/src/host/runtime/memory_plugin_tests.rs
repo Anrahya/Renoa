@@ -63,8 +63,8 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
     else if (last.is_error) say("error: "+last.content[0].text);
     else if (last.name==="plugin_search") {
       const value=JSON.parse(last.content[0].text);
-      const match=value.tool_matches?.find(tool=>tool.name===name) ?? value;
-      if (!match.input_schema) call("schema","plugin_search",{reference:match.reference});
+      const match=value.tool_matches?.find(tool=>tool.name===name) ?? value.tools?.[0];
+      if (!match.input_schema) call("schema","plugin_search",{references:[match.reference]});
       else call("run","tool_execute",{reference:match.reference,arguments:{[field]:prompt.slice(verb.length+2)}});
     } else say(last.content[0].text);
   } else say("unknown prompt");

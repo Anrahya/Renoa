@@ -224,8 +224,23 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
             !encoded.contains(configured_endpoint),
             "model request leaked the configured MCP endpoint"
         );
+        // An exact lookup is the one place echo's declared output schema
+        // may reach the model; tool specifications and every other message
+        // stay without it, escaped or not.
+        let mut outside_lookup = request.clone();
+        if let Some(messages) = outside_lookup["messages"].as_array_mut() {
+            messages.retain(|message| {
+                !(message["role"] == "tool" && message["result"]["name"] == "plugin_search")
+            });
+        }
+        assert!(
+            !serde_json::to_string(&outside_lookup)
+                .expect("encode model request")
+                .replace('\\', "")
+                .contains(r#""properties":{"echoed""#),
+            "an output schema reached the model outside an exact lookup"
+        );
         for forbidden in [
-            "output_schema",
             "adapter_revision",
             "connection_id",
             "integration_id",

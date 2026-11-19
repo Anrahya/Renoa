@@ -9,7 +9,7 @@ function preparePluginFixture(request) {
     if (message.role !== 'tool' || !message.result.call_id.startsWith('__schema_')) continue;
     if (message.result.is_error) throw Error(JSON.stringify(message.result));
     const value = JSON.parse(message.result.content[0].text);
-    for (const tool of value.tool_matches ?? (value.reference ? [value] : [])) {
+    for (const tool of value.tool_matches ?? value.tools ?? []) {
       if (tool.reference.startsWith('host:')) fixturePluginSchemas.set(tool.name, tool);
     }
   }
@@ -34,7 +34,7 @@ process.stdout.write = (chunk, ...rest) => {
     event.response.content = event.response.content.map(call => {
       if (call.type !== 'tool_call' || !fixturePluginTools.has(call.name)) return call;
       const schema = fixturePluginSchemas.get(call.name);
-      if (!schema?.input_schema) return {type:'tool_call',id:`__schema_${call.name}_${call.id}`,name:'plugin_search',arguments:schema ? {reference:schema.reference} : {query:call.name}};
+      if (!schema?.input_schema) return {type:'tool_call',id:`__schema_${call.name}_${call.id}`,name:'plugin_search',arguments:schema ? {references:[schema.reference]} : {query:call.name}};
       return {...call,name:'tool_execute',arguments:{reference:schema.reference,arguments:call.arguments}};
     });
     return fixtureOriginalWrite(JSON.stringify(event) + '\n', ...rest);
