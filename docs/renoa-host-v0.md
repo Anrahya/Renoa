@@ -61,7 +61,10 @@ creation request replays unchanged.
 
 Each turn composes the system prompt from the stored definition in this order:
 the instructions; an `<identity>` block, `Your name is <name>.`, so a rename
-reaches the next turn; the `<purpose>` block; the `<job>` block; the agent's
+reaches the next turn; a `<keeping_posted>` block every agent gets, asking it to
+say what it is doing during longer work and to wait for slow things in short
+checks rather than one long call, so the person sees how it goes and can steer
+it between steps; the `<purpose>` block; the `<job>` block; the agent's
 `SOUL.md`; the person's `USER.md`, which renders empty, with the revision of
 empty content, until that person has a profile; the `<session_context>` block
 the person's plugins add, such as their `MIND.md`; and, when enabled, the
@@ -1023,7 +1026,16 @@ does not mean weakening existing adapter correctness or cancellation behavior.
 Model-visible output is bounded. Reads use one-based pagination; Bash preserves
 the final output and stops its process group after 120 seconds by default. A
 call may choose 1 through 1,800 seconds; timeout results include retained output
-and warn that partial changes may already exist. Every other built-in tool has
+and warn that partial changes may already exist. A call that sets `background`
+returns as soon as the command starts: the command runs in its own process
+group, writes stdout and stderr to `.renoa-jobs/<id>.log` in the workspace, and
+the call names that log and the group. A watcher owns the process. When the
+command ends, the watcher stops what it left in its group and appends one line
+saying how it ended; at the job's timeout (one hour by default, at most six) it
+stops the group; and when the Host shuts down its runtime, dropping the watcher
+kills the group, with no closing line. A Host killed outright cannot stop its
+jobs; on the VPS, the service's cgroup ends them with it. Logs stay in the
+workspace until something deletes them. Every other built-in tool has
 a 120-second Host deadline. A deadline or cancellation is not reported until
 the adapter has stopped its owned work. Grep and find return
 deterministic workspace-relative results and explicit truncation notices.

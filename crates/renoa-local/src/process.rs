@@ -93,6 +93,12 @@ pub(crate) async fn wait_for_process_group_raw(pid: u32) -> Result<(), ProcessGr
     }
 }
 
+/// Kills process group `pid` without waiting, for a drop that cannot wait.
+/// A failure is not reported: the group is gone, or nothing more can be done.
+pub(crate) fn kill_process_group(pid: u32) {
+    let _gone = signal_process_group(pid, Signal::SIGKILL);
+}
+
 fn signal_process_group(pid: u32, signal: Signal) -> Result<(), ProcessGroupError> {
     match killpg(process_group_id(pid)?, signal) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
