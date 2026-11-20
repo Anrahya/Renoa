@@ -29,14 +29,17 @@ impl PluginStore {
         Ok(self.packages.join(digest))
     }
 
-    pub(super) fn plugin_data_dir(&self, digest: &str) -> Result<PathBuf, PluginError> {
-        validate_digest(digest)?;
+    /// Where a plugin's stdio servers keep state: keyed by its `plugin.json`
+    /// name, so every revision of the plugin, and every agent, finds the same
+    /// state and one revision always resolves to one launch.
+    pub(super) fn plugin_data_dir(&self, name: &str) -> Result<PathBuf, PluginError> {
+        super::inspect::validate_plugin_name(name)?;
         Ok(self
             .packages
             .parent()
             .unwrap_or(&self.packages)
             .join("plugin-data")
-            .join(digest))
+            .join(name))
     }
 
     pub(super) fn initialize(database: PathBuf, packages: PathBuf) -> Result<Self, PluginError> {

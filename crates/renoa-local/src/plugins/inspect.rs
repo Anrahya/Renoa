@@ -412,7 +412,7 @@ fn optional_string(
     }
 }
 
-fn validate_plugin_name(name: &str) -> Result<(), PluginError> {
+pub(super) fn validate_plugin_name(name: &str) -> Result<(), PluginError> {
     let bytes = name.as_bytes();
     let valid = !name.contains("--")
         && !name.contains("..")

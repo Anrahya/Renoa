@@ -2,11 +2,12 @@ use std::{
     io::{Read as _, Write as _},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::Command,
-    sync::OnceLock,
     thread,
     time::Duration,
 };
+
+#[path = "support/node_adapter.rs"]
+mod node_adapter;
 
 use renoa_local::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentId, AgentPresetId, LocalHost,
@@ -234,27 +235,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn compiled_adapter(workspace: &Path) -> PathBuf {
-    static BUILT: OnceLock<PathBuf> = OnceLock::new();
-    BUILT
-        .get_or_init(|| {
-            let root = workspace.join("adapters/mcp-client-node");
-            let adapter = root.join("dist/src/main.js");
-            let status = Command::new("pnpm")
-                .args([
-                    "--dir",
-                    root.to_str().expect("adapter path is UTF-8"),
-                    "build",
-                ])
-                .status()
-                .expect("build @renoa/mcp-client");
-            assert!(status.success(), "MCP adapter build failed: {status}");
-            assert!(
-                adapter.is_file(),
-                "MCP adapter build produced no entrypoint"
-            );
-            adapter
-        })
-        .clone()
+    node_adapter::built(&workspace.join("adapters/mcp-client-node"))
 }
 
 fn serve_discovery(listener: &TcpListener) {

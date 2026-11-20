@@ -4,7 +4,6 @@ use std::{
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
     thread,
     time::Duration,
 };
@@ -310,12 +309,7 @@ async fn stdio_plugin_package_discovers_and_executes_end_to_end() {
     assert_eq!(parsed["plugin_root"].as_str(), expected_root.to_str());
     assert_eq!(parsed["cwd"], parsed["plugin_root"]);
     // A server given PLUGIN_DATA finds it there, private to this user.
-    assert_private_dir(
-        &directory
-            .path()
-            .join("plugin-data")
-            .join(inspected.digest()),
-    );
+    assert_private_dir(&directory.path().join("plugin-data").join("fixture.browse"));
 
     // Verify stored integration endpoint matches the RESOLVED stdio config digest,
     // distinct from the unresolved package mcp.json endpoint.
@@ -367,10 +361,7 @@ async fn stdio_plugin_data_dir_is_created_only_on_valid_connect_and_never_on_rej
         .inspect(&package_dir)
         .await
         .expect("inspect PLUGIN_DATA stdio package");
-    let data_dir = directory
-        .path()
-        .join("plugin-data")
-        .join(inspected.digest());
+    let data_dir = directory.path().join("plugin-data").join("fixture.browse");
 
     // Add package without connecting yet.
     manager
@@ -428,7 +419,7 @@ async fn stdio_plugin_data_dir_is_created_only_on_valid_connect_and_never_on_rej
         assert!(!data_dir.exists(), "{op} must not create plugin-data");
     }
 
-    // Valid connect creates plugin-data/<digest> and executes with cwd == plugin-data/<digest>.
+    // Valid connect creates plugin-data/<plugin name> and runs the server there.
     manager
         .connect_profile(
             &agent_id,
@@ -737,23 +728,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn compiled_adapter(workspace: &Path) -> PathBuf {
-    static BUILT: OnceLock<PathBuf> = OnceLock::new();
-    BUILT
-        .get_or_init(|| {
-            let root = workspace.join("adapters/mcp-client-node");
-            let adapter = root.join("dist/src/main.js");
-            let status = Command::new("pnpm")
-                .args([
-                    "--dir",
-                    root.to_str().expect("adapter path is UTF-8"),
-                    "build",
-                ])
-                .status()
-                .expect("build MCP adapter");
-            assert!(status.success(), "MCP adapter build failed: {status}");
-            adapter
-        })
-        .clone()
+    crate::node_adapter::built(&workspace.join("adapters/mcp-client-node"))
 }
 
 fn compile_secret_tool(directory: &Path, arguments: &Path) -> PathBuf {
@@ -1120,10 +1095,7 @@ async fn a_stdio_connect_that_fails_removes_the_data_directory_it_made() {
         .inspect(&package_dir)
         .await
         .expect("inspect failing stdio package");
-    let data_dir = directory
-        .path()
-        .join("plugin-data")
-        .join(inspected.digest());
+    let data_dir = directory.path().join("plugin-data").join("fixture.browse");
     manager
         .invoke(
             &agent_id,
@@ -1165,4 +1137,141 @@ fn assert_private_dir(path: &Path) {
     assert!(metadata.is_dir());
     let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions());
     assert_eq!(mode & 0o777, 0o700, "{}", path.display());
+}
+
+/// The browse fixture with its server run in `${PLUGIN_DATA}`.
+fn write_data_stdio_fixture(package_dir: &Path) {
+    write_stdio_browse_fixture(package_dir);
+    let mcp_json = json!({
+        "$schema": super::inspect::MCP_SCHEMA,
+        "mcpServers": {
+            "browse": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["${PLUGIN_ROOT}/server.mjs"],
+                "cwd": "${PLUGIN_DATA}"
+            }
+        }
+    });
+    fs::write(package_dir.join("mcp.json"), mcp_json.to_string()).expect("write mcp.json");
+}
+
+#[tokio::test]
+async fn plugin_data_survives_replace_plugin() {
+    let adapter = compiled_adapter(&workspace_root());
+    let directory = tempdir().expect("temporary plugin data update fixture");
+    let (agent_id, mcp, manager) = init_stdio_manager(directory.path(), adapter.clone());
+    let package_dir = directory.path().join("browse-fixture");
+    write_data_stdio_fixture(&package_dir);
+    let other = test_agent_id(9);
+    let database = directory.path().join("host.sqlite3");
+    crate::test_agents::insert_agent_with_tools(&database, &other.to_string(), &["bash"]);
+    let invoke_as = async |agent, request, operation_id| {
+        manager
+            .invoke(
+                &agent,
+                directory.path(),
+                request,
+                super::api::PluginInvocation {
+                    operation_id,
+                    updates: None,
+                    cancellation: CancellationToken::new(),
+                },
+            )
+            .await
+            .expect(operation_id)
+    };
+    let invoke = async |request, operation_id| invoke_as(agent_id, request, operation_id).await;
+    let first = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect first revision");
+    let first = first.digest().to_owned();
+    invoke(
+        add_with_connection(
+            super::api::PluginSource::Package {
+                source_path: package_dir.clone(),
+            },
+            Some(first.clone()),
+            Some("browse"),
+        ),
+        "data-add",
+    )
+    .await;
+    let data_dir = directory.path().join("plugin-data").join("fixture.browse");
+    fs::write(data_dir.join("pairing"), "paired").expect("the server keeps state");
+
+    fs::write(
+        package_dir.join("server.mjs"),
+        fs::read_to_string(package_dir.join("server.mjs")).expect("read server") + "\n// next\n",
+    )
+    .expect("change the server");
+    let second = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect second revision");
+    let second = second.digest().to_owned();
+    assert_ne!(first, second);
+    invoke(
+        super::api::PluginRequest::Install {
+            source: super::api::PluginSource::Package {
+                source_path: package_dir,
+            },
+            expected_digest: second.clone(),
+        },
+        "data-install",
+    )
+    .await;
+    // Another agent connecting the new revision first stores the launch the
+    // replacing agent's reconnect resolves too, so the two do not conflict.
+    invoke_as(
+        other,
+        connect_request(&second, "browse.other"),
+        "data-other-connect",
+    )
+    .await;
+    invoke(
+        super::api::PluginRequest::ReplacePlugin {
+            plugin_id: first.clone(),
+            package_digest: second.clone(),
+            expected_digest: first.clone(),
+        },
+        "data-replace",
+    )
+    .await;
+    let mut reconnect = connect_request(&second, "browse.local");
+    if let super::api::PluginRequest::Connect { replace, .. } = &mut reconnect {
+        *replace = true;
+    }
+    invoke(reconnect, "data-reconnect").await;
+
+    let parsed =
+        execute_stdio_ping(&mcp, agent_id, directory.path(), adapter, "after-update").await;
+    assert_eq!(
+        parsed["plugin_root"].as_str(),
+        directory.path().join("plugins").join(&second).to_str()
+    );
+    assert_eq!(
+        parsed["cwd"].as_str(),
+        data_dir.to_str(),
+        "the new revision runs in the same data directory"
+    );
+    assert_eq!(
+        fs::read_to_string(data_dir.join("pairing")).expect("state kept"),
+        "paired"
+    );
+    let entries = fs::read_dir(directory.path().join("plugin-data")).expect("read plugin-data");
+    assert_eq!(entries.count(), 1, "one plugin has one data directory");
+}
+
+fn connect_request(digest: &str, connection: &str) -> super::api::PluginRequest {
+    super::api::PluginRequest::Connect {
+        package_digest: digest.to_owned(),
+        server: "browse".to_owned(),
+        connection: connection.to_owned(),
+        credential: None,
+        replace: false,
+        restart: false,
+        required_scope: None,
+    }
 }
