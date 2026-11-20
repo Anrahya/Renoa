@@ -1862,6 +1862,9 @@ class RcpAgentRepositoryTest {
         surface.running = false
         surface.feedFailure = IllegalStateException("dropped")
         assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.runRoutine(routine, "op") }.problem)
+
+        surface.feedFailure = RcpException(RcpErrorCode.Conflict, "Too many Host calls from this connection are waiting.", 1)
+        assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.runRoutine(routine, "op") }.problem, "a call the coordinator did not pass on started nothing")
     }
 
     @Test

@@ -2,6 +2,9 @@ package live.renoa.app.agents
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import live.renoa.rcp.HostAnswer
 import live.renoa.rcp.HostMethod
 import live.renoa.rcp.RcpSurface
@@ -17,6 +20,13 @@ internal class HostClient(private val surface: RcpSurface) {
 
     private suspend fun send(method: HostMethod, path: String, body: String?): HostAnswer = reaching { surface.callHost(method, path, body) }
 
+    private fun errorCode(body: String): String? =
+        try {
+            (hostJson.parseToJsonElement(body) as? JsonObject)?.get("error")?.jsonPrimitive?.contentOrNull
+        } catch (malformed: IllegalArgumentException) {
+            null
+        }
+
     private fun <T> decode(answer: HostAnswer, shape: KSerializer<T>, call: String): T {
         val problem =
             when (answer.status) {
@@ -26,7 +36,7 @@ internal class HostClient(private val surface: RcpSurface) {
                 400, 422 -> Problem.Invalid
                 else -> Problem.Unavailable
             }
-        if (problem != null) throw RepositoryException(problem, "the Host answered ${answer.status}: ${answer.body}")
+        if (problem != null) throw RepositoryException(problem, "the Host answered ${answer.status}: ${answer.body}", errorCode(answer.body))
         return try {
             hostJson.decodeFromString(shape, answer.body)
         } catch (malformed: IllegalArgumentException) {

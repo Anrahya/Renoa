@@ -93,13 +93,16 @@ internal class HostFeed(private val host: HostClient) {
         host.call(HostMethod.Post, "/v1/host/feed/items/$itemId/dismissal", null, JsonObject.serializer())
     }
 
-    /** Runs [routineId] now; a repeat of [operationId] runs it once, and a run already under way counts as this one. */
+    /**
+     * Runs [routineId] now; a repeat of [operationId] runs it once, and a run already under way counts
+     * as this one. Any other conflict, such as a call the coordinator did not pass on, started nothing.
+     */
     suspend fun runNow(routineId: String, operationId: String) {
         val body = buildJsonObject { put("operation_id", operationId) }
         try {
             host.call(HostMethod.Post, "/v1/host/automations/$routineId/run", body.toString(), JsonObject.serializer())
         } catch (refused: RepositoryException) {
-            if (refused.problem != Problem.Conflict) throw refused
+            if (refused.hostError != "run_in_progress") throw refused
         }
     }
 }
