@@ -140,8 +140,9 @@ impl PluginManager {
             && created_data
             && let Some(dir) = plugin_data_dir
         {
-            // A failed connect removes the data directory it made while it is
-            // still empty, so one another connect has begun to use is kept.
+            // A failed connect removes the data directory it made only while it
+            // is still empty, so a directory holding state is kept; a connect
+            // overlapping this one before anything is written can lose it.
             // Should that fail, the connect error is the one to report: a
             // retry adopts the directory left behind.
             let _removal = tokio::task::spawn_blocking(move || fs::remove_dir(dir)).await;
@@ -218,12 +219,15 @@ impl PluginManager {
             request.credential.clone(),
             request.replace,
         );
+        let data_dir = self.store.plugin_data_dir(plugin.metadata().name())?;
+        let preflight_data = data_dir.clone();
         tokio::task::spawn_blocking(move || {
             super::preflight::add_connection(
                 &preflight_catalog,
                 &preflight_store,
                 agent,
                 &preflight_digest,
+                &preflight_data,
                 &preflight_servers,
                 Some(&preflight_request),
                 false,
@@ -231,7 +235,12 @@ impl PluginManager {
             )
         })
         .await??;
-        let stdio = super::preflight::resolve_server_stdio(&self.store, plugin.digest(), &server)?;
+        let stdio = super::preflight::resolve_server_stdio(
+            &self.store,
+            plugin.digest(),
+            &data_dir,
+            &server,
+        )?;
         let endpoint = match &stdio {
             Some(resolved) => resolved.canonical_endpoint()?,
             None => server.endpoint().to_owned(),
@@ -239,8 +248,7 @@ impl PluginManager {
         let plugin_data_dir = server
             .stdio()
             .is_some_and(McpStdioConfig::exposes_plugin_dirs)
-            .then(|| self.store.plugin_data_dir(plugin.digest()))
-            .transpose()?;
+            .then_some(data_dir);
         let auth = credential_auth(
             request.credential.clone(),
             request.connection_id,
