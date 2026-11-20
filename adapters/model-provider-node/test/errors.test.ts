@@ -68,6 +68,30 @@ test("429 honors Retry-After seconds and remains retryable until the attempt bud
   assert.match(failure.message, /rate limited \(429\) \(request req_429\)/);
 });
 
+test("a 403 says access was refused and gives the provider's reason", () => {
+  const reason = "Access requires an eligible paid billing account in a supported region, subject to our terms and policies.";
+  const facts = classifyError(
+    Object.assign(new Error(JSON.stringify({ error: { code: 403, message: reason, status: "PERMISSION_DENIED" } })), {
+      status: 403,
+    }),
+    { outputExposed: false, cancelled: false, dispatched: true },
+  );
+  assert.equal(facts.category, "authentication");
+  assert.equal(facts.retryable, false);
+  const failure = new ProviderFailure(facts, { provider: "google-vertex", model: "gemini-4-neon", attemptCount: 1 });
+  assert.equal(failure.message, `Google Vertex AI request failed after 1 attempt: access refused (403): ${reason}`);
+  const bare = new ProviderFailure(classifyError(Object.assign(new Error(""), { status: 403 }), {
+    outputExposed: false,
+    cancelled: false,
+  }), { provider: "xai", model: "grok-4.6", attemptCount: 1 });
+  assert.equal(bare.message, "xAI request failed after 1 attempt: access refused (403).");
+  const unauthorized = new ProviderFailure(classifyError(Object.assign(new Error("bad key"), { status: 401 }), {
+    outputExposed: false,
+    cancelled: false,
+  }), { provider: "xai", model: "grok-4.6", attemptCount: 1 });
+  assert.equal(unauthorized.message, "xAI request failed after 1 attempt: authentication failed.");
+});
+
 test("provider body is preserved in a bounded redacted diagnostic field", () => {
   const facts = classifyError(
     Object.assign(new Error('400: {"error":{"message":"max_tokens is too large for this model","type":"invalid_request_error"}}'), {
