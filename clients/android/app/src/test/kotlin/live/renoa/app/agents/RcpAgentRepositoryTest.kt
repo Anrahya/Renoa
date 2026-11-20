@@ -299,13 +299,13 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         }
     }
 
-    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>): CommandSubmission {
+    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>, steer: Boolean): CommandSubmission {
         check(online) { "RCP client is not connected" }
         submitHeld?.let {
             submitHeld = null
             it.await()
         }
-        val command = PendingTextCommand(Uuid.random(), taskId, text, files)
+        val command = PendingTextCommand(Uuid.random(), taskId, text, files, steer)
         state.enqueueCommand(command)
         val accepted = CompletableDeferred<Unit>()
         runCatching { deliver(command) }.fold({ accepted.complete(Unit) }, { accepted.completeExceptionally(it) })
@@ -590,6 +590,14 @@ class RcpAgentRepositoryTest {
         assertEquals(listOf(surface.admitted.single().commandId.toString()), repo.chat(nagisa).messages.map { it.id })
         assertEquals(AgentState.Working, repo.agents.value.single().state)
         assertTrue(state.pendingCommands().isEmpty())
+    }
+
+    @Test
+    fun aMessageSteersOnlyWhenAskedTo() = runTest {
+        val repo = started()
+        repo.send(nagisa, "use the blue one", steer = true)
+        repo.send(nagisa, "then the red one")
+        assertEquals(listOf(true, false), surface.admitted.map { it.steer })
     }
 
     @Test

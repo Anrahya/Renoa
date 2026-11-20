@@ -19,7 +19,13 @@ sealed interface Authentication {
 }
 
 /** A command the surface wrote down before sending it, so a lost acknowledgement can be retried exactly. */
-data class PendingTextCommand(val commandId: Uuid, val taskId: Uuid, val text: String, val attachments: List<Attachment> = emptyList())
+data class PendingTextCommand(
+    val commandId: Uuid,
+    val taskId: Uuid,
+    val text: String,
+    val attachments: List<Attachment> = emptyList(),
+    val steer: Boolean = false,
+)
 
 /**
  * What the host app keeps across connections and restarts. The client calls these in order:
@@ -89,8 +95,11 @@ interface RcpSurface {
      */
     suspend fun attach(taskId: Uuid, live: ApplyLiveActivity? = null, apply: suspend (TaskEvent) -> Unit)
 
-    /** Sends [text] with [files], already uploaded to the Host. */
-    suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment> = emptyList()): CommandSubmission
+    /**
+     * Sends [text] with [files], already uploaded to the Host. With [steer] it asks to join the turn
+     * already running on the task; one the turn does not take in runs as its own command in queue order.
+     */
+    suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment> = emptyList(), steer: Boolean = false): CommandSubmission
 
     /**
      * Asks the task's node to stop [commandId]. Safe to repeat after an uncertain answer: a recorded

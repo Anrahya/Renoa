@@ -179,10 +179,10 @@ class WebSocketRcpSurface(
         }
     }
 
-    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>): CommandSubmission {
+    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>, steer: Boolean): CommandSubmission {
         connected()
         require(files.size <= Attachment.MAX_PER_COMMAND) { "A message carries at most ${Attachment.MAX_PER_COMMAND} files." }
-        val command = PendingTextCommand(newCommandId(), taskId, text, files)
+        val command = PendingTextCommand(newCommandId(), taskId, text, files, steer)
         requireFits(command)
         state.enqueueCommand(command)
         return CommandSubmission(command.commandId, scope.async { sendPending(command) })
@@ -240,7 +240,7 @@ class WebSocketRcpSurface(
     }
 
     private suspend fun sendPending(command: PendingTextCommand) {
-        val input = CommandInput.Text(command.text, attachments = command.attachments)
+        val input = CommandInput.Text(command.text, attachments = command.attachments, steer = command.steer)
         request(
             ServerMessage.CommandAccepted::class,
             { ClientMessage.Submit(it, command.taskId, command.commandId, input) },
@@ -257,7 +257,7 @@ class WebSocketRcpSurface(
                 MAX_SAFE_INTEGER,
                 command.taskId,
                 command.commandId,
-                CommandInput.Text(command.text, attachments = command.attachments),
+                CommandInput.Text(command.text, attachments = command.attachments, steer = command.steer),
             )
         val bytes = encodeClientMessage(worstCase).toByteArray(Charsets.UTF_8).size
         require(bytes <= MAX_FRAME_BYTES) {

@@ -117,6 +117,9 @@ import live.renoa.app.badge.PAPER
 import live.renoa.app.badge.color
 import live.renoa.app.chat.ArrivingReply
 import live.renoa.app.chat.ChatScreen
+import live.renoa.app.chat.SEND_WHEN_DONE
+import live.renoa.app.chat.STEER_HINT
+import androidx.compose.ui.test.longClick
 import live.renoa.app.chat.Reply
 import live.renoa.app.home.CHECKING_IN
 import live.renoa.app.theme.RenoaType
@@ -510,12 +513,42 @@ class ScreensTest : ScreenTest() {
         snapshot("chat-working")
     }
 
+    @Test
+    fun whileAnAgentWorksATapJoinsItsTurnAndHoldingSendsOnceItIsDone() {
+        val steers = mutableListOf<Boolean>()
+        val recording =
+            object : AgentRepository by repository {
+                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) {
+                    steers += steer
+                }
+            }
+        val model = ChatViewModel(recording, "renoa")
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithText(STEER_HINT).assertDoesNotExist()
+
+        compose.runOnUiThread { model.onDraft("Make it two posts") }
+        compose.waitForIdle()
+        compose.onNodeWithText(STEER_HINT).assertIsDisplayed()
+        snapshot("chat-steer")
+        compose.onNodeWithContentDescription("Send").performClick()
+        compose.waitForIdle()
+
+        compose.runOnUiThread { model.onDraft("And one about phones") }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Send").performTouchInput { longClick() }
+        compose.waitForIdle()
+        compose.onNodeWithText(SEND_WHEN_DONE).performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(true, false), steers)
+    }
+
     /** Optimus's chat as [talk] holds it. What the owner sends is listed in [sent]; it joins the chat only when the test adds it. */
     private fun chatWith(talk: MutableStateFlow<Conversation>, sent: MutableList<String> = mutableListOf()) =
         object : AgentRepository by repository {
             override fun conversation(agentId: String) = talk
 
-            override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
+            override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) {
                 sent += text
             }
         }

@@ -125,6 +125,8 @@ sealed interface CommandInput {
         val author: Author? = null,
         /** Files uploaded to the Host for this text; at most [Attachment.MAX_PER_COMMAND]. */
         val attachments: List<Attachment> = emptyList(),
+        /** Asks to join the turn already running on the task instead of waiting for it to end. */
+        val steer: Boolean = false,
     ) : CommandInput
 }
 
