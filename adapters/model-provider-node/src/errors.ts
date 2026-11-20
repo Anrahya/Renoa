@@ -140,6 +140,13 @@ function summarize(facts: FailureFacts): string {
     case "cancelled":
       return "cancelled.";
     case "authentication":
+      if (facts.httpStatus === 403) {
+        // The key was accepted and access refused; the provider's reason,
+        // such as a billing requirement, is what the owner can act on.
+        return facts.providerMessage === undefined
+          ? "access refused (403)."
+          : `access refused (403): ${facts.providerMessage}`;
+      }
       return facts.expiredOAuth
         ? "authentication failed after token refresh."
         : "authentication failed.";
