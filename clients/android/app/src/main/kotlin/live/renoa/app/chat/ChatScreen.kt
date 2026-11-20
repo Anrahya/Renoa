@@ -75,6 +75,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -418,9 +419,14 @@ private fun SendButton(action: ComposerAction, modifier: Modifier, queue: (() ->
             .minimumInteractiveComponentSize()
             .then(
                 if (queue == null) Modifier.clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
-                else Modifier.contextActions(onClick = onClick, clickLabel = "Send") { listOf(MenuItem(SEND_WHEN_DONE, "clock", action = queue)) }
+                else Modifier.contextActions(onClick = onClick, clickLabel = "Send", holdLabel = SEND_WHEN_DONE, presses = source) {
+                    listOf(MenuItem(SEND_WHEN_DONE, "clock", action = queue))
+                }
             )
-            .semantics { contentDescription = if (action == ComposerAction.Stop) "Stop" else "Send" }
+            .semantics {
+                role = Role.Button
+                contentDescription = if (action == ComposerAction.Stop) "Stop" else "Send"
+            }
             .pressScale(pressed)
             .size(34.dp)
             .clip(Capsule())

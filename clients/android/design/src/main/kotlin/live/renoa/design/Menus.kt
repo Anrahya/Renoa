@@ -25,6 +25,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -119,7 +120,8 @@ class ContextDrag(val start: () -> Unit, val move: (Float) -> Unit, val end: () 
  */
 @Composable fun Modifier.contextActions(reactions: ReactionPick? = null, enabled: Boolean = true, onClick: (() -> Unit)? = null,
     clickLabel: String? = null, preview: (@Composable () -> Unit)? = null, reorder: ContextDrag? = null,
-    mergeSemantics: Boolean = reorder == null, items: () -> List<MenuItem>): Modifier {
+    mergeSemantics: Boolean = reorder == null, holdLabel: String = "Actions", presses: MutableInteractionSource? = null,
+    items: () -> List<MenuItem>): Modifier {
     var anchor by remember { mutableStateOf(Rect.Zero) }
     var open by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
@@ -134,13 +136,14 @@ class ContextDrag(val start: () -> Unit, val move: (Float) -> Unit, val end: () 
     // One gesture for tap, hold and drag: a click detector would swallow the move after the hold.
     // A message reads as one node with its actions, as a clickable would merge it; a row that reorders keeps its own.
     val gestures = Modifier.semantics(mergeDescendants = mergeSemantics) {
-        if (enabled) { onClick(clickLabel) { tap?.invoke(); true }; onLongClick("Actions") { hold(); true } }
+        if (enabled) { onClick(clickLabel) { tap?.invoke(); true }; onLongClick(holdLabel) { hold(); true } }
     }.pointerInput(reorder, enabled) {
         if (!enabled) return@pointerInput
         awaitEachGesture {
             // A message's hold counts on its links and buttons too, as the iPhone's context menu: even a press a child took.
             val down = awaitFirstDown(requireUnconsumed = reorder != null)
-            val held = awaitLongPressOrCancellation(down.id)
+            val press = presses?.let { PressInteraction.Press(down.position).also(it::tryEmit) }
+            val held = try { awaitLongPressOrCancellation(down.id) } finally { press?.let { presses.tryEmit(PressInteraction.Release(it)) } }
             if (held == null) {
                 // Not an unconsumed up: a child (a link, a button) took the tap, or the press became a scroll.
                 val up = currentEvent.changes.firstOrNull { it.id == down.id }

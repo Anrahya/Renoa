@@ -367,7 +367,9 @@ class RcpAgentRepository(
         update(room) { outgoing = resend(commandId) }
         val message = outgoing ?: return
         try {
-            unsent.retry(PendingTextCommand(commandId, room.taskId, message.text, message.attachments))
+            // The outbox's copy is resent as it was first sent, steer included; the chat's copy has only what it shows.
+            val saved = state.pendingCommands().firstOrNull { it.commandId == commandId }
+            unsent.retry(saved ?: PendingTextCommand(commandId, room.taskId, message.text, message.attachments))
         } catch (refused: RcpException) {
             update(room) { refused(commandId) }
             throw refused.asProblem()

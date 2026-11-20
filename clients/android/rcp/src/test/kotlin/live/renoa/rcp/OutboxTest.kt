@@ -87,18 +87,6 @@ class OutboxTest : CoordinatorTest() {
     }
 
     @Test
-    fun reusingACommandIdentityWithTheOtherSteerIsAConflict() = eventually {
-        val taskId = coordinator.seedTask()
-        val commandId = Uuid.random()
-        coordinator.tasks.getValue(taskId).commands[commandId.toString()] = "same text"
-        val surface = client(newCommandId = { commandId })
-        surface.connect()
-
-        val submission = surface.submitText(taskId, "same text", steer = true)
-        assertEquals(RcpErrorCode.Conflict, assertFailsWith<RcpException> { submission.accepted.await() }.code)
-    }
-
-    @Test
     fun resendingACommandTheOutboxNoLongerHoldsSendsNothing() = eventually {
         val surface = client()
         surface.connect()

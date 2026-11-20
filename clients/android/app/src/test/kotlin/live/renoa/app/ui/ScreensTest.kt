@@ -74,6 +74,9 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.text.LinkAnnotation
@@ -117,10 +120,9 @@ import live.renoa.app.badge.PAPER
 import live.renoa.app.badge.color
 import live.renoa.app.chat.ArrivingReply
 import live.renoa.app.chat.ChatScreen
+import live.renoa.app.chat.Reply
 import live.renoa.app.chat.SEND_WHEN_DONE
 import live.renoa.app.chat.STEER_HINT
-import androidx.compose.ui.test.longClick
-import live.renoa.app.chat.Reply
 import live.renoa.app.home.CHECKING_IN
 import live.renoa.app.theme.RenoaType
 import org.junit.After
@@ -530,6 +532,8 @@ class ScreensTest : ScreenTest() {
         compose.runOnUiThread { model.onDraft("Make it two posts") }
         compose.waitForIdle()
         compose.onNodeWithText(STEER_HINT).assertIsDisplayed()
+        val holdSays = androidx.compose.ui.semantics.SemanticsActions.OnLongClick
+        compose.onNodeWithContentDescription("Send").assert(SemanticsMatcher("TalkBack names the hold") { it.config.getOrNull(holdSays)?.label == SEND_WHEN_DONE })
         snapshot("chat-steer")
         compose.onNodeWithContentDescription("Send").performClick()
         compose.waitForIdle()

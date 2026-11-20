@@ -76,8 +76,11 @@ data class ChatUiState(
                 else -> ComposerAction.Idle
             }
 
-    /** Sending now joins the agent's running turn, so the composer also offers to wait for it to end. */
-    val steers: Boolean get() = working && action == ComposerAction.Send
+    /**
+     * Sending now asks to join the agent's running turn, so the composer also offers to wait for it to
+     * end. Words alone answer an open question instead, which never steers.
+     */
+    val steers: Boolean get() = working && action == ComposerAction.Send && (ask == null || files.isNotEmpty())
 }
 
 class ChatViewModel(private val repository: AgentRepository, private val agentId: String) : ViewModel() {
@@ -154,7 +157,7 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
     /**
      * Sends the draft and its files. They leave the composer at once; if they are not kept, they
      * come back. While the agent waits on a question, words alone are the answer. With [steer] they
-     * join the turn the agent is running, if any; without, they wait for a turn of their own.
+     * ask to join the turn the agent is running; without, they wait for a turn of their own.
      */
     fun send(steer: Boolean = true) {
         val text = draft.value.trim()

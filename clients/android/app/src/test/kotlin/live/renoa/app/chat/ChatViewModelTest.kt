@@ -89,6 +89,9 @@ class ChatViewModelTest {
         assertTrue(ChatUiState(agent = working, draft = "hi").steers)
         assertFalse(ChatUiState(agent = working, draft = "").steers, "nothing typed: the button stops")
         assertFalse(ChatUiState(agent = resting, draft = "hi").steers, "no turn to join")
+        val asking = working.copy(glance = live.renoa.app.agents.Glance(ask = live.renoa.app.agents.Ask("Which one?", emptyList())))
+        assertFalse(ChatUiState(agent = asking, draft = "the blue one").steers, "words alone answer the question")
+        assertTrue(ChatUiState(agent = asking, draft = "this", files = listOf(OutgoingFile("a.jpg", "image/jpeg", ByteArray(1)))).steers)
     }
 
     @Test
