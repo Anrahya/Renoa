@@ -51,6 +51,7 @@ private data class Local(
     val apps: List<AgentApp>? = null,
     val appSwitching: Map<String, Boolean> = emptyMap(),
     val unread: Set<HomePage> = emptySet(),
+    val started: Set<String> = emptySet(),
 )
 
 /** What the Memory page shows: the owner's profile, which every agent reads, and the notes agents keep. */
@@ -81,6 +82,8 @@ data class HomeUiState(
     val appSwitching: Map<String, Boolean> = emptyMap(),
     /** Pages whose last read failed, which offer to read again. */
     val unread: Set<HomePage> = emptySet(),
+    /** Routines just asked to run now, shown as started for a moment. */
+    val started: Set<String> = emptySet(),
 ) {
     val main: AgentSummary? get() = mainAgent(roster)
 
@@ -100,7 +103,7 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
 
     val state: StateFlow<HomeUiState> =
         combine(repository.agents, repository.feed, repository.routines, local, repository.link.combine(repository.rosterKnown, ::Pair)) { agents, feed, routines, mine, (link, known) ->
-            HomeUiState(agents, feed, routines, mine.notice, mine.switching, mine.page, mine.ownerName, mine.signUp, link, known, mine.memory, mine.apps, mine.appSwitching, mine.unread)
+            HomeUiState(agents, feed, routines, mine.notice, mine.switching, mine.page, mine.ownerName, mine.signUp, link, known, mine.memory, mine.apps, mine.appSwitching, mine.unread, mine.started)
         }.stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
@@ -270,6 +273,34 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
         }
     }
 
+    /** Operation ids of runs Renoa did not confirm, so asking again cannot start a second run. */
+    private val unconfirmedRuns = HashMap<String, String>()
+
+    /** Runs a routine now; it shows as started for a moment, and a tap meanwhile asks nothing. */
+    fun run(routineId: String) {
+        if (routineId in local.value.started) return
+        local.update { it.copy(notice = null, started = it.started + routineId) }
+        val operation = unconfirmedRuns.getOrPut(routineId) { UUID.randomUUID().toString() }
+        viewModelScope.launch {
+            try {
+                repository.runRoutine(routineId, operation)
+                unconfirmedRuns -= routineId
+                delay(STARTED_FOR_MS)
+            } catch (refused: RepositoryException) {
+                if (refused.problem != Problem.Unavailable) unconfirmedRuns -= routineId
+                val words =
+                    when (refused.problem) {
+                        Problem.NotFound -> "That routine is gone."
+                        Problem.Unavailable -> "Renoa couldn't confirm that routine started. Try again in a moment."
+                        else -> refused.wordsOr("That routine could not run. Try again.")
+                    }
+                local.update { it.copy(notice = words) }
+            } finally {
+                local.update { it.copy(started = it.started - routineId) }
+            }
+        }
+    }
+
     /** Turns a routine on or off. Each tap is its own change, with its own operation id. */
     fun switch(routineId: String, on: Boolean) {
         local.update { it.copy(notice = null, switching = it.switching + (routineId to on)) }
@@ -290,3 +321,6 @@ class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
         }
     }
 }
+
+/** How long a routine asked to run shows as started, as on the computer. */
+internal const val STARTED_FOR_MS = 5_000L

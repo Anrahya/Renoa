@@ -181,4 +181,7 @@ interface AgentRepository {
      * read is a [Problem.Conflict].
      */
     suspend fun setRoutine(routineId: String, on: Boolean, operationId: String)
+
+    /** Runs a routine now. A repeat of [operationId] runs it once; a run already under way counts as this one. */
+    suspend fun runRoutine(routineId: String, operationId: String)
 }

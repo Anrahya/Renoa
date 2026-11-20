@@ -93,10 +93,14 @@ internal class HostFeed(private val host: HostClient) {
         host.call(HostMethod.Post, "/v1/host/feed/items/$itemId/dismissal", null, JsonObject.serializer())
     }
 
-    /** Runs [routineId] now; a repeat of [operationId] runs it once. */
+    /** Runs [routineId] now; a repeat of [operationId] runs it once, and a run already under way counts as this one. */
     suspend fun runNow(routineId: String, operationId: String) {
         val body = buildJsonObject { put("operation_id", operationId) }
-        host.call(HostMethod.Post, "/v1/host/automations/$routineId/run", body.toString(), JsonObject.serializer())
+        try {
+            host.call(HostMethod.Post, "/v1/host/automations/$routineId/run", body.toString(), JsonObject.serializer())
+        } catch (refused: RepositoryException) {
+            if (refused.problem != Problem.Conflict) throw refused
+        }
     }
 }
 
@@ -190,16 +194,11 @@ internal class HeldFeed(private val host: HostFeed, private val changed: () -> U
 
     /**
      * Runs a problem's routine again and hides the problem here; a run that fails again leaves it
-     * open on the Host, so it shows again once a read finds a new failure. A run already waiting
-     * counts as run.
+     * open on the Host, so it shows again once a read finds a new failure.
      */
     suspend fun runAgain(itemId: String, operationId: String) {
         val item = open().firstOrNull { it.id == itemId && it.kind == NoteKind.Problem.wire } ?: throw RepositoryException(Problem.NotFound, "no problem $itemId")
-        try {
-            host.runNow(item.subjectId, operationId)
-        } catch (refused: RepositoryException) {
-            if (refused.problem != Problem.Conflict) throw refused
-        }
+        host.runNow(item.subjectId, operationId)
         deal(itemId)
     }
 

@@ -101,7 +101,8 @@ class RcpAgentRepository(
     private val owner = HostOwner(hostClient)
     private val uploads = HostUploads(hostClient)
     private val heldRoutines = HeldRoutines(HostRoutines(hostClient), changed = ::publish)
-    private val heldFeed = HeldFeed(HostFeed(hostClient), changed = ::publish)
+    private val hostFeed = HostFeed(hostClient)
+    private val heldFeed = HeldFeed(hostFeed, changed = ::publish)
 
     /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
     private val following = Mutex()
@@ -294,6 +295,8 @@ class RcpAgentRepository(
     override suspend fun saveOwnerProfile(expectedRevision: String, content: String): OwnerProfile = owner.saveProfile(expectedRevision, content)
 
     override suspend fun setRoutine(routineId: String, on: Boolean, operationId: String) = heldRoutines.set(routineId, on, operationId)
+
+    override suspend fun runRoutine(routineId: String, operationId: String) = hostFeed.runNow(routineId, operationId)
 
     override suspend fun memory(): OwnerMemory = owner.memory()
 

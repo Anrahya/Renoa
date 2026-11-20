@@ -16,6 +16,7 @@ import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -35,6 +36,15 @@ class HomeViewModelTest {
             release.await()
             refusal?.let { throw RepositoryException(it, "refused") }
             inner.setRoutine(routineId, on, operationId)
+        }
+
+        val runs = mutableListOf<String>()
+        var runRefusal: Problem? = null
+
+        override suspend fun runRoutine(routineId: String, operationId: String) {
+            runs += operationId
+            runRefusal?.let { throw RepositoryException(it, "refused") }
+            inner.runRoutine(routineId, operationId)
         }
     }
 
@@ -141,6 +151,45 @@ class HomeViewModelTest {
         vm.switch("lunch", on = false)
         runCurrent()
         assertEquals(2, repo.operations.toSet().size, "a second tap is a second change, with its own operation id")
+    }
+
+    @Test
+    fun aRoutineRunNowShowsStartedForAMomentAndAnUnconfirmedRunIsAskedAgainAsTheSameRun() = runTest {
+        val (vm, repo) = model()
+        runCurrent()
+        vm.run("lunch")
+        runCurrent()
+        assertEquals(setOf("lunch"), vm.state.value.started)
+        vm.run("lunch")
+        runCurrent()
+        assertEquals(1, repo.runs.size, "a tap while it shows as started asks nothing")
+        advanceTimeBy(STARTED_FOR_MS)
+        runCurrent()
+        assertEquals(emptySet(), vm.state.value.started)
+
+        repo.runRefusal = Problem.Unavailable
+        vm.run("lunch")
+        runCurrent()
+        assertEquals("Renoa couldn't confirm that routine started. Try again in a moment.", vm.state.value.notice)
+        assertEquals(emptySet(), vm.state.value.started)
+        repo.runRefusal = null
+        vm.run("lunch")
+        runCurrent()
+        assertEquals(repo.runs[1], repo.runs[2], "asked again under the run's own operation id")
+        assertNull(vm.state.value.notice)
+        advanceTimeBy(STARTED_FOR_MS)
+        runCurrent()
+
+        vm.run("lunch")
+        runCurrent()
+        assertNotEquals(repo.runs[2], repo.runs[3], "a confirmed run is done; the next tap is a new run")
+        advanceTimeBy(STARTED_FOR_MS)
+        runCurrent()
+
+        repo.runRefusal = null
+        vm.run("gone")
+        runCurrent()
+        assertEquals("That routine is gone.", vm.state.value.notice)
     }
 
     @Test

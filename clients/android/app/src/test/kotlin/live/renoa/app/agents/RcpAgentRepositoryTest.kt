@@ -1849,6 +1849,22 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun anyRoutineRunsNowAndARunAlreadyUnderWayCountsAsStarted() = runTest {
+        val routine = Uuid.random().toString()
+        val repo = started()
+        repo.runRoutine(routine, "op")
+        assertEquals(HostMethod.Post to "/v1/host/automations/$routine/run", surface.feedCalls.last())
+
+        surface.running = true
+        repo.runRoutine(routine, "op")
+        assertEquals(2, surface.feedCalls.count { it.second.endsWith("/run") })
+
+        surface.running = false
+        surface.feedFailure = IllegalStateException("dropped")
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.runRoutine(routine, "op") }.problem)
+    }
+
+    @Test
     fun aProblemsRoutineRunsAgainAndARunAlreadyWaitingCountsAsRun() = runTest {
         val (kcal, _) = hostAgent()
         val routine = Uuid.random()

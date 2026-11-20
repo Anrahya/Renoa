@@ -136,6 +136,10 @@ class FakeAgentRepository(
         }
     }
 
+    override suspend fun runRoutine(routineId: String, operationId: String) {
+        if (routineId !in scheduled) throw RepositoryException(Problem.NotFound, "There is no such routine.")
+    }
+
     override suspend fun memory(): OwnerMemory = OwnerMemory(notes.reversed(), notes.size.toLong())
 
     private val connected = appSeeds.map { it.copy(on = false) }
