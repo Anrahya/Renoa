@@ -30,14 +30,19 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kyant.shapes.RoundedRectangle
 import live.renoa.app.agents.AbilityKind
 import live.renoa.app.agents.AbilitySwitch
+import live.renoa.app.agents.AgentApp
 import live.renoa.app.agents.AgentState
 import live.renoa.app.badge.Badge
+import live.renoa.app.connect.ServiceLogo
+import live.renoa.app.home.label
 import live.renoa.design.CardForm
 import live.renoa.design.CardSection
+import live.renoa.design.DesignSwitch
 import live.renoa.design.Field
 import live.renoa.design.FieldBox
 import live.renoa.design.IconButton
@@ -203,6 +208,22 @@ private fun EditAgentSheet(state: EditorUiState, called: String, viewModel: Agen
             // Renoa does not list abilities to the app yet; an empty card would only look broken.
             if (state.abilities.isNotEmpty()) {
                 AbilitiesSection(state.abilities, creating = false, called = called, onToggle = viewModel::toggle)
+            }
+            state.apps?.takeIf { it.isNotEmpty() }?.let { AppsSection(state, it, called, viewModel::switchApp) }
+        }
+    }
+}
+
+/** Which of the apps connected to Renoa the agent uses, a switch each, as the Apps page has for the main agent. */
+@Composable
+private fun AppsSection(state: EditorUiState, apps: List<AgentApp>, called: String, onSwitch: (String, Boolean) -> Unit) {
+    CardSection(title = "Apps $called uses", footer = "Turning an app off doesn't disconnect it.") {
+        for (app in apps) {
+            row {
+                DesignSwitch(state.isOn(app), { onSwitch(app.connection, it) }, enabled = app.connection !in state.appSwitching) {
+                    ServiceLogo(app.endpoint, app.label, 28.dp)
+                    Text(app.label, Modifier.weight(1f), style = Type.subheadline.semibold, color = Palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }

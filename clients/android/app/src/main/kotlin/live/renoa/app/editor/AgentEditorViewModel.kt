@@ -13,6 +13,9 @@ import live.renoa.app.agents.AbilityKind
 import live.renoa.app.agents.AbilitySwitch
 import live.renoa.app.agents.AgentProfile
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.agents.wordsOr
+import live.renoa.app.agents.Problem
+import live.renoa.app.agents.AgentApp
 import live.renoa.app.agents.AgentRules
 import live.renoa.app.agents.CreateAgent
 import live.renoa.app.agents.EditProfile
@@ -41,7 +44,13 @@ data class EditorUiState(
     /** The agent being edited wears its own look, or Renoa's if it is the main agent, as on every other screen. */
     val look: Look? = null,
     val main: Boolean = false,
+    /** The apps connected to Renoa and whether the agent being edited uses each; null until read, or while they cannot be. */
+    val apps: List<AgentApp>? = null,
+    /** App switches on their way, with the state asked for, shown until Renoa answers. */
+    val appSwitching: Map<String, Boolean> = emptyMap(),
 ) {
+    fun isOn(app: AgentApp): Boolean = appSwitching[app.connection] ?: app.on
+
     val nameProblem: FieldProblem? get() = AgentRules.checkName(name)
     val purposeProblem: FieldProblem? get() = AgentRules.checkPurpose(purpose)
     val canSave: Boolean get() = loaded && !saving && nameProblem == null && purposeProblem == null
@@ -83,6 +92,7 @@ class AgentEditorViewModel(
                     val profile = repository.profile(mode.agentId)
                     original = profile
                     _state.update { it.copy(loaded = true, name = profile.name, purpose = profile.purpose, abilities = profile.abilities) }
+                    readApps(mode.agentId)
                 }
             }
         } catch (refused: RepositoryException) {
@@ -146,6 +156,43 @@ class AgentEditorViewModel(
             } catch (refused: RepositoryException) {
                 _state.update { it.copy(saving = false, notice = refused.problem.ownerWords) }
             }
+        }
+    }
+
+    /** The apps card is left out while they cannot be read; the rest of the sheet still works. */
+    private suspend fun readApps(agentId: String) {
+        try {
+            val apps = repository.apps(agentId)
+            _state.update { it.copy(apps = apps) }
+        } catch (unread: RepositoryException) {
+            _state.update { it.copy(apps = null) }
+        }
+    }
+
+    /** Gives the agent being edited an app or takes it away. Its sign-in stays either way. */
+    fun switchApp(connection: String, on: Boolean) {
+        val agentId = (mode as? EditorMode.Editing)?.agentId ?: return
+        if (connection in _state.value.appSwitching) return
+        _state.update { it.copy(notice = null, appSwitching = it.appSwitching + (connection to on)) }
+        viewModelScope.launch {
+            var gone = false
+            try {
+                val apps = repository.setApp(agentId, connection, on)
+                _state.update { it.copy(apps = apps) }
+            } catch (refused: RepositoryException) {
+                gone = refused.problem == Problem.NotFound
+                val words =
+                    when (refused.problem) {
+                        Problem.NotFound -> "That app is not connected any more."
+                        Problem.Conflict -> "That app can't be turned on from here. Ask Renoa to set it up again."
+                        else -> refused.wordsOr("That app could not be changed. Try again.")
+                    }
+                _state.update { it.copy(notice = words) }
+            } finally {
+                _state.update { it.copy(appSwitching = it.appSwitching - connection) }
+            }
+            // A vanished app goes from the list rather than snap back.
+            if (gone) readApps(agentId)
         }
     }
 
