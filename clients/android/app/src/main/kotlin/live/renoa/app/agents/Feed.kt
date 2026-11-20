@@ -102,7 +102,7 @@ internal class HostFeed(private val host: HostClient) {
         try {
             host.call(HostMethod.Post, "/v1/host/automations/$routineId/run", body.toString(), JsonObject.serializer())
         } catch (refused: RepositoryException) {
-            if (refused.hostError != "run_in_progress") throw refused
+            if (refused.hostCode != "run_in_progress") throw refused
         }
     }
 }

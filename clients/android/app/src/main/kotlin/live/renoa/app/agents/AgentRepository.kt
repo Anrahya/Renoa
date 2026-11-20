@@ -69,8 +69,8 @@ enum class Link {
 }
 
 /** A refusal, or a failure to reach the other side. */
-/** [hostError] is the Host's own `error` code, when the Host itself answered. */
-class RepositoryException(val problem: Problem, message: String, val hostError: String? = null) : Exception(message)
+/** [hostCode] is the Host's own `code` for a refusal, when the Host itself answered. */
+class RepositoryException(val problem: Problem, message: String, val hostCode: String? = null) : Exception(message)
 
 /** Not reaching Renoa has its own words; any other refusal gets the one that fits the screen asking. */
 fun RepositoryException.wordsOr(fallback: String): String = if (problem == Problem.Unavailable) problem.ownerWords else fallback

@@ -20,9 +20,9 @@ internal class HostClient(private val surface: RcpSurface) {
 
     private suspend fun send(method: HostMethod, path: String, body: String?): HostAnswer = reaching { surface.callHost(method, path, body) }
 
-    private fun errorCode(body: String): String? =
+    private fun hostCode(body: String): String? =
         try {
-            (hostJson.parseToJsonElement(body) as? JsonObject)?.get("error")?.jsonPrimitive?.contentOrNull
+            (hostJson.parseToJsonElement(body) as? JsonObject)?.get("code")?.jsonPrimitive?.contentOrNull
         } catch (malformed: IllegalArgumentException) {
             null
         }
@@ -36,7 +36,7 @@ internal class HostClient(private val surface: RcpSurface) {
                 400, 422 -> Problem.Invalid
                 else -> Problem.Unavailable
             }
-        if (problem != null) throw RepositoryException(problem, "the Host answered ${answer.status}: ${answer.body}", errorCode(answer.body))
+        if (problem != null) throw RepositoryException(problem, "the Host answered ${answer.status}: ${answer.body}", hostCode(answer.body))
         return try {
             hostJson.decodeFromString(shape, answer.body)
         } catch (malformed: IllegalArgumentException) {

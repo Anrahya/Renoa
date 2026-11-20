@@ -475,7 +475,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             }
             return HostAnswer(200, answer)
         }
-        if (path.endsWith("/run")) return if (running) HostAnswer(409, "{\"error\":\"run_in_progress\"}") else HostAnswer(200, "{}")
+        if (path.endsWith("/run")) return if (running) HostAnswer(409, "{\"code\":\"run_in_progress\",\"message\":\"This automation already has a run waiting or running.\"}") else HostAnswer(200, "{}")
         val id = path.removePrefix("/v1/host/feed/items/").removeSuffix("/dismissal")
         val at = feed.indexOfFirst { it.getValue("id").jsonPrimitive.content == id }
         if (at < 0) return HostAnswer(404, "{\"error\":\"not_found\"}")
