@@ -140,8 +140,9 @@ impl PluginManager {
             && created_data
             && let Some(dir) = plugin_data_dir
         {
-            // A failed connect removes the data directory it made while it is
-            // still empty, so one another connect has begun to use is kept.
+            // A failed connect removes the data directory it made only while it
+            // is still empty, so a directory holding state is kept; a connect
+            // overlapping this one before anything is written can lose it.
             // Should that fail, the connect error is the one to report: a
             // retry adopts the directory left behind.
             let _removal = tokio::task::spawn_blocking(move || fs::remove_dir(dir)).await;
