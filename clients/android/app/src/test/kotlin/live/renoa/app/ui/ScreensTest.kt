@@ -60,6 +60,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isHeading
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.isSelected
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -945,6 +947,11 @@ class ScreensTest : ScreenTest() {
         compose.onNode(hasContentDescription("Name")).assertExists()
         compose.onNodeWithText("Tifa found and added Health itself").assertIsDisplayed()
         snapshot("edit-tifa")
+        compose.onNodeWithText("Apps Tifa uses").performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText("GitHub") and isToggleable()).performScrollTo().assertIsOn().performClick()
+        compose.waitForIdle()
+        compose.onNode(hasText("GitHub") and isToggleable()).assertIsOff()
+        snapshot("edit-tifa-apps")
     }
 
     @Test

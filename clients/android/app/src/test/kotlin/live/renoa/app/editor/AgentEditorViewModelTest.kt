@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import live.renoa.app.agents.DEMO_LOOKS
 import live.renoa.app.MainDispatcherRule
 import live.renoa.app.agents.AbilitySwitch
+import live.renoa.app.agents.AgentApp
 import live.renoa.app.agents.AgentProfile
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.CreateAgent
@@ -19,6 +20,7 @@ import live.renoa.app.agents.RepositoryException
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -55,6 +57,15 @@ class AgentEditorViewModelTest {
         }
 
         override suspend fun edit(agentId: String, edit: EditProfile) = inner.edit(agentId, edit.also { edits += it })
+
+        var refuseApp: Problem? = null
+        val appCalls = mutableListOf<Triple<String, String, Boolean>>()
+
+        override suspend fun setApp(agentId: String, connection: String, on: Boolean): List<AgentApp> {
+            appCalls += Triple(agentId, connection, on)
+            refuseApp?.let { throw RepositoryException(it, "refused") }
+            return inner.setApp(agentId, connection, on)
+        }
     }
 
     private fun TestScope.repo() = Recording(FakeAgentRepository(backgroundScope, FakeWorld.demo()))
@@ -198,6 +209,34 @@ class AgentEditorViewModelTest {
         runCurrent()
         assertEquals(listOf(Triple("tifa", "maps", true)), repo.setAbilityCalls)
         assertTrue(repo.profile("tifa").abilities.first { it.id == "maps" }.lit)
+    }
+
+    @Test
+    fun editingShowsTheAgentsOwnAppsAndASwitchChangesThemForThatAgentOnly() = runTest {
+        val repo = repo()
+        val vm = editing(repo)
+        runCurrent()
+        assertEquals(listOf("agentmail" to true, "github" to true, "exa" to false), vm.state.value.apps?.map { it.connection to it.on })
+        vm.switchApp("github", on = false)
+        assertFalse(vm.state.value.isOn(vm.state.value.apps!!.first { it.connection == "github" }), "shown off at once")
+        runCurrent()
+        assertEquals(listOf(Triple("tifa", "github", false)), repo.appCalls)
+        assertEquals(emptyMap(), vm.state.value.appSwitching)
+        assertFalse(repo.apps("tifa").first { it.connection == "github" }.on)
+        assertTrue(repo.apps("mochi").first { it.connection == "github" }.on, "another agent keeps its own")
+    }
+
+    @Test
+    fun anAppSwitchRenoaRefusesGoesBackAndSaysWhy() = runTest {
+        val repo = repo()
+        val vm = editing(repo)
+        runCurrent()
+        repo.refuseApp = Problem.Conflict
+        vm.switchApp("exa", on = true)
+        runCurrent()
+        assertFalse(vm.state.value.isOn(vm.state.value.apps!!.first { it.connection == "exa" }))
+        assertEquals("That app can't be turned on from here. Ask Renoa to set it up again.", vm.state.value.notice)
+        assertNull(creating(repo).also { runCurrent() }.state.value.apps, "a new agent has no apps to switch yet")
     }
 
     @Test
