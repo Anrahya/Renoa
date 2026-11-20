@@ -5,7 +5,7 @@ use std::{
     num::NonZeroU32,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -385,31 +385,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn compiled_adapter(workspace: &Path) -> PathBuf {
-    static BUILT: OnceLock<PathBuf> = OnceLock::new();
-    BUILT
-        .get_or_init(|| {
-            let adapter = workspace.join("adapters/model-provider-node/dist/src/main.js");
-            let adapter_root = workspace.join("adapters/model-provider-node");
-            let status = Command::new("pnpm")
-                .args([
-                    "--dir",
-                    adapter_root.to_str().expect("adapter path is UTF-8"),
-                    "build",
-                ])
-                .status()
-                .expect("build @renoa/model-provider");
-            assert!(
-                status.success(),
-                "adapter TypeScript build failed: {status}"
-            );
-            assert!(
-                adapter.is_file(),
-                "adapter build did not produce {}",
-                adapter.display()
-            );
-            adapter
-        })
-        .clone()
+    crate::node_adapter::built(&workspace.join("adapters/model-provider-node"))
 }
 
 fn write_loopback_trampoline(directory: &Path, adapter: &Path) -> PathBuf {

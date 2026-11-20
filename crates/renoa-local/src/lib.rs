@@ -49,6 +49,9 @@ mod workspace;
 #[cfg(test)]
 mod model_adapter_process_tests;
 #[cfg(test)]
+#[path = "../tests/support/node_adapter.rs"]
+mod node_adapter;
+#[cfg(test)]
 mod test_agents;
 
 pub use agent_definition::{

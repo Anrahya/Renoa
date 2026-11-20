@@ -4,7 +4,6 @@ use std::{
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
     thread,
     time::Duration,
 };
@@ -729,23 +728,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn compiled_adapter(workspace: &Path) -> PathBuf {
-    static BUILT: OnceLock<PathBuf> = OnceLock::new();
-    BUILT
-        .get_or_init(|| {
-            let root = workspace.join("adapters/mcp-client-node");
-            let adapter = root.join("dist/src/main.js");
-            let status = Command::new("pnpm")
-                .args([
-                    "--dir",
-                    root.to_str().expect("adapter path is UTF-8"),
-                    "build",
-                ])
-                .status()
-                .expect("build MCP adapter");
-            assert!(status.success(), "MCP adapter build failed: {status}");
-            adapter
-        })
-        .clone()
+    crate::node_adapter::built(&workspace.join("adapters/mcp-client-node"))
 }
 
 fn compile_secret_tool(directory: &Path, arguments: &Path) -> PathBuf {
