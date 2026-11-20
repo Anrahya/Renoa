@@ -75,6 +75,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -98,6 +99,8 @@ import live.renoa.design.Edge
 import live.renoa.design.GlassStage
 import live.renoa.design.IconButton
 import live.renoa.design.LocalDark
+import live.renoa.design.MenuItem
+import live.renoa.design.contextActions
 import live.renoa.design.Motion
 import live.renoa.design.Palette
 import live.renoa.design.PullToRefresh
@@ -128,9 +131,9 @@ fun ChatScreen(
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     // Sending, from the button or the keyboard, puts the keyboard away so the conversation is in view; the list goes to the message once it shows.
-    val send = {
+    val send = { steer: Boolean ->
         if (state.action == ComposerAction.Send) {
-            viewModel.send()
+            viewModel.send(steer)
             keyboard?.hide()
             focus.clearFocus()
         }
@@ -164,6 +167,7 @@ fun ChatScreen(
                     Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { composerHeight = it.height }.imePadding().navigationBarsPadding()) {
                         LinkLine(state.link, Modifier.padding(start = 24.dp, bottom = 6.dp))
                         state.notice?.let { Text(it, Modifier.padding(start = 24.dp, end = 24.dp, bottom = 6.dp), style = Type.footnote, color = Palette.danger) }
+                        if (state.steers && state.notice == null) Text(STEER_HINT, Modifier.padding(start = 24.dp, end = 24.dp, bottom = 6.dp), style = Type.footnote, color = Palette.secondary)
                         state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
                         Composer(state, agent?.name.orEmpty(), viewModel, send)
                     }
@@ -361,7 +365,7 @@ private fun JumpToLatest(visible: Boolean, modifier: Modifier, action: () -> Uni
 
 /** The files waiting to go, then the field in glass with the "+" and one button that turns between send and stop. */
 @Composable
-private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel, send: () -> Unit) {
+private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel, send: (steer: Boolean) -> Unit) {
     if (state.files.isNotEmpty()) PickedFiles(state.files, viewModel::unattach, Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp))
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp), verticalAlignment = Alignment.Bottom) {
         Row(
@@ -376,7 +380,7 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel,
                 textStyle = Type.body.copy(color = Palette.text),
                 cursorBrush = SolidColor(Palette.accent),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { send() }),
+                keyboardActions = KeyboardActions(onSend = { send(true) }),
                 maxLines = 8,
                 modifier = Modifier.weight(1f).padding(vertical = 10.dp).semantics { contentDescription = "Message $name".trim() },
                 decorationBox = { input ->
@@ -386,14 +390,25 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel,
                     }
                 },
             )
-            SendButton(state.action, Modifier) { if (state.action == ComposerAction.Stop) viewModel.stop() else send() }
+            SendButton(state.action, Modifier, queue = if (state.steers) ({ send(false) }) else null) {
+                if (state.action == ComposerAction.Stop) viewModel.stop() else send(true)
+            }
         }
     }
 }
 
-/** Send or stop: its symbol swaps, its fill crossfades, and it dims while there is nothing to send. */
+/** Shown over the composer while sending would join the agent's running turn. */
+internal const val STEER_HINT = "Sends now · hold to send when it's done"
+
+/** The long-press choice that sends as a turn of its own. */
+internal const val SEND_WHEN_DONE = "Send when it's done"
+
+/**
+ * Send or stop: its symbol swaps, its fill crossfades, and it dims while there is nothing to send.
+ * With [queue], holding it offers to send once the agent's running turn ends.
+ */
 @Composable
-private fun SendButton(action: ComposerAction, modifier: Modifier, onClick: () -> Unit) {
+private fun SendButton(action: ComposerAction, modifier: Modifier, queue: (() -> Unit)? = null, onClick: () -> Unit) {
     val enabled = action != ComposerAction.Idle
     val fill by animateColorAsState(if (enabled) Palette.accentFill else Palette.accentDim, Motion.morph(), label = "Fill")
     val ink by animateColorAsState(if (enabled) Palette.onAccent else Palette.tertiary, Motion.morph(), label = "Ink")
@@ -402,8 +417,16 @@ private fun SendButton(action: ComposerAction, modifier: Modifier, onClick: () -
     Box(
         modifier
             .minimumInteractiveComponentSize()
-            .clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = if (action == ComposerAction.Stop) "Stop" else "Send" }
+            .then(
+                if (queue == null) Modifier.clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
+                else Modifier.contextActions(onClick = onClick, clickLabel = "Send", holdLabel = SEND_WHEN_DONE, presses = source) {
+                    listOf(MenuItem(SEND_WHEN_DONE, "clock", action = queue))
+                }
+            )
+            .semantics {
+                role = Role.Button
+                contentDescription = if (action == ComposerAction.Stop) "Stop" else "Send"
+            }
             .pressScale(pressed)
             .size(34.dp)
             .clip(Capsule())

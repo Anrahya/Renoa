@@ -132,7 +132,13 @@ class WireTest {
     @Test
     fun textInputOmitsContextAuthorAndAttachmentsWhenAbsent() {
         val frame = encodeClientMessage(ClientMessage.Submit(1, Uuid.random(), Uuid.random(), CommandInput.Text("hi")))
-        assertTrue("context" !in frame && "author" !in frame && "attachments" !in frame, frame)
+        assertTrue("context" !in frame && "author" !in frame && "attachments" !in frame && "steer" !in frame, frame)
+    }
+
+    @Test
+    fun aSteerIsSentInTheTextInput() {
+        val frame = encodeClientMessage(ClientMessage.Submit(1, Uuid.random(), Uuid.random(), CommandInput.Text("hi", steer = true)))
+        assertTrue("\"input\":{\"type\":\"text\",\"text\":\"hi\",\"steer\":true}" in frame, frame)
     }
 
     @Test

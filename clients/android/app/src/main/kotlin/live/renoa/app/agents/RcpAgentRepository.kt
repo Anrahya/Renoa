@@ -323,13 +323,13 @@ class RcpAgentRepository(
      * Returns once the message is in the outbox and shown. A refusal takes it back out and throws;
      * any other failure leaves it to be sent again.
      */
-    override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
+    override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) {
         val room = room(agentId)
         if (text.isBlank() && files.isEmpty()) throw RepositoryException(Problem.Invalid, "A message needs some words in it.")
         val attachments = files.map { uploads.upload(it) }
         val submission =
             try {
-                surface.submitText(room.taskId, text.trim(), attachments)
+                surface.submitText(room.taskId, text.trim(), attachments, steer)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (offline: IllegalStateException) {
@@ -367,7 +367,9 @@ class RcpAgentRepository(
         update(room) { outgoing = resend(commandId) }
         val message = outgoing ?: return
         try {
-            unsent.retry(PendingTextCommand(commandId, room.taskId, message.text, message.attachments))
+            // The outbox's copy is resent as it was first sent, steer included; the chat's copy has only what it shows.
+            val saved = state.pendingCommands().firstOrNull { it.commandId == commandId }
+            unsent.retry(saved ?: PendingTextCommand(commandId, room.taskId, message.text, message.attachments))
         } catch (refused: RcpException) {
             update(room) { refused(commandId) }
             throw refused.asProblem()

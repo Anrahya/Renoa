@@ -196,7 +196,7 @@ class FakeAgentRepository(
 
     override fun conversation(agentId: String): Flow<Conversation> = room(agentId).conversation
 
-    override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
+    override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) {
         val room = room(agentId)
         if (text.isBlank() && files.isEmpty()) throw RepositoryException(Problem.Invalid, "A message needs some words in it.")
         val attachments = files.map { Attachment(Uuid.random(), it.name, it.mimeType) }

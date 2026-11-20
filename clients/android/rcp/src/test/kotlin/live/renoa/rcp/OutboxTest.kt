@@ -56,6 +56,37 @@ class OutboxTest : CoordinatorTest() {
     }
 
     @Test
+    fun aSteerIsKeptInTheOutboxAndResentAsASteer() = eventually {
+        val taskId = coordinator.seedTask()
+        val surface = client()
+        surface.connect()
+        coordinator.dropNextAcknowledgement = true
+
+        val submission = surface.submitText(taskId, "use the blue one", steer = true)
+        assertFailsWith<Disconnected> { submission.accepted.await() }
+        assertTrue(state.pendingCommands().single().steer, "the outbox keeps the steer")
+        assertIs<Disconnected>(surface.awaitDisconnect())
+
+        surface.connect()
+        surface.resendPending(state.pendingCommands().single())
+
+        val inputs = coordinator.framesOfType("submit").map { it.getValue("input").jsonObject }
+        assertEquals(listOf("true", "true"), inputs.map { it.getValue("steer").jsonPrimitive.content })
+        assertEquals(setOf(submission.commandId.toString()), coordinator.tasks.getValue(taskId).steers)
+        assertEquals(1, admittedCommands(taskId).size)
+    }
+
+    @Test
+    fun aMessageThatDoesNotSteerSaysNothingAboutIt() = eventually {
+        val taskId = coordinator.seedTask()
+        val surface = client()
+        surface.connect()
+        surface.submitText(taskId, "after you're done").accepted.await()
+        assertTrue("steer" !in coordinator.framesOfType("submit").single().getValue("input").jsonObject)
+        assertEquals(emptySet(), coordinator.tasks.getValue(taskId).steers)
+    }
+
+    @Test
     fun resendingACommandTheOutboxNoLongerHoldsSendsNothing() = eventually {
         val surface = client()
         surface.connect()

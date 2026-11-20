@@ -37,11 +37,15 @@ class ChatViewModelTest {
 
     private class Flaky(private val inner: AgentRepository) : AgentRepository by inner {
         var refuseSend = false
+
+        /** Whether each send asked to steer, in order. */
+        val sent = mutableListOf<Boolean>()
         var refuseStop: Problem? = null
 
-        override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
+        override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) {
             if (refuseSend) throw RepositoryException(Problem.Invalid, "refused")
-            inner.send(agentId, text, files)
+            sent += steer
+            inner.send(agentId, text, files, steer)
         }
 
         override suspend fun stop(agentId: String) {
@@ -80,6 +84,29 @@ class ChatViewModelTest {
         assertTrue(!ChatUiState(agent = null).working)
     }
 
+    @Test
+    fun theComposerOffersToWaitOnlyWhileSendingWouldJoinARunningTurn() {
+        assertTrue(ChatUiState(agent = working, draft = "hi").steers)
+        assertFalse(ChatUiState(agent = working, draft = "").steers, "nothing typed: the button stops")
+        assertFalse(ChatUiState(agent = resting, draft = "hi").steers, "no turn to join")
+        val asking = working.copy(glance = live.renoa.app.agents.Glance(ask = live.renoa.app.agents.Ask("Which one?", emptyList())))
+        assertFalse(ChatUiState(agent = asking, draft = "the blue one").steers, "words alone answer the question")
+        assertTrue(ChatUiState(agent = asking, draft = "this", files = listOf(OutgoingFile("a.jpg", "image/jpeg", ByteArray(1)))).steers)
+    }
+
+    @Test
+    fun aTapSteersAndTheHeldChoiceWaitsForATurnOfItsOwn() = runTest {
+        val (vm, repo) = model()
+        runCurrent()
+        vm.onDraft("use the blue one")
+        vm.send()
+        runCurrent()
+        vm.onDraft("then the red one")
+        vm.send(steer = false)
+        runCurrent()
+        assertEquals(listOf(true, false), repo.sent)
+    }
+
     // --- sending ---
 
     @Test
@@ -89,7 +116,7 @@ class ChatViewModelTest {
             object : AgentRepository by inner {
                 override fun conversation(agentId: String) = kotlinx.coroutines.flow.flow<live.renoa.app.agents.Conversation> { kotlinx.coroutines.awaitCancellation() }
 
-                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) = throw RepositoryException(Problem.Unavailable, "not reached")
+                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) = throw RepositoryException(Problem.Unavailable, "not reached")
             }
         val vm = ChatViewModel(waiting, "nagisa").also { vm -> backgroundScope.launch { vm.state.collect {} } }
         runCurrent()
@@ -141,7 +168,7 @@ class ChatViewModelTest {
                     inner.answer(agentId, choice)
                 }
 
-                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
+                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) {
                     calls += "send $text"
                     inner.send(agentId, text)
                 }
@@ -200,7 +227,7 @@ class ChatViewModelTest {
         val inner = FakeAgentRepository(backgroundScope, seeds = emptyList())
         val repo =
             object : AgentRepository by inner {
-                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>) {
+                override suspend fun send(agentId: String, text: String, files: List<OutgoingFile>, steer: Boolean) {
                     held.await()
                     inner.send(agentId, text)
                 }

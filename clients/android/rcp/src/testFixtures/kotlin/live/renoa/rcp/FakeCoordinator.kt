@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -40,6 +41,9 @@ class FakeCoordinator : AutoCloseable {
     class TaskRecord(val nodeId: Uuid, val target: String) {
         val journal = mutableListOf<JsonObject>()
         val commands = LinkedHashMap<String, String>()
+
+        /** Commands submitted with `steer`, which a reused command id must repeat. */
+        val steers = mutableSetOf<String>()
         var status = "idle"
 
         /** Commands whose execution has ended, and commands with a recorded stop. */
@@ -561,18 +565,21 @@ class FakeCoordinator : AutoCloseable {
             onSubmitArrived()
             val taskId = Uuid.parse(frame.getValue("task_id").jsonPrimitive.content)
             val commandId = frame.getValue("command_id").jsonPrimitive.content
-            val text = frame.getValue("input").jsonObject.getValue("text").jsonPrimitive.content
+            val input = frame.getValue("input").jsonObject
+            val text = input.getValue("text").jsonPrimitive.content
+            val steer = input["steer"]?.jsonPrimitive?.boolean ?: false
             val record = tasks[taskId] ?: run {
                 socket.send(error(requestId, "not_found", "no such task"))
                 return
             }
             val existing = record.commands[commandId]
-            if (existing != null && existing != text) {
+            if (existing != null && (existing != text || (commandId in record.steers) != steer)) {
                 socket.send(error(requestId, "conflict", "command id was already used with different content"))
                 return
             }
             if (existing == null) {
                 record.commands[commandId] = text
+                if (steer) record.steers += commandId
                 publish(
                     taskId,
                     buildJsonObject {
@@ -585,6 +592,7 @@ class FakeCoordinator : AutoCloseable {
                             putJsonObject("input") {
                                 put("type", "text")
                                 put("text", text)
+                                if (steer) put("steer", true)
                             }
                         }
                     },

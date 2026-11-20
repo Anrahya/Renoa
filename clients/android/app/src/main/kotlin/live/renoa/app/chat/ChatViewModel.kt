@@ -75,6 +75,12 @@ data class ChatUiState(
                 working -> ComposerAction.Stop
                 else -> ComposerAction.Idle
             }
+
+    /**
+     * Sending now asks to join the agent's running turn, so the composer also offers to wait for it to
+     * end. Words alone answer an open question instead, which never steers.
+     */
+    val steers: Boolean get() = working && action == ComposerAction.Send && (ask == null || files.isNotEmpty())
 }
 
 class ChatViewModel(private val repository: AgentRepository, private val agentId: String) : ViewModel() {
@@ -150,9 +156,10 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
 
     /**
      * Sends the draft and its files. They leave the composer at once; if they are not kept, they
-     * come back. While the agent waits on a question, words alone are the answer.
+     * come back. While the agent waits on a question, words alone are the answer. With [steer] they
+     * ask to join the turn the agent is running; without, they wait for a turn of their own.
      */
-    fun send() {
+    fun send(steer: Boolean = true) {
         val text = draft.value.trim()
         val sent = files.value
         if (text.isEmpty() && sent.isEmpty()) return
@@ -162,7 +169,7 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         inFlight.update { it + 1 }
         viewModelScope.launch {
             try {
-                if (state.value.ask == null || sent.isNotEmpty()) repository.send(agentId, text, sent) else repository.answer(agentId, text)
+                if (state.value.ask == null || sent.isNotEmpty()) repository.send(agentId, text, sent, steer) else repository.answer(agentId, text)
             } catch (refused: RepositoryException) {
                 draft.update { if (it.isEmpty()) text else it }
                 files.update { (sent + it).take(Attachment.MAX_PER_COMMAND) }

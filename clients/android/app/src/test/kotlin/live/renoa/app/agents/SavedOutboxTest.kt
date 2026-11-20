@@ -47,6 +47,14 @@ class SavedOutboxTest {
     }
 
     @Test
+    fun aSteerIsKeptSoItIsSentAgainAsOne() = runTest {
+        val steer = PendingTextCommand(Uuid.random(), chat, "use the blue one", steer = true)
+        SavedOutbox(file).enqueueCommand(steer)
+        assertEquals(listOf(steer), SavedOutbox(file).pendingCommands())
+        assertTrue("\"steer\":true" in file.readText())
+    }
+
+    @Test
     fun theChatIsReplayedInFullOnEveryLaunch() = runTest {
         SavedOutbox(file).advanceCursor(chat, 7)
         assertNull(SavedOutbox(file).cursor(chat), "a launch starts with no cursor, so the whole chat comes back")

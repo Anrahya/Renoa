@@ -30,7 +30,7 @@ import kotlin.uuid.Uuid
 internal class SavedOutbox(private val file: File) : RcpState {
     /** The files are already on the Host; only what names them is kept here. */
     @Serializable
-    private data class Saved(val commandId: String, val taskId: String, val text: String, val attachments: List<Attachment> = emptyList())
+    private data class Saved(val commandId: String, val taskId: String, val text: String, val attachments: List<Attachment> = emptyList(), val steer: Boolean = false)
 
     private val lock = Any()
     private val cursors = HashMap<Uuid, Long>()
@@ -95,7 +95,7 @@ internal class SavedOutbox(private val file: File) : RcpState {
         val text = file.readText()
         return try {
             Json.decodeFromString(ListSerializer(Saved.serializer()), text)
-                .map { PendingTextCommand(Uuid.parse(it.commandId), Uuid.parse(it.taskId), it.text, it.attachments) }
+                .map { PendingTextCommand(Uuid.parse(it.commandId), Uuid.parse(it.taskId), it.text, it.attachments, it.steer) }
                 .associateByTo(LinkedHashMap()) { it.commandId }
         } catch (_: IllegalArgumentException) {
             LinkedHashMap()
@@ -103,7 +103,7 @@ internal class SavedOutbox(private val file: File) : RcpState {
     }
 
     private fun write(all: Map<Uuid, PendingTextCommand>) {
-        val saved = all.values.map { Saved(it.commandId.toString(), it.taskId.toString(), it.text, it.attachments) }
+        val saved = all.values.map { Saved(it.commandId.toString(), it.taskId.toString(), it.text, it.attachments, it.steer) }
         file.replaceAtomically(Json.encodeToString(ListSerializer(Saved.serializer()), saved).toByteArray(Charsets.UTF_8))
     }
 

@@ -40,6 +40,7 @@ android {
         targetSdk = 36
         versionCode = renoaVersionCode
         versionName = renoaVersion ?: "0.0.0-dev"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The Renoa the app signs in to; its passkeys and assetlinks.json belong to this origin.
         buildConfigField("String", "RENOA_ORIGIN", "\"https://renoa.live\"")
         buildConfigField("String", "RENOA_CONNECT", "\"wss://renoa.live/connect\"")
@@ -135,6 +136,10 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(testFixtures(project(":rcp")))
     testImplementation(libs.okhttp.mockwebserver)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.kotlin.test)
 }
 
 /**

@@ -102,9 +102,10 @@ interface AgentRepository {
 
     /**
      * Uploads [files], then returns once the message is kept. The reply arrives later through
-     * [conversation]. A message needs words or a file.
+     * [conversation]. A message needs words or a file. With [steer] it asks to join the turn the
+     * agent is running; without, or when that turn does not take it in, it waits for a turn of its own.
      */
-    suspend fun send(agentId: String, text: String, files: List<OutgoingFile> = emptyList())
+    suspend fun send(agentId: String, text: String, files: List<OutgoingFile> = emptyList(), steer: Boolean = false)
 
     /** Sends again, under its own identity, a message the app stopped sending ([ChatMessage.notSent]). */
     suspend fun retry(agentId: String, messageId: String)

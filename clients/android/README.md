@@ -2,9 +2,10 @@
 
 The Kotlin app shell. Three modules:
 
-- `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 16)
+- `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 19)
   behind the `RcpSurface` interface: discovery with task status, each task's last sequence and
-  agent names, a task's journal with optional live text, submitting and stopping a command, and
+  agent names, a task's journal with optional live text, submitting (optionally as a steer) and
+  stopping a command, and
   the device-key proof, and registering or clearing the device's push token; `PasskeySignIn`
   signs a device in over the coordinator's identity HTTP API (`docs/identity-v0.md`). The app
   passes the signing function; the key itself stays in the platform keystore. A device can
@@ -30,7 +31,9 @@ The Kotlin app shell. Three modules:
   `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for this package and signing
   certificate (`deploy/README.md`). Once signed in, the screens run on `RcpAgentRepository`:
   chat over `:rcp`, and making an agent or reading its profile through the Host over the same
-  connection. Tests use `FakeAgentRepository`. Passkeys need Android 9, so `minSdk` is 28. The
+  connection. While an agent works, tapping Send steers: the message asks to join the running
+  turn. Holding Send offers "Send when it's done", which waits for a turn of its own. Stop shows
+  while nothing is typed. Tests use `FakeAgentRepository`. Passkeys need Android 9, so `minSdk` is 28. The
   licences of the fonts, icons and diagram renderer (`licenses/`) ship inside the APK as assets.
 
 ## Push wake-ups
@@ -93,6 +96,9 @@ Needs JDK 21 and the Android SDK (platform `android-37.0`). From this directory:
 ```
 
 `:rcp:test` runs the RCP client's own tests; `testDebugUnitTest` covers only the app.
+
+`./gradlew connectedDebugAndroidTest` runs the on-device tests (`app/src/androidTest`) on a
+connected phone or emulator.
 
 The screen tests run under Robolectric and write pictures to `app/build/screens`, so the
 screens can be looked at without a phone or emulator.

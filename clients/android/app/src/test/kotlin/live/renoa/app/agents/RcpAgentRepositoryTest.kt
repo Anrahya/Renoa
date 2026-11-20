@@ -299,13 +299,13 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         }
     }
 
-    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>): CommandSubmission {
+    override suspend fun submitText(taskId: Uuid, text: String, files: List<Attachment>, steer: Boolean): CommandSubmission {
         check(online) { "RCP client is not connected" }
         submitHeld?.let {
             submitHeld = null
             it.await()
         }
-        val command = PendingTextCommand(Uuid.random(), taskId, text, files)
+        val command = PendingTextCommand(Uuid.random(), taskId, text, files, steer)
         state.enqueueCommand(command)
         val accepted = CompletableDeferred<Unit>()
         runCatching { deliver(command) }.fold({ accepted.complete(Unit) }, { accepted.completeExceptionally(it) })
@@ -593,6 +593,14 @@ class RcpAgentRepositoryTest {
     }
 
     @Test
+    fun aMessageSteersOnlyWhenAskedTo() = runTest {
+        val repo = started()
+        repo.send(nagisa, "use the blue one", steer = true)
+        repo.send(nagisa, "then the red one")
+        assertEquals(listOf(true, false), surface.admitted.map { it.steer })
+    }
+
+    @Test
     fun aRefusedMessageIsTakenBackAndTheScreenToldWhy() = runTest {
         val repo = started()
         surface.answers += Answer.Refuse(RcpErrorCode.NotFound)
@@ -690,9 +698,9 @@ class RcpAgentRepositoryTest {
     private val offline = Answer.Refuse(RcpErrorCode.NodeOffline)
 
     /** Sends "hello" to Nagisa, whose node cannot take it, and lets a minute of answers give it up. */
-    private suspend fun TestScope.givenUp(repo: RcpAgentRepository): PendingTextCommand {
+    private suspend fun TestScope.givenUp(repo: RcpAgentRepository, steer: Boolean = false): PendingTextCommand {
         surface.answers += listOf(offline, offline)
-        repo.send(nagisa, "hello")
+        repo.send(nagisa, "hello", steer = steer)
         val hello = state.pendingCommands().single()
         advanceTimeBy(1.minutes)
         runCurrent()
@@ -742,6 +750,15 @@ class RcpAgentRepositoryTest {
         assertEquals(listOf(hello), surface.admitted, "under the identity it was first sent with")
         assertEquals(listOf(hello.commandId.toString() to false), repo.chat(nagisa).messages.map { it.id to it.notSent }, "and shown once")
         assertTrue(state.pendingCommands().isEmpty())
+    }
+
+    @Test
+    fun aRetriedSteerIsSentAgainAsASteer() = runTest {
+        val repo = started()
+        val hello = givenUp(repo, steer = true)
+        repo.retry(nagisa, hello.commandId.toString())
+        assertEquals(listOf(hello), surface.admitted, "the same command, steer included")
+        assertTrue(surface.admitted.single().steer)
     }
 
     @Test

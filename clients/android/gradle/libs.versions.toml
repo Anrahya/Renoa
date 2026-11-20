@@ -11,6 +11,7 @@ activityCompose = "1.13.0"
 coreKtx = "1.18.0"
 lifecycle = "2.10.0"
 robolectric = "4.17"
+androidxTestRunner = "1.7.0"
 credentials = "1.6.0"
 markdownRenderer = "0.46.0"
 firebaseMessaging = "26.0.1"
@@ -43,6 +44,7 @@ androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
 androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3-android", version.ref = "markdownRenderer" }
 androidx-credentials-play-services = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
