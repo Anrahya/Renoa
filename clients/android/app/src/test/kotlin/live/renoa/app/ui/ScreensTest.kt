@@ -413,6 +413,16 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
+    fun anyRoutineRunsNowFromTheRoutinesPage() {
+        home()
+        openPages()
+        compose.onAllNodesWithText("Run now")[0].performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Started").assertIsDisplayed()
+        snapshot("home-routines-run-now")
+    }
+
+    @Test
     fun anEmptyRoutinesPageSaysHowToMakeOne() {
         val model = HomeViewModel(FakeAgentRepository(scope, now = { EVENING }, routineSeeds = emptyList()))
         show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, now = { EVENING }) }

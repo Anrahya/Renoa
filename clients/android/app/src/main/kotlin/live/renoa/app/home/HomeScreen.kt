@@ -174,7 +174,7 @@ fun HomeScreen(
             AgentsRoster(state, time, act, { accountOpen = true }, onNewAgent, onRefresh, top, barSpace)
         }
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Renoa)) {
-            val renoa = remember(viewModel, onOpenChat) { RenoaActions(viewModel::open, viewModel::read, viewModel::switch, viewModel::switchApp, onOpenChat) }
+            val renoa = remember(viewModel, onOpenChat) { RenoaActions(viewModel::open, viewModel::read, viewModel::switch, viewModel::run, viewModel::switchApp, onOpenChat) }
             RenoaTab(state, time, state.page ?: HomePage.Routines, renoa, barSpace)
         }
         Box(Modifier.fillMaxSize().tabLayer(tab == HomeTab.Settings)) {

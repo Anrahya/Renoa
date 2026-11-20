@@ -69,7 +69,8 @@ enum class Link {
 }
 
 /** A refusal, or a failure to reach the other side. */
-class RepositoryException(val problem: Problem, message: String) : Exception(message)
+/** [hostCode] is the Host's own `code` for a refusal, when the Host itself answered. */
+class RepositoryException(val problem: Problem, message: String, val hostCode: String? = null) : Exception(message)
 
 /** Not reaching Renoa has its own words; any other refusal gets the one that fits the screen asking. */
 fun RepositoryException.wordsOr(fallback: String): String = if (problem == Problem.Unavailable) problem.ownerWords else fallback
@@ -181,4 +182,7 @@ interface AgentRepository {
      * read is a [Problem.Conflict].
      */
     suspend fun setRoutine(routineId: String, on: Boolean, operationId: String)
+
+    /** Runs a routine now. A repeat of [operationId] runs it once; a run already under way counts as this one. */
+    suspend fun runRoutine(routineId: String, operationId: String)
 }

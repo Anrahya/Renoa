@@ -475,7 +475,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
             }
             return HostAnswer(200, answer)
         }
-        if (path.endsWith("/run")) return if (running) HostAnswer(409, "{\"error\":\"run_in_progress\"}") else HostAnswer(200, "{}")
+        if (path.endsWith("/run")) return if (running) HostAnswer(409, "{\"code\":\"run_in_progress\",\"message\":\"This automation already has a run waiting or running.\"}") else HostAnswer(200, "{}")
         val id = path.removePrefix("/v1/host/feed/items/").removeSuffix("/dismissal")
         val at = feed.indexOfFirst { it.getValue("id").jsonPrimitive.content == id }
         if (at < 0) return HostAnswer(404, "{\"error\":\"not_found\"}")
@@ -1846,6 +1846,25 @@ class RcpAgentRepositoryTest {
         surface.feed.removeAt(1)
         repo.dismiss("two")
         assertEquals(emptyList(), repo.feed.value.notes, "one the Host no longer has is gone all the same")
+    }
+
+    @Test
+    fun anyRoutineRunsNowAndARunAlreadyUnderWayCountsAsStarted() = runTest {
+        val routine = Uuid.random().toString()
+        val repo = started()
+        repo.runRoutine(routine, "op")
+        assertEquals(HostMethod.Post to "/v1/host/automations/$routine/run", surface.feedCalls.last())
+
+        surface.running = true
+        repo.runRoutine(routine, "op")
+        assertEquals(2, surface.feedCalls.count { it.second.endsWith("/run") })
+
+        surface.running = false
+        surface.feedFailure = IllegalStateException("dropped")
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.runRoutine(routine, "op") }.problem)
+
+        surface.feedFailure = RcpException(RcpErrorCode.Conflict, "Too many Host calls from this connection are waiting.", 1)
+        assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.runRoutine(routine, "op") }.problem, "a call the coordinator did not pass on started nothing")
     }
 
     @Test

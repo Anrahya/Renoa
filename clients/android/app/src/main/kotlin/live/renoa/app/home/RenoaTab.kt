@@ -36,6 +36,7 @@ import live.renoa.design.DesignSwitch
 import live.renoa.design.Motion
 import live.renoa.design.Palette
 import live.renoa.design.ScreenHeader
+import live.renoa.design.SecondaryButton
 import live.renoa.design.SegmentedChoice
 import live.renoa.design.ThinkingOrb
 import live.renoa.design.ThinkingOrbState
@@ -67,7 +68,7 @@ internal fun RenoaTab(state: HomeUiState, now: ZonedDateTime, page: HomePage, ac
             ) {
                 item(key = shown.name) {
                     when (shown) {
-                        HomePage.Routines -> Routines(state, now, act.switchRoutine)
+                        HomePage.Routines -> Routines(state, now, act.switchRoutine, act.runRoutine)
                         HomePage.Memory -> MemoryPage(state) { act.retry(HomePage.Memory) }
                         HomePage.Apps -> AppsPage(state, act.switchApp, act.ask) { act.retry(HomePage.Apps) }
                     }
@@ -78,20 +79,21 @@ internal fun RenoaTab(state: HomeUiState, now: ZonedDateTime, page: HomePage, ac
 }
 
 /**
- * What the Renoa tab does with the owner's taps: turn to a page, read one again, switch a routine
- * or an app, or open a chat to ask for one.
+ * What the Renoa tab does with the owner's taps: turn to a page, read one again, switch or run a
+ * routine, switch an app, or open a chat to ask for one.
  */
 internal class RenoaActions(
     val open: (HomePage) -> Unit,
     val retry: (HomePage) -> Unit,
     val switchRoutine: (String, Boolean) -> Unit,
+    val runRoutine: (String) -> Unit,
     val switchApp: (String, Boolean) -> Unit,
     val ask: (String) -> Unit,
 )
 
-/** Every routine, soonest first, with what it does next and a switch to turn it on or off. */
+/** Every routine, soonest first, with what it does next, a button to run it now and a switch to turn it on or off. */
 @Composable
-private fun Routines(state: HomeUiState, now: ZonedDateTime, onSwitch: (String, Boolean) -> Unit) {
+private fun Routines(state: HomeUiState, now: ZonedDateTime, onSwitch: (String, Boolean) -> Unit, onRun: (String) -> Unit) {
     if (state.routines.isEmpty()) return Empty("No routines yet. Ask an agent to check on something every day, and it shows here.")
     CardSection {
         for (routine in soonestFirst(state.routines)) {
@@ -104,6 +106,8 @@ private fun Routines(state: HomeUiState, now: ZonedDateTime, onSwitch: (String, 
                         Text(listOfNotNull(state.agent(routine.agentId)?.name, routine.schedule).joinToString(" · "), style = Type.footnote, color = Palette.secondary)
                         Text(routineStatus(routine.copy(on = on, next = routine.next.takeIf { on }), now), style = Type.footnote, color = Palette.secondary)
                     }
+                    val started = routine.id in state.started
+                    SecondaryButton(if (started) "Started" else "Run now", enabled = !started) { onRun(routine.id) }
                 }
             }
         }
