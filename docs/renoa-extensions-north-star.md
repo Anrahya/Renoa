@@ -1266,8 +1266,9 @@ Build a narrow Node adapter using the pinned official MCP TypeScript client.
 Support current Streamable HTTP, deterministic discovery, one tool call,
 bounded ordered results, cancellation, process supervision, and typed terminal
 errors. The initial proof is unauthenticated; the later Host-management slice
-adds OAuth without adding a second adapter. Do not add stdio, resources,
-prompts, apps, or tasks.
+adds OAuth without adding a second adapter. Do not add resources, prompts,
+apps, or tasks. Stdio came later, as a per-call transport in the same adapter
+(schema 57).
 
 Proof gate: deterministic local-server tests cover negotiation, discovery,
 invocation, malformed responses, timeouts before and after dispatch,
@@ -1493,8 +1494,9 @@ remain later work and must preserve `rcp-v0.md`.
 - OAuth terminal-receipt garbage collection after a proven Host/kernel
   settlement boundary;
 - historical resolved-binding retention after catalog or profile changes;
-- when to add stdio MCP servers and how to constrain their process and
-  filesystem authority;
+- process pooling and optional OS sandboxing for stdio MCP servers (schema 57
+  adds per-call native `stdio` MCP support for both Agent Plugin `mcp.json`
+  entries and direct `plugin_manage` `source.kind = "stdio_mcp"`);
 - ancestor-directory skill discovery, explicit profile configuration, and
   garbage collection of installed revisions and session-pinned skills;
 - support for MCP resources, prompts, apps, tasks, or future protocol
@@ -1520,7 +1522,8 @@ The first direct MCP slice does not implement:
 - a public marketplace, package signing, automatic updates, rollback, removal,
   or garbage collection;
 - GUI credential entry, headless OAuth, or general secret synchronization;
-- stdio MCP servers;
+- long-lived pooled stdio MCP processes (stdio servers currently run per
+  discover/call inside the adapter's process group);
 - MCP resources, prompts, apps, tasks, sampling, or elicitation;
 - Waku extension settings or management UI;
 - a general permission system;

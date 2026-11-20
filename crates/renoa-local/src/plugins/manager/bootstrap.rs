@@ -32,6 +32,7 @@ impl PluginManager {
             connection.to_owned(),
             server.endpoint().to_owned(),
             McpRequestHeaders::default(),
+            None,
             auth,
         )?;
         let catalog = self.mcp_catalog.clone();

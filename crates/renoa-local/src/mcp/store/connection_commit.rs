@@ -2,8 +2,8 @@ use rusqlite::{TransactionBehavior, params};
 
 use super::{McpCatalogStore, ensure_connection, ensure_integration, store_catalog};
 use crate::mcp::{
-    McpCatalogSnapshot, McpConnectionAuth, McpHostError, McpRequestHeaders, validate_endpoint,
-    validate_identity,
+    McpCatalogSnapshot, McpConnectionAuth, McpHostError, McpRequestHeaders, McpStdioConfig,
+    validate_connection_binding, validate_endpoint, validate_identity,
 };
 
 #[derive(Clone)]
@@ -12,6 +12,7 @@ pub(crate) struct McpConnectionCandidate {
     connection_id: String,
     endpoint: String,
     request_headers: McpRequestHeaders,
+    stdio: Option<McpStdioConfig>,
     auth: McpConnectionAuth,
 }
 
@@ -21,17 +22,20 @@ impl McpConnectionCandidate {
         connection_id: String,
         endpoint: String,
         request_headers: McpRequestHeaders,
+        stdio: Option<McpStdioConfig>,
         auth: McpConnectionAuth,
     ) -> Result<Self, McpHostError> {
         validate_identity("integration", &integration_id)?;
         validate_identity("connection", &connection_id)?;
         validate_endpoint(&endpoint)?;
+        validate_connection_binding(&endpoint, &request_headers, stdio.as_ref(), &auth)?;
         auth.validate_oauth_binding(&connection_id, &endpoint)?;
         Ok(Self {
             integration_id,
             connection_id,
             endpoint,
             request_headers,
+            stdio,
             auth,
         })
     }
@@ -46,6 +50,10 @@ impl McpConnectionCandidate {
 
     pub(crate) const fn request_headers(&self) -> &McpRequestHeaders {
         &self.request_headers
+    }
+
+    pub(crate) const fn stdio(&self) -> Option<&McpStdioConfig> {
+        self.stdio.as_ref()
     }
 
     pub(crate) const fn auth(&self) -> &McpConnectionAuth {
@@ -66,6 +74,7 @@ impl McpCatalogStore {
             &candidate.integration_id,
             &candidate.endpoint,
             &candidate.request_headers,
+            candidate.stdio.as_ref(),
         )?;
         match ensure_connection(
             &transaction,
@@ -105,6 +114,7 @@ impl McpCatalogStore {
             &candidate.integration_id,
             &candidate.endpoint,
             &candidate.request_headers,
+            candidate.stdio.as_ref(),
         )?;
         match ensure_connection(
             &transaction,

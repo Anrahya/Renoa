@@ -7,6 +7,7 @@ mod headers;
 mod oauth;
 mod process;
 mod registry;
+mod stdio;
 mod store;
 mod tool;
 
@@ -39,12 +40,17 @@ pub(crate) use process::{discover, discover_cancellable};
 pub(crate) use registry::{
     McpToolReference, McpToolSummary, SCHEMA_LOOKUP_OUTPUT_BYTES, SEARCH_RESULT_LIMIT, rank_tools,
 };
+pub use stdio::McpStdioConfig;
+#[cfg(test)]
+pub(crate) use stdio::is_stdio_endpoint;
+pub(crate) use stdio::{valid_package_stdio_cwd, validate_connection_binding};
 pub use store::McpConnectionStatus;
 pub(crate) use store::{McpCatalogStore, McpConnectionCandidate};
 pub(crate) use tool::{adapter_tool_error, agent_registry_bindings};
 
+pub(super) const WIRE_VERSION: u32 = 10;
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.10.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.11.0";
 const MCP_LEGACY_ADAPTER_REVISIONS: &[&str] = &[
     "mcp-client-node-v0.1.0",
     "mcp-client-node-v0.2.0",
@@ -54,6 +60,7 @@ const MCP_LEGACY_ADAPTER_REVISIONS: &[&str] = &[
     "mcp-client-node-v0.7.0",
     "mcp-client-node-v0.8.0",
     "mcp-client-node-v0.9.0",
+    "mcp-client-node-v0.10.0",
 ];
 const MCP_HEADERLESS_DIGEST_REVISIONS: &[&str] =
     &["mcp-client-node-v0.1.0", "mcp-client-node-v0.2.0"];
@@ -198,6 +205,7 @@ pub struct ResolvedMcpTool {
     connection_id: String,
     endpoint: String,
     request_headers: McpRequestHeaders,
+    stdio: Option<McpStdioConfig>,
     protocol_version: String,
     adapter_revision: String,
     auth: McpConnectionAuth,
@@ -222,6 +230,10 @@ impl ResolvedMcpTool {
 
     pub(crate) fn request_headers(&self) -> &McpRequestHeaders {
         &self.request_headers
+    }
+
+    pub(crate) const fn stdio(&self) -> Option<&McpStdioConfig> {
+        self.stdio.as_ref()
     }
 
     #[must_use]

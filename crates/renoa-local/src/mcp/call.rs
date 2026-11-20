@@ -24,18 +24,18 @@ use self::{
     wire::{CallTerminal, McpCallResult, ParseFailure, parse_call_records},
 };
 use super::{
-    McpAdapterError, McpCredentialHeader, McpOutcomeCertainty, McpRemoteFailure, ResolvedMcpTool,
+    McpAdapterError, McpCredentialHeader, McpOutcomeCertainty, McpRemoteFailure, McpStdioConfig,
+    ResolvedMcpTool, WIRE_VERSION,
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
-const WIRE_VERSION: u32 = 9;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(125);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
 
 pub(super) const CALL_BOUNDARY_REVISION: &str =
-    "rust-call-v1/wire-9/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
+    "rust-call-v1/wire-10/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
 
 #[derive(Debug)]
 pub(super) struct McpCallFailure {
@@ -90,6 +90,7 @@ pub(super) async fn call_tool(
         endpoint: selected.endpoint(),
         protocol_version: selected.protocol_version(),
         headers: selected.request_headers(),
+        stdio: selected.stdio(),
         credential: credential.map(WireCredential::from),
         tool: FrozenTool {
             name: selected.tool().name(),
@@ -116,6 +117,8 @@ struct CallRequest<'a> {
     protocol_version: &'a str,
     #[serde(skip_serializing_if = "super::McpRequestHeaders::is_empty")]
     headers: &'a super::McpRequestHeaders,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stdio: Option<&'a McpStdioConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     credential: Option<WireCredential<'a>>,
     tool: FrozenTool<'a>,

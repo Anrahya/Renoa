@@ -509,3 +509,187 @@ fn enabling_a_connection_requires_a_complete_catalog() {
     assert!(matches!(error, McpHostError::NotFound(_)));
     assert!(connections(store.path(), &agent).is_empty());
 }
+
+#[test]
+fn package_stdio_cwd_rejects_traversal_and_escapes() {
+    use std::collections::BTreeMap;
+
+    let root = std::path::Path::new(
+        "/srv/renoa/plugins/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    let data = std::path::Path::new(
+        "/srv/renoa/plugin-data/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+
+    for bad in [
+        "",
+        ".",
+        "./",
+        ".//etc",
+        "./../etc",
+        "./sub/../../etc",
+        "./.",
+        "./a\\b",
+        "/etc",
+        "sub/dir",
+        "${PLUGIN_ROOT}/",
+        "${PLUGIN_ROOT}/../etc",
+        "${PLUGIN_ROOT}//etc",
+        "${PLUGIN_ROOT}/${PLUGIN_DATA}",
+        "${PLUGIN_DATA}/../etc",
+        "${PLUGIN_DATA}/sub/",
+    ] {
+        assert!(
+            !super::valid_package_stdio_cwd(bad),
+            "cwd '{bad}' must be rejected"
+        );
+        if let Ok(config) = super::McpStdioConfig::new(
+            "node".to_owned(),
+            vec![],
+            BTreeMap::new(),
+            Some(bad.to_owned()),
+        ) {
+            assert!(
+                config.resolve_for_package(root, data).is_err(),
+                "resolve_for_package must reject cwd '{bad}'"
+            );
+        }
+    }
+
+    for (good, expected_cwd) in [
+        ("./sub/dir", root.join("sub/dir")),
+        ("${PLUGIN_ROOT}", root.to_path_buf()),
+        ("${PLUGIN_ROOT}/bin", root.join("bin")),
+        ("${PLUGIN_DATA}", data.to_path_buf()),
+        ("${PLUGIN_DATA}/state", data.join("state")),
+    ] {
+        assert!(
+            super::valid_package_stdio_cwd(good),
+            "cwd '{good}' should be accepted"
+        );
+        let config = super::McpStdioConfig::new(
+            "node".to_owned(),
+            vec![],
+            BTreeMap::new(),
+            Some(good.to_owned()),
+        )
+        .expect("valid config");
+        let resolved = config
+            .resolve_for_package(root, data)
+            .expect("resolve valid package cwd");
+        assert_eq!(resolved.cwd.as_deref(), expected_cwd.to_str());
+        assert_eq!(
+            resolved.env.get("PLUGIN_ROOT").map(String::as_str),
+            root.to_str()
+        );
+        assert_eq!(
+            resolved.env.get("PLUGIN_DATA").map(String::as_str),
+            data.to_str()
+        );
+    }
+}
+
+#[test]
+fn package_stdio_with_64_user_env_vars_resolves_and_65_fails() {
+    use std::collections::BTreeMap;
+
+    let root = std::path::Path::new("/srv/renoa/plugins/root");
+    let data = std::path::Path::new("/srv/renoa/plugin-data/root");
+    let mut env = BTreeMap::new();
+    for i in 0..64 {
+        env.insert(format!("VAR_{i}"), format!("val_{i}"));
+    }
+    let config = super::McpStdioConfig::new(
+        "node".to_owned(),
+        vec!["${PLUGIN_ROOT}/server.mjs".to_owned()],
+        env.clone(),
+        Some("${PLUGIN_DATA}".to_owned()),
+    )
+    .expect("64 env vars valid");
+    config
+        .validate_package_env_keys()
+        .expect("64 user env vars allowed");
+    let resolved = config
+        .resolve_for_package(root, data)
+        .expect("64 user env vars + PLUGIN_ROOT + PLUGIN_DATA resolves cleanly");
+    assert_eq!(resolved.env.len(), 66);
+
+    env.insert("VAR_64".to_owned(), "too_many".to_owned());
+    let too_many = super::McpStdioConfig::new("node".to_owned(), vec![], env, None)
+        .expect("raw allows up to 66 for resolved");
+    assert!(
+        too_many.validate_package_env_keys().is_err(),
+        "65 user env vars must fail package validation"
+    );
+}
+
+#[test]
+fn stdio_connection_binding_is_enforced_on_register_and_read() {
+    use std::collections::BTreeMap;
+
+    let (_directory, store) = store();
+    let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
+
+    let stdio = super::McpStdioConfig::new(
+        "browse".to_owned(),
+        vec!["mcp".to_owned()],
+        BTreeMap::new(),
+        None,
+    )
+    .expect("stdio config");
+    let endpoint = stdio.canonical_endpoint().expect("canonical endpoint");
+
+    assert!(
+        store
+            .register_connection(
+                "http-spoof",
+                "http-spoof",
+                &endpoint,
+                &super::McpRequestHeaders::default(),
+                &McpConnectionAuth::None,
+            )
+            .is_err(),
+        "register_connection must reject stdio:<sha256> endpoints"
+    );
+
+    let candidate = super::McpConnectionCandidate::new(
+        "stdio.int".to_owned(),
+        "stdio.conn".to_owned(),
+        endpoint.clone(),
+        super::McpRequestHeaders::default(),
+        Some(stdio),
+        McpConnectionAuth::None,
+    )
+    .expect("valid stdio candidate");
+    let snap = snapshot("stdio.conn", &endpoint, &["execute"]);
+    store
+        .commit_connection(&agent, &candidate, &snap, false)
+        .expect("commit stdio connection");
+    let reference = store
+        .agent_tool_summaries(&agent)
+        .expect("summaries")
+        .pop()
+        .expect("one tool")
+        .reference()
+        .expect("reference");
+
+    // Tamper stdio_config_json directly in SQLite so it no longer matches endpoint.
+    let db = rusqlite::Connection::open(store.path()).expect("open db");
+    db.execute(
+        "UPDATE mcp_integrations SET stdio_config_json = '{\"command\":\"tampered\"}'
+         WHERE integration_id = 'stdio.int'",
+        [],
+    )
+    .expect("tamper stdio_config_json");
+    drop(db);
+
+    assert!(
+        store.connection_config("stdio.conn").is_err(),
+        "connection_config must reject tampered stdio_config_json"
+    );
+    assert!(
+        store.resolve_agent_tools(&agent, &[reference]).is_err(),
+        "resolve_agent_tools must reject tampered stdio_config_json"
+    );
+}

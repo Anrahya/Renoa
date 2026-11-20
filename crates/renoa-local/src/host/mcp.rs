@@ -99,6 +99,7 @@ impl LocalHost {
             connection_id,
             &connection.endpoint,
             &connection.request_headers,
+            connection.stdio.as_ref(),
             authorization.as_ref(),
         )
         .await?;

@@ -1,9 +1,18 @@
-export const WIRE_VERSION = 9 as const;
+export const WIRE_VERSION = 10 as const;
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
-export const MCP_ADAPTER_REVISION = "mcp-client-node-v0.10.0";
+export const MCP_ADAPTER_REVISION = "mcp-client-node-v0.11.0";
 
 export const DISCOVERY_TIMEOUT_MS = 30_000;
 export const TOOL_CALL_TIMEOUT_MS = 120_000;
+
+export const MAX_STDIO_COMMAND_BYTES = 1_024;
+export const MAX_STDIO_ARGS = 256;
+export const MAX_STDIO_ARG_BYTES = 8 * 1024;
+export const MAX_STDIO_ENV_VARS = 66;
+export const MAX_STDIO_ENV_KEY_BYTES = 256;
+export const MAX_STDIO_ENV_VALUE_BYTES = 16 * 1024;
+export const MAX_STDIO_CWD_BYTES = 1_024;
+export const MAX_STDIO_STDERR_BYTES = 4 * 1024;
 
 export const MAX_STDIN_BYTES = 1 * 1024 * 1024;
 export const MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024;

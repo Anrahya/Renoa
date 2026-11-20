@@ -24,6 +24,7 @@ fn one_package_card_contains_related_servers_and_skill_only_packages_remain_visi
                 id: id.to_owned(),
                 endpoint: format!("https://example.test/{id}"),
                 request_headers: BTreeMap::new(),
+                stdio: None,
             })
             .collect(),
         notices: Vec::new(),

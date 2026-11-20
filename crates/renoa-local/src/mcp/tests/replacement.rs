@@ -27,6 +27,7 @@ fn explicit_connection_replacement_commits_config_catalog_and_attachment_togethe
         "drive".to_owned(),
         ENDPOINT.to_owned(),
         McpRequestHeaders::default(),
+        None,
         replacement.clone(),
     )
     .expect("valid replacement candidate");

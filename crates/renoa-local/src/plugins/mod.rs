@@ -71,6 +71,46 @@ impl RemoteMcpSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StdioMcpSource {
+    name: String,
+    description: String,
+    server: String,
+    command: String,
+    args: Vec<String>,
+    env: BTreeMap<String, String>,
+    cwd: Option<String>,
+    documentation: Option<String>,
+}
+
+impl StdioMcpSource {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the stdio MCP source fields"
+    )]
+    pub(crate) fn new(
+        name: String,
+        description: String,
+        server: String,
+        command: String,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+        cwd: Option<String>,
+        documentation: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            server,
+            command,
+            args,
+            env,
+            cwd,
+            documentation,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginConnectionRequest {
     id: Option<String>,
     server: Option<String>,
@@ -146,6 +186,8 @@ pub struct PluginMcpServer {
     id: String,
     endpoint: String,
     request_headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stdio: Option<crate::mcp::McpStdioConfig>,
 }
 
 impl PluginMcpServer {
@@ -162,6 +204,16 @@ impl PluginMcpServer {
     #[must_use]
     pub fn request_headers(&self) -> &BTreeMap<String, String> {
         &self.request_headers
+    }
+
+    #[must_use]
+    pub const fn stdio(&self) -> Option<&crate::mcp::McpStdioConfig> {
+        self.stdio.as_ref()
+    }
+
+    #[must_use]
+    pub const fn is_stdio(&self) -> bool {
+        self.stdio.is_some()
     }
 }
 

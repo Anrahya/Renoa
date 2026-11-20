@@ -1,3 +1,8 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use renoa_agent::ToolUpdates;
 use tokio_util::sync::CancellationToken;
 
@@ -8,7 +13,7 @@ use crate::{
     mcp::{
         McpAdapterError, McpCatalogSnapshot, McpConnectionCandidate, McpCredentialHeader,
         McpHostError, McpOAuthAuthorizationRequest, McpOAuthError, McpRequestHeaders,
-        discover_cancellable,
+        McpStdioConfig, discover_cancellable,
     },
     plugins::{PluginCredential, PluginError},
 };
@@ -75,15 +80,9 @@ impl PluginManager {
             adapter,
             candidate,
             display_name,
+            plugin_data_dir,
         } = self
-            .prepare_connection(
-                request.package_digest,
-                request.server_id,
-                request.connection_id,
-                request.credential,
-                request.replace,
-                cancellation.clone(),
-            )
+            .prepare_connection(&request, cancellation.clone())
             .await?;
         self.authorizations
             .ensure_credentials(
@@ -128,11 +127,42 @@ impl PluginManager {
         if cancellation.is_cancelled() {
             return Err(McpHostError::from(McpAdapterError::Cancelled).into());
         }
+        let created_data = match plugin_data_dir.clone() {
+            Some(dir) => {
+                tokio::task::spawn_blocking(move || ensure_plugin_data_dir(&dir)).await??
+            }
+            None => false,
+        };
+        let connected = self
+            .discover_and_commit(&request, &adapter, &candidate, authorization, cancellation)
+            .await;
+        if connected.is_err()
+            && created_data
+            && let Some(dir) = plugin_data_dir
+        {
+            // A failed connect removes the data directory it made while it is
+            // still empty, so one another connect has begun to use is kept.
+            // Should that fail, the connect error is the one to report: a
+            // retry adopts the directory left behind.
+            let _removal = tokio::task::spawn_blocking(move || fs::remove_dir(dir)).await;
+        }
+        connected
+    }
+
+    async fn discover_and_commit(
+        &self,
+        request: &ProfileConnectionRequest<'_>,
+        adapter: &Path,
+        candidate: &McpConnectionCandidate,
+        authorization: Option<McpCredentialHeader>,
+        cancellation: CancellationToken,
+    ) -> Result<McpCatalogSnapshot, PluginError> {
         let snapshot = discover_cancellable(
-            &adapter,
+            adapter,
             candidate.connection_id(),
             candidate.endpoint(),
             candidate.request_headers(),
+            candidate.stdio(),
             authorization.as_ref(),
             cancellation,
         )
@@ -141,13 +171,9 @@ impl PluginManager {
         let agent_id = *request.agent_id;
         let committed = candidate.clone();
         let stored_snapshot = snapshot.clone();
+        let replace = request.replace;
         tokio::task::spawn_blocking(move || {
-            catalog.commit_connection(
-                &agent_id.to_string(),
-                &committed,
-                &stored_snapshot,
-                request.replace,
-            )
+            catalog.commit_connection(&agent_id.to_string(), &committed, &stored_snapshot, replace)
         })
         .await??;
         Ok(snapshot)
@@ -155,48 +181,70 @@ impl PluginManager {
 
     async fn prepare_connection(
         &self,
-        package_digest: &str,
-        server_id: &str,
-        connection_id: &str,
-        credential: PluginCredential,
-        replace: bool,
+        request: &ProfileConnectionRequest<'_>,
         cancellation: CancellationToken,
     ) -> Result<PreparedConnection, PluginError> {
-        let plugin = self.load_available(package_digest).await?;
+        let plugin = self.load_available(request.package_digest).await?;
         let server = plugin
             .mcp_servers()
             .iter()
-            .find(|server| server.id() == server_id)
+            .find(|server| server.id() == request.server_id)
             .cloned()
             .ok_or_else(|| {
                 PluginError::NotFound(format!(
                     "package '{}' has no supported MCP server '{}'",
                     plugin.digest(),
-                    server_id,
+                    request.server_id,
                 ))
             })?;
+        if server.stdio().is_some() && (request.restart || request.requested_scope.is_some()) {
+            return Err(PluginError::Invalid(
+                "stdio MCP connections do not accept OAuth restart or scope options".to_owned(),
+            ));
+        }
         let adapter = self.mcp_adapter.clone().ok_or_else(|| {
             PluginError::Unavailable(
                 "RENOA_MCP_ADAPTER must be set before connecting a package MCP server".to_owned(),
             )
         })?;
-        super::preflight::add_connection(
-            &self.mcp_catalog,
-            package_digest,
-            plugin.mcp_servers(),
-            Some(&crate::plugins::PluginConnectionRequest::new(
-                Some(connection_id.to_owned()),
-                Some(server_id.to_owned()),
-                credential.clone(),
-                replace,
-            )),
-            false,
-            None,
-        )?;
+        let preflight_catalog = self.mcp_catalog.clone();
+        let preflight_store = self.store.clone();
+        let preflight_digest = request.package_digest.to_owned();
+        let agent = *request.agent_id;
+        let preflight_servers = plugin.mcp_servers().to_vec();
+        let preflight_request = crate::plugins::PluginConnectionRequest::new(
+            Some(request.connection_id.to_owned()),
+            Some(request.server_id.to_owned()),
+            request.credential.clone(),
+            request.replace,
+        );
+        tokio::task::spawn_blocking(move || {
+            super::preflight::add_connection(
+                &preflight_catalog,
+                &preflight_store,
+                agent,
+                &preflight_digest,
+                &preflight_servers,
+                Some(&preflight_request),
+                false,
+                None,
+            )
+        })
+        .await??;
+        let stdio = super::preflight::resolve_server_stdio(&self.store, plugin.digest(), &server)?;
+        let endpoint = match &stdio {
+            Some(resolved) => resolved.canonical_endpoint()?,
+            None => server.endpoint().to_owned(),
+        };
+        let plugin_data_dir = server
+            .stdio()
+            .is_some_and(McpStdioConfig::exposes_plugin_dirs)
+            .then(|| self.store.plugin_data_dir(plugin.digest()))
+            .transpose()?;
         let auth = credential_auth(
-            credential,
-            connection_id,
-            server.endpoint(),
+            request.credential.clone(),
+            request.connection_id,
+            &endpoint,
             &self.authorizations,
             cancellation,
         )
@@ -209,19 +257,22 @@ impl PluginManager {
         )?;
         let candidate = McpConnectionCandidate::new(
             integration_id(plugin.digest(), server.id()),
-            connection_id.to_owned(),
-            server.endpoint().to_owned(),
+            request.connection_id.to_owned(),
+            endpoint,
             headers,
+            stdio,
             auth,
         )?;
         let catalog = self.mcp_catalog.clone();
         let preflight = candidate.clone();
+        let replace = request.replace;
         tokio::task::spawn_blocking(move || catalog.preflight_connection(&preflight, replace))
             .await??;
         Ok(PreparedConnection {
             adapter,
             candidate,
             display_name: plugin.metadata().name().to_owned(),
+            plugin_data_dir,
         })
     }
 
@@ -258,6 +309,11 @@ impl PluginManager {
         let connection =
             tokio::task::spawn_blocking(move || catalog.connection_config(&stored_connection))
                 .await??;
+        if connection.stdio.is_some() {
+            return Err(PluginError::Invalid(
+                "stdio MCP connections do not use OAuth authorization".to_owned(),
+            ));
+        }
         self.authorizations
             .ensure_credentials(
                 &connection.auth,
@@ -291,6 +347,7 @@ impl PluginManager {
             request.connection_id,
             &connection.endpoint,
             &connection.request_headers,
+            connection.stdio.as_ref(),
             Some(&authorization),
             cancellation,
         )
@@ -307,7 +364,33 @@ impl PluginManager {
 }
 
 struct PreparedConnection {
-    adapter: std::path::PathBuf,
+    adapter: PathBuf,
     candidate: McpConnectionCandidate,
     display_name: String,
+    plugin_data_dir: Option<PathBuf>,
+}
+
+/// Creates the package's data directory, private to this user from the
+/// start, and says whether this call made it.
+fn ensure_plugin_data_dir(path: &Path) -> Result<bool, PluginError> {
+    let io = |action| {
+        move |source| PluginError::Io {
+            action,
+            path: path.to_path_buf(),
+            source,
+        }
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io("create plugin data root"))?;
+    }
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    match builder.create(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => {
+            Ok(false)
+        }
+        Err(error) => Err(io("create plugin data directory")(error)),
+    }
 }

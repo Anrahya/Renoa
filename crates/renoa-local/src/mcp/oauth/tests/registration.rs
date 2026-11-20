@@ -96,10 +96,10 @@ async fn oauth_metadata_discovery_uses_its_own_strict_wire_action() {
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
-if (request.action !== 'oauth_discover' || request.wire_version !== 9 ||
+if (request.action !== 'oauth_discover' || request.wire_version !== 10 ||
     request.endpoint !== 'https://mcp.example.test/mcp') process.exit(17);
 process.stdout.write(JSON.stringify({
-  wire_version: 9,
+  wire_version: 10,
   event: 'oauth_discovered',
   discovery: {
     mcp_endpoint: request.endpoint,
@@ -216,7 +216,7 @@ fs.appendFileSync({requests_json}, `${{JSON.stringify({{
   requested_scope: request.requested_scope ?? null
 }})}}\n`);
 process.stdout.write(`${{JSON.stringify({{
-  wire_version: 9,
+  wire_version: 10,
   event: 'oauth_failed',
   failure: {{
     kind: 'protocol',

@@ -100,6 +100,7 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
         json!([
             "installed",
             "mcp",
+            "stdio_mcp",
             "package",
             "skill",
             "github",
@@ -486,7 +487,7 @@ fn write_local_components(source: &Path) -> PathBuf {
         serde_json::to_vec(&json!({
             "$schema": crate::plugins::inspect::MCP_SCHEMA,
             "mcpServers": {
-                "local-helper": {"type": "stdio", "command": "local-helper"}
+                "local-helper": {"type": "sse", "url": "https://example.com/sse"}
             }
         }))
         .expect("encode unsupported MCP fixture"),

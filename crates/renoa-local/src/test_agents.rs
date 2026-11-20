@@ -12,6 +12,11 @@ use rusqlite::Connection;
 /// operation writes, in the same shape, so the binding table's foreign key holds
 /// and a later canonical read of the fixture agent succeeds.
 pub(crate) fn insert_agent(path: &Path, agent: &str) {
+    insert_agent_with_tools(path, agent, &[]);
+}
+
+/// [`insert_agent`] for an agent granted `tools`.
+pub(crate) fn insert_agent_with_tools(path: &Path, agent: &str, tools: &[&str]) {
     let operational = crate::AgentOperationalDefinition {
         instructions: "Fixture.".to_owned(),
         purpose: None,
@@ -41,8 +46,8 @@ pub(crate) fn insert_agent(path: &Path, agent: &str) {
     connection
         .execute(
             "INSERT INTO host_agent_tool_selections(agent_id, revision, tools_json)
-             VALUES (?1, 1, '[]')",
-            rusqlite::params![agent],
+             VALUES (?1, 1, ?2)",
+            rusqlite::params![agent, serde_json::to_string(tools).expect("tools")],
         )
         .expect("tool selection row");
 }

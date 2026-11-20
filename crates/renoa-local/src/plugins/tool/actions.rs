@@ -158,6 +158,7 @@ fn installed_failure(
 fn source_output(receipt: &PluginSourceReceipt) -> &'static str {
     match receipt {
         PluginSourceReceipt::Mcp => "mcp",
+        PluginSourceReceipt::StdioMcp => "stdio_mcp",
         PluginSourceReceipt::Package => "package",
         PluginSourceReceipt::Installed => "installed",
         PluginSourceReceipt::Skill => "skill",

@@ -229,6 +229,470 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
     assert_no_secret_in_database(&database, "exa-fixture-api-key");
 }
 
+#[tokio::test]
+async fn stdio_plugin_package_discovers_and_executes_end_to_end() {
+    let repository = workspace_root();
+    let adapter = compiled_adapter(&repository);
+    let directory = tempdir().expect("temporary stdio extension fixture");
+    let (agent_id, mcp, manager) = init_stdio_manager(directory.path(), adapter.clone());
+    let package_dir = directory.path().join("browse-fixture");
+    write_stdio_browse_fixture(&package_dir);
+
+    let inspected = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect stdio package");
+    assert!(inspected.notices().is_empty());
+    assert_eq!(inspected.mcp_servers().len(), 1);
+    assert!(inspected.mcp_servers()[0].is_stdio());
+
+    let bad_cred = manager
+        .invoke(
+            &agent_id,
+            directory.path(),
+            super::api::PluginRequest::Add {
+                source: super::api::PluginSource::Package {
+                    source_path: package_dir.clone(),
+                },
+                expected_digest: Some(inspected.digest().to_owned()),
+                server: Some("browse".to_owned()),
+                connection: Some("browse.bad".to_owned()),
+                credential: Some(super::api::PluginAuthentication::OAuth {}),
+                replace: false,
+            },
+            super::api::PluginInvocation {
+                operation_id: "stdio-bad-cred",
+                updates: None,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await;
+    assert!(bad_cred.is_err(), "OAuth on stdio must be rejected");
+    assert!(
+        mcp.agent_tool_summaries(&agent_id.to_string())
+            .unwrap()
+            .is_empty()
+    );
+
+    let added = manager
+        .invoke(
+            &agent_id,
+            directory.path(),
+            super::api::PluginRequest::Add {
+                source: super::api::PluginSource::Package {
+                    source_path: package_dir,
+                },
+                expected_digest: Some(inspected.digest().to_owned()),
+                server: Some("browse".to_owned()),
+                connection: Some("browse.local".to_owned()),
+                credential: None,
+                replace: false,
+            },
+            super::api::PluginInvocation {
+                operation_id: "stdio-pkg-add",
+                updates: None,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .expect("add stdio package");
+    let super::api::PluginOutcome::Added(outcome) = added else {
+        panic!("expected Added outcome");
+    };
+    assert!(matches!(
+        outcome.connection,
+        super::PluginConnectionOutcome::Connected { .. }
+    ));
+
+    let parsed = execute_stdio_ping(&mcp, agent_id, directory.path(), adapter, "hello-stdio").await;
+    assert_eq!(parsed["label"], "hello-stdio");
+    let expected_root = directory.path().join("plugins").join(inspected.digest());
+    assert_eq!(parsed["plugin_root"].as_str(), expected_root.to_str());
+    assert_eq!(parsed["cwd"], parsed["plugin_root"]);
+    // A server given PLUGIN_DATA finds it there, private to this user.
+    assert_private_dir(
+        &directory
+            .path()
+            .join("plugin-data")
+            .join(inspected.digest()),
+    );
+
+    // Verify stored integration endpoint matches the RESOLVED stdio config digest,
+    // distinct from the unresolved package mcp.json endpoint.
+    let stored = mcp
+        .connection_config("browse.local")
+        .expect("stored stdio connection config");
+    assert_ne!(
+        stored.endpoint,
+        inspected.mcp_servers()[0].endpoint(),
+        "resolved integration endpoint must bind the resolved paths, not unresolved placeholders"
+    );
+    assert_eq!(
+        stored.endpoint,
+        stored
+            .stdio
+            .as_ref()
+            .expect("stored stdio")
+            .canonical_endpoint()
+            .expect("canonical endpoint")
+    );
+}
+
+#[tokio::test]
+async fn stdio_plugin_data_dir_is_created_only_on_valid_connect_and_never_on_rejected_preflight() {
+    let repository = workspace_root();
+    let adapter = compiled_adapter(&repository);
+    let directory = tempdir().expect("temporary plugin_data stdio fixture");
+    let (agent_id, mcp, manager) = init_stdio_manager(directory.path(), adapter.clone());
+    let package_dir = directory.path().join("plugin-data-fixture");
+    write_stdio_browse_fixture(&package_dir);
+    fs::write(
+        package_dir.join("mcp.json"),
+        serde_json::to_vec_pretty(&json!({
+            "$schema": super::inspect::MCP_SCHEMA,
+            "mcpServers": {
+                "browse": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": ["${PLUGIN_ROOT}/server.mjs"],
+                    "cwd": "${PLUGIN_DATA}"
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let inspected = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect PLUGIN_DATA stdio package");
+    let data_dir = directory
+        .path()
+        .join("plugin-data")
+        .join(inspected.digest());
+
+    // Add package without connecting yet.
+    manager
+        .invoke(
+            &agent_id,
+            directory.path(),
+            super::api::PluginRequest::Add {
+                source: super::api::PluginSource::Package {
+                    source_path: package_dir,
+                },
+                expected_digest: Some(inspected.digest().to_owned()),
+                server: None,
+                connection: None,
+                credential: None,
+                replace: false,
+            },
+            super::api::PluginInvocation {
+                operation_id: "stdio-data-add-only",
+                updates: None,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .expect("install package without connecting");
+    assert!(
+        !data_dir.exists(),
+        "install alone must not create plugin-data"
+    );
+
+    for (op, restart, scope) in [
+        ("stdio-data-bad-restart", true, None),
+        ("stdio-data-bad-scope", false, Some("read")),
+    ] {
+        let rejected = manager
+            .connect_profile_operation(
+                super::manager::ProfileConnectionRequest {
+                    agent_id: &agent_id,
+                    package_digest: inspected.digest(),
+                    server_id: "browse",
+                    connection_id: "browse.data",
+                    credential: super::PluginCredential::None,
+                    replace: false,
+                    restart,
+                    requested_scope: scope,
+                    operation_id: op,
+                    updates: None,
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            matches!(rejected, Err(super::PluginError::Invalid(_))),
+            "{op} must be rejected: {rejected:?}"
+        );
+        assert!(!data_dir.exists(), "{op} must not create plugin-data");
+    }
+
+    // Valid connect creates plugin-data/<digest> and executes with cwd == plugin-data/<digest>.
+    manager
+        .connect_profile(
+            &agent_id,
+            inspected.digest(),
+            "browse",
+            "browse.data",
+            super::PluginCredential::None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("connect PLUGIN_DATA stdio package");
+    assert!(
+        data_dir.is_dir(),
+        "valid connect must create plugin-data dir"
+    );
+
+    let parsed = execute_stdio_ping(&mcp, agent_id, directory.path(), adapter, "data-cwd").await;
+    assert_eq!(parsed["cwd"].as_str(), data_dir.to_str());
+}
+
+#[tokio::test]
+async fn direct_stdio_mcp_source_adds_and_connects_end_to_end() {
+    let repository = workspace_root();
+    let adapter = compiled_adapter(&repository);
+    let directory = tempdir().expect("temporary direct stdio fixture");
+    let (agent_id, _mcp, manager) = init_stdio_manager(directory.path(), adapter);
+    let package_dir = directory.path().join("browse-fixture");
+    write_stdio_browse_fixture(&package_dir);
+
+    let direct = manager
+        .invoke(
+            &agent_id,
+            directory.path(),
+            super::api::PluginRequest::Add {
+                source: super::api::PluginSource::StdioMcp {
+                    name: "direct-stdio".to_owned(),
+                    description: "Direct stdio MCP fixture.".to_owned(),
+                    server: "direct".to_owned(),
+                    command: "node".to_owned(),
+                    args: vec![
+                        package_dir
+                            .join("server.mjs")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ],
+                    env: std::collections::BTreeMap::new(),
+                    cwd: None,
+                    documentation: Some("https://opencode.ai/browse".to_owned()),
+                },
+                expected_digest: None,
+                server: None,
+                connection: Some("direct.local".to_owned()),
+                credential: None,
+                replace: false,
+            },
+            super::api::PluginInvocation {
+                operation_id: "stdio-direct-add",
+                updates: None,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .expect("add direct stdio_mcp source");
+    let super::api::PluginOutcome::Added(direct_outcome) = direct else {
+        panic!("expected Added outcome");
+    };
+    assert!(matches!(
+        direct_outcome.source,
+        super::PluginSourceReceipt::StdioMcp
+    ));
+    assert!(matches!(
+        direct_outcome.connection,
+        super::PluginConnectionOutcome::Connected { .. }
+    ));
+}
+
+fn init_stdio_manager(
+    root: &Path,
+    adapter: PathBuf,
+) -> (renoa_kernel::AgentId, McpCatalogStore, PluginManager) {
+    let database = root.join("host.sqlite3");
+    catalog::initialize(&database).expect("initialize Host catalog");
+    let agent_id = test_agent_id(7);
+    crate::test_agents::insert_agent_with_tools(&database, &agent_id.to_string(), &["bash"]);
+    let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
+    let skills = test_skill_store(&database, root);
+    let manager = PluginManager::initialize(
+        database,
+        root.join("plugins"),
+        mcp.clone(),
+        Some(adapter),
+        None,
+        McpCredentialResolver::with_executables(
+            root.join("unused-gh"),
+            root.join("unused-secret-tool"),
+        ),
+        skills,
+    )
+    .expect("initialize plugin manager");
+    (agent_id, mcp, manager)
+}
+
+fn write_stdio_browse_fixture(package_dir: &Path) {
+    fs::create_dir_all(package_dir.join("skills/browse")).expect("create skill dir");
+    fs::write(
+        package_dir.join("server.mjs"),
+        r#"
+import { createInterface } from "node:readline";
+const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+rl.on("line", (line) => {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+  const msg = JSON.parse(trimmed);
+  if (msg.id === undefined) return;
+  if (msg.method === "server/discover") {
+    send({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        resultType: "complete",
+        supportedVersions: ["2026-07-28"],
+        capabilities: { tools: {} },
+        ttlMs: 0,
+        cacheScope: "private",
+        _meta: { "io.modelcontextprotocol/serverInfo": { name: "fixture-browse", version: "0.1.0" } }
+      }
+    });
+  } else if (msg.method === "tools/list") {
+    send({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        resultType: "complete",
+        ttlMs: 0,
+        cacheScope: "private",
+        tools: [{
+          name: "ping_browser",
+          description: "Return cwd and plugin root.",
+          inputSchema: {
+            type: "object",
+            properties: { label: { type: "string" } },
+            required: ["label"]
+          }
+        }]
+      }
+    });
+  } else if (msg.method === "tools/call") {
+    send({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        resultType: "complete",
+        isError: false,
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            label: msg.params.arguments.label,
+            cwd: process.cwd(),
+            plugin_root: process.env.PLUGIN_ROOT ?? null
+          })
+        }]
+      }
+    });
+  }
+});
+"#,
+    )
+    .expect("write stdio server script");
+    fs::write(
+        package_dir.join("plugin.json"),
+        serde_json::to_vec_pretty(&json!({
+            "$schema": super::inspect::PLUGIN_SCHEMA,
+            "name": "fixture.browse",
+            "version": "0.1.0",
+            "description": "Fixture stdio browser plugin."
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        package_dir.join("mcp.json"),
+        serde_json::to_vec_pretty(&json!({
+            "$schema": super::inspect::MCP_SCHEMA,
+            "mcpServers": {
+                "browse": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": ["${PLUGIN_ROOT}/server.mjs"],
+                    "cwd": "${PLUGIN_ROOT}"
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        package_dir.join("skills/browse/SKILL.md"),
+        "---\nname: browse\ndescription: Fixture browse skill.\n---\nUse ping_browser.\n",
+    )
+    .unwrap();
+}
+
+async fn execute_stdio_ping(
+    mcp: &McpCatalogStore,
+    agent_id: renoa_kernel::AgentId,
+    root: &Path,
+    adapter: PathBuf,
+    label: &str,
+) -> serde_json::Value {
+    let summaries = mcp
+        .agent_tool_summaries(&agent_id.to_string())
+        .expect("read agent MCP summaries");
+    assert_eq!(summaries.len(), 1);
+    let reference = summaries[0].reference().expect("tool reference");
+    assert_eq!(reference.tool_name(), "ping_browser");
+    let bindings = crate::mcp::agent_registry_bindings(
+        agent_id,
+        mcp.clone(),
+        Some(adapter.clone()),
+        crate::mcp::McpAuthorizationResolver::new(
+            mcp,
+            Some(adapter),
+            McpCredentialResolver::with_executables(
+                root.join("unused-gh"),
+                root.join("unused-secret-tool"),
+            ),
+        ),
+        renoa_kernel::SessionId::new(),
+        None,
+    );
+    let execute_tool = bindings
+        .into_iter()
+        .find(|binding| binding.tool().spec().name == "tool_execute")
+        .expect("tool_execute binding");
+    let output = renoa_agent::invoke_tool(
+        Some(execute_tool.tool().as_ref()),
+        renoa_agent::ToolCall {
+            id: "call-stdio".to_owned(),
+            name: "tool_execute".to_owned(),
+            arguments: json!({
+                "reference": reference.to_string(),
+                "arguments": { "label": label }
+            }),
+            thought_signature: None,
+            namespace: None,
+        },
+        CancellationToken::new(),
+        None,
+    )
+    .await
+    .expect("execute stdio tool");
+    assert!(!output.is_error, "stdio tool call failed: {output:?}");
+    let text = output
+        .content
+        .iter()
+        .find_map(|block| match block {
+            renoa_agent::ContentBlock::Text { text } => Some(text.as_str()),
+            renoa_agent::ContentBlock::Image { .. } => None,
+        })
+        .expect("text result");
+    serde_json::from_str(text).expect("json tool output")
+}
+
 pub(super) fn write_exa_plugin(root: &Path, endpoint: &str) {
     write_manifest(root);
     fs::write(
@@ -430,4 +894,275 @@ fn assert_no_secret_in_database(database: &Path, secret: &str) {
             );
         }
     }
+}
+
+struct GateFixture {
+    directory: tempfile::TempDir,
+    bash_agent: renoa_kernel::AgentId,
+    agent: renoa_kernel::AgentId,
+    manager: PluginManager,
+    package_dir: PathBuf,
+    digest: String,
+}
+
+/// A Host with one agent granted bash, one without, and a stdio package.
+async fn gate_fixture() -> GateFixture {
+    let adapter = compiled_adapter(&workspace_root());
+    let directory = tempdir().expect("temporary stdio gate fixture");
+    let (bash_agent, _mcp, manager) = init_stdio_manager(directory.path(), adapter);
+    let agent = test_agent_id(8);
+    crate::test_agents::insert_agent(&directory.path().join("host.sqlite3"), &agent.to_string());
+    let package_dir = directory.path().join("browse-fixture");
+    write_stdio_browse_fixture(&package_dir);
+    let digest = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect stdio package")
+        .digest()
+        .to_owned();
+    GateFixture {
+        directory,
+        bash_agent,
+        agent,
+        manager,
+        package_dir,
+        digest,
+    }
+}
+
+impl GateFixture {
+    async fn invoke(
+        &self,
+        agent: renoa_kernel::AgentId,
+        request: super::api::PluginRequest,
+        operation: &str,
+    ) -> Result<super::api::PluginOutcome, PluginError> {
+        self.manager
+            .invoke(
+                &agent,
+                self.directory.path(),
+                request,
+                super::api::PluginInvocation {
+                    operation_id: operation,
+                    updates: None,
+                    cancellation: CancellationToken::new(),
+                },
+            )
+            .await
+    }
+
+    async fn connect(
+        &self,
+        agent: renoa_kernel::AgentId,
+    ) -> Result<crate::McpCatalogSnapshot, PluginError> {
+        self.manager
+            .connect_profile(
+                &agent,
+                &self.digest,
+                "browse",
+                "browse.local",
+                super::PluginCredential::None,
+                CancellationToken::new(),
+            )
+            .await
+    }
+}
+
+fn add_with_connection(
+    source: super::api::PluginSource,
+    expected_digest: Option<String>,
+    server: Option<&str>,
+) -> super::api::PluginRequest {
+    super::api::PluginRequest::Add {
+        source,
+        expected_digest,
+        server: server.map(str::to_owned),
+        connection: Some("browse.local".to_owned()),
+        credential: None,
+        replace: false,
+    }
+}
+
+fn assert_bash_refusal<T>(outcome: Result<T, PluginError>) {
+    match outcome {
+        Err(PluginError::Unavailable(message)) => assert!(message.contains("bash"), "{message}"),
+        Err(other) => panic!("expected the bash refusal, got {other:?}"),
+        Ok(_) => panic!("expected the bash refusal, but it connected"),
+    }
+}
+
+#[tokio::test]
+async fn an_agent_without_bash_cannot_add_a_stdio_server_and_the_refusal_leaves_nothing() {
+    let fixture = gate_fixture().await;
+    let direct = super::api::PluginSource::StdioMcp {
+        name: "direct-stdio".to_owned(),
+        description: "Direct stdio MCP fixture.".to_owned(),
+        server: "direct".to_owned(),
+        command: "node".to_owned(),
+        args: vec![
+            fixture
+                .package_dir
+                .join("server.mjs")
+                .to_string_lossy()
+                .into_owned(),
+        ],
+        env: std::collections::BTreeMap::new(),
+        cwd: None,
+        documentation: None,
+    };
+    assert_bash_refusal(
+        fixture
+            .invoke(
+                fixture.agent,
+                add_with_connection(direct, None, None),
+                "gate-direct",
+            )
+            .await,
+    );
+    let package = super::api::PluginSource::Package {
+        source_path: fixture.package_dir.clone(),
+    };
+    assert_bash_refusal(
+        fixture
+            .invoke(
+                fixture.agent,
+                add_with_connection(package, Some(fixture.digest.clone()), Some("browse")),
+                "gate-package",
+            )
+            .await,
+    );
+
+    // Both are refused before any install.
+    let library = fixture.manager.list_report().await.expect("library");
+    assert!(library.installed().is_empty());
+    assert!(!fixture.directory.path().join("plugin-data").exists());
+}
+
+#[tokio::test]
+async fn only_an_agent_with_bash_connects_a_stdio_server_and_then_any_agent_may_use_it() {
+    let fixture = gate_fixture().await;
+    // Installing only publishes the package; connecting it is what runs it.
+    fixture
+        .invoke(
+            fixture.agent,
+            super::api::PluginRequest::Install {
+                source: super::api::PluginSource::Package {
+                    source_path: fixture.package_dir.clone(),
+                },
+                expected_digest: fixture.digest.clone(),
+            },
+            "gate-install",
+        )
+        .await
+        .expect("install without running");
+    assert_bash_refusal(fixture.connect(fixture.agent).await);
+    for (operation, replace) in [("gate-connect", false), ("gate-replace", true)] {
+        assert_bash_refusal(
+            fixture
+                .invoke(
+                    fixture.agent,
+                    super::api::PluginRequest::Connect {
+                        package_digest: fixture.digest.clone(),
+                        server: "browse".to_owned(),
+                        connection: "browse.local".to_owned(),
+                        credential: None,
+                        replace,
+                        restart: false,
+                        required_scope: None,
+                    },
+                    operation,
+                )
+                .await,
+        );
+    }
+
+    fixture
+        .connect(fixture.bash_agent)
+        .await
+        .expect("an agent with bash connects the stdio server");
+    fixture
+        .invoke(
+            fixture.agent,
+            super::api::PluginRequest::Enable {
+                connection: "browse.local".to_owned(),
+            },
+            "gate-enable",
+        )
+        .await
+        .expect("an agent without bash uses a connected stdio server");
+}
+
+#[tokio::test]
+async fn a_stdio_connect_that_fails_removes_the_data_directory_it_made() {
+    let repository = workspace_root();
+    let adapter = compiled_adapter(&repository);
+    let directory = tempdir().expect("temporary failing stdio fixture");
+    let (agent_id, _mcp, manager) = init_stdio_manager(directory.path(), adapter);
+    let package_dir = directory.path().join("missing-server");
+    write_stdio_browse_fixture(&package_dir);
+    fs::write(
+        package_dir.join("mcp.json"),
+        serde_json::to_vec_pretty(&json!({
+            "$schema": super::inspect::MCP_SCHEMA,
+            "mcpServers": {
+                "browse": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": ["${PLUGIN_ROOT}/missing.mjs"],
+                    "cwd": "${PLUGIN_DATA}"
+                }
+            }
+        }))
+        .expect("encode mcp.json"),
+    )
+    .expect("write mcp.json");
+    let inspected = manager
+        .inspect(&package_dir)
+        .await
+        .expect("inspect failing stdio package");
+    let data_dir = directory
+        .path()
+        .join("plugin-data")
+        .join(inspected.digest());
+    manager
+        .invoke(
+            &agent_id,
+            directory.path(),
+            super::api::PluginRequest::Install {
+                source: super::api::PluginSource::Package {
+                    source_path: package_dir,
+                },
+                expected_digest: inspected.digest().to_owned(),
+            },
+            super::api::PluginInvocation {
+                operation_id: "failing-install",
+                updates: None,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .expect("install failing package");
+
+    let failed = manager
+        .connect_profile(
+            &agent_id,
+            inspected.digest(),
+            "browse",
+            "browse.missing",
+            super::PluginCredential::None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(failed.is_err(), "a server that never starts cannot connect");
+    assert!(
+        !data_dir.exists(),
+        "the failed connect removed its data directory"
+    );
+}
+
+fn assert_private_dir(path: &Path) {
+    let metadata = fs::metadata(path).expect("the directory exists");
+    assert!(metadata.is_dir());
+    let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions());
+    assert_eq!(mode & 0o777, 0o700, "{}", path.display());
 }

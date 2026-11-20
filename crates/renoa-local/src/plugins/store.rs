@@ -8,7 +8,7 @@ use super::{
     PluginMcpServer, PluginMetadata, inspect,
 };
 use crate::{
-    mcp::McpRequestHeaders,
+    mcp::{McpRequestHeaders, McpStdioConfig},
     package_tree::{self, publish},
 };
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -22,6 +22,21 @@ pub(crate) struct PluginStore {
 impl PluginStore {
     pub(super) fn database(&self) -> &std::path::Path {
         &self.database
+    }
+
+    pub(super) fn package_path(&self, digest: &str) -> Result<PathBuf, PluginError> {
+        validate_digest(digest)?;
+        Ok(self.packages.join(digest))
+    }
+
+    pub(super) fn plugin_data_dir(&self, digest: &str) -> Result<PathBuf, PluginError> {
+        validate_digest(digest)?;
+        Ok(self
+            .packages
+            .parent()
+            .unwrap_or(&self.packages)
+            .join("plugin-data")
+            .join(digest))
     }
 
     pub(super) fn initialize(database: PathBuf, packages: PathBuf) -> Result<Self, PluginError> {
@@ -264,15 +279,22 @@ fn ensure_installed(
     )?;
     if inserted == 1 {
         for server in &plugin.mcp_servers {
+            let (transport, stdio_json) = match &server.stdio {
+                Some(stdio) => ("stdio", Some(stdio.encoded()?)),
+                None => ("streamable_http", None),
+            };
             transaction.execute(
                 "INSERT INTO plugin_mcp_servers(
-                    plugin_digest, server_id, transport, endpoint, request_headers_json, integration_id
-                 ) VALUES (?1, ?2, 'streamable_http', ?3, ?4, ?5)",
+                    plugin_digest, server_id, transport, endpoint,
+                    request_headers_json, stdio_config_json, integration_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     plugin.digest,
                     server.id,
+                    transport,
                     server.endpoint,
                     serde_json::to_string(&server.request_headers)?,
+                    stdio_json,
                     super::manager::integration_id(&plugin.digest, &server.id),
                 ],
             )?;
@@ -320,7 +342,7 @@ fn load_stored(
         return Ok(None);
     };
     let mut statement = connection.prepare(
-        "SELECT server_id, transport, endpoint, request_headers_json
+        "SELECT server_id, transport, endpoint, request_headers_json, stdio_config_json
          FROM plugin_mcp_servers WHERE plugin_digest = ?1 ORDER BY server_id",
     )?;
     let servers = statement
@@ -330,20 +352,51 @@ fn load_stored(
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })?
         .map(|row| {
-            let (id, transport, endpoint, headers) = row?;
-            if transport != "streamable_http" {
-                return Err(PluginError::Conflict(format!(
-                    "installed package '{digest}' has unknown transport '{transport}'"
-                )));
-            }
+            let (id, transport, endpoint, headers, stdio_json) = row?;
+            let stdio = match transport.as_str() {
+                "streamable_http" => {
+                    if stdio_json.is_some() {
+                        return Err(PluginError::Conflict(format!(
+                            "installed package '{digest}' has unexpected stdio config on streamable_http server '{id}'"
+                        )));
+                    }
+                    None
+                }
+                "stdio" => {
+                    let encoded = stdio_json.ok_or_else(|| {
+                        PluginError::Conflict(format!(
+                            "installed package '{digest}' is missing stdio config for server '{id}'"
+                        ))
+                    })?;
+                    Some(McpStdioConfig::from_stored(&encoded)?)
+                }
+                _ => {
+                    return Err(PluginError::Conflict(format!(
+                        "installed package '{digest}' has unknown transport '{transport}'"
+                    )));
+                }
+            };
             let headers = McpRequestHeaders::from_stored(&headers)?;
+            crate::mcp::validate_connection_binding(
+                &endpoint,
+                &headers,
+                stdio.as_ref(),
+                &crate::mcp::McpConnectionAuth::None,
+            )
+            .map_err(|error| {
+                PluginError::Conflict(format!(
+                    "installed package '{digest}' has inconsistent transport configuration for server '{id}': {error}"
+                ))
+            })?;
             Ok(PluginMcpServer {
                 id,
                 endpoint,
                 request_headers: headers.values().clone(),
+                stdio,
             })
         })
         .collect::<Result<Vec<_>, PluginError>>()?;

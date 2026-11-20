@@ -40,6 +40,13 @@ define_built_in_capabilities! {
     Find => "find",
 }
 
+/// Whether an agent selecting `tools` may run commands on this machine: only
+/// one granted bash may, so only it may start a command such as a stdio MCP
+/// server.
+pub(crate) fn runs_commands(tools: &std::collections::BTreeSet<String>) -> bool {
+    tools.contains(BuiltInCapability::Bash.name())
+}
+
 pub(crate) const PLUGIN_MANAGE: &str = "plugin_manage";
 pub(crate) const AGENT_MANAGE: &str = "agent_manage";
 pub(crate) const AGENT_ROSTER: &str = "agent_roster";

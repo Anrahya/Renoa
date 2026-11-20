@@ -1,17 +1,38 @@
+use renoa_kernel::AgentId;
+
 use super::{default_connection_id, integration_id};
 use crate::{
     mcp::{
         McpCatalogStore, McpConnectionAuth, McpConnectionCandidate, McpHostError,
-        McpOAuthRegistration, McpRequestHeaders,
+        McpOAuthRegistration, McpRequestHeaders, McpStdioConfig,
     },
     plugins::{
         PluginConnectionRequest, PluginCredential, PluginError, PluginMcpServer,
-        PluginOAuthRegistration,
+        PluginOAuthRegistration, store::PluginStore,
     },
 };
 
+pub(super) fn resolve_server_stdio(
+    store: &PluginStore,
+    digest: &str,
+    server: &PluginMcpServer,
+) -> Result<Option<McpStdioConfig>, PluginError> {
+    let Some(stdio) = server.stdio() else {
+        return Ok(None);
+    };
+    let root = store.package_path(digest)?;
+    let data = store.plugin_data_dir(digest)?;
+    Ok(Some(stdio.resolve_for_package(&root, &data)?))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one preflight for both add and connect: the caller, the stores, and the selection"
+)]
 pub(super) fn add_connection(
     catalog: &McpCatalogStore,
+    store: &PluginStore,
+    agent: AgentId,
     digest: &str,
     servers: &[PluginMcpServer],
     request: Option<&PluginConnectionRequest>,
@@ -38,27 +59,56 @@ pub(super) fn add_connection(
                     .to_owned(),
             )),
         };
+    if server.stdio().is_some()
+        && !crate::capabilities::runs_commands(
+            &crate::host::definition::read_selection(
+                &crate::host::catalog::open_verified(catalog.path())?,
+                agent,
+            )?
+            .tools,
+        )
+    {
+        return Err(PluginError::Unavailable(
+            "a stdio MCP server runs a command on this machine, so connecting one needs the bash \
+             tool, which this agent does not have; ask the owner to grant this agent bash, or use \
+             a remote MCP server"
+                .to_owned(),
+        ));
+    }
     let connection = request
         .and_then(|request| request.id.clone())
         .unwrap_or_else(|| default_connection_id(digest, server.id()));
     crate::mcp::validate_identity("connection", &connection)?;
+    let stdio = resolve_server_stdio(store, digest, server)?;
+    if stdio.is_some()
+        && request.is_some_and(|request| !matches!(request.credential, PluginCredential::None))
+    {
+        return Err(PluginError::Invalid(
+            "stdio MCP servers do not accept HTTP credentials or OAuth; omit credential".to_owned(),
+        ));
+    }
+    let endpoint = match &stdio {
+        Some(resolved) => resolved.canonical_endpoint()?,
+        None => server.endpoint().to_owned(),
+    };
     let auth = preflight_auth(
         catalog,
         &connection,
-        server.endpoint(),
+        &endpoint,
         request.map(|request| &request.credential),
         request.is_some_and(|request| request.replace),
     )?;
     let candidate = McpConnectionCandidate::new(
         integration_id(digest, server.id()),
         connection,
-        server.endpoint().to_owned(),
+        endpoint,
         McpRequestHeaders::new(
             server
                 .request_headers()
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone())),
         )?,
+        stdio,
         auth,
     )?;
     catalog.preflight_connection(&candidate, request.is_some_and(|request| request.replace))?;

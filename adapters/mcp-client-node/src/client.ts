@@ -1,5 +1,8 @@
 import {
   Client,
+  ProtocolError,
+  SdkError,
+  SdkErrorCode,
   SUPPORTED_PROTOCOL_VERSIONS as LEGACY_PROTOCOL_VERSIONS,
   StreamableHTTPClientTransport,
   type ListToolsResult,
@@ -16,6 +19,7 @@ import type {
   CatalogTool,
   RejectedTool,
   WireCredential,
+  WireStdioTarget,
 } from "./contract.js";
 import {
   AdapterProblem,
@@ -35,6 +39,10 @@ import {
 import { projectToolResult } from "./result.js";
 import { executeOAuthRequest, isOAuthRequest } from "./oauth.js";
 import {
+  createGuardedStdioTransport,
+  parseStdioEndpoint,
+} from "./stdio-transport.js";
+import {
   CallExchangeTracker,
   Deadline,
   guardedFetch,
@@ -51,6 +59,14 @@ export interface AdapterHooks {
   readonly registerCleanup: (cleanup: () => Promise<void>) => void;
 }
 
+type EndpointTarget =
+  | { readonly kind: "http"; readonly url: URL; readonly label: string }
+  | {
+      readonly kind: "stdio";
+      readonly stdio: WireStdioTarget;
+      readonly label: string;
+    };
+
 export async function executeAdapterRequest(
   request: AdapterRequest,
   hooks: AdapterHooks,
@@ -61,10 +77,20 @@ export async function executeAdapterRequest(
   const tracker = new CallExchangeTracker();
   let record: AdapterRecord;
   try {
-    const endpoint = parseEndpoint(request.endpoint);
+    const target: EndpointTarget =
+      request.stdio !== undefined
+        ? {
+            kind: "stdio",
+            stdio: request.stdio,
+            label: parseStdioEndpoint(request.endpoint),
+          }
+        : (() => {
+            const url = parseEndpoint(request.endpoint);
+            return { kind: "http", url, label: url.href };
+          })();
     if (request.action === "discover") {
       const catalog = await discoverCatalog(
-        endpoint,
+        target,
         hooks,
         tracker,
         request.headers,
@@ -72,7 +98,7 @@ export async function executeAdapterRequest(
       );
       record = { wire_version: WIRE_VERSION, event: "discovered", catalog };
     } else {
-      const result = await callTool(endpoint, request, hooks, tracker);
+      const result = await callTool(target, request, hooks, tracker);
       record = { wire_version: WIRE_VERSION, event: "completed", result };
     }
   } catch (error) {
@@ -121,7 +147,7 @@ function redactCredential(
 }
 
 async function discoverCatalog(
-  endpoint: URL,
+  target: EndpointTarget,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
   headers: RuntimeRequest["headers"],
@@ -129,7 +155,7 @@ async function discoverCatalog(
 ) {
   const deadline = new Deadline(DISCOVERY_TIMEOUT_MS);
   const client = await connectClient(
-    endpoint,
+    target,
     "discover",
     deadline,
     hooks,
@@ -201,7 +227,7 @@ async function discoverCatalog(
 
   return finalizeCatalog(
     {
-      endpoint: endpoint.href,
+      endpoint: target.label,
       protocol_version: protocolVersion,
       adapter_revision: MCP_ADAPTER_REVISION,
     },
@@ -211,7 +237,7 @@ async function discoverCatalog(
 }
 
 async function callTool(
-  endpoint: URL,
+  target: EndpointTarget,
   request: Extract<AdapterRequest, { readonly action: "call" }>,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
@@ -219,7 +245,7 @@ async function callTool(
   const selected = validateFrozenTool(request.tool, request.arguments);
   const deadline = new Deadline(TOOL_CALL_TIMEOUT_MS);
   const client = await connectClient(
-    endpoint,
+    target,
     "call",
     deadline,
     hooks,
@@ -257,7 +283,7 @@ async function callTool(
 }
 
 async function connectClient(
-  endpoint: URL,
+  target: EndpointTarget,
   action: RuntimeRequest["action"],
   deadline: Deadline,
   hooks: AdapterHooks,
@@ -266,27 +292,40 @@ async function connectClient(
   credential: WireCredential | undefined,
   expectedProtocolVersion: string | undefined,
 ): Promise<Client> {
-  const fetch = guardedFetch(
-    action,
-    tracker,
-    hooks.dispatchStarted,
-    hooks.signal,
-    endpoint,
-    headers,
-    credential,
-  );
-  const transport = new StreamableHTTPClientTransport(endpoint, {
-    fetch,
-    requestInit: { redirect: "manual" },
-    reconnectionOptions: {
-      maxReconnectionDelay: 1,
-      initialReconnectionDelay: 1,
-      reconnectionDelayGrowFactor: 1,
-      maxRetries: 0,
-    },
-    onInsufficientScope: "throw",
-    maxStepUpRetries: 0,
-  });
+  let stdioStderr: (() => string) | undefined;
+  const transport =
+    target.kind === "stdio"
+      ? (() => {
+          const guarded = createGuardedStdioTransport(
+            target.stdio,
+            action,
+            tracker,
+            hooks.dispatchStarted,
+            hooks.signal,
+          );
+          stdioStderr = guarded.stderrSnippet;
+          return guarded.transport;
+        })()
+      : new StreamableHTTPClientTransport(target.url, {
+          fetch: guardedFetch(
+            action,
+            tracker,
+            hooks.dispatchStarted,
+            hooks.signal,
+            target.url,
+            headers,
+            credential,
+          ),
+          requestInit: { redirect: "manual" },
+          reconnectionOptions: {
+            maxReconnectionDelay: 1,
+            initialReconnectionDelay: 1,
+            reconnectionDelayGrowFactor: 1,
+            maxRetries: 0,
+          },
+          onInsufficientScope: "throw",
+          maxStepUpRetries: 0,
+        });
   const protocol = protocolSelection(expectedProtocolVersion);
   const client = new Client(
     { name: "renoa-mcp-client", version: "0.1.0" },
@@ -303,7 +342,32 @@ async function connectClient(
     },
   );
   hooks.registerCleanup(() => client.close());
-  await client.connect(transport, deadline.requestOptions(hooks.signal));
+  if (hooks.signal.aborted) {
+    throw createAbortError("MCP operation was cancelled before connecting.");
+  }
+  try {
+    await connectWithAbort(
+      client,
+      transport,
+      deadline.requestOptions(hooks.signal),
+      hooks.signal,
+    );
+  } catch (error) {
+    if (
+      stdioStderr !== undefined &&
+      shouldWrapStdioConnectError(error, hooks.signal.aborted)
+    ) {
+      const detail = stdioStderr();
+      if (detail.length > 0) {
+        throw new AdapterProblem(
+          "unavailable",
+          `stdio MCP server failed to connect: ${detail.slice(0, 384)}`,
+          { code: "stdio_connect_failed", cause: error },
+        );
+      }
+    }
+    throw error;
+  }
   const negotiated = requireNegotiatedProtocolVersion(client);
   if (
     expectedProtocolVersion !== undefined &&
@@ -323,6 +387,66 @@ async function connectClient(
     );
   }
   return client;
+}
+
+function createAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+async function connectWithAbort(
+  client: Client,
+  transport: Parameters<Client["connect"]>[0],
+  options: Parameters<Client["connect"]>[1],
+  signal: AbortSignal,
+): Promise<void> {
+  const connectPromise = client.connect(transport, options);
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      void transport.close().catch(() => {});
+      reject(createAbortError("MCP operation was cancelled while connecting."));
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  try {
+    await Promise.race([connectPromise, abortPromise]);
+  } finally {
+    if (onAbort !== undefined) {
+      signal.removeEventListener("abort", onAbort);
+    }
+    void connectPromise.catch(() => {});
+  }
+}
+
+function shouldWrapStdioConnectError(
+  error: unknown,
+  aborted: boolean,
+): boolean {
+  if (aborted) {
+    return false;
+  }
+  if (error instanceof AdapterProblem || error instanceof ProtocolError) {
+    return false;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return false;
+  }
+  if (
+    error instanceof SdkError &&
+    (error.code === SdkErrorCode.RequestTimeout ||
+      error.code === SdkErrorCode.EraNegotiationFailed ||
+      error.code === SdkErrorCode.CapabilityNotSupported ||
+      error.code === SdkErrorCode.MethodNotSupportedByProtocolVersion)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 const SUPPORTED_PROTOCOL_VERSIONS = [

@@ -9,11 +9,23 @@ pub(super) const SCHEMA: &str = "
 
     CREATE TABLE mcp_integrations (
         integration_id TEXT PRIMARY KEY CHECK (length(integration_id) > 0),
-        kind TEXT NOT NULL CHECK (kind = 'direct_streamable_http'),
+        kind TEXT NOT NULL CHECK (kind IN ('direct_streamable_http', 'direct_stdio')),
         endpoint TEXT NOT NULL CHECK (length(endpoint) > 0),
         request_headers_json TEXT NOT NULL CHECK (
             json_valid(request_headers_json)
             AND json_type(request_headers_json) = 'object'
+        ),
+        stdio_config_json TEXT,
+        CHECK (
+            (kind = 'direct_streamable_http' AND stdio_config_json IS NULL)
+            OR
+            (kind = 'direct_stdio'
+             AND length(endpoint) = 70
+             AND substr(endpoint, 1, 6) = 'stdio:'
+             AND request_headers_json = '{}'
+             AND stdio_config_json IS NOT NULL
+             AND json_valid(stdio_config_json)
+             AND json_type(stdio_config_json) = 'object')
         )
     ) STRICT;
 
@@ -164,11 +176,23 @@ pub(super) const SCHEMA: &str = "
             REFERENCES installed_plugins(plugin_digest) ON DELETE RESTRICT,
         server_id TEXT NOT NULL CHECK (length(server_id) BETWEEN 1 AND 128),
         integration_id TEXT NOT NULL UNIQUE,
-        transport TEXT NOT NULL CHECK (transport = 'streamable_http'),
+        transport TEXT NOT NULL CHECK (transport IN ('streamable_http', 'stdio')),
         endpoint TEXT NOT NULL CHECK (length(endpoint) > 0),
         request_headers_json TEXT NOT NULL CHECK (
             json_valid(request_headers_json)
             AND json_type(request_headers_json) = 'object'
+        ),
+        stdio_config_json TEXT,
+        CHECK (
+            (transport = 'streamable_http' AND stdio_config_json IS NULL)
+            OR
+            (transport = 'stdio'
+             AND length(endpoint) = 70
+             AND substr(endpoint, 1, 6) = 'stdio:'
+             AND request_headers_json = '{}'
+             AND stdio_config_json IS NOT NULL
+             AND json_valid(stdio_config_json)
+             AND json_type(stdio_config_json) = 'object')
         ),
         PRIMARY KEY (plugin_digest, server_id)
     ) STRICT;

@@ -428,8 +428,9 @@ mod tests {
             connection_id: "drive".to_owned(),
             endpoint: "https://drivemcp.googleapis.com/mcp/v1".to_owned(),
             request_headers: McpRequestHeaders::default(),
+            stdio: None,
             protocol_version: "2026-07-28".to_owned(),
-            adapter_revision: "mcp-client-node-v0.10.0".to_owned(),
+            adapter_revision: "mcp-client-node-v0.11.0".to_owned(),
             auth: McpConnectionAuth::oauth(
                 "drive",
                 "https://drivemcp.googleapis.com/mcp/v1",
