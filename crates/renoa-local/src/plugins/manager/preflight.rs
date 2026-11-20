@@ -15,14 +15,14 @@ use crate::{
 pub(super) fn resolve_server_stdio(
     store: &PluginStore,
     digest: &str,
+    data: &std::path::Path,
     server: &PluginMcpServer,
 ) -> Result<Option<McpStdioConfig>, PluginError> {
     let Some(stdio) = server.stdio() else {
         return Ok(None);
     };
     let root = store.package_path(digest)?;
-    let data = store.plugin_data_dir(digest)?;
-    Ok(Some(stdio.resolve_for_package(&root, &data)?))
+    Ok(Some(stdio.resolve_for_package(&root, data)?))
 }
 
 #[expect(
@@ -34,6 +34,7 @@ pub(super) fn add_connection(
     store: &PluginStore,
     agent: AgentId,
     digest: &str,
+    data: &std::path::Path,
     servers: &[PluginMcpServer],
     request: Option<&PluginConnectionRequest>,
     connect_default: bool,
@@ -79,7 +80,7 @@ pub(super) fn add_connection(
         .and_then(|request| request.id.clone())
         .unwrap_or_else(|| default_connection_id(digest, server.id()));
     crate::mcp::validate_identity("connection", &connection)?;
-    let stdio = resolve_server_stdio(store, digest, server)?;
+    let stdio = resolve_server_stdio(store, digest, data, server)?;
     if stdio.is_some()
         && request.is_some_and(|request| !matches!(request.credential, PluginCredential::None))
     {

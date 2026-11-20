@@ -34,10 +34,10 @@ This plugin runs `anomalyco/browse` through Renoa's stdio MCP transport with `np
 Connecting this plugin needs bash, and so does this setup. Do it once, after adding the plugin; it pairs the owner's
 Chrome, on a computer that stays on, with the relay on this Host.
 
-1. Point your shell at the plugin's browse state (the newest revision's, if there are several):
+1. Point your shell at the plugin's browse state:
 
    ```sh
-   BROWSE_HOME=$(ls -dt ~/.renoa/plugin-data/*/browse | head -n 1)
+   BROWSE_HOME=~/.renoa/plugin-data/renoa.browse/browse
    export OPENCODE_BROWSER_HOME="$BROWSE_HOME" npm_config_cache="$(dirname "$BROWSE_HOME")/npm" \
      npm_config_update_notifier=false OPENCODE_BROWSER_AUTO_UPDATE=off
    ```
@@ -54,5 +54,5 @@ Chrome, on a computer that stays on, with the relay on this Host.
 4. Call `status` until it reports a connected browser, then tell the owner it is ready and that the computer must
    stay awake with Chrome open for agents to browse.
 
-A new revision of this plugin has a new data directory, so pair again after replacing it.
+Every revision of this plugin shares one data directory, named after the plugin, so the pairing survives an update.
 

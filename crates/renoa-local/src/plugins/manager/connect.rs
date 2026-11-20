@@ -218,12 +218,15 @@ impl PluginManager {
             request.credential.clone(),
             request.replace,
         );
+        let data_dir = self.store.plugin_data_dir(plugin.metadata().name())?;
+        let preflight_data = data_dir.clone();
         tokio::task::spawn_blocking(move || {
             super::preflight::add_connection(
                 &preflight_catalog,
                 &preflight_store,
                 agent,
                 &preflight_digest,
+                &preflight_data,
                 &preflight_servers,
                 Some(&preflight_request),
                 false,
@@ -231,7 +234,12 @@ impl PluginManager {
             )
         })
         .await??;
-        let stdio = super::preflight::resolve_server_stdio(&self.store, plugin.digest(), &server)?;
+        let stdio = super::preflight::resolve_server_stdio(
+            &self.store,
+            plugin.digest(),
+            &data_dir,
+            &server,
+        )?;
         let endpoint = match &stdio {
             Some(resolved) => resolved.canonical_endpoint()?,
             None => server.endpoint().to_owned(),
@@ -239,8 +247,7 @@ impl PluginManager {
         let plugin_data_dir = server
             .stdio()
             .is_some_and(McpStdioConfig::exposes_plugin_dirs)
-            .then(|| self.store.plugin_data_dir(plugin.digest()))
-            .transpose()?;
+            .then_some(data_dir);
         let auth = credential_auth(
             request.credential.clone(),
             request.connection_id,

@@ -193,15 +193,12 @@ impl PluginManager {
     ) -> Result<PluginAddOutcome, PluginError> {
         super::intake::require_active(&cancellation)?;
         validate_add_source(&source, expected.as_deref(), connection_request.is_some())?;
-        let connect_by_default = matches!(
-            source,
-            super::api::PluginSource::Mcp { .. } | super::api::PluginSource::StdioMcp { .. }
-        );
         let generated_server = match &source {
             super::api::PluginSource::Mcp { server, .. }
             | super::api::PluginSource::StdioMcp { server, .. } => Some(server.clone()),
             _ => None,
         };
+        let connect_by_default = generated_server.is_some();
         let receipt = super::intake::receipt(&source);
         let existing = if let super::api::PluginSource::Installed { package_digest } = &source {
             Some(self.load_available(package_digest).await?)
@@ -223,15 +220,7 @@ impl PluginManager {
         } else {
             None
         };
-        let (digest, servers) = if let Some(existing) = &existing {
-            (existing.digest(), existing.mcp_servers())
-        } else {
-            let captured = captured.as_ref().expect("new source was captured");
-            (
-                captured.inspection.digest(),
-                captured.inspection.mcp_servers(),
-            )
-        };
+        let (digest, metadata, servers) = added_plugin(existing.as_ref(), captured.as_ref());
         if let Some(expected) = &expected
             && expected != digest
         {
@@ -241,6 +230,7 @@ impl PluginManager {
         }
         let catalog = self.mcp_catalog.clone();
         let store = self.store.clone();
+        let data = self.store.plugin_data_dir(metadata.name())?;
         let digest = digest.to_owned();
         let servers = servers.to_vec();
         let preflight_request = connection_request.clone();
@@ -252,6 +242,7 @@ impl PluginManager {
                 &store,
                 agent,
                 &digest,
+                &data,
                 &servers,
                 preflight_request.as_ref(),
                 connect_by_default,
@@ -377,6 +368,31 @@ impl PluginManager {
             skills,
             connection: outcome,
         })
+    }
+}
+
+/// The plugin an add works on: the installed revision, or the source it captured.
+fn added_plugin<'a>(
+    existing: Option<&'a InstalledPlugin>,
+    captured: Option<&'a super::CapturedPlugin>,
+) -> (
+    &'a str,
+    &'a super::PluginMetadata,
+    &'a [super::PluginMcpServer],
+) {
+    if let Some(existing) = existing {
+        (
+            existing.digest(),
+            existing.metadata(),
+            existing.mcp_servers(),
+        )
+    } else {
+        let captured = &captured.expect("new source was captured").inspection;
+        (
+            captured.digest(),
+            captured.metadata(),
+            captured.mcp_servers(),
+        )
     }
 }
 
