@@ -538,6 +538,7 @@ class ScreensTest : ScreenTest() {
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Send").performTouchInput { longClick() }
         compose.waitForIdle()
+        snapshot("chat-send-when-done")
         compose.onNodeWithText(SEND_WHEN_DONE).performClick()
         compose.waitForIdle()
         assertEquals(listOf(true, false), steers)
