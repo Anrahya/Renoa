@@ -73,6 +73,16 @@ without `off` when reasoning is mandatory. The first binding learned for such a
 model is kept and cached; while the list cannot be fetched the cache stands in,
 and a model OpenRouter no longer lists is no longer advertised.
 
+An owner may prefer OpenRouter providers per model in `openrouter-routing.json`
+beside the credential store, mapping a model id to OpenRouter's provider
+preference object, for example
+`{"thinkingmachines/inkling-2-small": {"order": ["primeintellect"]}}`. The
+adapter reads it on every model call and sends the entry as the request's
+`provider` object; it is applied after the binding is fixed, so it never
+changes a session's binding. An unreadable file, or an entry for a model
+served on Anthropic Messages, which carries no preference here, refuses the
+call instead of being ignored.
+
 Alpha refreshes the catalog when a session is created or loaded and immediately
 before selecting a different model in an open session. Configuration changes
 remain excluded while a prompt is active. Existing sessions store

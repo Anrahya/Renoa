@@ -34,6 +34,7 @@ import { streamSimple as streamOpenAiChat } from "@earendil-works/pi-ai/api/open
 import { streamSimple as streamOpenAiResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { streamSimple as streamVertex } from "@earendil-works/pi-ai/api/google-vertex";
 import { vertexRouteEnv } from "./providers/google-vertex.js";
+import { withOpenRouterRouting } from "./providers/openrouter.js";
 
 const OAUTH_SKEW_MS = 5 * 60 * 1000;
 
@@ -88,13 +89,14 @@ export function loadRuntime(options: RuntimeOptions): LoadedRuntime {
   const credentials = new SqliteCredentialStore(options.authStorePath, options.credentialStore);
   try {
     requireCredential(credentials, options.provider);
-    const model = resolveModel(options);
-    const reasoningLevel = resolveReasoningLevel(model, options.reasoningLevel);
+    const bound = resolveModel(options);
+    const reasoningLevel = resolveReasoningLevel(bound, options.reasoningLevel);
     return {
       provider: options.provider,
-      model,
-      modelBindingId: modelBindingId(model),
-      modelSpec: JSON.stringify(model),
+      model:
+        options.provider === "openrouter" ? withOpenRouterRouting(bound, options.authStorePath) : bound,
+      modelBindingId: modelBindingId(bound),
+      modelSpec: JSON.stringify(bound),
       reasoningLevel,
       credentials,
       close: () => credentials.close(),

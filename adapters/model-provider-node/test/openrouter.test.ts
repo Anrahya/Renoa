@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { findCatalogModel, validateModelSpec } from "../src/catalog.js";
+import { findCatalogModel, loadPinnedCatalog, validateModelSpec } from "../src/catalog.js";
 import type { CatalogModel } from "../src/contract.js";
 import { loadCatalog, loadRuntime } from "../src/runtime.js";
 import { streamModel } from "../src/stream.js";
@@ -173,6 +174,72 @@ test("ERNIE streams with the key and OpenRouter's reasoning effort", async () =>
     assert.equal(body.tools?.length, 1);
   } finally {
     await server.close();
+    directory.close();
+  }
+});
+
+test("the owner's provider preference for a model reaches OpenRouter without changing its binding", async () => {
+  const directory = tempDir();
+  const server = await startFakeServer();
+  server.enqueue({ sse: successfulChat("hi") });
+  try {
+    createStore(directory.path, KEY, "openrouter").close();
+    const learned = (await catalog(directory.path, listing(ernie()))).find((model) => model.id === ERNIE);
+    assert.ok(learned);
+    const options = {
+      provider: "openrouter",
+      modelId: ERNIE,
+      authStorePath: join(directory.path, "credentials.sqlite"),
+      modelSpec: { ...(learned.model_spec as object), baseUrl: server.origin },
+      allowLoopback: true,
+    } as const;
+    const unrouted = loadRuntime(options);
+    unrouted.close();
+    const preference = { order: ["primeintellect"] };
+    writeFileSync(
+      join(directory.path, "openrouter-routing.json"),
+      JSON.stringify({ [ERNIE]: preference, "acme/other": { only: ["together"] } }),
+    );
+    const runtime = loadRuntime(options);
+    try {
+      assert.equal(runtime.modelBindingId, unrouted.modelBindingId);
+      assert.equal(runtime.modelSpec, unrouted.modelSpec);
+      await streamModel({
+        runtime,
+        request: userRequest(),
+        maxOutputTokens: 128,
+        signal: new AbortController().signal,
+        emit: () => {},
+      });
+    } finally {
+      runtime.close();
+    }
+    const request = server.requests[0];
+    assert.ok(request);
+    assert.deepEqual((JSON.parse(request.body) as { provider?: unknown }).provider, preference);
+  } finally {
+    await server.close();
+    directory.close();
+  }
+});
+
+test("an unreadable provider preference refuses the model instead of being ignored", () => {
+  const directory = tempDir();
+  try {
+    createStore(directory.path, KEY, "openrouter").close();
+    const authStorePath = join(directory.path, "credentials.sqlite");
+    const claude = loadPinnedCatalog("openrouter").find((entry) => entry.model.api === "anthropic-messages");
+    assert.ok(claude);
+    const refusals: [string, RegExp][] = [
+      ["not json", /must map OpenRouter model ids/],
+      [JSON.stringify({ [claude.id]: ["primeintellect"] }), /must map OpenRouter model ids/],
+      [JSON.stringify({ [claude.id]: { order: ["anthropic"] } }), /only on Chat Completions/],
+    ];
+    for (const [text, refusal] of refusals) {
+      writeFileSync(join(directory.path, "openrouter-routing.json"), text);
+      assert.throws(() => loadRuntime({ provider: "openrouter", modelId: claude.id, authStorePath }), refusal);
+    }
+  } finally {
     directory.close();
   }
 });
