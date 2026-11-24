@@ -86,8 +86,14 @@ pub(crate) fn require_model<'a>(
     source: &str,
 ) -> Result<&'a ModelChoice, LocalHostError> {
     selected_model(models, provider, id).ok_or_else(|| {
+        let name = provider.name();
+        let reason = if models.iter().any(|model| model.provider() == provider) {
+            format!("{name} does not list it")
+        } else {
+            format!("{name} offers no models; check that it is enabled and has a stored credential")
+        };
         LocalHostError::Configuration(format!(
-            "{source} {provider}/{id} model is not available from the authenticated provider"
+            "{source} {provider}/{id} model is not available: {reason}"
         ))
     })
 }

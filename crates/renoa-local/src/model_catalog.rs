@@ -181,7 +181,10 @@ impl ModelChoice {
     }
 }
 
-/// Discovers the authenticated provider's current model choices.
+/// Discovers the provider's current model choices.
+///
+/// A provider with no stored credential offers no models, so one keyless
+/// provider never blocks discovery for the others.
 ///
 /// # Errors
 ///
@@ -244,9 +247,6 @@ fn validate_catalog(
         {
             return Err(ModelBridgeError::InvalidModelCatalog);
         }
-    }
-    if models.is_empty() {
-        return Err(ModelBridgeError::InvalidModelCatalog);
     }
     models
         .into_iter()

@@ -29,7 +29,9 @@ speaks the same stdin/stdout protocol and environment contract.
 
 Provider, surface, and product policy. Session durability, tool execution,
 compaction, ACP, Waku, and RCP. The Rust host launches this process for
-`catalog`, `describe`, and `stream` only.
+`catalog`, `describe`, and `stream` only. A `catalog` call for a provider with no
+stored credential returns no models, so an enabled but unconnected provider
+never fails discovery for the others.
 
 ## Providers and transports
 
@@ -210,7 +212,9 @@ It accepts `RENOA_MCP_ADAPTER`, `RENOA_CODE_MODE_WORKER`, and
 
 A replacement adapter must implement `catalog`, `describe`, and `stream` over
 newline JSON on stdout, consume the same `RENOA_MODEL_*` environment, and
-preserve binding IDs as SHA-256 of the advertised model spec JSON.
+preserve binding IDs as SHA-256 of the advertised model spec JSON. Its
+`catalog` returns no models for a provider without a stored credential and
+at least one for a provider with one.
 Each `catalog` entry also carries the model's validated positive
 `context_window_tokens`; the Host pins that value with the active model choice
 and ACP uses it only for standard context-usage telemetry. Each successful

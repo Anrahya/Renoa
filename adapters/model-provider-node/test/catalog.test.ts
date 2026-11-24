@@ -12,6 +12,7 @@ import {
   toWireCatalog,
   validateModelSpec,
 } from "../src/catalog.js";
+import { PROVIDER_IDS } from "../src/contract.js";
 import { readLiveCatalogCache } from "../src/live-catalog.js";
 import { OPENCODE_GO_SOURCE } from "../src/opencode-catalog.js";
 import { loadCatalog } from "../src/runtime.js";
@@ -86,6 +87,14 @@ test("only chat models on a retained API are advertised", () => {
   }
 });
 
+// An empty catalog now means "no stored credential", so a connected provider
+// must never advertise an empty bundled catalog.
+test("every provider bundles at least one advertisable model", () => {
+  for (const provider of PROVIDER_IDS) {
+    assert.ok(loadPinnedCatalog(provider).length > 0, `${provider} bundles no models`);
+  }
+});
+
 test("OpenCode Go bindings use the inference endpoints and refuse the retired zen route", () => {
   const glm = findCatalogModel("opencode-go", "glm-5.3");
   assert.ok(glm);
@@ -122,6 +131,20 @@ test("catalog probing is read-only and does not rewrite stored credentials", asy
     const after = new SqliteCredentialStore(path);
     assert.deepEqual(after.read("xai"), before);
     after.close();
+  } finally {
+    directory.close();
+  }
+});
+
+test("a provider with no stored credential offers no models", async () => {
+  const directory = tempDir();
+  const path = join(directory.path, "credentials.sqlite");
+  try {
+    const store = new SqliteCredentialStore(path);
+    store.write("deepseek", { type: "api_key", key: "deepseek-api-key" });
+    store.close();
+    assert.deepEqual(await loadCatalog("google-vertex", path), []);
+    assert.ok((await loadCatalog("deepseek", path)).length > 0);
   } finally {
     directory.close();
   }
