@@ -26,9 +26,9 @@ Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
 ## Releases and deployment
 
 CI builds every release. The one exception is the Android app: until it has a
-release key, it ships as the debug build signed with the owner's Mac's debug
-key, the key the owner's phone already trusts, so it is built there and attached
-to the release afterwards (below). A build signed with any other key is refused
+release key, it ships as the debug build signed with the debug key of the
+owner's development computer, the key the owner's phone already trusts, so it is
+built there and attached to the release afterwards (below). A build signed with any other key is refused
 by every phone that has the app.
 `.github/workflows/ci.yml` runs the `AGENTS.md` gates on every pull request.
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds one
@@ -39,7 +39,7 @@ GitHub Release with `SHA256SUMS` and build provenance:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-To ship the Android app with a release, check out the tag on that Mac after the
+To ship the Android app with a release, check out the tag on that computer after the
 release workflow has published it, and before deploying (an install of the
 release already running places an app published later):
 
