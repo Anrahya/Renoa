@@ -71,6 +71,11 @@ export async function loadCatalog(
 ) {
   const credentials = new SqliteCredentialStore(authStorePath, options.credentialStore);
   try {
+    // A provider with no stored credential offers nothing, so it cannot fail
+    // discovery for the providers that have one.
+    if (credentials.read(provider) === undefined) {
+      return [];
+    }
     requireCredential(credentials, provider);
   } finally {
     credentials.close();

@@ -111,7 +111,7 @@ impl ModelCatalog {
             .any(|model| model.provider() == default_provider && model.id() == configured_model)
         {
             return Err(ServerError::Configuration(format!(
-                "configured {default_provider}/{configured_model} model is not available from the authenticated provider"
+                "configured {default_provider}/{configured_model} model is not available; check that {default_provider} has a stored credential"
             )));
         }
         let models = models

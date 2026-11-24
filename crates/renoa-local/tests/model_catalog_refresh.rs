@@ -1,8 +1,9 @@
 use std::fs;
 
 use renoa_local::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalHostError, LocalModelConfiguration, ModelProvider, ReasoningLevel,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentModelSelection, AgentPresetId,
+    LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration, ModelProvider,
+    ReasoningLevel,
 };
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -40,7 +41,7 @@ async fn an_open_agent_session_can_select_a_newly_discovered_model() {
     fs::write(&credentials, "").expect("create credential placeholder");
     fs::write(
         &bridge,
-        bridge_source(catalog_calls.to_string_lossy().as_ref()),
+        bridge_source(catalog_calls.to_string_lossy().as_ref(), None),
     )
     .expect("write model bridge");
     let host = LocalHost::new(
@@ -123,7 +124,7 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
     fs::write(&credentials, "").expect("create credential placeholder");
     fs::write(
         &bridge,
-        bridge_source(catalog_calls.to_string_lossy().as_ref()),
+        bridge_source(catalog_calls.to_string_lossy().as_ref(), None),
     )
     .expect("write model bridge");
     let host = LocalHost::new(
@@ -162,6 +163,93 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
 }
 
 #[tokio::test]
+async fn a_provider_without_credentials_does_not_block_agents_on_other_providers() {
+    let directory = tempdir().expect("temporary directory");
+    let data = directory.path().join("data");
+    let workspace = directory.path().join("workspace");
+    let bridge = directory.path().join("bridge.mjs");
+    let catalog_calls = directory.path().join("catalog-calls");
+    let credentials = directory.path().join("credentials.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&credentials, "").expect("create credential placeholder");
+    fs::write(
+        &bridge,
+        bridge_source(
+            catalog_calls.to_string_lossy().as_ref(),
+            Some(ModelProvider::OpenCodeGo.as_str()),
+        ),
+    )
+    .expect("write model bridge");
+    let host = LocalHost::new(
+        &data,
+        LocalModelConfiguration::new(
+            &bridge,
+            vec![ModelProvider::OpenCodeGo, ModelProvider::Xai],
+            ModelProvider::Xai,
+            "model-a",
+            &credentials,
+        ),
+        LocalHostAdapters::default(),
+    )
+    .expect("assemble Host");
+    let alpha = provision_agent(&host, ALPHA_PRESET, "Alpha").await;
+    let arcee = provision_agent(&host, ARCEE_PRESET, "Arcee").await;
+
+    let session = host
+        .ensure_agent_session(alpha, &workspace, Uuid::new_v4())
+        .await
+        .expect("an xAI agent opens while OpenCode Go has no credentials");
+    assert_eq!(
+        session
+            .configuration()
+            .expect("Alpha configuration")
+            .models
+            .iter()
+            .map(renoa_local::ModelChoice::selection_id)
+            .collect::<Vec<_>>(),
+        ["xai/model-a"]
+    );
+
+    let error = host
+        .ensure_agent_session(arcee, &workspace, Uuid::new_v4())
+        .await
+        .err()
+        .expect("an agent bound to the keyless provider cannot open");
+    assert_eq!(
+        error.to_string(),
+        "invalid local Host configuration: agent opencode-go/model-a model is not available: \
+         OpenCode Go offers no models; check that it is enabled and has a stored credential"
+    );
+
+    let mut unlisted = AgentCreateRequest::from_preset(
+        Uuid::new_v4(),
+        AgentPresetId::new(ALPHA_PRESET).expect("preset id"),
+        "Unlisted",
+    );
+    unlisted.model = Some(AgentModelSelection {
+        provider: ModelProvider::Xai,
+        model: "model-z".to_owned(),
+        reasoning: None,
+    });
+    let error = host
+        .create_agent(
+            AgentCreator::System {
+                component: "model-catalog-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            unlisted,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect_err("a connected provider's unlisted model is refused");
+    assert_eq!(
+        error.to_string(),
+        "invalid local Host configuration: agent xai/model-z model is not available: \
+         xAI does not list it"
+    );
+}
+
+#[tokio::test]
 async fn configured_initial_reasoning_must_be_supported_by_the_model() {
     let directory = tempdir().expect("temporary directory");
     let data = directory.path().join("data");
@@ -173,7 +261,7 @@ async fn configured_initial_reasoning_must_be_supported_by_the_model() {
     fs::write(&credentials, "").expect("create credential placeholder");
     fs::write(
         &bridge,
-        bridge_source(catalog_calls.to_string_lossy().as_ref()),
+        bridge_source(catalog_calls.to_string_lossy().as_ref(), None),
     )
     .expect("write model bridge");
     let host = LocalHost::new(
@@ -204,12 +292,18 @@ async fn configured_initial_reasoning_must_be_supported_by_the_model() {
     );
 }
 
-fn bridge_source(catalog_calls: &str) -> String {
+/// A fake adapter; `keyless` names a provider whose catalog is empty, as the
+/// real adapter reports a provider with no stored credential.
+fn bridge_source(catalog_calls: &str, keyless: Option<&str>) -> String {
     format!(
         r#"
 import {{ createHash }} from "node:crypto";
 import {{ existsSync, readFileSync, writeFileSync }} from "node:fs";
 const action = process.env.RENOA_MODEL_ACTION;
+if (action === "catalog" && process.env.RENOA_MODEL_PROVIDER === {keyless}) {{
+  process.stdout.write(JSON.stringify({{ ok: true, response: {{ models: [] }} }}));
+  process.exit(0);
+}}
 if (action === "catalog") {{
   const path = {catalog_calls};
   const calls = existsSync(path) ? Number(readFileSync(path, "utf8")) : 0;
@@ -237,6 +331,7 @@ if (action === "describe") {{
 }}
 process.exit(2);
 "#,
-        catalog_calls = serde_json::to_string(catalog_calls).expect("encode counter path")
+        catalog_calls = serde_json::to_string(catalog_calls).expect("encode counter path"),
+        keyless = serde_json::to_string(&keyless).expect("encode keyless provider")
     )
 }
