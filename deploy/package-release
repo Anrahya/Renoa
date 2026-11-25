@@ -55,6 +55,9 @@ def build_adapters(stage: Path) -> None:
         target.mkdir(parents=True)
         for name in ("package.json", "pnpm-lock.yaml"):
             shutil.copy2(source / name, target / name)
+        workspace = source / "pnpm-workspace.yaml"
+        if workspace.exists():
+            shutil.copy2(workspace, target / "pnpm-workspace.yaml")
         shutil.copytree(source / "dist" / "src", target / "dist" / "src")
         # Production dependencies only, as plain directories without links.
         run(
