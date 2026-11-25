@@ -229,9 +229,22 @@ test("Claude Haiku 5.5 uses adaptive thinking with an effort and disables thinki
     }
     const [effortRequest, offRequest] = server.requests;
     assert.ok(effortRequest && offRequest);
-    const effort = JSON.parse(effortRequest.body) as Record<string, unknown>;
-    assert.deepEqual(effort.thinking, { type: "adaptive", display: "summarized" });
-    assert.deepEqual(effort.output_config, { effort: "xhigh" });
+    const effort = JSON.parse(effortRequest.body) as {
+      thinking?: unknown;
+      output_config?: unknown;
+      messages?: { role?: string; output_config?: unknown }[];
+    };
+    assert.deepEqual(effort.thinking, {
+      type: "adaptive",
+      display: "summarized",
+      block_binding: { prefix_mismatch_behavior: "drop_block" },
+    });
+    assert.deepEqual(effort.output_config, { effort: "low" });
+    assert.deepEqual(effort.messages?.at(-1), {
+      role: "system",
+      content: [],
+      output_config: { effort: "xhigh" },
+    });
     assert.equal((effortRequest.headers["anthropic-beta"] ?? "").includes("interleaved-thinking"), false);
     const off = JSON.parse(offRequest.body) as Record<string, unknown>;
     assert.deepEqual(off.thinking, { type: "disabled" });

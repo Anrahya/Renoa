@@ -12,6 +12,7 @@ const PROVIDERS = [
   { id: "anthropic", label: "Anthropic" },
   { id: "opencode-go", label: "OpenCode Go" },
   { id: "deepseek", label: "DeepSeek" },
+  { id: "qwen-token-plan-individual", label: "Qwen Token Plan Individual" },
 ] as const;
 
 for (const { id, label } of PROVIDERS) {

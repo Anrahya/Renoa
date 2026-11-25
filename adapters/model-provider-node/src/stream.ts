@@ -184,9 +184,8 @@ async function runAttempt(
     });
   }
   const apiKey = await resolveApiKey(invocation.runtime, signal);
-  // Pi's Vertex transport sends through Google's SDK and refuses a custom
-  // fetch, so Renoa cannot observe whether a Vertex request left the process:
-  // every Vertex failure is treated as possibly dispatched.
+  // Renoa does not pass its capturing fetch to Pi's Vertex transport yet, so
+  // every Vertex failure is treated conservatively as possibly dispatched.
   const vertex = invocation.runtime.model.api === "google-vertex";
   const fetchImpl = vertex ? undefined : capturingFetch(invocation.fetch ?? globalThis.fetch, capture);
   const model = vertex

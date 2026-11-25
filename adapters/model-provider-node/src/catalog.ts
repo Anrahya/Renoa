@@ -6,6 +6,7 @@ import { DEEPSEEK_MODELS } from "@earendil-works/pi-ai/providers/deepseek.models
 import { GOOGLE_VERTEX_MODELS } from "@earendil-works/pi-ai/providers/google-vertex.models";
 import { OPENCODE_GO_MODELS } from "@earendil-works/pi-ai/providers/opencode-go.models";
 import { OPENROUTER_MODELS } from "@earendil-works/pi-ai/providers/openrouter.models";
+import { QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS } from "@earendil-works/pi-ai/providers/qwen-token-plan-individual.models";
 import { XAI_MODELS } from "@earendil-works/pi-ai/providers/xai.models";
 
 import type { CatalogModel, ProviderId, ReasoningLevel } from "./contract.js";
@@ -17,7 +18,11 @@ import {
 import { ANTHROPIC_BASE_URL } from "./providers/anthropic.js";
 import { DEEPSEEK_BASE_URL } from "./providers/deepseek.js";
 import { OPENROUTER_BASE_URL } from "./providers/openrouter.js";
-import { GEMINI_4_HYDROGEN, GEMINI_4_NEON, VERTEX_TEMPLATE_BASE_URL } from "./providers/google-vertex.js";
+import { VERTEX_TEMPLATE_BASE_URL } from "./providers/google-vertex.js";
+import {
+  QWEN4_MAX,
+  QWEN_TOKEN_PLAN_INDIVIDUAL_BASE_URL,
+} from "./providers/qwen-token-plan-individual.js";
 import { XAI_BASE_URL } from "./providers/xai.js";
 
 export interface CatalogEntry {
@@ -54,7 +59,8 @@ const PINNED_CATALOGS: Readonly<Record<ProviderId, Readonly<Record<string, objec
   "opencode-go": OPENCODE_GO_MODELS,
   deepseek: DEEPSEEK_MODELS,
   openrouter: OPENROUTER_MODELS,
-  "google-vertex": withEntry(withEntry(GOOGLE_VERTEX_MODELS, GEMINI_4_HYDROGEN), GEMINI_4_NEON),
+  "google-vertex": GOOGLE_VERTEX_MODELS,
+  "qwen-token-plan-individual": withEntry(QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS, QWEN4_MAX),
 };
 
 /** Adds a Renoa-pinned entry until Pi's own catalog lists that model. */
@@ -95,6 +101,9 @@ export function isAdvertisableCatalogEntry(
   provider: ProviderId,
   entry: Record<string, unknown>,
 ): boolean {
+  if (provider === "openrouter" && typeof entry.id === "string" && entry.id.endsWith(":batch")) {
+    return false;
+  }
   return (entry.type === undefined || entry.type === "chat") && supportsApi(provider, entry.api);
 }
 
@@ -227,6 +236,8 @@ function supportsApi(provider: ProviderId, api: unknown): api is Api {
       return api === "anthropic-messages" || api === "openai-completions";
     case "google-vertex":
       return api === "google-vertex";
+    case "qwen-token-plan-individual":
+      return api === "openai-completions";
   }
 }
 
@@ -253,6 +264,9 @@ function trustedBaseUrl(
   }
   if (provider === "google-vertex") {
     return value === VERTEX_TEMPLATE_BASE_URL;
+  }
+  if (provider === "qwen-token-plan-individual") {
+    return value === QWEN_TOKEN_PLAN_INDIVIDUAL_BASE_URL;
   }
   if (provider === "openrouter") {
     return typeof api === "string" && api in OPENROUTER_BASE_URL

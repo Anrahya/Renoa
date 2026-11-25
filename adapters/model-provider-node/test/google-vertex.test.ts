@@ -17,17 +17,17 @@ const KEY: Credential = {
   env: { GOOGLE_CLOUD_PROJECT: "renoa-test-project", GOOGLE_CLOUD_LOCATION: "global" },
 };
 
-test("Vertex advertises Gemini 4 Hydrogen and Neon beside Pi's catalog, at low, medium and high", async () => {
+test("Vertex advertises Gemini 4 Hydrogen and Neon from Pi's catalog, at low through xhigh", async () => {
   const directory = tempDir();
   try {
     createStore(directory.path, KEY, "google-vertex").close();
     const models = await loadCatalog("google-vertex", join(directory.path, "credentials.sqlite"));
     const hydrogen = models.find((model) => model.id === HYDROGEN);
     assert.ok(hydrogen);
-    assert.deepEqual(hydrogen.reasoning_levels, ["low", "medium", "high"]);
+    assert.deepEqual(hydrogen.reasoning_levels, ["low", "medium", "high", "xhigh"]);
     const neon = models.find((model) => model.id === "gemini-4-neon");
     assert.ok(neon);
-    assert.deepEqual(neon.reasoning_levels, ["low", "medium", "high"]);
+    assert.deepEqual(neon.reasoning_levels, ["low", "medium", "high", "xhigh"]);
     assert.ok(models.some((model) => model.id === "gemini-4-argon"));
     const spec = findCatalogModel("google-vertex", HYDROGEN)?.model;
     assert.ok(spec);

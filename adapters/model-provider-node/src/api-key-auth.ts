@@ -11,7 +11,10 @@ import {
 } from "./providers/google-vertex.js";
 
 /** Providers that authenticate with an API key piped on standard input. */
-export type ApiKeyProvider = Extract<ProviderId, "anthropic" | "opencode-go" | "deepseek" | "openrouter" | "google-vertex">;
+export type ApiKeyProvider = Extract<
+  ProviderId,
+  "anthropic" | "opencode-go" | "deepseek" | "openrouter" | "google-vertex" | "qwen-token-plan-individual"
+>;
 
 /** Stores the API key read from standard input; the key is never printed. */
 export function runApiKeyAuth(provider: ApiKeyProvider): void {

@@ -22,6 +22,7 @@ export interface StreamOptions {
   credential: Credential;
   provider?: ProviderId;
   reasoningLevel?: "off" | "low" | "medium" | "high" | "xhigh" | "max";
+  maxOutputTokens?: number;
   clock?: ManualClock;
   signal?: AbortSignal;
   releases?: number;
@@ -49,7 +50,7 @@ export async function runStream(options: StreamOptions): Promise<WireStreamRecor
       runtime,
       request: options.request ?? userRequest(),
       sessionId: "11111111-1111-4111-8111-111111111111",
-      maxOutputTokens: 128,
+      maxOutputTokens: options.maxOutputTokens ?? 128,
       signal: abort,
       emit: async (record) => {
         records.push(record);

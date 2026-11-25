@@ -161,9 +161,10 @@ async fn loopback_turn(
 ) -> (Kernel, SessionId, renoa_kernel::Runtime) {
     let model = Arc::new(load_loopback_bridge_model(directory, address).await);
     let revision = format!(
-        "renoa-model-provider-node/v1/{LOOPBACK_PROVIDER}/{LOOPBACK_MODEL}/{}/reasoning-{}",
+        "renoa-model-provider-node/v1/{LOOPBACK_PROVIDER}/{LOOPBACK_MODEL}/{}/reasoning-{}/max-output-{}",
         model.binding_id(),
-        model.reasoning().as_str()
+        model.reasoning().as_str(),
+        model.max_output_tokens()
     );
     let runtime = build_runtime(
         AgentLoopConfig::new(

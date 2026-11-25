@@ -7,29 +7,33 @@ use std::{
 use renoa_agent::Message;
 use renoa_agent_loop::{
     AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CodeModeBinding,
-    CompactingContextStrategy, CompactionLimits, CompactionLimitsError, ContextBinding,
-    ContextInput, ContextSizer, ContextStrategy, ContextStrategyError, ModelBinding,
-    build_runtime as build_agent_runtime, build_runtime_with_code_mode as build_code_mode_runtime,
+    CompactingContextStrategy, CompactionLimitsError, ContextBinding, ContextInput, ContextSizer,
+    ContextStrategy, ContextStrategyError, ModelBinding, build_runtime as build_agent_runtime,
+    build_runtime_with_code_mode as build_code_mode_runtime,
     build_runtime_with_code_mode_and_events as build_observed_code_mode_runtime,
     build_runtime_with_events as build_observed_agent_runtime,
 };
 use renoa_kernel::{EffectRecovery, Runtime};
 use thiserror::Error;
 
+#[path = "runtime_compaction.rs"]
+mod compaction;
+
+pub(crate) use compaction::{
+    AUTOMATIC_COMPACTION_BYTES, COMPACTION_TAIL_BYTES, MAX_CHECKPOINT_TOKENS, MAX_OUTPUT_TOKENS,
+    REQUEST_DISPATCH_LIMIT_BYTES, cap_model_output, compaction_limits,
+};
+#[cfg(test)]
+pub(crate) use compaction::{MIN_CONTEXT_SAFETY_TOKENS, compaction_settings};
+
 use crate::{
-    AgentDefinitionError, AutomaticCompaction, BridgeModel, LocalWorkspace, ModelBridgeError,
-    ModelChoice, ReasoningLevel, skills::SkillRuntimeContext, speaker::ToolAccess,
+    AgentDefinitionError, BridgeModel, LocalWorkspace, ModelBridgeError, ModelChoice,
+    ReasoningLevel, skills::SkillRuntimeContext, speaker::ToolAccess,
 };
 
 const MODEL_ROUND_LIMIT: NonZeroU32 = NonZeroU32::new(100).unwrap();
 const TOOL_CALL_LIMIT: NonZeroU32 = NonZeroU32::new(16).unwrap();
-pub(crate) const MAX_OUTPUT_TOKENS: NonZeroU32 = NonZeroU32::new(32_768).unwrap();
 const COMPACTION_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(2).unwrap();
-pub(crate) const MAX_CHECKPOINT_TOKENS: u64 = 16_384;
-pub(crate) const MIN_CONTEXT_SAFETY_TOKENS: u64 = 8_192;
-const REQUEST_DISPATCH_LIMIT_BYTES: NonZeroU64 = NonZeroU64::new(20 * 1_024 * 1_024).unwrap();
-const AUTOMATIC_COMPACTION_BYTES: NonZeroU64 = NonZeroU64::new(8 * 1_024 * 1_024).unwrap();
-const COMPACTION_TAIL_BYTES: NonZeroU64 = NonZeroU64::new(3 * 1_024 * 1_024).unwrap();
 
 /// Provider, model, and instruction inputs for one local coding runtime.
 pub struct LocalRuntimeConfig {
@@ -219,12 +223,27 @@ async fn build_local_runtime_inner(
 }
 
 /// The revision a model binding is frozen under: the adapter, the provider's
-/// model and its binding, and the reasoning level.
+/// model and its binding, the reasoning level, and the effective output cap.
 fn model_revision(provider: &str, model_id: &str, model: &BridgeModel) -> String {
-    format!(
-        "renoa-model-provider-node/v1/{provider}/{model_id}/{}/reasoning-{}",
+    model_revision_for(
+        provider,
+        model_id,
         model.binding_id(),
-        model.reasoning().as_str()
+        model.reasoning(),
+        model.max_output_tokens(),
+    )
+}
+
+pub(crate) fn model_revision_for(
+    provider: &str,
+    model_id: &str,
+    binding_id: &str,
+    reasoning: ReasoningLevel,
+    max_output_tokens: NonZeroU32,
+) -> String {
+    format!(
+        "renoa-model-provider-node/v1/{provider}/{model_id}/{binding_id}/reasoning-{}/max-output-{max_output_tokens}",
+        reasoning.as_str(),
     )
 }
 
@@ -261,16 +280,18 @@ pub(crate) async fn build_memory_job_runtime(
 ) -> Result<Runtime, LocalRuntimeError> {
     let provider = model.provider().as_str();
     let loaded = Arc::new(
-        BridgeModel::load_with_spec(
-            bridge,
-            provider,
-            model.id(),
-            credential_store,
-            Some(model.encoded_spec()),
-            Some(reasoning),
-            MAX_OUTPUT_TOKENS,
+        cap_model_output(
+            BridgeModel::load_with_spec(
+                bridge,
+                provider,
+                model.id(),
+                credential_store,
+                Some(model.encoded_spec()),
+                Some(reasoning),
+                MAX_OUTPUT_TOKENS,
+            )
+            .await?,
         )
-        .await?
         .with_session(Some(session_id)),
     );
     let revision = model_revision(provider, model.id(), &loaded);
@@ -324,16 +345,18 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
         instructions.push_str(&context.instructions);
     }
     let model = Arc::new(
-        BridgeModel::load_with_spec(
-            config.bridge,
-            config.provider.as_str(),
-            config.model.as_str(),
-            config.credential_store,
-            config.model_spec,
-            config.reasoning,
-            MAX_OUTPUT_TOKENS,
+        cap_model_output(
+            BridgeModel::load_with_spec(
+                config.bridge,
+                config.provider.as_str(),
+                config.model.as_str(),
+                config.credential_store,
+                config.model_spec,
+                config.reasoning,
+                MAX_OUTPUT_TOKENS,
+            )
+            .await?,
         )
-        .await?
         .with_session(config.session_id),
     );
     Ok(ResolvedModel {
@@ -346,33 +369,6 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
         selected_tools: config.selected_tools,
         code_mode: config.code_mode,
     })
-}
-
-pub(crate) fn compaction_limits(
-    provider_context: NonZeroU64,
-    max_output: NonZeroU32,
-    automatic_compaction: Option<crate::AutomaticCompaction>,
-    working_input_limit: Option<NonZeroU64>,
-) -> Result<(CompactionSettings, CompactionLimits), LocalRuntimeError> {
-    let settings = compaction_settings(
-        provider_context,
-        max_output,
-        automatic_compaction,
-        working_input_limit,
-    )?;
-    let limits = CompactionLimits::new(
-        settings.context,
-        settings.reserved,
-        settings.target,
-        settings.max_summary,
-    )?
-    .with_automatic_compaction_input_tokens(settings.automatic_compaction)?
-    .with_request_byte_budget(
-        REQUEST_DISPATCH_LIMIT_BYTES,
-        AUTOMATIC_COMPACTION_BYTES,
-        COMPACTION_TAIL_BYTES,
-    )?;
-    Ok((settings, limits))
 }
 
 pub(crate) fn context_binding(
@@ -416,79 +412,3 @@ pub(crate) fn context_binding(
     );
     Ok(ContextBinding::new(revision, Arc::new(strategy)))
 }
-
-pub(crate) struct CompactionSettings {
-    pub(crate) context: NonZeroU64,
-    pub(crate) reserved: u64,
-    pub(crate) automatic_compaction: NonZeroU64,
-    pub(crate) target: NonZeroU64,
-    pub(crate) max_summary: NonZeroU64,
-}
-
-pub(crate) fn compaction_settings(
-    provider_context: NonZeroU64,
-    max_output: NonZeroU32,
-    automatic_compaction: Option<crate::AutomaticCompaction>,
-    working_input_limit: Option<NonZeroU64>,
-) -> Result<CompactionSettings, LocalRuntimeError> {
-    let safety = (provider_context.get() / 50).max(MIN_CONTEXT_SAFETY_TOKENS);
-    let reserved = u64::from(max_output.get())
-        .checked_add(safety)
-        .ok_or(LocalRuntimeError::ContextReserveOverflow)?;
-    let context = working_input_limit.map_or(provider_context, |limit| {
-        NonZeroU64::new(
-            provider_context
-                .get()
-                .min(limit.get().saturating_add(reserved)),
-        )
-        .expect("positive context and working input limit")
-    });
-    let dispatch = context
-        .get()
-        .checked_sub(reserved)
-        .and_then(NonZeroU64::new)
-        .ok_or(LocalRuntimeError::ContextWindowTooSmall)?;
-    // An agent's policy is written without knowing its model, so a trigger past
-    // this model's dispatch limit, or a working limit's, compacts at the limit
-    // instead, with the target kept to three fifths of it. A policy that fits
-    // is used as stored.
-    let automatic_compaction = match automatic_compaction {
-        Some(policy) if policy.trigger_input_tokens > dispatch || working_input_limit.is_some() => {
-            let trigger = policy.trigger_input_tokens.min(dispatch);
-            let target = trigger
-                .get()
-                .checked_mul(3)
-                .and_then(|value| NonZeroU64::new(value / 5))
-                .ok_or(LocalRuntimeError::ZeroCompactionTarget)?;
-            Some(AutomaticCompaction {
-                trigger_input_tokens: trigger,
-                target_input_tokens: policy.target_input_tokens.min(target),
-            })
-        }
-        policy => policy,
-    };
-    let automatic_compaction_input_tokens =
-        automatic_compaction.map_or(dispatch, |policy| policy.trigger_input_tokens);
-    let target = match automatic_compaction {
-        Some(policy) => policy.target_input_tokens,
-        None => dispatch
-            .get()
-            .checked_mul(3)
-            .and_then(|value| value.checked_div(5))
-            .and_then(NonZeroU64::new)
-            .ok_or(LocalRuntimeError::ZeroCompactionTarget)?,
-    };
-    let max_summary = NonZeroU64::new(MAX_CHECKPOINT_TOKENS.min(target.get() / 4))
-        .ok_or(LocalRuntimeError::ZeroCheckpointBudget)?;
-    Ok(CompactionSettings {
-        context,
-        reserved,
-        automatic_compaction: automatic_compaction_input_tokens,
-        target,
-        max_summary,
-    })
-}
-
-#[cfg(test)]
-#[path = "runtime_compaction_tests.rs"]
-mod compaction_settings_tests;

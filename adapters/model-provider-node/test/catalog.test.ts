@@ -78,7 +78,7 @@ test("only chat models on a retained API are advertised", () => {
   assert.equal(isAdvertisableCatalogEntry("xai", { ...chat, api: "openai-completions" }), false);
   assert.equal(isAdvertisableCatalogEntry("xai", { ...chat, api: "openai-responses" }), true);
 
-  for (const provider of ["xai", "opencode-go", "deepseek"] as const) {
+  for (const provider of ["xai", "opencode-go", "deepseek", "qwen-token-plan-individual"] as const) {
     for (const entry of loadPinnedCatalog(provider)) {
       assert.notEqual(entry.model.api, "google-generative-ai");
       assert.equal("type" in entry.model, false, `${entry.id} must not carry catalog type`);
@@ -206,7 +206,7 @@ test("OpenCode Go discovers a new official model and reuses cached metadata on 3
     });
     assert.equal(first.some((model) => model.id === LIVE_MODEL), false);
     assert.equal(
-      first.some((model) => model.id === "mimo-v2.5"),
+      first.some((model) => model.id === "mimo-v2.6-pro"),
       true,
       "the public inventory must not remove bundled catalog entries",
     );

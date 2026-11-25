@@ -2,7 +2,7 @@
 
 `@renoa/model-provider` is the Node process that translates Renoa's
 provider-neutral model contract into Anthropic, xAI, OpenCode Go, DeepSeek,
-OpenRouter, and Google Vertex AI API calls. The provider protocols and bundled catalogs come from Pi's published
+OpenRouter, Google Vertex AI, and Qwen Token Plan Individual API calls. The provider protocols and bundled catalogs come from Pi's published
 `@earendil-works/pi-ai` package, pinned to an exact version; Renoa owns the
 contract mapping, credentials, retry, and request identity around it.
 
@@ -18,6 +18,7 @@ speaks the same stdin/stdout protocol and environment contract.
 - DeepSeek over its API key
 - OpenRouter over its API key
 - Google Vertex AI over an API key bound to a service account, with its project
+- Qwen Token Plan Individual over its API key
 - OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Google
   Vertex transports
 - one retry policy: Pi's own client retries are off (`maxRetries: 0`)
@@ -42,7 +43,8 @@ never fails discovery for the others.
 | OpenCode Go | API key | Official Go transports only: Responses, Chat Completions, Anthropic Messages |
 | DeepSeek | API key | Chat Completions at `https://api.deepseek.com`, from the bundled catalog only |
 | OpenRouter | API key | Chat Completions at `https://openrouter.ai/api/v1`; Anthropic Messages at `https://openrouter.ai/api` for the bundled Claude entries |
-| Google Vertex AI | API key and project | Vertex through Google's SDK, under the key's project and location; the bundled catalog plus Gemini 4 Hydrogen until Pi lists it |
+| Google Vertex AI | API key and project | Vertex through Google's SDK, under the key's project and location, from the bundled catalog only |
+| Qwen Token Plan Individual | API key | Chat Completions at `https://token-plan.maas.qwencloudapi.com/compatible-mode/v1`, from the bundled catalog plus `qwen4-max` until Pi lists it there |
 
 OpenCode availability comes from its official `/inference/go/v1/models` endpoint.
 Limits, modalities, tool support, costs, and reasoning levels come from the
@@ -92,7 +94,7 @@ remain excluded while a prompt is active. Existing sessions store
 binding in its kernel recovery identity
 
 ```text
-renoa-model-provider-node/v1/{provider}/{model}/{binding}/reasoning-{level}
+renoa-model-provider-node/v1/{provider}/{model}/{binding}/reasoning-{level}/max-output-{tokens}
 ```
 
 An unfinished `pi/...` operation cannot execute through this adapter. There is
@@ -154,10 +156,10 @@ Failures before any request may have been transmitted can be
 cancellation are `unknown` unless the provider proves rejection with HTTP 4xx.
 Retryability is separate from that durable certainty.
 
-Google Vertex AI requests go through Google's SDK, which accepts no
-caller-supplied fetch, so the adapter cannot observe whether a Vertex request
-left the process. Every Vertex failure is therefore treated as possibly
-dispatched: `unknown`, never `known_not_started`, and it carries no HTTP status.
+Google Vertex AI requests currently bypass Renoa's HTTP capture wrapper, so
+the adapter does not observe whether a Vertex request left the process. Every
+Vertex failure is therefore treated conservatively as possibly dispatched:
+`unknown`, never `known_not_started`, and it carries no HTTP status.
 
 Categories: `authentication`, `rate_limited`, `invalid_request`,
 `context_window_exceeded`, `network`, `timeout`, `provider_unavailable`,
@@ -190,16 +192,16 @@ pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scrip
 pnpm --dir adapters/model-provider-node build
 export RENOA_MODEL_BRIDGE="$PWD/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek, openrouter, google-vertex
+export RENOA_MODEL_PROVIDERS=xai,opencode-go # any of anthropic, xai, opencode-go, deepseek, openrouter, google-vertex, qwen-token-plan-individual
 export RENOA_MODEL_PROVIDER=opencode-go # default for new ACP sessions
 export RENOA_MODEL=deepseek-v4-pro
 export RENOA_MODEL_REASONING=high # optional
 ```
 
 Authenticate with `pnpm --dir adapters/model-provider-node auth:xai`,
-`auth:opencode-go`, `auth:deepseek`, `auth:anthropic`, `auth:openrouter`, or
+`auth:opencode-go`, `auth:deepseek`, `auth:anthropic`, `auth:openrouter`,
 `auth:google-vertex` (with `GOOGLE_CLOUD_PROJECT` and an optional
-`GOOGLE_CLOUD_LOCATION`, default `global`); API keys are read from standard input. The RCP Pi node still uses `RENOA_PI_*` harness settings
+`GOOGLE_CLOUD_LOCATION`, default `global`), or `auth:qwen-token-plan-individual`; API keys are read from standard input. The RCP Pi node still uses `RENOA_PI_*` harness settings
 and is not this adapter.
 
 `renoa-agent` exposes enabled models as `provider/model` ACP identities. The

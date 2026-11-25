@@ -13,13 +13,14 @@
     "auth:google-vertex": "pnpm run build && node dist/src/auth-google-vertex.js",
     "auth:opencode-go": "pnpm run build && node dist/src/auth-opencode-go.js",
     "auth:openrouter": "pnpm run build && node dist/src/auth-openrouter.js",
+    "auth:qwen-token-plan-individual": "pnpm run build && node dist/src/auth-qwen-token-plan-individual.js",
     "auth:xai": "pnpm run build && node --dns-result-order=ipv4first dist/src/auth-xai.js",
     "build": "node ./scripts/clean-dist.mjs && tsc",
     "check": "tsc --noEmit",
     "test": "pnpm run build && node --test --test-reporter=spec dist/test/*.test.js"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.5.0"
+    "@earendil-works/pi-ai": "1.6.1"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

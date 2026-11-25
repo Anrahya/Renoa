@@ -172,6 +172,12 @@ impl BridgeModel {
     }
 
     #[must_use]
+    pub(crate) const fn with_max_output_tokens(mut self, max_output_tokens: NonZeroU32) -> Self {
+        self.max_output_tokens = max_output_tokens;
+        self
+    }
+
+    #[must_use]
     pub fn binding_id(&self) -> &str {
         &self.binding_id
     }
