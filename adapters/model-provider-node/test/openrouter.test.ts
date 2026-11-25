@@ -120,6 +120,12 @@ test("OpenRouter falls back to Pi's catalog when it has never been reached", asy
     const models = await catalog(directory.path, unreachable);
     assert.ok(models.some((model) => model.id === PINNED));
     assert.equal(models.some((model) => model.id === ERNIE), false);
+    assert.ok(models.some((model) => model.id === "google/gemini-4-neon"));
+    assert.equal(
+      models.some((model) => model.id.endsWith(":batch")),
+      false,
+      "OpenRouter batch-only variants must not be advertised for chat",
+    );
   } finally {
     directory.close();
   }

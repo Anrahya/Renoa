@@ -8,10 +8,12 @@ export const QWEN_TOKEN_PLAN_INDIVIDUAL_BASE_URL =
 
 /**
  * Qwen4 Max, which Pi 1.6.1 lists in `qwen-token-plan` but not yet in
- * `qwen-token-plan-individual`. Shape mirrors Pi's `qwen-token-plan` entry
- * verbatim with this provider id. Remove this entry once the pinned Pi package
- * lists `qwen4-max` in `qwen-token-plan-individual`: Pi's own entry then takes
- * its place.
+ * `qwen-token-plan-individual`. Adapted from `earendil-works/pi` commit
+ * `ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe` (MIT license,
+ * `packages/ai/src/providers/data/qwen-token-plan.json`), keeping the exact
+ * entry shape with this provider id. Remove this entry once the pinned Pi
+ * package lists `qwen4-max` in `qwen-token-plan-individual`: Pi's own entry
+ * then takes its place.
  */
 export const QWEN4_MAX = {
   id: "qwen4-max",

@@ -116,6 +116,7 @@ test("Qwen4 Max sends Qwen thinking controls, Renoa's identity, system role, and
         baseUrl: server.origin,
         credential: QWEN_KEY,
         reasoningLevel,
+        maxOutputTokens: 65_536,
         request,
       });
     }
@@ -128,6 +129,7 @@ test("Qwen4 Max sends Qwen thinking controls, Renoa's identity, system role, and
 
     const highBody = JSON.parse(high.body) as Record<string, unknown>;
     assert.equal(highBody.model, "qwen4-max");
+    assert.equal(highBody.max_completion_tokens, 65_536);
     assert.equal(highBody.store, undefined);
     assert.equal(highBody.enable_thinking, true);
     assert.equal(highBody.reasoning_effort, "high");

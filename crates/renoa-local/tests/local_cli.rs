@@ -262,7 +262,7 @@ fn assert_frozen_runtime_selections(database: &Path, session: &str) {
             .get("renoa.agent.model")
             .map(String::as_str),
         Some(
-            "renoa-model-provider-node/v1/xai/grok-test-a/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-low"
+            "renoa-model-provider-node/v1/xai/grok-test-a/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-low/max-output-65536"
         )
     );
     assert_eq!(
@@ -271,7 +271,7 @@ fn assert_frozen_runtime_selections(database: &Path, session: &str) {
             .get("renoa.agent.model")
             .map(String::as_str),
         Some(
-            "renoa-model-provider-node/v1/xai/grok-test-a/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-high"
+            "renoa-model-provider-node/v1/xai/grok-test-a/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-high/max-output-65536"
         ),
         "a resumed session keeps its durable model and applies the new reasoning level"
     );

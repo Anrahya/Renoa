@@ -94,7 +94,7 @@ remain excluded while a prompt is active. Existing sessions store
 binding in its kernel recovery identity
 
 ```text
-renoa-model-provider-node/v1/{provider}/{model}/{binding}/reasoning-{level}
+renoa-model-provider-node/v1/{provider}/{model}/{binding}/reasoning-{level}/max-output-{tokens}
 ```
 
 An unfinished `pi/...` operation cannot execute through this adapter. There is
@@ -156,10 +156,10 @@ Failures before any request may have been transmitted can be
 cancellation are `unknown` unless the provider proves rejection with HTTP 4xx.
 Retryability is separate from that durable certainty.
 
-Google Vertex AI requests go through Google's SDK, which accepts no
-caller-supplied fetch, so the adapter cannot observe whether a Vertex request
-left the process. Every Vertex failure is therefore treated as possibly
-dispatched: `unknown`, never `known_not_started`, and it carries no HTTP status.
+Google Vertex AI requests currently bypass Renoa's HTTP capture wrapper, so
+the adapter does not observe whether a Vertex request left the process. Every
+Vertex failure is therefore treated conservatively as possibly dispatched:
+`unknown`, never `known_not_started`, and it carries no HTTP status.
 
 Categories: `authentication`, `rate_limited`, `invalid_request`,
 `context_window_exceeded`, `network`, `timeout`, `provider_unavailable`,

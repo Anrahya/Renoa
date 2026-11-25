@@ -101,6 +101,9 @@ export function isAdvertisableCatalogEntry(
   provider: ProviderId,
   entry: Record<string, unknown>,
 ): boolean {
+  if (provider === "openrouter" && typeof entry.id === "string" && entry.id.endsWith(":batch")) {
+    return false;
+  }
   return (entry.type === undefined || entry.type === "chat") && supportsApi(provider, entry.api);
 }
 
