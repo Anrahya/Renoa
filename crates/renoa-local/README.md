@@ -6,7 +6,7 @@ runtimes from:
 - one stored agent definition: its instructions, behavior, exact capability
   selection, and connection bindings, plus workspace `AGENTS.md` rules where
   the agent's stored behavior reads them;
-- the `@renoa/model-provider` process adapter for Anthropic, xAI, OpenCode Go, DeepSeek, OpenRouter, and Google Vertex AI; and
+- the `@renoa/model-provider` process adapter for Anthropic, xAI, OpenCode Go, DeepSeek, OpenRouter, Google Vertex AI, and Qwen Token Plan Individual; and
 - Renoa's durable model/tool loop and compaction strategy;
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
   tools; and
@@ -69,7 +69,7 @@ pnpm --dir adapters/mcp-registry-node build
 
 Enroll provider credentials into an owner-only SQLite file before starting the
 host. SuperGrok uses `pnpm --dir adapters/model-provider-node auth:xai`.
-OpenCode Go, DeepSeek, Anthropic, OpenRouter and Google Vertex AI use the non-echoing piped-key flow (a Vertex key also needs the project it belongs to):
+OpenCode Go, DeepSeek, Anthropic, OpenRouter, Google Vertex AI, and Qwen Token Plan Individual use the non-echoing piped-key flow (a Vertex key also needs the project it belongs to):
 
 ```sh
 printf '%s' "$OPENCODE_API_KEY" | pnpm --dir adapters/model-provider-node auth:opencode-go
@@ -77,6 +77,7 @@ printf '%s' "$DEEPSEEK_API_KEY" | pnpm --dir adapters/model-provider-node auth:d
 printf '%s' "$ANTHROPIC_API_KEY" | pnpm --dir adapters/model-provider-node auth:anthropic
 printf '%s' "$OPENROUTER_API_KEY" | pnpm --dir adapters/model-provider-node auth:openrouter
 printf '%s' "$GOOGLE_CLOUD_API_KEY" | GOOGLE_CLOUD_PROJECT=my-project pnpm --dir adapters/model-provider-node auth:google-vertex
+printf '%s' "$QWEN_TOKEN_PLAN_API_KEY" | pnpm --dir adapters/model-provider-node auth:qwen-token-plan-individual
 ```
 
 Existing `~/.config/renoa/pi-auth.sqlite` files remain the credential store.
@@ -88,7 +89,7 @@ Then configure one model and run a turn:
 ```sh
 export RENOA_MODEL_BRIDGE='/absolute/path/to/adapters/model-provider-node/dist/src/main.js'
 export RENOA_MODEL_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
-export RENOA_MODEL_PROVIDER='xai' # or anthropic, opencode-go, deepseek, openrouter, google-vertex
+export RENOA_MODEL_PROVIDER='xai' # or anthropic, opencode-go, deepseek, openrouter, google-vertex, qwen-token-plan-individual
 export RENOA_MODEL='grok-4.7'
 export RENOA_MODEL_REASONING='high' # optional: off|minimal|low|medium|high|xhigh|max
 export RENOA_MCP_ADAPTER='/absolute/path/to/adapters/mcp-client-node/dist/src/main.js'
@@ -139,7 +140,7 @@ that revision with the loop, context configuration, instructions, and
 workspace-bound tools before an operation runs. An interrupted operation
 therefore fails closed instead of silently changing behavior after restart.
 
-The Host caps model output at 32,768 tokens and enables durable context
+The Host caps model output at 65,536 tokens and enables durable context
 checkpoints with explicit headroom. The local token estimate is deliberately
 conservative but not treated as exact. An explicit pre-inference provider
 context rejection is persisted and forces compaction without replaying the

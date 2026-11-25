@@ -20,6 +20,8 @@ pub enum ModelProvider {
     OpenRouter,
     #[serde(rename = "google-vertex")]
     GoogleVertex,
+    #[serde(rename = "qwen-token-plan-individual")]
+    QwenTokenPlanIndividual,
 }
 
 impl ModelProvider {
@@ -32,6 +34,7 @@ impl ModelProvider {
             "deepseek" => Some(Self::DeepSeek),
             "openrouter" => Some(Self::OpenRouter),
             "google-vertex" => Some(Self::GoogleVertex),
+            "qwen-token-plan-individual" => Some(Self::QwenTokenPlanIndividual),
             _ => None,
         }
     }
@@ -45,6 +48,7 @@ impl ModelProvider {
             Self::DeepSeek => "deepseek",
             Self::OpenRouter => "openrouter",
             Self::GoogleVertex => "google-vertex",
+            Self::QwenTokenPlanIndividual => "qwen-token-plan-individual",
         }
     }
 
@@ -57,6 +61,7 @@ impl ModelProvider {
             Self::DeepSeek => "DeepSeek",
             Self::OpenRouter => "OpenRouter",
             Self::GoogleVertex => "Google Vertex AI",
+            Self::QwenTokenPlanIndividual => "Qwen Token Plan Individual",
         }
     }
 }
@@ -279,6 +284,7 @@ mod tests {
             ModelProvider::DeepSeek,
             ModelProvider::OpenRouter,
             ModelProvider::GoogleVertex,
+            ModelProvider::QwenTokenPlanIndividual,
         ] {
             // A new variant must be added to this list: the match is exhaustive.
             match provider {
@@ -287,7 +293,8 @@ mod tests {
                 | ModelProvider::OpenCodeGo
                 | ModelProvider::DeepSeek
                 | ModelProvider::OpenRouter
-                | ModelProvider::GoogleVertex => {}
+                | ModelProvider::GoogleVertex
+                | ModelProvider::QwenTokenPlanIndividual => {}
             }
             assert_eq!(ModelProvider::from_id(provider.as_str()), Some(provider));
             assert_eq!(
@@ -313,6 +320,14 @@ mod tests {
         assert_eq!(
             ModelProvider::from_id("google-vertex"),
             Some(ModelProvider::GoogleVertex)
+        );
+        assert_eq!(
+            ModelProvider::from_id("qwen-token-plan-individual"),
+            Some(ModelProvider::QwenTokenPlanIndividual)
+        );
+        assert_eq!(
+            ModelProvider::QwenTokenPlanIndividual.name(),
+            "Qwen Token Plan Individual"
         );
         assert_eq!(ModelProvider::from_id("mistral"), None);
     }

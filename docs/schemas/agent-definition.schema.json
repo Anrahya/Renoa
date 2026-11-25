@@ -253,7 +253,8 @@
         "opencode-go",
         "deepseek",
         "openrouter",
-        "google-vertex"
+        "google-vertex",
+        "qwen-token-plan-individual"
       ],
       "type": "string"
     },

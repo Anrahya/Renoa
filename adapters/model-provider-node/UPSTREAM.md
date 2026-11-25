@@ -6,7 +6,7 @@ The provider protocols (Anthropic Messages, OpenAI Chat Completions, OpenAI
 Responses), the bundled model catalogs, and the xAI OAuth flow come from Pi's
 published model package, imported as a dependency rather than copied.
 
-- Package: [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi) `1.5.0`,
+- Package: [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi) `1.6.1`,
   pinned exactly in `package.json`
 - License: MIT, Copyright (c) 2025 Mario Zechner; the license ships inside the
   installed package
@@ -83,11 +83,18 @@ bundled entries carry, such as strict tool schemas, are not inferred.
 
 ## Google Vertex AI
 
-Pi's Vertex transport and catalog are used as published. Two things are
-Renoa's own (`src/providers/google-vertex.ts`): a Vertex API key bound to a
-service account reaches a model only under its project's path, so enrolment
-stores the project and location with the key and each request is routed there;
-and Gemini 4 Hydrogen, which Pi 1.5.2 does not list, is pinned by Renoa in the
-shape of Pi's Gemini 4 Argon entry until the pinned Pi package lists it. Pi's
+Pi's Vertex transport and catalog are used as published. One thing is Renoa's
+own (`src/providers/google-vertex.ts`): a Vertex API key bound to a service
+account reaches a model only under its project's path, so enrolment stores the
+project and location with the key and each request is routed there. Pi's
 transport refuses a custom fetch, so Vertex failures are classified as possibly
 dispatched.
+
+## Qwen Token Plan Individual
+
+Pi's `qwen-token-plan-individual` catalog and `openai-completions` transport
+(at `https://token-plan.maas.qwencloudapi.com/compatible-mode/v1`) are used as
+published. `qwen4-max`, which Pi 1.6.1 lists in `qwen-token-plan` but not yet
+in `qwen-token-plan-individual`, is pinned by Renoa in
+`src/providers/qwen-token-plan-individual.ts` in the exact shape of Pi's
+`qwen-token-plan` entry until the pinned Pi package lists it.

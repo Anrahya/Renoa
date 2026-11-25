@@ -4,57 +4,10 @@ import type { Credential } from "../credentials.js";
 
 /**
  * The endpoint template of every Vertex entry in Pi's catalog
- * (`packages/ai/src/providers/google-vertex.ts`, v1.5.0). It is the binding's
+ * (`packages/ai/src/providers/google-vertex.ts`, v1.6.1). It is the binding's
  * base URL; the route a request takes comes from the stored credential.
  */
 export const VERTEX_TEMPLATE_BASE_URL = "https://{location}-aiplatform.googleapis.com";
-
-/**
- * Gemini 4 Hydrogen, which Pi 1.5.2 does not list yet. Shape follows Pi's
- * Gemini 4 Argon entry; the id was confirmed against Vertex on 2026-11-12.
- * The price is the reported list price, not yet on Google's pricing page.
- * Pi's Google transport maps only minimal, low, medium and high, so xhigh is
- * not offered. Remove this entry once the pinned Pi package lists the model:
- * Pi's own entry then takes its place.
- */
-export const GEMINI_4_HYDROGEN = {
-  id: "gemini-4-hydrogen",
-  name: "Gemini 4 Hydrogen",
-  api: "google-vertex",
-  provider: "google-vertex",
-  baseUrl: VERTEX_TEMPLATE_BASE_URL,
-  reasoning: true,
-  input: ["text", "image"],
-  cost: { input: 1.5, output: 7.5, cacheRead: 0.075, cacheWrite: 0 },
-  contextWindow: 1_048_576,
-  maxTokens: 65_536,
-  thinkingLevelMap: {
-    off: null,
-    minimal: null,
-    low: "low",
-    medium: "medium",
-    high: "high",
-    xhigh: null,
-    max: null,
-  },
-  type: "chat",
-} as const;
-
-/**
- * Gemini 4 Neon, released 2026-11-18 and not yet in the pinned Pi package.
- * Google's model page gives the id, the `global` location, a 1,048,576-token
- * window and 65,536 output tokens per segment. Input and output are Vertex's
- * list price on OpenRouter; Google lists no cached-input rate yet, so the
- * cache-read price assumes its usual tenth of input. Neon also has xhigh, but
- * Pi's Google transport maps only up to high, as for Hydrogen. Remove this
- * entry once the pinned Pi package lists the model.
- */
-export const GEMINI_4_NEON = {
-  ...GEMINI_4_HYDROGEN,
-  id: "gemini-4-neon",
-  name: "Gemini 4 Neon",
-  cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
-} as const;
 
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/u;
 const LOCATION = /^[a-z][a-z0-9-]{1,39}$/u;

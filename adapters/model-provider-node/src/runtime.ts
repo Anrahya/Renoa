@@ -222,6 +222,9 @@ function requireCredential(
     }
     vertexRouteEnv(credential);
   }
+  if (provider === "qwen-token-plan-individual" && credential.type !== "api_key") {
+    throw new Error("Qwen Token Plan Individual requires an API key");
+  }
   return credential;
 }
 

@@ -6,7 +6,15 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export const PROVIDER_IDS = ["anthropic", "xai", "opencode-go", "deepseek", "openrouter", "google-vertex"] as const;
+export const PROVIDER_IDS = [
+  "anthropic",
+  "xai",
+  "opencode-go",
+  "deepseek",
+  "openrouter",
+  "google-vertex",
+  "qwen-token-plan-individual",
+] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
@@ -201,6 +209,8 @@ export function providerDisplayName(provider: string): string {
       return "OpenRouter";
     case "google-vertex":
       return "Google Vertex AI";
+    case "qwen-token-plan-individual":
+      return "Qwen Token Plan Individual";
     default:
       return provider;
   }

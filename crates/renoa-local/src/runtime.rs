@@ -23,7 +23,7 @@ use crate::{
 
 const MODEL_ROUND_LIMIT: NonZeroU32 = NonZeroU32::new(100).unwrap();
 const TOOL_CALL_LIMIT: NonZeroU32 = NonZeroU32::new(16).unwrap();
-pub(crate) const MAX_OUTPUT_TOKENS: NonZeroU32 = NonZeroU32::new(32_768).unwrap();
+pub(crate) const MAX_OUTPUT_TOKENS: NonZeroU32 = NonZeroU32::new(65_536).unwrap();
 const COMPACTION_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(2).unwrap();
 pub(crate) const MAX_CHECKPOINT_TOKENS: u64 = 16_384;
 pub(crate) const MIN_CONTEXT_SAFETY_TOKENS: u64 = 8_192;

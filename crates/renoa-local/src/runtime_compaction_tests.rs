@@ -1,8 +1,8 @@
 use std::num::{NonZeroU32, NonZeroU64};
 
 use super::{
-    AUTOMATIC_COMPACTION_BYTES, COMPACTION_TAIL_BYTES, REQUEST_DISPATCH_LIMIT_BYTES,
-    compaction_limits, compaction_settings,
+    AUTOMATIC_COMPACTION_BYTES, COMPACTION_TAIL_BYTES, MAX_OUTPUT_TOKENS,
+    REQUEST_DISPATCH_LIMIT_BYTES, compaction_limits, compaction_settings,
 };
 use crate::AutomaticCompaction;
 
@@ -62,4 +62,19 @@ fn runtime_compaction_limits_bind_the_request_byte_budget() {
         AUTOMATIC_COMPACTION_BYTES
     );
     assert_eq!(budget.tail_budget_bytes(), COMPACTION_TAIL_BYTES);
+}
+
+#[test]
+fn host_output_cap_is_64k_and_preserves_400k_compaction_trigger() {
+    assert_eq!(MAX_OUTPUT_TOKENS.get(), 65_536);
+    let settings = compaction_settings(
+        tokens(1_000_000),
+        MAX_OUTPUT_TOKENS,
+        Some(policy(400_000, 40_000)),
+        None,
+    )
+    .expect("settings");
+    assert_eq!(settings.reserved, 65_536 + 20_000);
+    assert_eq!(settings.automatic_compaction.get(), 400_000);
+    assert_eq!(settings.target.get(), 40_000);
 }
