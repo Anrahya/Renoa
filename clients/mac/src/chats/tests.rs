@@ -15,6 +15,7 @@ use crate::{
     chat::{Speaker, app_chat_task_id},
     face::look::PLAIN,
     link::{Command, StopOutcome, StopProblem, Update},
+    notice::{HeldLink, SetupLink, SetupLinkKind, now_ms},
     test_events::{MINUTE_MS, executed, said},
 };
 
@@ -1281,5 +1282,97 @@ fn stop_button_cancels_active_turn_even_with_draft_and_surfaces_refusal(cx: &mut
         assert!(!chats.stop_notices.contains_key(&task_id));
         assert_eq!(chats.composer.read(cx).value(), "Half a follow-up");
         assert_eq!(chats.scroller.read(cx).item_count(), 1);
+    });
+}
+
+#[gpui_kit::test]
+fn setup_link_card_connects_dismisses_and_reports_ack_failure(cx: &mut TestAppContext) {
+    let (window, chats, mut asked, updates) = open(cx);
+    let first_id = Uuid::new_v4();
+    let second_id = Uuid::new_v4();
+    let future = now_ms() + 300_000;
+
+    updates
+        .send(Update::SetupLinks(vec![
+            HeldLink {
+                notice_id: first_id,
+                link: SetupLink {
+                    kind: SetupLinkKind::Credentials,
+                    label: "Google OAuth".to_owned(),
+                    url: "https://renoa.live/setup#v=1&key=secret".to_owned(),
+                    expires_at_ms: future,
+                },
+            },
+            HeldLink {
+                notice_id: second_id,
+                link: SetupLink {
+                    kind: SetupLinkKind::Authorization,
+                    label: "Gmail".to_owned(),
+                    url: "https://accounts.google.com/o/oauth2/auth".to_owned(),
+                    expires_at_ms: future,
+                },
+            },
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+
+    chats.read_with(cx, |chats, _| {
+        let (shown, count) = chats.setup_links.current().expect("first card shown");
+        assert_eq!(shown.notice_id, first_id);
+        assert_eq!(count, 2);
+    });
+
+    // Clicking "Not now" acknowledges; a refusal keeps the card with an error.
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("setup-link-dismiss", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let Ok(Command::AcknowledgeNotice {
+        notice_id,
+        answered,
+    }) = chat_command(&mut asked)
+    else {
+        panic!("dismiss must emit Command::AcknowledgeNotice");
+    };
+    assert_eq!(notice_id, first_id);
+    answered.send(false).unwrap();
+    cx.run_until_parked();
+
+    chats.read_with(cx, |chats, _| {
+        let (shown, _) = chats.setup_links.current().expect("card kept on failure");
+        assert_eq!(shown.notice_id, first_id);
+        assert!(chats.setup_links.problem_for(first_id).is_some());
+    });
+
+    // Clicking "Connect" opens the URL, acknowledges, and advances to the second card.
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("setup-link-connect", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://renoa.live/setup#v=1&key=secret")
+    );
+    let Ok(Command::AcknowledgeNotice {
+        notice_id,
+        answered,
+    }) = chat_command(&mut asked)
+    else {
+        panic!("connect must emit Command::AcknowledgeNotice");
+    };
+    assert_eq!(notice_id, first_id);
+    answered.send(true).unwrap();
+    cx.run_until_parked();
+
+    chats.read_with(cx, |chats, _| {
+        let (shown, count) = chats.setup_links.current().expect("second card shown");
+        assert_eq!(shown.notice_id, second_id);
+        assert_eq!(count, 1);
     });
 }

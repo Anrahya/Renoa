@@ -1,13 +1,15 @@
-//! What this computer keeps between launches, in its secret store: its key
-//! and, once signed in, its credential. Nothing else is kept. The store is
-//! the login Keychain on macOS and the Secret Service keyring on Linux.
+//! What this computer keeps between launches, in its secret store: its device
+//! key, its setup-notice key, and, once signed in, its credential. Nothing else
+//! is kept. The store is the login Keychain on macOS and the Secret Service
+//! keyring on Linux.
 
 use renoa_rcp_wire::DeviceCredentials;
 
-use crate::{device, key::MacKey};
+use crate::{device, key::MacKey, notice::NoticeSecret};
 
 const SERVICE: &str = "live.renoa.mac";
 const KEY: &str = "device-key";
+const NOTICE_KEY: &str = "notice-key";
 const CREDENTIALS: &str = "device-credentials";
 
 pub use store::PROBLEM;
@@ -33,6 +35,26 @@ pub fn key() -> Result<MacKey, String> {
     Ok(key)
 }
 
+/// This computer's P-256 notice key, made and kept on first use. Only a store
+/// that holds no notice key gets a new one: any other failure leaves it alone.
+pub fn notice_key() -> Result<NoticeSecret, String> {
+    match store::read(NOTICE_KEY) {
+        Ok(Some(scalar)) => return NoticeSecret::from_scalar(&scalar),
+        Ok(None) => {}
+        Err(error) => {
+            return Err(format!(
+                "the {} could not read this {}'s notice key: {error}",
+                store::NAME,
+                device::KIND
+            ));
+        }
+    }
+    let key = NoticeSecret::generate()?;
+    store::write(NOTICE_KEY, key.scalar())
+        .map_err(|error| format!("the {} refused the notice key: {error}", store::NAME))?;
+    Ok(key)
+}
+
 /// The credential this computer signed in with, if it has one. A kept
 /// credential that does not read as one counts as none: signing in again
 /// replaces it.
@@ -53,7 +75,7 @@ pub fn keep_credentials(credentials: &DeviceCredentials) -> Result<(), String> {
         .map_err(|error| format!("the {} refused the sign-in: {error}", store::NAME))
 }
 
-/// Forgets the credential, as signing out does. The key stays, so signing in
+/// Forgets the credential, as signing out does. The keys stay, so signing in
 /// again is the same device.
 pub fn forget_credentials() {
     store::delete(CREDENTIALS);

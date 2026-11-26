@@ -15,6 +15,7 @@ use crate::{
     device,
     key::MacKey,
     link::{self, Endpoints, SignInStep},
+    notice::NoticeSecret,
     theme::{self, Palette, u},
     update::{self, Updater, Updates},
     vault,
@@ -34,6 +35,7 @@ pub struct Renoa {
     endpoints: Endpoints,
     updates: Entity<Updater>,
     key: Option<Arc<MacKey>>,
+    notice_key: Option<Arc<NoticeSecret>>,
     screen: Screen,
     _work: Option<Task<()>>,
 }
@@ -56,16 +58,18 @@ impl Renoa {
             endpoints,
             updates,
             key: None,
+            notice_key: None,
             screen: Screen::SigningIn {
                 code: None,
                 unreachable: false,
             },
             _work: None,
         };
-        match vault::key() {
+        match vault::key().and_then(|key| vault::notice_key().map(|notice| (key, notice))) {
             Err(problem) => renoa.fail(&problem),
-            Ok(key) => {
+            Ok((key, notice_key)) => {
                 renoa.key = Some(Arc::new(key));
+                renoa.notice_key = Some(Arc::new(notice_key));
                 match vault::credentials() {
                     Ok(Some(credentials)) => renoa.open_chats(credentials, window, cx),
                     Ok(None) => renoa.sign_in(window, cx),
@@ -132,13 +136,16 @@ impl Renoa {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(key) = self.key.clone() else { return };
+        let (Some(key), Some(notice_key)) = (self.key.clone(), self.notice_key.clone()) else {
+            return;
+        };
         let (commands, commands_received) = mpsc::unbounded_channel();
         let (updates_sender, updates) = mpsc::unbounded_channel();
         link::runtime().spawn(link::session(
             self.endpoints.clone(),
             credentials,
             key,
+            notice_key,
             link::Pace::APP,
             commands_received,
             updates_sender,
