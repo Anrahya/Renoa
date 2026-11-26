@@ -1,8 +1,14 @@
 //! Setup link cards waiting for the owner, shown over whatever screen is open
 //! so a link from any agent is always reachable. Connect opens the link in the
-//! system browser and acknowledges it; Not now acknowledges it without opening.
+//! system browser and acknowledges it only after the OS accepts the handoff (or
+//! if the link already expired); Not now acknowledges it without opening.
 
 use std::collections::HashSet;
+#[cfg(not(test))]
+use std::{
+    process::{Command as ProcessCommand, Stdio},
+    time::{Duration, Instant},
+};
 
 use gpui_kit::{
     Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
@@ -22,12 +28,22 @@ use crate::{
 
 const ACK_FAILED: &str = "Could not reach Renoa. Check your connection and try again.";
 
+#[cfg(target_os = "macos")]
+const BROWSER_FAILED: &str = "This Mac has no browser to open the link in.";
+#[cfg(not(target_os = "macos"))]
+const BROWSER_FAILED: &str = "This PC has no browser to open the link in.";
+
+#[cfg(test)]
+type UrlOpener = Box<dyn Fn(&str) -> bool>;
+
 /// Held setup links and any in-flight or failed acknowledgement for them.
 #[derive(Default)]
 pub(super) struct SetupLinks {
     links: Vec<HeldLink>,
     pending: HashSet<Uuid>,
     problem: Option<(Uuid, &'static str)>,
+    #[cfg(test)]
+    opener: Option<UrlOpener>,
 }
 
 impl SetupLinks {
@@ -59,11 +75,16 @@ impl SetupLinks {
             .filter(|(id, _)| *id == notice_id)
             .map(|(_, text)| text)
     }
+
+    #[cfg(test)]
+    pub(super) fn set_opener(&mut self, opener: impl Fn(&str) -> bool + 'static) {
+        self.opener = Some(Box::new(opener));
+    }
 }
 
 impl Chats {
     /// The first setup link waiting for the owner, floating at the top of the
-    /// workspace.
+    /// workspace above any open sheet.
     pub(super) fn setup_link_card(
         &self,
         palette: Palette,
@@ -212,10 +233,52 @@ impl Chats {
             return;
         }
         // A link that expired while on screen leads nowhere; put it away instead.
-        if expires_at_ms > now_ms() {
-            cx.open_url(url);
+        if expires_at_ms <= now_ms() {
+            self.acknowledge_setup_link(notice_id, cx);
+            return;
         }
-        self.acknowledge_setup_link(notice_id, cx);
+        if self
+            .setup_links
+            .problem
+            .is_some_and(|(id, _)| id == notice_id)
+        {
+            self.setup_links.problem = None;
+        }
+        #[cfg(test)]
+        {
+            let opened = if let Some(opener) = &self.setup_links.opener {
+                opener(url)
+            } else {
+                cx.open_url(url);
+                true
+            };
+            if opened {
+                self.acknowledge_setup_link(notice_id, cx);
+            } else {
+                self.setup_links.problem = Some((notice_id, BROWSER_FAILED));
+                cx.notify();
+            }
+        }
+        #[cfg(not(test))]
+        {
+            self.setup_links.pending.insert(notice_id);
+            cx.notify();
+            let url = url.to_owned();
+            let launched = crate::link::runtime().spawn_blocking(move || launch_browser(&url));
+            cx.spawn(async move |this, cx| {
+                let opened = launched.await.unwrap_or(false);
+                let _ = this.update(cx, |this, cx| {
+                    this.setup_links.pending.remove(&notice_id);
+                    if opened {
+                        this.acknowledge_setup_link(notice_id, cx);
+                    } else {
+                        this.setup_links.problem = Some((notice_id, BROWSER_FAILED));
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     pub(super) fn acknowledge_setup_link(&mut self, notice_id: Uuid, cx: &mut Context<Self>) {
@@ -266,4 +329,34 @@ impl Chats {
         })
         .detach();
     }
+}
+
+/// Hands `url` off to the system browser and reports whether the OS accepted it.
+/// Waits briefly for immediate handoff errors (such as missing browser or exit
+/// status 3/4 from `xdg-open`) without killing a newly cold-started browser.
+#[cfg(not(test))]
+fn launch_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    const LAUNCHER: &str = "/usr/bin/open";
+    #[cfg(not(target_os = "macos"))]
+    const LAUNCHER: &str = "xdg-open";
+
+    let Ok(mut child) = ProcessCommand::new(LAUNCHER)
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(_) => return false,
+        }
+    }
+    true
 }

@@ -1023,23 +1023,7 @@ async fn setup_notices_register_key_open_valid_ack_unreadable_refresh_on_turn_en
 
     let phase = Arc::new(AtomicUsize::new(0));
     let phase_in = Arc::clone(&phase);
-    let key_attempts = Arc::new(AtomicUsize::new(0));
-    let key_attempts_in = Arc::clone(&key_attempts);
     let (endpoints, heard) = coordinator(Arc::new(move |_, frame: &ClientMessage| match frame {
-        ClientMessage::SetNoticeKey { request_id, .. } => {
-            // Fail the first SetNoticeKey transiently to prove it retries on the same connection.
-            if key_attempts_in.fetch_add(1, Ordering::SeqCst) == 0 {
-                vec![reply(&ServerMessage::Error {
-                    request_id: Some(*request_id),
-                    code: ErrorCode::Internal,
-                    message: "temporary".to_owned(),
-                })]
-            } else {
-                vec![reply(&ServerMessage::NoticeKeySet {
-                    request_id: *request_id,
-                })]
-            }
-        }
         ClientMessage::ListNotices { request_id } => {
             let notices = match phase_in.load(Ordering::SeqCst) {
                 0 => vec![
@@ -1115,24 +1099,19 @@ async fn setup_notices_register_key_open_valid_ack_unreadable_refresh_on_turn_en
         Pace {
             collect_every: Duration::from_millis(5),
             retry_after: Duration::from_millis(5),
-            // Short enough to retry SetNoticeKey on the second tick, long enough to stay clean.
-            agents_every: Duration::from_millis(40),
+            // Long poll interval proves the turn-end event itself wakes the refresh.
+            agents_every: Duration::from_secs(60),
         },
         received,
         sender,
     ));
 
-    let registered = hear(&heard, 2, |frame| {
+    let registered = hear(&heard, 1, |frame| {
         matches!(frame, ClientMessage::SetNoticeKey { .. })
     })
     .await;
-    assert_eq!(
-        (registered[0].0, registered[1].0),
-        (0, 0),
-        "transient SetNoticeKey failure retries on the same connection"
-    );
     assert!(matches!(
-        &registered[1].1,
+        &registered[0].1,
         ClientMessage::SetNoticeKey { public_key, .. } if *public_key == expected_pub
     ));
 
@@ -1204,6 +1183,108 @@ async fn setup_notices_register_key_open_valid_ack_unreadable_refresh_on_turn_en
     assert_eq!(second_links.len(), 1);
     assert_eq!(second_links[0].notice_id, later_id);
     assert_eq!(second_links[0].link.label, "Gmail");
+
+    drop(commands);
+    let _ = timeout(Duration::from_secs(5), session_task).await;
+}
+
+#[tokio::test]
+async fn a_transient_set_notice_key_failure_retries_on_the_same_connection() {
+    let device_id = DeviceId::new();
+    let notice_key = Arc::new(NoticeSecret::generate().expect("notice key"));
+    let point = notice_key.public_key().point().expect("point");
+    let notice_id = Uuid::new_v4();
+    let future = now_ms() + 300_000;
+    let sealed = seal_for_test(
+        &point,
+        notice_id,
+        device_id,
+        serde_json::json!({
+            "kind": "authorization",
+            "label": "Gmail",
+            "url": "https://accounts.google.com/o/oauth2/auth",
+            "expires_at_ms": future,
+        })
+        .to_string()
+        .as_bytes(),
+    );
+
+    let key_attempts = Arc::new(AtomicUsize::new(0));
+    let key_attempts_in = Arc::clone(&key_attempts);
+    let (endpoints, heard) = coordinator(Arc::new(move |_, frame: &ClientMessage| match frame {
+        ClientMessage::SetNoticeKey { request_id, .. } => {
+            if key_attempts_in.fetch_add(1, Ordering::SeqCst) == 0 {
+                vec![reply(&ServerMessage::Error {
+                    request_id: Some(*request_id),
+                    code: ErrorCode::Internal,
+                    message: "temporary".to_owned(),
+                })]
+            } else {
+                vec![reply(&ServerMessage::NoticeKeySet {
+                    request_id: *request_id,
+                })]
+            }
+        }
+        ClientMessage::ListNotices { request_id } => vec![reply(&ServerMessage::NoticeList {
+            request_id: *request_id,
+            notices: vec![HeldNotice {
+                notice_id,
+                sealed: sealed.clone(),
+                expires_at_ms: future,
+            }],
+        })],
+        other => chat_replies(other).expect("expected frame"),
+    }))
+    .await;
+
+    let (commands, received) = mpsc::unbounded_channel();
+    let (sender, mut updates) = mpsc::unbounded_channel();
+    let credentials = DeviceCredentials {
+        device_id,
+        credential: DeviceCredential::new("credential"),
+    };
+    let key = Arc::new(MacKey::generate().expect("key"));
+    let expected_pub = notice_key.public_key();
+    let session_task = tokio::spawn(session(
+        endpoints,
+        credentials,
+        key,
+        notice_key,
+        Pace {
+            collect_every: Duration::from_millis(5),
+            retry_after: Duration::from_millis(5),
+            agents_every: Duration::from_millis(30),
+        },
+        received,
+        sender,
+    ));
+
+    let registered = hear(&heard, 2, |frame| {
+        matches!(frame, ClientMessage::SetNoticeKey { .. })
+    })
+    .await;
+    assert_eq!(
+        (registered[0].0, registered[1].0),
+        (0, 0),
+        "retries SetNoticeKey on the same connection"
+    );
+    assert!(matches!(
+        &registered[1].1,
+        ClientMessage::SetNoticeKey { public_key, .. } if *public_key == expected_pub
+    ));
+
+    let links = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(Update::SetupLinks(links)) = updates.recv().await
+                && !links.is_empty()
+            {
+                return links;
+            }
+        }
+    })
+    .await
+    .expect("notice arrives once registration succeeds");
+    assert_eq!(links[0].notice_id, notice_id);
 
     drop(commands);
     let _ = timeout(Duration::from_secs(5), session_task).await;

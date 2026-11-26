@@ -337,26 +337,17 @@ async fn linked(
     let mut agents = tokio::time::interval(agents_every);
     agents.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut first_tick = true;
-    // Profiles and setup notices are read beside the loop, coalesced to one
-    // in-flight reader each so slow replies never stack or hold up messages.
+    // Profiles and setup notices run beside the loop; notices use one
+    // long-lived worker driven by `refresh_notices` so refreshes coalesce
+    // cleanly without losing notifications at shutdown.
     let mut reading: Option<Aborting> = None;
-    let mut reading_notices: Option<Aborting> = Some(Aborting(tokio::spawn(notices.clone().sync(
+    let _notice_watcher = Aborting(tokio::spawn(notices.clone().watch(
         connection_id,
         connection.clone(),
+        Arc::clone(refresh_notices),
         updates.clone(),
-    ))));
+    )));
     let mut calls: Vec<Aborting> = Vec::new();
-    let trigger_notices = |slot: &mut Option<Aborting>| {
-        if slot.as_ref().is_none_or(Aborting::finished) {
-            *slot = Some(Aborting(tokio::spawn(notices.clone().sync(
-                connection_id,
-                connection.clone(),
-                updates.clone(),
-            ))));
-        } else {
-            notices.mark_dirty();
-        }
-    };
     loop {
         let served = tokio::select! {
             command = commands.recv() => match command {
@@ -414,10 +405,6 @@ async fn linked(
                     }
                 },
             },
-            () = refresh_notices.notified() => {
-                trigger_notices(&mut reading_notices);
-                Ok(())
-            }
             _ = agents.tick() => match within(connection.list_targets()).await {
                 Ok(listed) => {
                     if reading.as_ref().is_none_or(Aborting::finished) {
@@ -429,7 +416,7 @@ async fn linked(
                         ))));
                     }
                     if !std::mem::replace(&mut first_tick, false) {
-                        trigger_notices(&mut reading_notices);
+                        refresh_notices.notify_one();
                     }
                     let _ = updates.send(Update::Agents(listed));
                     catch_up(connection, updates, kept).await

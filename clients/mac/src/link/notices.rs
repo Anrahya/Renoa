@@ -1,17 +1,14 @@
 //! Setup notices on one session: registers this device's notice key on each
-//! connection (retrying on later refreshes after a transient failure), coalesces
-//! concurrent reads, opens held notices, acknowledges unreadable ones, and
-//! serializes reads against owner acknowledgements so a dismissed card cannot
-//! reappear from an in-flight list.
+//! connection (retrying on later refreshes after a transient failure), drives a
+//! single race-free per-connection worker via `tokio::sync::Notify`, opens held
+//! notices, acknowledges unreadable ones, and serializes reads against owner
+//! acknowledgements so a dismissed card cannot reappear from an in-flight list.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use renoa_rcp_client::{ClientError, Connection};
 use renoa_rcp_wire::DeviceId;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, Notify, mpsc, oneshot};
 use uuid::Uuid;
 
 use super::{Update, session::within};
@@ -28,7 +25,6 @@ pub(super) struct Notices {
     device_id: DeviceId,
     key: Arc<NoticeSecret>,
     state: Arc<Mutex<State>>,
-    dirty: Arc<AtomicBool>,
 }
 
 impl Notices {
@@ -37,47 +33,39 @@ impl Notices {
             device_id,
             key,
             state: Arc::new(Mutex::new(State::default())),
-            dirty: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Marks that a fresh read is needed once any in-flight read completes.
-    pub(super) fn mark_dirty(&self) {
-        self.dirty.store(true, Ordering::Release);
-    }
-
-    /// Ensures this device's notice key is registered on `connection_id`, then
-    /// reads waiting notices and re-runs once if another refresh arrived while
-    /// reading.
-    pub(super) async fn sync(
+    /// Long-lived per-connection worker: registers the notice key and reads
+    /// waiting notices whenever `refresh` is notified (including once on start).
+    /// Because `Notify` stores a single permit across concurrent notifications,
+    /// refreshes are coalesced without losing one at task shutdown.
+    pub(super) async fn watch(
         self,
         connection_id: u64,
         connection: Connection,
+        refresh: Arc<Notify>,
         updates: mpsc::UnboundedSender<Update>,
     ) {
+        refresh.notify_one();
         loop {
-            self.dirty.store(false, Ordering::Release);
+            refresh.notified().await;
             let mut state = self.state.lock().await;
             if state.registered_on != Some(connection_id) {
                 if within(connection.set_notice_key(self.key.public_key()))
                     .await
                     .is_err()
                 {
-                    return;
+                    continue;
                 }
                 state.registered_on = Some(connection_id);
             }
-            let ok = self
-                .read_locked(&connection, &updates, &mut state.held)
+            self.read_locked(&connection, &updates, &mut state.held)
                 .await;
-            drop(state);
-            if !ok || !self.dirty.load(Ordering::Acquire) {
-                return;
-            }
         }
     }
 
-    /// Acknowledges `notice_id` under the same lock as [`Self::sync`], removing
+    /// Acknowledges `notice_id` under the same lock as [`Self::watch`], removing
     /// it from the shown list on success and reporting whether it succeeded.
     pub(super) async fn acknowledge(
         self,
@@ -102,9 +90,9 @@ impl Notices {
         connection: &Connection,
         updates: &mpsc::UnboundedSender<Update>,
         held: &mut Vec<HeldLink>,
-    ) -> bool {
+    ) {
         let Ok(listed) = within(connection.list_notices()).await else {
-            return false;
+            return;
         };
         let now = now_ms();
         let mut opened = Vec::with_capacity(listed.len());
@@ -132,6 +120,5 @@ impl Notices {
             *held = opened;
             let _ = updates.send(Update::SetupLinks(held.clone()));
         }
-        transport_ok
     }
 }

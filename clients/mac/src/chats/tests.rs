@@ -1375,4 +1375,29 @@ fn setup_link_card_connects_dismisses_and_reports_ack_failure(cx: &mut TestAppCo
         assert_eq!(shown.notice_id, second_id);
         assert_eq!(count, 1);
     });
+
+    // A failed browser launch keeps the unexpired card, shows an error, and
+    // emits NO AcknowledgeNotice.
+    chats.update(cx, |chats, _| {
+        chats.setup_links.set_opener(|_| false);
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("setup-link-connect", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    assert!(
+        chat_command(&mut asked).is_err(),
+        "failed browser launch must not acknowledge the notice"
+    );
+    chats.read_with(cx, |chats, _| {
+        let (shown, _) = chats
+            .setup_links
+            .current()
+            .expect("card kept on launch failure");
+        assert_eq!(shown.notice_id, second_id);
+        assert!(chats.setup_links.problem_for(second_id).is_some());
+    });
 }

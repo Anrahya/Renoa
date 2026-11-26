@@ -9,11 +9,13 @@ use crate::{ClientError, Connection, unexpected};
 
 impl Connection {
     /// Registers or replaces this device's P-256 notice public key so nodes
-    /// can seal setup links to it.
+    /// can seal setup links to it. Only a connection that proved its device
+    /// key (via [`crate::connect_with_key`]) may call this.
     ///
     /// # Errors
     ///
-    /// Returns a transport failure or the coordinator's refusal.
+    /// Returns a transport failure or the coordinator's refusal (such as
+    /// `InvalidRole` when the connection did not prove a device key).
     pub async fn set_notice_key(&self, public_key: NoticeKey) -> Result<(), ClientError> {
         match self
             .request(|request_id| ClientMessage::SetNoticeKey {
@@ -28,11 +30,13 @@ impl Connection {
     }
 
     /// Lists this device's unexpired held setup notices, soonest to expire
-    /// first.
+    /// first. Only a connection that proved its device key (via
+    /// [`crate::connect_with_key`]) may call this.
     ///
     /// # Errors
     ///
-    /// Returns a transport failure or the coordinator's refusal.
+    /// Returns a transport failure or the coordinator's refusal (such as
+    /// `InvalidRole` when the connection did not prove a device key).
     pub async fn list_notices(&self) -> Result<Vec<HeldNotice>, ClientError> {
         match self
             .request(|request_id| ClientMessage::ListNotices { request_id })
@@ -44,11 +48,13 @@ impl Connection {
     }
 
     /// Acknowledges `notice_id`, removing it for this device. Repeating the
-    /// call for a notice that is already gone succeeds.
+    /// call for a notice that is already gone succeeds. Only a connection that
+    /// proved its device key (via [`crate::connect_with_key`]) may call this.
     ///
     /// # Errors
     ///
-    /// Returns a transport failure or the coordinator's refusal.
+    /// Returns a transport failure or the coordinator's refusal (such as
+    /// `InvalidRole` when the connection did not prove a device key).
     pub async fn acknowledge_notice(&self, notice_id: Uuid) -> Result<(), ClientError> {
         match self
             .request(|request_id| ClientMessage::AcknowledgeNotice {
