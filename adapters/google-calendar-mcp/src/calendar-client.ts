@@ -52,12 +52,14 @@ export interface UpdateEventInput {
   readonly sendUpdates: SendUpdates;
 }
 
+const defaultFetch: CalendarFetch = (input, init) => fetch(input, init);
+
 export class CalendarClient {
   readonly #token: string;
   readonly #signal: AbortSignal;
   readonly #fetch: CalendarFetch;
 
-  constructor(token: string, signal: AbortSignal, fetchFn: CalendarFetch = fetch) {
+  constructor(token: string, signal: AbortSignal, fetchFn: CalendarFetch = defaultFetch) {
     this.#token = token;
     this.#signal = signal;
     this.#fetch = fetchFn;
@@ -210,8 +212,9 @@ export class CalendarClient {
       AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ]);
     let response: Response;
+    const fetchFn = this.#fetch;
     try {
-      response = await this.#fetch(new URL(path, GOOGLE_API_ORIGIN), {
+      response = await fetchFn(new URL(path, GOOGLE_API_ORIGIN), {
         ...init,
         headers,
         redirect: "manual",

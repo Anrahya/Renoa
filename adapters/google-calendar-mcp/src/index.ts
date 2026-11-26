@@ -18,7 +18,9 @@ export interface CalendarWorker {
   fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response>;
 }
 
-export function createWorker(fetchFn: CalendarFetch = fetch): CalendarWorker {
+const defaultFetch: CalendarFetch = (input, init) => fetch(input, init);
+
+export function createWorker(fetchFn: CalendarFetch = defaultFetch): CalendarWorker {
   const mcp = createMcpHandler(
     (context) => createCalendarServer(context, fetchFn),
     {

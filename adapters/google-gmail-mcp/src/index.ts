@@ -19,7 +19,9 @@ export interface GmailWorker {
   fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response>;
 }
 
-export function createWorker(fetchFn: GmailFetch = fetch): GmailWorker {
+const defaultFetch: GmailFetch = (input, init) => fetch(input, init);
+
+export function createWorker(fetchFn: GmailFetch = defaultFetch): GmailWorker {
   const mcp = createMcpHandler(
     (context) => createGmailServer(context, fetchFn),
     {

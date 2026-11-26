@@ -146,6 +146,37 @@ describe("MCP tools", () => {
     expect(failed.isError).toBe(true);
     expect(toolJson(failed).error).toBe("Denied for [REDACTED]");
   });
+
+  test("invokes fetch without binding this to the client instance", async () => {
+    function receiverCheckedFetch(
+      this: unknown,
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return Promise.resolve(
+        Response.json({ items: [{ id: "primary", summary: "Main" }] }),
+      );
+    }
+    const worker = createWorker(receiverCheckedFetch);
+    const fetchLike: FetchLike = (input, init) =>
+      dispatch(worker, input instanceof Request ? input : new Request(input, init));
+    const transport = new StreamableHTTPClientTransport(new URL(MCP_ENDPOINT), {
+      fetch: fetchLike,
+      requestInit: { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } },
+    });
+    const client = new Client(
+      { name: "renoa-calendar-fetch-this-test", version: "0.1.0" },
+      { supportedProtocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] },
+    );
+    await client.connect(transport);
+    clients.push(client);
+    const result = await client.callTool({ name: "list_calendars", arguments: {} });
+    expect(result.isError).not.toBe(true);
+    expect(toolJson(result)).toEqual({ items: [{ id: "primary", summary: "Main" }] });
+  });
 });
 
 async function connectedClient(handler: (request: Request) => Promise<Response>): Promise<{

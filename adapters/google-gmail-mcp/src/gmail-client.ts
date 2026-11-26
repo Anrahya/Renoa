@@ -39,12 +39,14 @@ export interface ComposeInput extends ComposeMessageInput {
   readonly threadId?: string;
 }
 
+const defaultFetch: GmailFetch = (input, init) => fetch(input, init);
+
 export class GmailClient {
   readonly #token: string;
   readonly #signal: AbortSignal;
   readonly #fetch: GmailFetch;
 
-  constructor(token: string, signal: AbortSignal, fetchFn: GmailFetch = fetch) {
+  constructor(token: string, signal: AbortSignal, fetchFn: GmailFetch = defaultFetch) {
     this.#token = token;
     this.#signal = signal;
     this.#fetch = fetchFn;
@@ -237,8 +239,9 @@ export class GmailClient {
       AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ]);
     let response: Response;
+    const fetchFn = this.#fetch;
     try {
-      response = await this.#fetch(new URL(path, GOOGLE_GMAIL_ORIGIN), {
+      response = await fetchFn(new URL(path, GOOGLE_GMAIL_ORIGIN), {
         ...init,
         headers,
         redirect: "manual",

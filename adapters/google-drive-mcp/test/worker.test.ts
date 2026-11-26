@@ -296,6 +296,33 @@ describe("MCP tools", () => {
     expect(googleRequests).toHaveLength(1);
     expect(new URL(googleRequests[0]!.url).origin).toBe("https://www.googleapis.com");
   });
+
+  test("invokes fetch without binding this to the client instance", async () => {
+    function receiverCheckedFetch(
+      this: unknown,
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return Promise.resolve(Response.json({ files: [] }));
+    }
+    const worker = createWorker(receiverCheckedFetch);
+    const transport = new StreamableHTTPClientTransport(new URL(MCP_ENDPOINT), {
+      fetch: workerFetch(worker),
+      requestInit: { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } },
+    });
+    const client = new Client(
+      { name: "renoa-drive-fetch-this-test", version: "0.1.0" },
+      { supportedProtocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] },
+    );
+    clients.push(client);
+    await client.connect(transport);
+    const result = await client.callTool({ name: "list_recent_files", arguments: {} });
+    expect(result.isError).not.toBe(true);
+    expect(toolJson(result)).toEqual({ files: [] });
+  });
 });
 
 async function connectedClient(

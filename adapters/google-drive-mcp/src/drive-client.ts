@@ -41,12 +41,14 @@ const DEFAULT_EXPORTS: Readonly<Record<string, string>> = {
   "application/vnd.google-apps.spreadsheet": "text/csv",
 };
 
+const defaultFetch: DriveFetch = (input, init) => fetch(input, init);
+
 export class DriveClient {
   readonly #token: string;
   readonly #signal: AbortSignal;
   readonly #fetch: DriveFetch;
 
-  constructor(token: string, signal: AbortSignal, fetchFn: DriveFetch = fetch) {
+  constructor(token: string, signal: AbortSignal, fetchFn: DriveFetch = defaultFetch) {
     this.#token = token;
     this.#signal = signal;
     this.#fetch = fetchFn;
@@ -271,8 +273,9 @@ export class DriveClient {
       AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ]);
     let response: Response;
+    const fetchFn = this.#fetch;
     try {
-      response = await this.#fetch(new URL(path, origin), {
+      response = await fetchFn(new URL(path, origin), {
         ...init,
         headers,
         redirect: "manual",

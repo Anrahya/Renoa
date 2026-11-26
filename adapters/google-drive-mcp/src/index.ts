@@ -18,7 +18,9 @@ export interface DriveWorker {
   fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response>;
 }
 
-export function createWorker(fetchFn: DriveFetch = fetch): DriveWorker {
+const defaultFetch: DriveFetch = (input, init) => fetch(input, init);
+
+export function createWorker(fetchFn: DriveFetch = defaultFetch): DriveWorker {
   const mcp = createMcpHandler(
     (context) => createDriveServer(context, fetchFn),
     {
