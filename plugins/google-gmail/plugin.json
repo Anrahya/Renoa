@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "renoa.google-gmail",
+  "version": "0.1.0",
+  "description": "Gmail tools backed by the stable Gmail REST API and authenticated by the Renoa Host.",
+  "author": {
+    "name": "Renoa"
+  },
+  "homepage": "https://gmail.renoa.live",
+  "repository": "https://github.com/Anrahya/Renoa",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["gmail", "google-gmail", "email", "mcp", "renoa"]
+}

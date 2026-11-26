@@ -28,6 +28,7 @@ node_modules/
 /grok-build/
 /pi/
 .wrangler/
+.cloudflare/
 
 # macOS Finder metadata.
 .DS_Store

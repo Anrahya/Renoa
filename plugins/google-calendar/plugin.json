@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "renoa.google-calendar",
+  "version": "0.1.0",
+  "description": "Google Calendar tools backed by the stable Calendar REST API and authenticated by the Renoa Host.",
+  "author": {
+    "name": "Renoa"
+  },
+  "homepage": "https://calendar.renoa.live",
+  "repository": "https://github.com/Anrahya/Renoa",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["calendar", "google-calendar", "mcp", "renoa"]
+}
