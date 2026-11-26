@@ -6,6 +6,7 @@
 //! reconnects and resumes from it.
 
 mod handshake;
+mod notices;
 mod sign_in;
 mod transport;
 
@@ -26,7 +27,7 @@ use renoa_rcp_wire::{
     ClientMessage, DeviceCredentials, ErrorCode, NodeId, ServerMessage, TargetSummary, TaskEvent,
     TaskId,
 };
-pub use renoa_rcp_wire::{HostMethod, ShareLink, StopOutcome};
+pub use renoa_rcp_wire::{HeldNotice, HostMethod, NoticeKey, ShareLink, StopOutcome};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;

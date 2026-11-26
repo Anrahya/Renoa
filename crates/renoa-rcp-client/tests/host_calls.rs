@@ -4,10 +4,14 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_rcp_client::{ClientError, HostAnswer, ShareLink};
+use renoa_rcp_client::{ClientError, DeviceKey, HeldNotice, HostAnswer, NoticeKey, ShareLink};
 use renoa_rcp_wire::{
     ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HostMethod,
     JSON_WS_VERSION, ServerMessage,
+};
+use ring::{
+    rand::SystemRandom,
+    signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair as _},
 };
 use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle, time::timeout};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -222,4 +226,161 @@ async fn client_requests_share_link_and_surfaces_coordinator_errors() {
         ),
         "{err:?}"
     );
+}
+
+struct TestKey(EcdsaKeyPair);
+
+impl TestKey {
+    fn generate() -> Self {
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng)
+            .expect("generate device key");
+        Self(
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref(), &rng)
+                .expect("load device key"),
+        )
+    }
+}
+
+impl DeviceKey for TestKey {
+    fn public_key(&self) -> [u8; 65] {
+        self.0
+            .public_key()
+            .as_ref()
+            .try_into()
+            .expect("uncompressed P-256 point")
+    }
+
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, ClientError> {
+        self.0
+            .sign(&SystemRandom::new(), message)
+            .map(|sig| sig.as_ref().to_vec())
+            .map_err(|_| ClientError::Key("sign failed".to_owned()))
+    }
+}
+
+/// Like [`serving`], but issues a device challenge so the client proves its
+/// device key via `connect_with_key`.
+async fn serving_with_key(
+    answer: impl Fn(&ClientMessage) -> ServerMessage + Send + Sync + 'static,
+) -> (
+    String,
+    mpsc::UnboundedReceiver<ClientMessage>,
+    JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("ws://{}/connect", listener.local_addr().expect("address"));
+    let (calls, received) = mpsc::unbounded_channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut socket = accept_async(stream).await.expect("websocket");
+        while let Some(Ok(Message::Text(text))) = socket.next().await {
+            let frame = serde_json::from_str::<ClientMessage>(&text).expect("client frame");
+            let reply = match &frame {
+                ClientMessage::Authenticate { .. } => ServerMessage::DeviceChallenge {
+                    nonce: "challenge-nonce".to_owned(),
+                },
+                ClientMessage::DeviceProof { .. } => ServerMessage::Authenticated {
+                    version: JSON_WS_VERSION,
+                },
+                other => answer(other),
+            };
+            let _ = calls.send(frame);
+            let json = serde_json::to_string(&reply).expect("encode");
+            if socket.send(Message::Text(json.into())).await.is_err() {
+                return;
+            }
+        }
+    });
+    (url, received, server)
+}
+
+#[tokio::test]
+async fn client_registers_notice_key_lists_and_acknowledges_notices() {
+    let key = NoticeKey::new(
+        "BF-DLVvm3C97gH6MzIEC7j1M0GDuNjRhHpAeTO0yeUTB9wUgMWG2wmkQOontZLJUCELALgwqPvlQuCRxhOTuqoM",
+    );
+    let expected_key = key.clone();
+    let held = HeldNotice {
+        notice_id: Uuid::new_v4(),
+        sealed: "opaque-ciphertext".to_owned(),
+        expires_at_ms: 1_893_456_000_000,
+    };
+    let held_reply = held.clone();
+    let (url, mut received, _server) = serving_with_key(move |frame| match frame {
+        ClientMessage::SetNoticeKey {
+            request_id,
+            public_key,
+        } => {
+            assert_eq!(*public_key, expected_key);
+            ServerMessage::NoticeKeySet {
+                request_id: *request_id,
+            }
+        }
+        ClientMessage::ListNotices { request_id } => ServerMessage::NoticeList {
+            request_id: *request_id,
+            notices: vec![held_reply.clone()],
+        },
+        ClientMessage::AcknowledgeNotice {
+            request_id,
+            notice_id,
+        } if *notice_id == held_reply.notice_id => ServerMessage::NoticeAcknowledged {
+            request_id: *request_id,
+        },
+        ClientMessage::AcknowledgeNotice { request_id, .. } => ServerMessage::Error {
+            request_id: Some(*request_id),
+            code: ErrorCode::InvalidRole,
+            message: "not an app".to_owned(),
+        },
+        other => panic!("unexpected frame {other:?}"),
+    })
+    .await;
+    let device_key = TestKey::generate();
+    let (connection, _events) =
+        renoa_rcp_client::connect_with_key(&url, credentials(), &device_key)
+            .await
+            .expect("connect with device key");
+
+    connection
+        .set_notice_key(key.clone())
+        .await
+        .expect("set notice key");
+    assert_eq!(
+        connection.list_notices().await.expect("list notices"),
+        vec![held.clone()]
+    );
+    connection
+        .acknowledge_notice(held.notice_id)
+        .await
+        .expect("acknowledge notice");
+
+    let err = connection
+        .acknowledge_notice(Uuid::new_v4())
+        .await
+        .expect_err("refused ack");
+    assert_eq!(err.code(), Some(ErrorCode::InvalidRole));
+
+    let mut seen = Vec::new();
+    while let Ok(Some(frame)) = timeout(Duration::from_millis(200), received.recv()).await {
+        seen.push(frame);
+        if seen.len() == 6 {
+            break;
+        }
+    }
+    assert!(
+        seen.iter()
+            .any(|frame| matches!(frame, ClientMessage::DeviceProof { .. }))
+    );
+    assert!(seen.iter().any(|frame| matches!(
+        frame,
+        ClientMessage::SetNoticeKey { public_key, .. } if *public_key == key
+    )));
+    assert!(
+        seen.iter()
+            .any(|frame| matches!(frame, ClientMessage::ListNotices { .. }))
+    );
+    assert!(seen.iter().any(|frame| matches!(
+        frame,
+        ClientMessage::AcknowledgeNotice { notice_id, .. } if *notice_id == held.notice_id
+    )));
 }

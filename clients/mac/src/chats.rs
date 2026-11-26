@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 
 use gpui_kit::{
@@ -25,6 +25,7 @@ use crate::{
     face::Look,
     home::Home,
     link::{Command, Update, host_agent},
+    notice::now_ms,
     theme::Palette,
 };
 
@@ -105,6 +106,8 @@ pub struct Chats {
     _home_events: Subscription,
     /// The chats the owner opened, for Ctrl+Tab.
     recent: recent::Recent,
+    /// Setup links waiting for the owner.
+    setup_links: connect::SetupLinks,
 }
 
 impl EventEmitter<SignedOut> for Chats {}
@@ -192,6 +195,7 @@ impl Chats {
             home_focus,
             _home_events,
             recent: recent::Recent::default(),
+            setup_links: connect::SetupLinks::default(),
         }
     }
 
@@ -251,16 +255,11 @@ impl Chats {
                     self.stopping.remove(command_id);
                     self.stop_notices.remove(&event.task_id);
                 }
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |since| {
-                        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-                    });
                 let timed = self
                     .transcripts
                     .entry(event.task_id)
                     .or_default()
-                    .apply(&event, now_ms);
+                    .apply(&event, now_ms());
                 if self.chosen_task() == Some(event.task_id) {
                     self.show_rows(cx);
                     // A line that took a time may now show one above it.
@@ -295,6 +294,7 @@ impl Chats {
                     self.drafts.insert(task_id, joined(text, &draft));
                 }
             }
+            Update::SetupLinks(links) => self.setup_links.set(links),
             Update::SignedOut => cx.emit(SignedOut),
         }
         // Home shows each agent as the chats do.
@@ -465,6 +465,7 @@ impl Render for Chats {
             .child(sidebar)
             .child(main)
             .children(overlay)
+            .children(self.setup_link_card(palette, cx))
             .children(self.switcher(palette))
     }
 }
@@ -479,6 +480,7 @@ fn joined(first: String, then: &str) -> String {
 }
 
 mod composer;
+mod connect;
 mod home;
 mod jump;
 pub(crate) mod keys;

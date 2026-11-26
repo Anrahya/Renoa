@@ -10,6 +10,7 @@ mod icons;
 mod key;
 mod link;
 mod menus;
+mod notice;
 mod sheets;
 mod stamp;
 #[cfg(test)]

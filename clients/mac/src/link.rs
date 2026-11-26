@@ -9,80 +9,32 @@ use std::{
 
 use renoa_protocol::{CommandId, LiveActivity, TargetRef};
 pub use renoa_rcp_client::StopOutcome;
-use renoa_rcp_client::{ClientError, Connection, Events, SurfaceEvent, connect_with_key};
+use renoa_rcp_client::{ClientError, Connection, connect_with_key};
 use renoa_rcp_wire::{DeviceCredentials, ErrorCode, NodeId, TargetSummary, TaskEvent, TaskId};
 use tokio::{
     runtime::Runtime,
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
+    sync::{Notify, mpsc, oneshot},
     time::{MissedTickBehavior, sleep},
 };
 use uuid::Uuid;
 
-use crate::{face::Look, key::MacKey};
+use crate::{
+    face::Look,
+    key::MacKey,
+    notice::{HeldLink, NoticeSecret},
+};
 use host::HostCall;
-pub use session::StopProblem;
-use session::{Followed, Outgoing, Through, flush, follow, note, request_stop, within};
+use notices::Notices;
+use session::{
+    Aborting, Followed, Outgoing, Through, flush, follow, forward, note, request_stop, within,
+};
+pub use session::{Endpoints, Pace, StopProblem};
 pub use sign_in::{SignInStep, sign_in};
-
-const DEFAULT_ORIGIN: &str = "https://renoa.live";
 
 pub fn runtime() -> &'static Runtime {
     static RUNTIME: LazyLock<Runtime> =
         LazyLock::new(|| Runtime::new().expect("start the tokio runtime"));
     &RUNTIME
-}
-
-/// Where Renoa is: `RENOA_ORIGIN`, or renoa.live.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Endpoints {
-    pub origin: String,
-    pub connect: String,
-}
-
-impl Endpoints {
-    pub fn from_environment() -> Self {
-        Self::at(&std::env::var("RENOA_ORIGIN").unwrap_or_else(|_| DEFAULT_ORIGIN.to_owned()))
-    }
-
-    /// The coordinator at `origin` takes connections at `/connect`, over
-    /// TLS unless the origin is plain HTTP.
-    pub fn at(origin: &str) -> Self {
-        let origin = origin.trim_end_matches('/').to_owned();
-        let socket = origin
-            .strip_prefix("https://")
-            .map(|host| format!("wss://{host}"))
-            .or_else(|| {
-                origin
-                    .strip_prefix("http://")
-                    .map(|host| format!("ws://{host}"))
-            })
-            .unwrap_or_else(|| origin.clone());
-        Self {
-            connect: format!("{socket}/connect"),
-            origin,
-        }
-    }
-}
-
-/// How often signing in collects, how long the link waits before trying
-/// Renoa again after a failure, and how often it reads the agent list again.
-#[derive(Debug, Clone, Copy)]
-pub struct Pace {
-    pub collect_every: Duration,
-    pub retry_after: Duration,
-    /// Each read shows agents that came online and retries the chats,
-    /// messages and profiles a refusal held back. A connection that died
-    /// without closing fails it within [`REPLY_WITHIN`].
-    pub agents_every: Duration,
-}
-
-impl Pace {
-    pub const APP: Self = Self {
-        collect_every: Duration::from_secs(2),
-        retry_after: Duration::from_secs(5),
-        agents_every: Duration::from_secs(30),
-    };
 }
 
 /// What the session tells the views.
@@ -115,6 +67,8 @@ pub enum Update {
         task_id: TaskId,
         text: String,
     },
+    /// Unexpired setup links waiting for the owner, soonest to expire first.
+    SetupLinks(Vec<HeldLink>),
     /// Renoa no longer knows this Mac: it was signed out.
     SignedOut,
 }
@@ -154,6 +108,12 @@ pub enum Command {
         command_id: CommandId,
         answered: oneshot::Sender<Result<StopOutcome, StopProblem>>,
     },
+    /// Acknowledges a setup notice the owner acted on or dismissed; answers
+    /// whether Renoa recorded it.
+    AcknowledgeNotice {
+        notice_id: Uuid,
+        answered: oneshot::Sender<bool>,
+    },
 }
 
 enum Immediate {
@@ -166,6 +126,10 @@ enum Immediate {
         task_id: TaskId,
         command_id: CommandId,
         answered: oneshot::Sender<Result<StopOutcome, StopProblem>>,
+    },
+    AcknowledgeNotice {
+        notice_id: Uuid,
+        answered: oneshot::Sender<bool>,
     },
 }
 
@@ -180,7 +144,7 @@ struct Kept {
 
 impl Kept {
     /// Keeps a chat to follow or a message to send for the next catch-up;
-    /// Host calls and share-link requests belong to the current connection.
+    /// Host calls, share links, stops, and notice acks belong to the current connection.
     fn hold(&mut self, command: Command) -> Option<Immediate> {
         match command {
             Command::Follow {
@@ -227,6 +191,13 @@ impl Kept {
                 command_id,
                 answered,
             }),
+            Command::AcknowledgeNotice {
+                notice_id,
+                answered,
+            } => Some(Immediate::AcknowledgeNotice {
+                notice_id,
+                answered,
+            }),
         }
     }
 }
@@ -238,12 +209,16 @@ pub async fn session(
     endpoints: Endpoints,
     credentials: DeviceCredentials,
     key: Arc<MacKey>,
+    notice_key: Arc<NoticeSecret>,
     pace: Pace,
     mut commands: mpsc::UnboundedReceiver<Command>,
     updates: mpsc::UnboundedSender<Update>,
 ) {
     let mut kept = Kept::default();
+    let notices = Notices::new(credentials.device_id, notice_key);
+    let mut connection_id = 0_u64;
     loop {
+        connection_id = connection_id.wrapping_add(1);
         let connected = within(connect_with_key(
             &endpoints.connect,
             credentials.clone(),
@@ -267,14 +242,23 @@ pub async fn session(
                 continue;
             }
         };
+        let refresh_notices = Arc::new(Notify::new());
         // Events are read apart from the calls below, so a long replay never
         // holds up a reply.
-        let forwarder = tokio::spawn(forward(events, Arc::clone(&kept.through), updates.clone()));
+        let forwarder = tokio::spawn(forward(
+            events,
+            Arc::clone(&kept.through),
+            updates.clone(),
+            Arc::clone(&refresh_notices),
+        ));
         let _ = updates.send(Update::Linked(true));
         let ended = linked(
+            connection_id,
             &connection,
             &endpoints.origin,
             pace.agents_every,
+            &notices,
+            &refresh_notices,
             &mut commands,
             &updates,
             &mut kept,
@@ -318,6 +302,9 @@ async fn offline(
                     Some(Immediate::Stop { answered, .. }) => {
                         let _ = answered.send(Err(StopProblem::Uncertain));
                     }
+                    Some(Immediate::AcknowledgeNotice { answered, .. }) => {
+                        let _ = answered.send(false);
+                    }
                 },
             },
         }
@@ -331,10 +318,14 @@ enum Ended {
 }
 
 /// Serves the views over one connection until it is lost or they are gone.
+#[expect(clippy::too_many_arguments)]
 async fn linked(
+    connection_id: u64,
     connection: &Connection,
     origin: &str,
     agents_every: Duration,
+    notices: &Notices,
+    refresh_notices: &Arc<Notify>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     updates: &mpsc::UnboundedSender<Update>,
     kept: &mut Kept,
@@ -345,8 +336,17 @@ async fn linked(
     // The first tick is at once: it lists the agents and catches up.
     let mut agents = tokio::time::interval(agents_every);
     agents.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    // Profiles are read beside the loop: a slow Host holds up no message.
+    let mut first_tick = true;
+    // Profiles and setup notices run beside the loop; notices use one
+    // long-lived worker driven by `refresh_notices` so refreshes coalesce
+    // cleanly without losing notifications at shutdown.
     let mut reading: Option<Aborting> = None;
+    let _notice_watcher = Aborting(tokio::spawn(notices.clone().watch(
+        connection_id,
+        connection.clone(),
+        Arc::clone(refresh_notices),
+        updates.clone(),
+    )));
     let mut calls: Vec<Aborting> = Vec::new();
     loop {
         let served = tokio::select! {
@@ -390,6 +390,19 @@ async fn linked(
                         calls.retain(|call| !call.finished());
                         Ok(())
                     }
+                    Some(Immediate::AcknowledgeNotice {
+                        notice_id,
+                        answered,
+                    }) => {
+                        calls.push(Aborting(tokio::spawn(notices.clone().acknowledge(
+                            connection.clone(),
+                            notice_id,
+                            updates.clone(),
+                            answered,
+                        ))));
+                        calls.retain(|call| !call.finished());
+                        Ok(())
+                    }
                 },
             },
             _ = agents.tick() => match within(connection.list_targets()).await {
@@ -402,6 +415,9 @@ async fn linked(
                             updates.clone(),
                         ))));
                     }
+                    if !std::mem::replace(&mut first_tick, false) {
+                        refresh_notices.notify_one();
+                    }
                     let _ = updates.send(Update::Agents(listed));
                     catch_up(connection, updates, kept).await
                 }
@@ -412,21 +428,6 @@ async fn linked(
         if served.is_err() {
             return Ended::LinkLost;
         }
-    }
-}
-
-/// A task that ends when the link it works for does.
-struct Aborting(JoinHandle<()>);
-
-impl Aborting {
-    fn finished(&self) -> bool {
-        self.0.is_finished()
-    }
-}
-
-impl Drop for Aborting {
-    fn drop(&mut self) {
-        self.0.abort();
     }
 }
 
@@ -443,31 +444,8 @@ async fn catch_up(
     flush(connection, &mut kept.outbox, updates).await
 }
 
-/// Passes events on as they arrive and notes the last one of each chat.
-async fn forward(mut events: Events, through: Through, updates: mpsc::UnboundedSender<Update>) {
-    while let Some(Ok(item)) = events.next_event().await {
-        let send = match item {
-            SurfaceEvent::Task(event) => {
-                note(&through, event.task_id, event.sequence);
-                Update::Event(event)
-            }
-            SurfaceEvent::Live {
-                task_id,
-                command_id,
-                activity,
-            } => Update::Live {
-                task_id,
-                command_id,
-                activity,
-            },
-        };
-        if updates.send(send).is_err() {
-            return;
-        }
-    }
-}
-
 pub mod host;
+mod notices;
 mod profiles;
 mod session;
 mod sign_in;

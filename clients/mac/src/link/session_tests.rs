@@ -9,11 +9,11 @@ use std::{
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use renoa_protocol::{CommandId, CommandInput, TargetRef};
+use renoa_protocol::{CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use renoa_rcp_client::StopOutcome;
 use renoa_rcp_wire::{
-    ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HostMethod,
-    JSON_WS_VERSION, NodeId, ServerMessage, ShareLink, TargetSummary, TaskId,
+    ClientMessage, DeviceCredential, DeviceCredentials, DeviceId, ErrorCode, HeldNotice,
+    HostMethod, JSON_WS_VERSION, NodeId, ServerMessage, ShareLink, TargetSummary, TaskId,
 };
 use tokio::{
     net::TcpListener,
@@ -28,7 +28,12 @@ use super::{
     host::{Answer, HostCall},
     session,
 };
-use crate::{face::look::HairFront, key::MacKey, test_events::said};
+use crate::{
+    face::look::HairFront,
+    key::MacKey,
+    notice::{NoticeSecret, SetupLinkKind, now_ms, tests::seal_for_test},
+    test_events::{executed, said},
+};
 
 const QUICK: Pace = Pace {
     collect_every: Duration::from_millis(5),
@@ -94,12 +99,22 @@ async fn coordinator(script: Arc<Script>) -> (Endpoints, Heard) {
     (endpoints, heard)
 }
 
-/// The answers every chat needs: the agent list, the task and the attach.
+/// The answers every chat needs: the agent list, notice setup, the task and the attach.
 fn chat_replies(frame: &ClientMessage) -> Option<Vec<Reply>> {
     let answer = match frame {
         ClientMessage::ListTargets { request_id } => ServerMessage::TargetList {
             request_id: *request_id,
             targets: Vec::new(),
+        },
+        ClientMessage::SetNoticeKey { request_id, .. } => ServerMessage::NoticeKeySet {
+            request_id: *request_id,
+        },
+        ClientMessage::ListNotices { request_id } => ServerMessage::NoticeList {
+            request_id: *request_id,
+            notices: Vec::new(),
+        },
+        ClientMessage::AcknowledgeNotice { request_id, .. } => ServerMessage::NoticeAcknowledged {
+            request_id: *request_id,
         },
         ClientMessage::OpenTask {
             request_id,
@@ -153,10 +168,12 @@ fn start(endpoints: Endpoints) -> Running {
         credential: DeviceCredential::new("credential"),
     };
     let key = Arc::new(MacKey::generate().expect("key"));
+    let notice_key = Arc::new(NoticeSecret::generate().expect("notice key"));
     tokio::spawn(session(
         endpoints,
         credentials,
         key,
+        notice_key,
         QUICK,
         received,
         sender,
@@ -596,10 +613,12 @@ async fn a_host_call_while_renoa_is_out_of_reach_is_answered_lost_and_the_sessio
         credential: DeviceCredential::new("credential"),
     };
     let key = Arc::new(MacKey::generate().expect("key"));
+    let notice_key = Arc::new(NoticeSecret::generate().expect("notice key"));
     let running = tokio::spawn(session(
         endpoints,
         credentials,
         key,
+        notice_key,
         QUICK,
         received,
         sender,
@@ -763,10 +782,12 @@ async fn a_share_link_request_resolves_against_endpoints_origin_or_none_on_refus
         credential: DeviceCredential::new("credential"),
     };
     let key = Arc::new(MacKey::generate().expect("key"));
+    let notice_key = Arc::new(NoticeSecret::generate().expect("notice key"));
     let task = tokio::spawn(session(
         offline_endpoints,
         credentials,
         key,
+        notice_key,
         QUICK,
         received,
         sender,
@@ -912,10 +933,12 @@ async fn stop_command_forwards_stop_outcomes_refusal_and_offline_uncertainty() {
         credential: DeviceCredential::new("credential"),
     };
     let key = Arc::new(MacKey::generate().expect("key"));
+    let notice_key = Arc::new(NoticeSecret::generate().expect("notice key"));
     let task = tokio::spawn(session(
         offline_endpoints,
         credentials,
         key,
+        notice_key,
         QUICK,
         received,
         sender,
@@ -943,4 +966,326 @@ async fn stop_command_forwards_stop_outcomes_refusal_and_offline_uncertainty() {
     );
     drop(commands);
     let _ = timeout(Duration::from_secs(5), task).await;
+}
+
+#[tokio::test]
+async fn setup_notices_register_key_open_valid_ack_unreadable_refresh_on_turn_end_and_ack_on_command()
+ {
+    let device_id = DeviceId::new();
+    let notice_key = Arc::new(NoticeSecret::generate().expect("notice key"));
+    let point = notice_key.public_key().point().expect("point");
+    let valid_id = Uuid::new_v4();
+    let expired_id = Uuid::new_v4();
+    let corrupt_id = Uuid::new_v4();
+    let later_id = Uuid::new_v4();
+    let future = now_ms() + 300_000;
+    let past = now_ms() - 60_000;
+
+    let valid_sealed = seal_for_test(
+        &point,
+        valid_id,
+        device_id,
+        serde_json::json!({
+            "kind": "credentials",
+            "label": "Google OAuth",
+            "url": "https://renoa.live/setup#v=1&key=abc",
+            "expires_at_ms": future,
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    let expired_sealed = seal_for_test(
+        &point,
+        expired_id,
+        device_id,
+        serde_json::json!({
+            "kind": "authorization",
+            "label": "Old",
+            "url": "https://accounts.google.com/auth",
+            "expires_at_ms": past,
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    let later_sealed = seal_for_test(
+        &point,
+        later_id,
+        device_id,
+        serde_json::json!({
+            "kind": "authorization",
+            "label": "Gmail",
+            "url": "https://accounts.google.com/o/oauth2/auth",
+            "expires_at_ms": future,
+        })
+        .to_string()
+        .as_bytes(),
+    );
+
+    let phase = Arc::new(AtomicUsize::new(0));
+    let phase_in = Arc::clone(&phase);
+    let (endpoints, heard) = coordinator(Arc::new(move |_, frame: &ClientMessage| match frame {
+        ClientMessage::ListNotices { request_id } => {
+            let notices = match phase_in.load(Ordering::SeqCst) {
+                0 => vec![
+                    HeldNotice {
+                        notice_id: valid_id,
+                        sealed: valid_sealed.clone(),
+                        expires_at_ms: future,
+                    },
+                    HeldNotice {
+                        notice_id: expired_id,
+                        sealed: expired_sealed.clone(),
+                        expires_at_ms: past,
+                    },
+                    HeldNotice {
+                        notice_id: corrupt_id,
+                        sealed: "not-valid-ciphertext".to_owned(),
+                        expires_at_ms: future,
+                    },
+                ],
+                1 => Vec::new(),
+                _ => vec![HeldNotice {
+                    notice_id: later_id,
+                    sealed: later_sealed.clone(),
+                    expires_at_ms: future,
+                }],
+            };
+            vec![reply(&ServerMessage::NoticeList {
+                request_id: *request_id,
+                notices,
+            })]
+        }
+        ClientMessage::Attach {
+            request_id,
+            task_id,
+            ..
+        } => {
+            // Delivering ExecutionTerminated wakes a fresh notice read.
+            phase_in.store(2, Ordering::SeqCst);
+            vec![
+                reply(&ServerMessage::TaskEvent {
+                    event: executed(
+                        *task_id,
+                        0,
+                        ExecutionEventKind::ExecutionTerminated {
+                            terminal: ExecutionTerminal::Completed,
+                        },
+                    ),
+                }),
+                reply(&ServerMessage::Attached {
+                    request_id: *request_id,
+                    task_id: *task_id,
+                    through_sequence: Some(0),
+                }),
+            ]
+        }
+        other => chat_replies(other).expect("expected chat or notice frame"),
+    }))
+    .await;
+
+    let (commands, received) = mpsc::unbounded_channel();
+    let (sender, mut updates) = mpsc::unbounded_channel();
+    let credentials = DeviceCredentials {
+        device_id,
+        credential: DeviceCredential::new("credential"),
+    };
+    let key = Arc::new(MacKey::generate().expect("key"));
+    let expected_pub = notice_key.public_key();
+    let session_task = tokio::spawn(session(
+        endpoints,
+        credentials,
+        key,
+        notice_key,
+        Pace {
+            collect_every: Duration::from_millis(5),
+            retry_after: Duration::from_millis(5),
+            // Long poll interval proves the turn-end event itself wakes the refresh.
+            agents_every: Duration::from_secs(60),
+        },
+        received,
+        sender,
+    ));
+
+    let registered = hear(&heard, 1, |frame| {
+        matches!(frame, ClientMessage::SetNoticeKey { .. })
+    })
+    .await;
+    assert!(matches!(
+        &registered[0].1,
+        ClientMessage::SetNoticeKey { public_key, .. } if *public_key == expected_pub
+    ));
+
+    let first_links = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(Update::SetupLinks(links)) = updates.recv().await {
+                return links;
+            }
+        }
+    })
+    .await
+    .expect("first setup links arrive");
+    assert_eq!(first_links.len(), 1);
+    assert_eq!(first_links[0].notice_id, valid_id);
+    assert_eq!(first_links[0].link.kind, SetupLinkKind::Credentials);
+    assert_eq!(first_links[0].link.label, "Google OAuth");
+
+    // Corrupt notice was acknowledged automatically without user action.
+    let acks = hear(&heard, 1, |frame| {
+        matches!(
+            frame,
+            ClientMessage::AcknowledgeNotice { notice_id, .. } if *notice_id == corrupt_id
+        )
+    })
+    .await;
+    assert_eq!(acks.len(), 1);
+
+    // Owner acknowledges the valid notice.
+    phase.store(1, Ordering::SeqCst);
+    let (tx, rx) = oneshot::channel();
+    commands
+        .send(Command::AcknowledgeNotice {
+            notice_id: valid_id,
+            answered: tx,
+        })
+        .expect("ack");
+    assert_eq!(timeout(Duration::from_secs(5), rx).await.unwrap(), Ok(true));
+    let cleared = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(Update::SetupLinks(links)) = updates.recv().await {
+                return links;
+            }
+        }
+    })
+    .await
+    .expect("cleared update");
+    assert!(cleared.is_empty());
+
+    // Following a chat whose event terminates a turn triggers a fresh read.
+    commands
+        .send(Command::Follow {
+            task_id: TaskId::new(),
+            node_id: NodeId::new(),
+            target: TargetRef::new("renoa"),
+            after: None,
+        })
+        .expect("follow");
+    let second_links = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(Update::SetupLinks(links)) = updates.recv().await
+                && !links.is_empty()
+            {
+                return links;
+            }
+        }
+    })
+    .await
+    .expect("turn-end refresh delivers the new setup link");
+    assert_eq!(second_links.len(), 1);
+    assert_eq!(second_links[0].notice_id, later_id);
+    assert_eq!(second_links[0].link.label, "Gmail");
+
+    drop(commands);
+    let _ = timeout(Duration::from_secs(5), session_task).await;
+}
+
+#[tokio::test]
+async fn a_transient_set_notice_key_failure_retries_on_the_same_connection() {
+    let device_id = DeviceId::new();
+    let notice_key = Arc::new(NoticeSecret::generate().expect("notice key"));
+    let point = notice_key.public_key().point().expect("point");
+    let notice_id = Uuid::new_v4();
+    let future = now_ms() + 300_000;
+    let sealed = seal_for_test(
+        &point,
+        notice_id,
+        device_id,
+        serde_json::json!({
+            "kind": "authorization",
+            "label": "Gmail",
+            "url": "https://accounts.google.com/o/oauth2/auth",
+            "expires_at_ms": future,
+        })
+        .to_string()
+        .as_bytes(),
+    );
+
+    let key_attempts = Arc::new(AtomicUsize::new(0));
+    let key_attempts_in = Arc::clone(&key_attempts);
+    let (endpoints, heard) = coordinator(Arc::new(move |_, frame: &ClientMessage| match frame {
+        ClientMessage::SetNoticeKey { request_id, .. } => {
+            if key_attempts_in.fetch_add(1, Ordering::SeqCst) == 0 {
+                vec![reply(&ServerMessage::Error {
+                    request_id: Some(*request_id),
+                    code: ErrorCode::Internal,
+                    message: "temporary".to_owned(),
+                })]
+            } else {
+                vec![reply(&ServerMessage::NoticeKeySet {
+                    request_id: *request_id,
+                })]
+            }
+        }
+        ClientMessage::ListNotices { request_id } => vec![reply(&ServerMessage::NoticeList {
+            request_id: *request_id,
+            notices: vec![HeldNotice {
+                notice_id,
+                sealed: sealed.clone(),
+                expires_at_ms: future,
+            }],
+        })],
+        other => chat_replies(other).expect("expected frame"),
+    }))
+    .await;
+
+    let (commands, received) = mpsc::unbounded_channel();
+    let (sender, mut updates) = mpsc::unbounded_channel();
+    let credentials = DeviceCredentials {
+        device_id,
+        credential: DeviceCredential::new("credential"),
+    };
+    let key = Arc::new(MacKey::generate().expect("key"));
+    let expected_pub = notice_key.public_key();
+    let session_task = tokio::spawn(session(
+        endpoints,
+        credentials,
+        key,
+        notice_key,
+        Pace {
+            collect_every: Duration::from_millis(5),
+            retry_after: Duration::from_millis(5),
+            agents_every: Duration::from_millis(30),
+        },
+        received,
+        sender,
+    ));
+
+    let registered = hear(&heard, 2, |frame| {
+        matches!(frame, ClientMessage::SetNoticeKey { .. })
+    })
+    .await;
+    assert_eq!(
+        (registered[0].0, registered[1].0),
+        (0, 0),
+        "retries SetNoticeKey on the same connection"
+    );
+    assert!(matches!(
+        &registered[1].1,
+        ClientMessage::SetNoticeKey { public_key, .. } if *public_key == expected_pub
+    ));
+
+    let links = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(Update::SetupLinks(links)) = updates.recv().await
+                && !links.is_empty()
+            {
+                return links;
+            }
+        }
+    })
+    .await
+    .expect("notice arrives once registration succeeds");
+    assert_eq!(links[0].notice_id, notice_id);
+
+    drop(commands);
+    let _ = timeout(Duration::from_secs(5), session_task).await;
 }

@@ -8,12 +8,69 @@ use std::{
     time::Duration,
 };
 
-use renoa_protocol::{Author, CommandId, CommandInput, TargetRef};
-use renoa_rcp_client::{ClientError, Connection, StopOutcome};
-use renoa_rcp_wire::{NodeId, TaskId};
-use tokio::sync::{mpsc, oneshot};
+use renoa_protocol::{Author, CommandId, CommandInput, ExecutionEventKind, TargetRef};
+use renoa_rcp_client::{ClientError, Connection, Events, StopOutcome, SurfaceEvent};
+use renoa_rcp_wire::{NodeId, TaskEventKind, TaskId};
+use tokio::{
+    sync::{Notify, mpsc, oneshot},
+    task::JoinHandle,
+};
 
 use super::Update;
+
+const DEFAULT_ORIGIN: &str = "https://renoa.live";
+
+/// Where Renoa is: `RENOA_ORIGIN`, or renoa.live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoints {
+    pub origin: String,
+    pub connect: String,
+}
+
+impl Endpoints {
+    pub fn from_environment() -> Self {
+        Self::at(&std::env::var("RENOA_ORIGIN").unwrap_or_else(|_| DEFAULT_ORIGIN.to_owned()))
+    }
+
+    /// The coordinator at `origin` takes connections at `/connect`, over
+    /// TLS unless the origin is plain HTTP.
+    pub fn at(origin: &str) -> Self {
+        let origin = origin.trim_end_matches('/').to_owned();
+        let socket = origin
+            .strip_prefix("https://")
+            .map(|host| format!("wss://{host}"))
+            .or_else(|| {
+                origin
+                    .strip_prefix("http://")
+                    .map(|host| format!("ws://{host}"))
+            })
+            .unwrap_or_else(|| origin.clone());
+        Self {
+            connect: format!("{socket}/connect"),
+            origin,
+        }
+    }
+}
+
+/// How often signing in collects, how long the link waits before trying
+/// Renoa again after a failure, and how often it reads the agent list again.
+#[derive(Debug, Clone, Copy)]
+pub struct Pace {
+    pub collect_every: Duration,
+    pub retry_after: Duration,
+    /// Each read shows agents that came online and retries the chats,
+    /// messages and profiles a refusal held back. A connection that died
+    /// without closing fails it within [`REPLY_WITHIN`].
+    pub agents_every: Duration,
+}
+
+impl Pace {
+    pub const APP: Self = Self {
+        collect_every: Duration::from_secs(2),
+        retry_after: Duration::from_secs(5),
+        agents_every: Duration::from_secs(30),
+    };
+}
 
 /// Why stopping an active command did not confirm a stop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,4 +220,54 @@ pub(super) async fn within<T>(
     tokio::time::timeout(REPLY_WITHIN, call)
         .await
         .unwrap_or_else(|_| Err(ClientError::Transport("Renoa did not answer".to_owned())))
+}
+
+/// A task that ends when the link it works for does.
+pub(super) struct Aborting(pub(super) JoinHandle<()>);
+
+impl Aborting {
+    pub(super) fn finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
+impl Drop for Aborting {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Passes events on as they arrive, notes the last one of each chat, and wakes
+/// notice reads whenever an agent turn ends (as a setup link ends its turn).
+pub(super) async fn forward(
+    mut events: Events,
+    through: Through,
+    updates: mpsc::UnboundedSender<Update>,
+    refresh_notices: Arc<Notify>,
+) {
+    while let Some(Ok(item)) = events.next_event().await {
+        let send = match item {
+            SurfaceEvent::Task(event) => {
+                note(&through, event.task_id, event.sequence);
+                if let TaskEventKind::ExecutionEvent { event: exec, .. } = &event.kind
+                    && matches!(exec.kind, ExecutionEventKind::ExecutionTerminated { .. })
+                {
+                    refresh_notices.notify_one();
+                }
+                Update::Event(event)
+            }
+            SurfaceEvent::Live {
+                task_id,
+                command_id,
+                activity,
+            } => Update::Live {
+                task_id,
+                command_id,
+                activity,
+            },
+        };
+        if updates.send(send).is_err() {
+            return;
+        }
+    }
 }
